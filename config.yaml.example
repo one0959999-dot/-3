@@ -1,0 +1,18 @@
+# config.yaml (설정 파일 예시)
+# 아래 정보를 채워서 config.yaml로 저장하세요.
+
+# 한국투자증권 API 정보
+KIS:
+  APP_KEY: "YOUR_APP_KEY"
+  APP_SECRET: "YOUR_APP_SECRET"
+  ACCOUNT_NO: "YOUR_ACCOUNT_NO"  # 10자리
+  IS_MOCK: true  # true면 모의투자, false면 실전투자
+
+# 텔레그램 봇 정보
+TELEGRAM:
+  BOT_TOKEN: "YOUR_BOT_TOKEN"
+  CHAT_ID: "YOUR_CHAT_ID"
+
+# 구글 제미나이(Gemini) API 정보
+GEMINI:
+  API_KEY: "YOUR_GEMINI_API_KEY"
