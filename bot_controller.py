@@ -219,20 +219,20 @@ class BotController:
         self._save_state()
 
     def _save_state(self):
-        """현재 포트폴리오 상태를 DB에 저장"""
+        """현재 포트폴리오 상태를 DB에 저장 (JSON 에러 방지 수정본)"""
         try:
             state = {
                 "cores": [
                      {"ticker": c.ticker, "name": c.name,
-                      "shares": c.shares, "floor_shares": c.floor_shares,
-                      "cash": c.cash, "initial_cash": c.initial_cash,
-                      "avg_price": c.avg_price}
+                      "shares": int(c.shares), "floor_shares": int(c.floor_shares),
+                      "cash": float(c.cash), "initial_cash": float(c.initial_cash),
+                      "avg_price": float(c.avg_price)}
                     for c in self.core_positions
                 ],
                 "satellites": {
-                    ticker: {"name": pos.name, "shares": pos.shares,
-                             "cash": pos.cash, "initial_cash": pos.initial_cash,
-                             "avg_price": pos.avg_price}
+                    ticker: {"name": pos.name, "shares": int(pos.shares),
+                             "cash": float(pos.cash), "initial_cash": float(pos.initial_cash),
+                             "avg_price": float(pos.avg_price)}
                     for ticker, pos in self.satellite_positions.items()
                 },
                 "satellite_info": self.satellite_info,
@@ -240,13 +240,13 @@ class BotController:
                 "hot_sectors": self.hot_sectors,
                 "num_satellites": self.num_satellites,
                 "last_screen_month": getattr(self, 'last_screen_month', None),
-                "last_screen_date": getattr(self, 'last_screen_date', None).strftime('%Y-%m-%d') if getattr(self, 'last_screen_date', None) else None,
                 "daily_pnl": self.daily_pnl,
                 "daily_report": self.daily_report,
             }
+            # database.py 모듈의 함수를 호출하여 저장
             save_portfolio_state(self.user_id, state)
         except Exception as e:
-            self.add_log(f"⚠️ 상태 저장 실패: {e}")
+            self.add_log(f"⚠️ 상태 저장 실패 (형식 변환 확인 필요): {e}")
 
     def _restore_state(self):
         """DB에서 포트폴리오 상태 복구. 성공하면 True 반환."""

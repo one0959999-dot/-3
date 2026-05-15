@@ -4,7 +4,8 @@ from google import genai
 from google.genai import types
 
 class GeminiApi:
-    # 사용자님이 설정하신 주식 전문가 페르소나 유지 및 강화
+    """라씨 AI - Gemini를 활용한 주식 분석 엔진"""
+    
     SYSTEM_PROMPT = """당신은 '라씨 AI'라는 이름의 전문 주식 투자 어시스턴트입니다.
 당신은 다음 세 가지 분야에서 깊은 전문 지식을 가지고 있습니다:
 1. 📈 시장 분석: KOSPI/KOSDAQ 지수 동향, 섹터 강세, 수급 분석, 거시경제 흐름
@@ -24,11 +25,11 @@ class GeminiApi:
         if api_key:
             self.client = genai.Client(api_key=api_key)
         
-        # 최신 Pro 모델명 적용
-        self.model_id = "gemini-3.1-pro-preview" 
+        # 모델 ID를 안정적인 1.5 버전으로 설정하여 API 오류 방지
+        self.model_id = "gemini-1.5-flash" 
 
     def generate_content(self, prompt, use_thinking=False):
-        """기본 응답 생성 (기존 코드의 generate_content 호환)"""
+        """기본 응답 생성"""
         if not self.client:
             return "Gemini API 키가 설정되지 않았습니다."
         try:
@@ -36,10 +37,6 @@ class GeminiApi:
                 system_instruction=self.SYSTEM_PROMPT,
                 temperature=0.7
             )
-            # 추론이 필요한 경우 Thinking 모드 활성화
-            if use_thinking:
-                config.thinking_config = types.ThinkingConfig(thinking_level="HIGH")
-
             response = self.client.models.generate_content(
                 model=self.model_id,
                 contents=prompt,
@@ -49,8 +46,47 @@ class GeminiApi:
         except Exception as e:
             return f"Gemini 응답 생성 중 오류: {str(e)}"
 
+    def ai_select_satellites(self, candidates, hot_sectors, n):
+        """스크리너가 추출한 후보 중 AI가 최종 n개를 선정 (AttributeError 해결)"""
+        if not self.client:
+            return None
+            
+        candidate_text = "\n".join([
+            f"- {c['name']}({c['ticker']}): 수익률 {c['return_pct']}%, 점수 {c['score']}, 섹터 {c['sector']}"
+            for c in candidates[:15]
+        ])
+        
+        prompt = f"""[위성 종목 최종 선정 요청]
+현재 강세 섹터: {', '.join(hot_sectors)}
+후보 종목 리스트:
+{candidate_text}
+
+위 후보 중 기술적 지표와 섹터 정렬이 가장 우수한 종목 {n}개를 선정해주세요.
+반드시 아래 JSON 형식으로만 답변하세요.
+[
+  {{"ticker": "종목코드", "reason": "선정이유(간략히)"}},
+  ...
+]"""
+        try:
+            res = self.generate_content(prompt)
+            # 마크다운 코드 블록 제거 후 JSON 파싱
+            json_str = res.replace("```json", "").replace("```", "").strip()
+            selected_data = json.loads(json_str)
+            
+            final_selection = []
+            for item in selected_data:
+                for cand in candidates:
+                    if cand['ticker'] == item['ticker']:
+                        cand['ai_selected'] = True
+                        cand['ai_reason'] = item['reason']
+                        final_selection.append(cand)
+                        break
+            return final_selection[:n]
+        except Exception:
+            return None
+
     def chat(self, user_message, portfolio_context=None):
-        """대화 히스토리를 유지하는 채팅 기능 (기존 chat 기능 복구)"""
+        """대화 히스토리를 유지하는 채팅 기능"""
         if not self.client:
             return "❌ API 키가 등록되지 않았습니다."
 
@@ -82,35 +118,31 @@ class GeminiApi:
             return f"⚠️ 채팅 오류: {str(e)}"
 
     def analyze_market(self, market_data_text):
-        """시장 데이터 분석 리포트 생성 (기존 기능 유지)"""
+        """시장 데이터 분석 리포트 생성"""
         prompt = f"제공된 시장 데이터를 바탕으로 전문적인 '데일리 시장 분석 리포트'를 작성해주세요.\n\n[데이터]\n{market_data_text}"
-        return self.generate_content(prompt, use_thinking=True)
+        return self.generate_content(prompt)
 
-    def ai_approve_trade(self, signal, stock_name, ticker, price, strategy, indicator_val, avg_price=0, shares=0, hot_sectors=None):
-        """매매 신호 발생 시 최종 승인/거부 (Pro의 사고력 활용)"""
+    def ai_approve_trade(self, signal, stock_name, ticker, price, strategy, indicator_val, **kwargs):
+        """매매 신호 발생 시 AI 최종 승인/거부"""
         if not self.client:
             return True, "API 미설정으로 자동 승인"
 
-        action_kr = "매수" if signal == 'BUY' else "매도"
-        profit_info = f"\n- 수익률: {(price/avg_price-1)*100:+.1f}%" if signal == 'SELL' and avg_price > 0 else ""
-        
+        action = "매수" if signal == 'BUY' else "매도"
         prompt = f"""[매매 신호 검토]
-- 종목: {stock_name} ({ticker}) | 신호: {action_kr}
-- 현재가: {price:,.0f}원 | 전략: {strategy} | 지표값: {indicator_val:.2f}{profit_info}
-- 강세 섹터: {', '.join(hot_sectors) if hot_sectors else '없음'}
+종목: {stock_name}({ticker}) | 신호: {action} | 가격: {price:,}원
+전략: {strategy} | 지표값: {indicator_val:.2f}
 
-위 정보를 바탕으로 승인 여부를 결정하세요.
-출력 형식:
-DECISION: (CONFIRM/REJECT)
-REASON: (이유 한 줄)"""
-
+이 매매가 현재 시장 상황에서 적절한지 판단하여 CONFIRM 또는 REJECT로 답하고 이유를 한 줄로 적으세요.
+형식: DECISION: (CONFIRM/REJECT), REASON: (이유)"""
+        
         try:
-            res = self.generate_content(prompt, use_thinking=True)
+            res = self.generate_content(prompt)
             decision = "CONFIRM" in res.upper()
             reason = res.split("REASON:")[-1].strip() if "REASON:" in res else "AI 분석 완료"
             return decision, reason
-        except:
+        except Exception:
             return True, "오류 발생으로 인한 자동 승인"
 
     def reset_chat(self):
+        """채팅 기록 초기화"""
         self._conversation_history = []
