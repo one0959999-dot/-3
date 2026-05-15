@@ -704,14 +704,17 @@ window.saveCoreStocks = async function () {
 window.saveAccountSettings = async function () {
     const isMock = document.getElementById('modeSwitch').checked ? 1 : 0;
     const data = {
-        // 실전/모의 데이터 각각 수집
+        // 실전 데이터 수집 (HTML의 새로운 ID 사용)
         real_app_key: document.getElementById('realAppKey').value,
         real_app_secret: document.getElementById('realAppSecret').value,
         real_account_no: document.getElementById('realAccountNo').value,
+
+        // 모의 데이터 수집
         mock_app_key: document.getElementById('mockAppKey').value,
         mock_app_secret: document.getElementById('mockAppSecret').value,
         mock_account_no: document.getElementById('mockAccountNo').value,
 
+        // 공통 데이터
         telegram_token: document.getElementById('teleToken').value,
         telegram_chat_id: document.getElementById('teleChatId').value,
         gemini_api_key: document.getElementById('geminiApiKey').value,

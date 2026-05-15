@@ -472,10 +472,10 @@
         <div class="modal-content">
             <span class="close-modal" onclick="closeSettingsModal()">&times;</span>
             <h2 style="font-family:'Outfit',sans-serif; margin-bottom:0.5rem;">API 계좌 설정</h2>
-            <p style="font-size:0.8rem; color:#94a3b8; margin-bottom:1.5rem;">한국투자증권 API 키와 텔레그램 정보를 입력하세요.</p>
+
             <div class="settings-group"
-                style="border: 1px solid rgba(239, 68, 68, 0.3); padding: 10px; border-radius: 8px; margin-bottom: 10px;">
-                <h3 style="color: #ef4444; font-size: 0.85rem; margin-bottom: 8px;">🔴 실전투자 API 설정</h3>
+                style="border: 1px solid rgba(239, 68, 68, 0.3); padding: 10px; border-radius: 8px; margin-bottom: 15px;">
+                <h3 style="color: #ef4444; font-size: 0.9rem; margin-bottom: 10px;">🔴 실전투자 API 설정</h3>
                 <label>App Key</label>
                 <input type="text" id="realAppKey" value="{{ user.data.real_app_key or '' }}">
                 <label>App Secret</label>
@@ -485,8 +485,8 @@
             </div>
 
             <div class="settings-group"
-                style="border: 1px solid rgba(16, 185, 129, 0.3); padding: 10px; border-radius: 8px; margin-bottom: 10px;">
-                <h3 style="color: #10b981; font-size: 0.85rem; margin-bottom: 8px;">🟢 모의투자 API 설정</h3>
+                style="border: 1px solid rgba(16, 185, 129, 0.3); padding: 10px; border-radius: 8px; margin-bottom: 15px;">
+                <h3 style="color: #10b981; font-size: 0.9rem; margin-bottom: 10px;">🟢 모의투자 API 설정</h3>
                 <label>App Key</label>
                 <input type="text" id="mockAppKey" value="{{ user.data.mock_app_key or '' }}">
                 <label>App Secret</label>
