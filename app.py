@@ -103,29 +103,6 @@ def kis_balance():
         return jsonify({"status": "success", "data": balance})
     return jsonify({"status": "error", "message": "잔고 조회 실패"})
 
-@app.route('/api/ai_reset', methods=['POST'])
-@login_required
-def ai_reset():
-    """AI 채팅 기록 초기화 API"""
-    bot = get_current_bot()
-    if bot and bot.gemini:
-        bot.gemini.reset_chat()
-        return jsonify({"status": "success"})
-    return jsonify({"status": "error"})    
-
-@app.route('/api/kis_balance')
-@login_required
-def kis_balance():
-    """실시간 한국투자증권 계좌 잔고 조회 (누락된 API 추가)"""
-    bot = get_current_bot()
-    if not bot or not bot.kis:
-        return jsonify({"status": "error", "message": "API 설정이 필요합니다."})
-    
-    balance = bot.kis.get_account_balance()
-    if balance:
-        return jsonify({"status": "success", "data": balance})
-    return jsonify({"status": "error", "message": "잔고 조회 실패"})
-
 @app.route('/api/toggle', methods=['POST'])
 @login_required
 def toggle_bot():
