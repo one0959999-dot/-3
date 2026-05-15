@@ -158,26 +158,46 @@ def ai_reset():
         return jsonify({"status": "success"})
     return jsonify({"status": "error"})
 
+@app.route('/api/settings/mode', methods=['POST'])
+@login_required
+def set_mode():
+    """실전/모의 투자 모드 전환 API"""
+    data = request.json
+    is_mock = int(data.get('is_mock', 1))
+    
+    # 1. DB 업데이트
+    from database import get_db_connection
+    conn = get_db_connection()
+    conn.execute('UPDATE users SET is_mock = ? WHERE id = ?', (is_mock, current_user.id))
+    conn.commit()
+    conn.close()
+    
+    # 2. 실행 중인 봇의 모드 즉시 변경
+    bot = get_current_bot()
+    if bot:
+        bot.update_mode(bool(is_mock))
+        
+    return jsonify({"status": "success", "is_mock": is_mock})
+
 @app.route('/api/settings/keys', methods=['POST'])
 @login_required
 def set_keys():
     data = request.json
-    core_text = data.get('core_stocks', '')
-    core_list = []
-    for line in core_text.split('\n'):
-        if ':' in line:
-            parts = line.split(':')
-            core_list.append({"ticker": parts[0].strip(), "name": parts[1].strip()})
-    
-    data['core_stocks'] = json.dumps(core_list)
-    update_user_keys(current_user.id, data)
-    
-    if current_user.id in manager.bots:
-        bot = manager.bots[current_user.id]
-        bot.stop()
-        del manager.bots[current_user.id]
-        
-    return jsonify({"status": "success"})  
+    # 화면의 input ID와 DB 컬럼명을 매칭시킵니다.
+    update_data = {
+        'real_app_key': data.get('real_app_key'),
+        'real_app_secret': data.get('real_app_secret'),
+        'real_account_no': data.get('real_account_no'),
+        'mock_app_key': data.get('mock_app_key'),
+        'mock_app_secret': data.get('mock_app_secret'),
+        'mock_account_no': data.get('mock_account_no'),
+        'telegram_token': data.get('telegram_token'),
+        'telegram_chat_id': data.get('telegram_chat_id'),
+        'gemini_api_key': data.get('gemini_api_key'),
+        'core_stocks': data.get('core_stocks'),
+        'is_mock': data.get('is_mock')
+    }
+    update_user_keys(current_user.id, update_data)
 
 if __name__ == '__main__':
     init_db()

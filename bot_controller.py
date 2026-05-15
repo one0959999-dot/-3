@@ -221,6 +221,7 @@ class BotController:
     def _save_state(self):
         """현재 포트폴리오 상태를 DB에 저장 (JSON 에러 방지 수정본)"""
         try:
+            # [수정본 코드] 객체들을 숫자나 문자열로 확실히 변환하여 저장합니다.
             state = {
                 "cores": [
                      {"ticker": c.ticker, "name": c.name,
@@ -243,10 +244,9 @@ class BotController:
                 "daily_pnl": self.daily_pnl,
                 "daily_report": self.daily_report,
             }
-            # database.py 모듈의 함수를 호출하여 저장
             save_portfolio_state(self.user_id, state)
         except Exception as e:
-            self.add_log(f"⚠️ 상태 저장 실패 (형식 변환 확인 필요): {e}")
+            self.add_log(f"⚠️ 상태 저장 실패: {e}")
 
     def _restore_state(self):
         """DB에서 포트폴리오 상태 복구. 성공하면 True 반환."""
@@ -670,29 +670,37 @@ class BotManager:
         self.bots = {}  # {user_id: BotController}
 
     def get_bot(self, user_id, user_data=None):
-        if user_id not in self.bots:
-            if user_data:
-                kis_config = {
-                    "app_key": user_data.get('kis_app_key'),
-                    "app_secret": user_data.get('kis_app_secret'),
-                    "account_no": user_data.get('kis_account_no'),
-                    "is_mock": bool(user_data.get('is_mock', 1))
-                }
-                tele_config = {
-                    "token": user_data.get('telegram_token'),
-                    "chat_id": user_data.get('telegram_chat_id')
-                }
-                gemini_config = {
-                    "api_key": user_data.get('gemini_api_key')
-                }
-                self.bots[user_id] = BotController(
-                    user_id, kis_config, tele_config, gemini_config,
-                    core_stocks=user_data.get('core_stocks'),
-                    is_mock=bool(user_data.get('is_mock', 1))
-                )
-            else:
-                return None
-        return self.bots[user_id]
+        if user_id not in self.bots and user_data:
+            # 1. 현재 모드 확인
+            is_mock = bool(user_data.get('is_mock', 1))
+            
+            # 2. 모드에 따라 'real_' 또는 'mock_' 접두사 선택
+            prefix = 'mock_' if is_mock else 'real_'
+            
+            # 3. 해당 모드의 키를 가져와서 설정 구성
+            kis_config = {
+                "app_key": user_data.get(f'{prefix}app_key'),
+                "app_secret": user_data.get(f'{prefix}app_secret'),
+                "account_no": user_data.get(f'{prefix}account_no'),
+                "is_mock": is_mock
+            }
+            
+            tele_config = {
+                "token": user_data.get('telegram_token'),
+                "chat_id": user_data.get('telegram_chat_id')
+            }
+            gemini_config = {
+                "api_key": user_data.get('gemini_api_key')
+            }
+            
+            # 봇 생성
+            self.bots[user_id] = BotController(
+                user_id, kis_config, tele_config, gemini_config,
+                core_stocks=user_data.get('core_stocks'),
+                is_mock=is_mock
+            )
+            
+        return self.bots.get(user_id)
 
     def stop_all(self):
         for bot in self.bots.values():

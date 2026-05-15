@@ -1,7 +1,6 @@
 import sqlite3
 import os
-
-db_path = '/home/ubuntu/lassi_bot/users.db'
+db_path = os.path.join(os.path.dirname(__file__), 'users.db')
 if os.path.exists(db_path):
     conn = sqlite3.connect(db_path)
     cur = conn.cursor()
