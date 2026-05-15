@@ -8,3 +8,4 @@ users.db
 .idea/
 instance/
 .pytest_cache/
+*.pem
