@@ -130,7 +130,9 @@ class BotController:
             real_stock_value = float(real_balance.get('total_value', 0))
             total_equity = real_cash + real_stock_value
             
-            if total_equity > 0:
+            # 💡 [버그 해결] 가짜 장부를 버리고 모의/실전 무관하게 한투증권 앱의 '진짜 잔고'를 그대로 가져옵니다.
+            # 어플 잔고가 0원이면 봇의 예산도 0원으로 정확하게 동기화됩니다.
+            if total_equity >= 0:
                 target_core_pool = total_equity * CORE_RATIO
                 target_sat_pool = total_equity * SATELLITE_RATIO
                 
@@ -983,17 +985,22 @@ class BotController:
                 "budget":   getattr(pos, 'initial_cash', getattr(pos, 'budget', 0))
             })
 
-        # ── 모의투자 전용 내부 가상 장부 정밀 연산 ──
-        mock_total_cash = total_core_cash_val + total_sat_cash_val
-        mock_total_value = total_core_stock_val + total_sat_stock_val
-        mock_total_asset = mock_total_cash + mock_total_value
-        
-        mock_initial_principal = sum([c.initial_cash for c in self.core_positions]) + sum([getattr(pos, 'initial_cash', 0) for pos in self.satellite_positions.values()])
-        if mock_initial_principal == 0:
-            mock_initial_principal = 10000000
+       # 💡 [버그 해결] 가짜 계산식을 모두 버리고, 무조건 한투 API 서버에서 받아온 진짜 내역만 화면에 직결시킵니다.
+        if self.cached_balance:
+            api_cash = float(self.cached_balance.get('total_cash', 0))
+            api_stock_val = float(self.cached_balance.get('total_value', 0))
+            api_purchase = float(self.cached_balance.get('total_purchase', 0))
             
-        mock_pnl = mock_total_asset - mock_initial_principal
-        mock_pnl_rt = (mock_pnl / mock_initial_principal * 100) if mock_initial_principal > 0 else 0
+            # 총 자산 = 앱 기준 예수금 + 현재 주식 평가금 총액
+            mock_total_asset = api_cash + api_stock_val
+            
+            # 수익금 = 현재 주식 평가금액 - 주식 매입 원금 (실시간 주식 손익)
+            mock_pnl = api_stock_val - api_purchase
+            mock_pnl_rt = (mock_pnl / api_purchase * 100) if api_purchase > 0 else 0
+        else:
+            mock_total_asset = 0
+            mock_pnl = 0
+            mock_pnl_rt = 0
 
         return {
             "is_running":    self.is_running,
@@ -1004,7 +1011,7 @@ class BotController:
             "num_satellites": self.num_satellites,
             "cores":         cores_data,
             "satellites":    satellites,
-            # 모의투자 화면 바인딩용 독립 자산 데이터 추가
+            # 계산된 진짜 한투 자산을 프론트엔드로 전송
             "mock_total_asset": mock_total_asset,
             "mock_pnl": mock_pnl,
             "mock_pnl_rt": mock_pnl_rt
