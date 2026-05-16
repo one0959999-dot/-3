@@ -4,12 +4,13 @@ import json
 from datetime import datetime
 from werkzeug.security import generate_password_hash, check_password_hash
 
-DB_PATH = 'users.db'
+# 💡 [버그 해결] 서비스(systemd)로 실행할 때 경로가 꼬이지 않도록, 현재 파일이 있는 폴더의 '절대 경로'를 강제 지정합니다.
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+DB_PATH = os.path.join(BASE_DIR, 'lassi.db')
 
 def get_db_connection():
-    # 💡 timeout=15.0을 추가하여 다른 스레드가 쓰고 있을 때 즉시 에러를 내지 않고 15초간 대기하게 만듭니다.
-    # 💡 check_same_thread=False를 추가하여 여러 스레드가 충돌 없이 안정적으로 안전하게 DB를 공유하도록 합니다.
-    conn = sqlite3.connect('lassi.db', check_same_thread=False, timeout=15.0)
+    # 💡 단순히 'lassi.db'가 아닌 절대 경로(DB_PATH)를 바라보도록 수정합니다.
+    conn = sqlite3.connect(DB_PATH, check_same_thread=False, timeout=15.0)
     conn.row_factory = sqlite3.Row
     return conn
 
