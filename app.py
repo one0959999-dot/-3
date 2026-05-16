@@ -268,13 +268,27 @@ def set_mode():
     conn.close()
     
     # [핵심 수정] 로그인 세션 메모리(current_user.data)의 모드 상태를 즉시 변경해 줍니다.
-    # 단일 객체의 내부 속성을 변조(bot.update_mode)하는 대신, 분리된 독립 쌍둥이 봇 인스턴스가 완벽히 스위칭되게 만듭니다.
     current_user.data['is_mock'] = is_mock
     
     # 새롭게 전환된 모드에 맞는 쌍둥이 봇 인스턴스를 백엔드 메모리에 깨끗하게 생성 및 복구해 둡니다.
     get_current_bot()
         
     return jsonify({"status": "success", "is_mock": is_mock})
+
+# 🟢 [여기에 새로 추가된 부분] 🟢
+@app.route('/api/settings/satellites', methods=['POST'])
+@login_required
+def set_satellites_count():
+    """웹 대시보드에서 요청한 위성 종목 개수 변경 설정을 저장합니다."""
+    data = request.json
+    count = int(data.get('count', 5))
+    
+    bot = get_current_bot()
+    if bot:
+        bot.num_satellites = count
+        bot._save_state()  # 💡 변경된 종목 개수 설정을 DB 장부에 즉시 반영합니다.
+        return jsonify({"status": "success", "num_satellites": count})
+    return jsonify({"status": "error", "message": "봇을 활성화할 수 없습니다."}), 400
 
 @app.route('/api/settings/keys', methods=['POST'])
 @login_required

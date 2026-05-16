@@ -351,6 +351,11 @@ document.addEventListener('DOMContentLoaded', () => {
             document.getElementById('sat-num-display').textContent = data.num_satellites;
         }
 
+        // 💡 [여기 새로 추가] 봇 상태를 받아올 때 현재 DB에 보관 중인 코어 종목 명단을 실시간으로 전역 변수에 복사해 둡니다.
+        if (data.cores) {
+            window.cachedCoreStocks = data.cores.map(c => ({ ticker: c.ticker, name: c.name }));
+        }
+
         // 🟢 [최적화 1] 코어 카드가 그려질 때 중간 탈착 과정이 화면에 노출되지 않도록 가상 임시 저장소(Fragment)를 씁니다.
         const topCardsContainer = document.getElementById('top-cards-container');
         const satCard = topCardsContainer.lastElementChild;
@@ -506,6 +511,10 @@ window.closeSettingsModal = function () {
 // ─── 코어 종목 모달 ───
 window.openCoreModal = function () {
     document.getElementById('coreModal').style.display = 'block';
+
+    // 💡 [여기 새로 추가] 창을 열 때, 아까 백업해둔 기존 코어 종목 리스트를 화면(모달)으로 불러옵니다.
+    _coreStockList = [...(window.cachedCoreStocks || [])];
+
     renderCoreTags();
     document.getElementById('coreSearchResults').innerHTML = '';
     document.getElementById('coreSearchInput').value = '';

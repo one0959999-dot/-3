@@ -112,7 +112,8 @@ class BotController:
                         cp = self.kis.get_current_price(core.ticker)
                         if cp: core._last_price = cp
                             
-                    for ticker, pos in self.satellite_positions.items():
+                    # 💡 list()로 감싸 스레드간 동시 접근으로 인한 딕셔너리 변형 에러(RuntimeError)를 방지합니다.
+                    for ticker, pos in list(self.satellite_positions.items()):
                         sp = self.kis.get_current_price(ticker)
                         if sp: pos._last_price = sp
             except Exception as e:
@@ -812,7 +813,9 @@ class BotController:
 
     # ─── 봇 시작/정지 ───
     def _run_loop(self, total_cash):
-        schedule.clear()
+        # 💡 전역 스케줄러 전체를 지우면 다른 사용자 봇이 멈추므로, 본인 유저 ID 태그가 붙은 작업만 초기화합니다.
+        user_tag = f"user_{self.user_id}"
+        schedule.clear(user_tag)
 
         # 서버 재시작 시 기존 상태 복구 시도
         restored = self._restore_state()
@@ -823,14 +826,10 @@ class BotController:
             # 복구 성공 시 schedule만 재등록
             self.add_log("📊 기존 포트폴리오로 매매를 재개합니다.")
 
-        # 장중 매매: 5분마다
-        schedule.every(5).minutes.do(self.trading_job)
-        # 일일 시장 분석 리포트 (08:00 -> 11:00 변경)
-        # [수정] 1차 매매 골든타임이 종료되는 오전 11시에 정확하게 시장을 분석하도록 변경합니다.
-        schedule.every().day.at("11:00").do(self.generate_daily_report)
-        
-        # 데일리 위성 리밸런싱 (09:05)
-        schedule.every().day.at("09:05").do(self._rescreen_satellites)
+        # 💡 각 스케줄 등록 시 .tag(user_tag)를 붙여 유저별로 독립 관리합니다.
+        schedule.every(5).minutes.do(self.trading_job).tag(user_tag)
+        schedule.every().day.at("11:00").do(self.generate_daily_report).tag(user_tag)
+        schedule.every().day.at("09:05").do(self._rescreen_satellites).tag(user_tag)
 
         self.trading_job()  # 즉시 1회 실행
         

@@ -62,9 +62,7 @@ def init_db():
             pass 
 
     # 3. 봇 상태 테이블 (bot_states) - 실전/모의 장부 분리
-    # [핵심 수정] SQLite 특성상 기존 테이블의 기본키(PRIMARY KEY) 제약조건을 변경할 수 없으므로,
-    # 기존에 단일 키로 잘못 생성되어 꼬여있던 bot_states 테이블을 확실히 DROP(삭제)한 후 복합키 구조로 재생성합니다.
-    cursor.execute('DROP TABLE IF EXISTS bot_states')
+    # 💡 마이그레이션용 DROP 구문을 제거하여 서버 재시작 시 기존 데이터가 증발하는 현상을 방지합니다.
     cursor.execute('''
     CREATE TABLE IF NOT EXISTS bot_states (
         user_id INTEGER,

@@ -237,7 +237,8 @@ def get_volume_surge_tickers(kis=None,
         if ticker in EXCLUDE_TICKERS:
             continue
         try:
-            df = fetch_ohlcv(ticker, days=80)
+            # 💡 days=80 대신 백테스트 기간인 BACKTEST_DAYS(130)로 일치시켜 캐시된 데이터를 재사용하게 만듭니다.
+            df = fetch_ohlcv(ticker, days=BACKTEST_DAYS)
             if len(df) < 30 or 'volume' not in df.columns:
                 continue
             if df['close'].iloc[-1] < 1000:
