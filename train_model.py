@@ -3,7 +3,7 @@ import time
 from google import genai
 from google.genai import types
 
-API_KEY = "AIzaSyDnAjOEpAZ9hjk_Na0-RniMHMqseiwSsDQ"
+API_KEY = "AIzaSyCSRhPKoMsCDbbCpXsCFAnf_e7TPiyXycc"
 client = genai.Client(api_key=API_KEY)
 
 print("📂 1단계: 로컬에서 데이터셋을 직접 읽어옵니다...")
