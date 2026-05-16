@@ -252,6 +252,24 @@ document.addEventListener('DOMContentLoaded', () => {
                 realSection.style.display = 'none';
                 mockSection.style.display = 'block';
                 stopKisBalancePolling(); // 모의: 중지
+
+                // ── 모의투자 모드일 때 실전 자산 잔재 제거 및 독자 가상 자산 바인딩 ──
+                const totalAsset = data.mock_total_asset || 0;
+                const totalValEl = document.getElementById('total-value');
+                if (totalValEl) {
+                    totalValEl.textContent = totalAsset.toLocaleString() + '원';
+                }
+
+                const totalPnl = data.mock_pnl || 0;
+                const pnlRt = data.mock_pnl_rt || 0;
+                const pnlEl = document.getElementById('total-pnl');
+                if (pnlEl) {
+                    const sign = totalPnl >= 0 ? '+' : '';
+                    const color = totalPnl > 0 ? '#f85149' : (totalPnl < 0 ? '#58a6ff' : '#8b949e');
+                    pnlEl.style.color = color;
+                    pnlEl.style.fontWeight = '700';
+                    pnlEl.textContent = `수익: ${sign}${totalPnl.toLocaleString()}원 (${sign}${pnlRt.toFixed(2)}%)`;
+                }
             }
         }
 

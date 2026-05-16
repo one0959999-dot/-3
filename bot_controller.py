@@ -83,11 +83,89 @@ class BotController:
         if gemini_config and gemini_config.get('api_key'):
             self.gemini = GeminiApi(api_key=gemini_config.get('api_key', '').strip())
             
+        # 캐시 컨테이너 정의
+        self.cached_balance = None
+            
         # 봇 정지 상태에서도 코어 종목 UI를 표시하기 위해 미리 로드
         self._init_dummy_cores()
         self._restore_state()
         
-        self.add_log(f"User {user_id} Bot Controller 초기화 완료.")
+        # 💎 [구조 개선] 봇 가동 여부와 무관하게 24시간 잔고를 수집하는 독립 영속 스레드 가동
+        self.perpetual_thread = threading.Thread(target=self._perpetual_sync_loop, daemon=True)
+        self.perpetual_thread.start()
+        
+        self.add_log(f"User {user_id} Bot Controller 및 실시간 영속 동기화 스레드 가동 완료.")
+
+    def _perpetual_sync_loop(self):
+        """봇 가동과 상관없이 10초마다 백그라운드에서 한투 API를 찔러 최신 주가와 잔고를 캐싱합니다."""
+        while True:
+            try:
+                if self.kis:
+                    # 1. 증권사 실제 잔고 비동기 캐싱 및 내부 장부 동기화
+                    real_balance = self.kis.get_account_balance()
+                    if real_balance:
+                        self.cached_balance = real_balance
+                        self._sync_internal_balances(real_balance)
+                    
+                    # 2. 실전/모의 활성화된 전 종목 실시간 현재가 비동기 갱신
+                    for core in self.core_positions:
+                        cp = self.kis.get_current_price(core.ticker)
+                        if cp: core._last_price = cp
+                            
+                    for ticker, pos in self.satellite_positions.items():
+                        sp = self.kis.get_current_price(ticker)
+                        if sp: pos._last_price = sp
+            except Exception as e:
+                print(f"[_perpetual_sync_loop 에러] {e}")
+            time.sleep(10)
+
+    def _sync_internal_balances(self, real_balance):
+        """한투증권 실제 데이터셋을 가상 포지션 자산 장부에 완벽히 이식하는 공통 로직"""
+        try:
+            if not real_balance or 'stocks' not in real_balance: return
+            real_cash = float(real_balance.get('total_cash', 0))
+            real_stock_value = float(real_balance.get('total_value', 0))
+            total_equity = real_cash + real_stock_value
+            
+            if total_equity > 0:
+                target_core_pool = total_equity * CORE_RATIO
+                target_sat_pool = total_equity * SATELLITE_RATIO
+                
+                current_core_stock_val = sum([float(s['value']) for s in real_balance['stocks'] if any(c.ticker == s['ticker'] for c in self.core_positions)])
+                per_core_cash = max(0.0, (target_core_pool - current_core_stock_val) / max(1, len(self.core_positions)))
+                for core in self.core_positions:
+                    core.cash = round(per_core_cash, 2)
+                    
+                current_sat_stock_val = sum([float(s['value']) for s in real_balance['stocks'] if s['ticker'] in self.satellite_positions])
+                total_sat_cash = max(0.0, target_sat_pool - current_sat_stock_val)
+                empty_sat_count = sum(1 for sat in self.satellite_positions.values() if int(sat.shares) == 0)
+                
+                for t, sat in self.satellite_positions.items():
+                    if int(sat.shares) > 0: sat.cash = 0.0
+                    else: sat.cash = round(total_sat_cash / max(1, empty_sat_count), 2)
+
+            for core in self.core_positions: core.shares = 0
+            for sat in self.satellite_positions.values(): sat.shares = 0
+
+            for real_stock in real_balance['stocks']:
+                t = real_stock['ticker']
+                q = int(real_stock['shares'])
+                p = float(real_stock['purchase_price'])
+
+                for core in self.core_positions:
+                    if core.ticker == t:
+                        core.shares = q
+                        core.avg_price = p
+                        if core.floor_shares == 0 and q > 0:
+                            core.floor_shares = max(1, int(q * CORE_MIN_FLOOR_RATIO))
+                        break
+
+                if t in self.satellite_positions:
+                    sat = self.satellite_positions[t]
+                    sat.shares = q
+                    sat.avg_price = p
+        except Exception:
+            pass
 
     def _init_dummy_cores(self):
         """정지 상태에서도 코어 종목을 화면에 표시하기 위해 초기 세팅 및 KIS 잔고 동기화"""
@@ -817,9 +895,13 @@ class BotController:
 
     def get_status(self):
         cores_data = []
+        total_core_stock_val = 0
+        total_core_cash_val = 0
         for core in self.core_positions:
             cp = getattr(core, '_last_price', 0) or 0
             core_value = core.shares * cp
+            total_core_stock_val += core_value
+            total_core_cash_val += getattr(core, 'cash', 0)
             cores_data.append({
                 "name":        core.name,
                 "ticker":      core.ticker,
@@ -832,9 +914,13 @@ class BotController:
             })
 
         satellites = []
+        total_sat_stock_val = 0
+        total_sat_cash_val = 0
         for ticker, pos in self.satellite_positions.items():
             sp = getattr(pos, '_last_price', 0) or 0
             sat_value = pos.shares * sp
+            total_sat_stock_val += sat_value
+            total_sat_cash_val += getattr(pos, 'cash', 0)
             satellites.append({
                 "name":     pos.name,
                 "ticker":   ticker,
@@ -845,6 +931,18 @@ class BotController:
                 "budget":   getattr(pos, 'initial_cash', getattr(pos, 'budget', 0))
             })
 
+        # ── 모의투자 전용 내부 가상 장부 정밀 연산 ──
+        mock_total_cash = total_core_cash_val + total_sat_cash_val
+        mock_total_value = total_core_stock_val + total_sat_stock_val
+        mock_total_asset = mock_total_cash + mock_total_value
+        
+        mock_initial_principal = sum([c.initial_cash for c in self.core_positions]) + sum([getattr(pos, 'initial_cash', 0) for pos in self.satellite_positions.values()])
+        if mock_initial_principal == 0:
+            mock_initial_principal = 10000000
+            
+        mock_pnl = mock_total_asset - mock_initial_principal
+        mock_pnl_rt = (mock_pnl / mock_initial_principal * 100) if mock_initial_principal > 0 else 0
+
         return {
             "is_running":    self.is_running,
             "is_mock":       self._is_mock,
@@ -854,6 +952,10 @@ class BotController:
             "num_satellites": self.num_satellites,
             "cores":         cores_data,
             "satellites":    satellites,
+            # 모의투자 화면 바인딩용 독립 자산 데이터 추가
+            "mock_total_asset": mock_total_asset,
+            "mock_pnl": mock_pnl,
+            "mock_pnl_rt": mock_pnl_rt
         }
 
 class BotManager:

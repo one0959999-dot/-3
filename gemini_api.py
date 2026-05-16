@@ -25,8 +25,8 @@ class GeminiApi:
         if api_key:
             self.client = genai.Client(api_key=api_key)
         
-        # 모델 ID를 안정적인 1.5 버전으로 설정하여 API 오류 방지
-        self.model_id = "gemini-1.5-flash" 
+        # 💎 [성능 업그레이드] 더 빠르고 고도화된 분석 능력을 가진 2.5 정식 모델 장착
+        self.model_id = "gemini-2.5-flash"
 
     def generate_content(self, prompt, use_thinking=False):
         """기본 응답 생성"""
