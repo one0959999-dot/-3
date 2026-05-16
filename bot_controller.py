@@ -971,6 +971,7 @@ class BotManager:
     def __init__(self):
         # 🟢 초기값을 None으로 지정하여 '서버가 방금 막 켜진 최초 상태'임을 명시합니다.
         self.last_assets = None
+        self.bots = {}        # 🚨 [버그 해결] 봇 인스턴스들을 관리할 핵심 주머니 딕셔너리를 누락 없이 생성합니다.
         self.ai_clients = {}  # { user_id: GeminiApi }               -> 공유형 단일 AI 엔진 관리
 
     def get_bot(self, user_id, user_data=None):
