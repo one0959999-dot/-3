@@ -2,28 +2,34 @@
    DESIGN TOKENS
 ═══════════════════════════════════════════ */
 :root {
-    --bg-primary:    #0d1117;
-    --bg-secondary:  #161b22;
-    --card-bg:       rgba(22, 27, 34, 0.75);
-    --card-border:   rgba(255,255,255,0.08);
-    --text-primary:  #e6edf3;
-    --text-secondary:#8b949e;
-    --accent-blue:   #58a6ff;
+    --bg-primary: #0d1117;
+    --bg-secondary: #161b22;
+    --card-bg: rgba(22, 27, 34, 0.75);
+    --card-border: rgba(255, 255, 255, 0.08);
+    --text-primary: #e6edf3;
+    --text-secondary: #8b949e;
+    --accent-blue: #58a6ff;
     --accent-purple: #bc8cff;
-    --accent-green:  #3fb950;
-    --accent-red:    #f85149;
-    --accent-amber:  #d29922;
-    --glow-blue:     rgba(88,166,255,0.15);
-    --glow-purple:   rgba(188,140,255,0.12);
-    --radius-card:   16px;
-    --radius-btn:    12px;
-    --shadow-card:   0 8px 32px rgba(0,0,0,0.4);
+    --accent-green: #3fb950;
+    --accent-red: #f85149;
+    --accent-amber: #d29922;
+    --glow-blue: rgba(88, 166, 255, 0.15);
+    --glow-purple: rgba(188, 140, 255, 0.12);
+    --radius-card: 16px;
+    --radius-btn: 12px;
+    --shadow-card: 0 8px 32px rgba(0, 0, 0, 0.4);
 }
 
 /* ═══════════════════════════════════════════
    RESET & BASE
 ═══════════════════════════════════════════ */
-*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+*,
+*::before,
+*::after {
+    box-sizing: border-box;
+    margin: 0;
+    padding: 0;
+}
 
 body {
     font-family: 'Inter', -apple-system, sans-serif;
@@ -36,7 +42,14 @@ body {
 /* ═══════════════════════════════════════════
    ANIMATED BACKGROUND BLOBS
 ═══════════════════════════════════════════ */
-.background-blobs { position: fixed; inset: 0; pointer-events: none; z-index: 0; overflow: hidden; }
+.background-blobs {
+    position: fixed;
+    inset: 0;
+    pointer-events: none;
+    z-index: 0;
+    overflow: hidden;
+}
+
 .blob {
     position: absolute;
     border-radius: 50%;
@@ -44,14 +57,48 @@ body {
     opacity: 0.25;
     animation: float 12s ease-in-out infinite;
 }
-.blob1 { width: 600px; height: 600px; background: radial-gradient(circle, #1e3a5f, transparent); top:-200px; left:-100px; animation-delay:0s; }
-.blob2 { width: 500px; height: 500px; background: radial-gradient(circle, #2d1b69, transparent); bottom:-150px; right:-100px; animation-delay:-4s; }
-.blob3 { width: 400px; height: 400px; background: radial-gradient(circle, #0d4429, transparent); top:40%; left:40%; animation-delay:-8s; }
+
+.blob1 {
+    width: 600px;
+    height: 600px;
+    background: radial-gradient(circle, #1e3a5f, transparent);
+    top: -200px;
+    left: -100px;
+    animation-delay: 0s;
+}
+
+.blob2 {
+    width: 500px;
+    height: 500px;
+    background: radial-gradient(circle, #2d1b69, transparent);
+    bottom: -150px;
+    right: -100px;
+    animation-delay: -4s;
+}
+
+.blob3 {
+    width: 400px;
+    height: 400px;
+    background: radial-gradient(circle, #0d4429, transparent);
+    top: 40%;
+    left: 40%;
+    animation-delay: -8s;
+}
 
 @keyframes float {
-    0%,100% { transform: translate(0,0) scale(1); }
-    33%      { transform: translate(30px,-40px) scale(1.05); }
-    66%      { transform: translate(-20px,20px) scale(0.95); }
+
+    0%,
+    100% {
+        transform: translate(0, 0) scale(1);
+    }
+
+    33% {
+        transform: translate(30px, -40px) scale(1.05);
+    }
+
+    66% {
+        transform: translate(-20px, 20px) scale(0.95);
+    }
 }
 
 /* ═══════════════════════════════════════════
@@ -81,7 +128,10 @@ body {
     box-shadow: var(--shadow-card);
     transition: border-color 0.25s;
 }
-.glass-card:hover { border-color: rgba(255,255,255,0.14); }
+
+.glass-card:hover {
+    border-color: rgba(255, 255, 255, 0.14);
+}
 
 /* ═══════════════════════════════════════════
    HEADER
@@ -103,7 +153,13 @@ header {
     background-clip: text;
     letter-spacing: -0.5px;
 }
-.title-area p { color: var(--text-secondary); font-size: 0.88rem; margin-top: 2px; }
+
+.title-area p {
+    color: var(--text-secondary);
+    font-size: 0.88rem;
+    margin-top: 2px;
+}
+
 .hot-sectors {
     margin-top: 8px;
     font-size: 0.82rem;
@@ -134,15 +190,33 @@ header {
     padding: 10px 14px;
     font-size: 0.78rem;
     scrollbar-width: thin;
-    scrollbar-color: rgba(255,255,255,0.1) transparent;
+    scrollbar-color: rgba(255, 255, 255, 0.1) transparent;
     border-radius: 12px;
     line-height: 1.5;
 }
-.mini-log::-webkit-scrollbar { width: 4px; }
-.mini-log::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.1); border-radius: 4px; }
-.mini-log-entry { color: var(--text-primary); margin-bottom: 2px; }
-.mini-log-entry .log-time { color: var(--text-secondary); margin-right: 5px; }
-.mini-log-entry.muted { color: var(--text-secondary); }
+
+.mini-log::-webkit-scrollbar {
+    width: 4px;
+}
+
+.mini-log::-webkit-scrollbar-thumb {
+    background: rgba(255, 255, 255, 0.1);
+    border-radius: 4px;
+}
+
+.mini-log-entry {
+    color: var(--text-primary);
+    margin-bottom: 2px;
+}
+
+.mini-log-entry .log-time {
+    color: var(--text-secondary);
+    margin-right: 5px;
+}
+
+.mini-log-entry.muted {
+    color: var(--text-secondary);
+}
 
 /* ─── Toggle Button ─── */
 .btn-toggle {
@@ -162,34 +236,62 @@ header {
     justify-content: center;
     letter-spacing: 0.3px;
 }
+
 .toggle-dot {
-    width: 9px; height: 9px;
+    width: 9px;
+    height: 9px;
     border-radius: 50%;
     display: inline-block;
     transition: background 0.25s;
 }
 
 .btn-stopped {
-    background: rgba(48,54,61,0.9);
+    background: rgba(48, 54, 61, 0.9);
     color: #e6edf3;
-    border: 1px solid rgba(255,255,255,0.12);
-    box-shadow: 0 2px 12px rgba(0,0,0,0.3);
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    box-shadow: 0 2px 12px rgba(0, 0, 0, 0.3);
 }
-.btn-stopped .toggle-dot { background: var(--accent-red); box-shadow: 0 0 6px var(--accent-red); }
-.btn-stopped:hover { background: rgba(56,64,74,0.95); transform: translateY(-1px); box-shadow: 0 4px 20px rgba(0,0,0,0.4); }
+
+.btn-stopped .toggle-dot {
+    background: var(--accent-red);
+    box-shadow: 0 0 6px var(--accent-red);
+}
+
+.btn-stopped:hover {
+    background: rgba(56, 64, 74, 0.95);
+    transform: translateY(-1px);
+    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.4);
+}
 
 .btn-running {
     background: linear-gradient(135deg, #1a7f3c, #258a48);
     color: #fff;
-    border: 1px solid rgba(63,185,80,0.4);
-    box-shadow: 0 2px 20px rgba(63,185,80,0.3);
+    border: 1px solid rgba(63, 185, 80, 0.4);
+    box-shadow: 0 2px 20px rgba(63, 185, 80, 0.3);
 }
-.btn-running .toggle-dot { background: #fff; animation: pulse-dot 1.4s ease-in-out infinite; }
-.btn-running:hover { transform: translateY(-1px); box-shadow: 0 6px 28px rgba(63,185,80,0.45); }
+
+.btn-running .toggle-dot {
+    background: #fff;
+    animation: pulse-dot 1.4s ease-in-out infinite;
+}
+
+.btn-running:hover {
+    transform: translateY(-1px);
+    box-shadow: 0 6px 28px rgba(63, 185, 80, 0.45);
+}
 
 @keyframes pulse-dot {
-    0%,100% { opacity: 1; transform: scale(1); }
-    50%      { opacity: 0.6; transform: scale(0.7); }
+
+    0%,
+    100% {
+        opacity: 1;
+        transform: scale(1);
+    }
+
+    50% {
+        opacity: 0.6;
+        transform: scale(0.7);
+    }
 }
 
 /* ═══════════════════════════════════════════
@@ -200,7 +302,12 @@ header {
     grid-template-columns: repeat(3, 1fr);
     gap: 16px;
 }
-@media (max-width: 700px) { .grid-container { grid-template-columns: 1fr; } }
+
+@media (max-width: 700px) {
+    .grid-container {
+        grid-template-columns: 1fr;
+    }
+}
 
 .info-card h3 {
     font-size: 0.78rem;
@@ -210,36 +317,54 @@ header {
     letter-spacing: 0.8px;
     margin-bottom: 12px;
 }
+
 .card-value {
     font-size: 1.55rem;
     font-weight: 700;
     color: var(--text-primary);
     letter-spacing: -0.3px;
 }
+
 .card-value.highlight {
     background: linear-gradient(135deg, var(--accent-blue), var(--accent-purple));
     -webkit-background-clip: text;
     -webkit-text-fill-color: transparent;
     background-clip: text;
 }
+
 .card-subvalue {
     font-size: 0.83rem;
     color: var(--text-secondary);
     margin-top: 5px;
 }
-.pnl-positive { color: var(--accent-green) !important; -webkit-text-fill-color: var(--accent-green) !important; }
-.pnl-negative { color: var(--accent-red) !important; -webkit-text-fill-color: var(--accent-red) !important; }
+
+.pnl-positive {
+    color: var(--accent-green) !important;
+    -webkit-text-fill-color: var(--accent-green) !important;
+}
+
+.pnl-negative {
+    color: var(--accent-red) !important;
+    -webkit-text-fill-color: var(--accent-red) !important;
+}
 
 /* ═══════════════════════════════════════════
    SATELLITE TABLE
 ═══════════════════════════════════════════ */
-.satellite-card h2, .chart-card h2 {
+.satellite-card h2,
+.chart-card h2 {
     font-size: 0.95rem;
     font-weight: 700;
     margin-bottom: 18px;
     color: var(--text-primary);
 }
-.sat-table { width: 100%; border-collapse: collapse; font-size: 0.9rem; }
+
+.sat-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.9rem;
+}
+
 .sat-table th {
     text-align: left;
     padding: 8px 14px;
@@ -250,15 +375,30 @@ header {
     letter-spacing: 0.6px;
     border-bottom: 1px solid var(--card-border);
 }
+
 .sat-table td {
     padding: 10px 14px;
-    border-bottom: 1px solid rgba(255,255,255,0.04);
+    border-bottom: 1px solid rgba(255, 255, 255, 0.04);
     color: var(--text-primary);
 }
-.sat-table tr:last-child td { border-bottom: none; }
-.sat-table tbody tr { transition: background 0.15s; }
-.sat-table tbody tr:hover { background: rgba(255,255,255,0.03); }
-.muted-center { text-align: center; color: var(--text-secondary); padding: 28px; }
+
+.sat-table tr:last-child td {
+    border-bottom: none;
+}
+
+.sat-table tbody tr {
+    transition: background 0.15s;
+}
+
+.sat-table tbody tr:hover {
+    background: rgba(255, 255, 255, 0.03);
+}
+
+.muted-center {
+    text-align: center;
+    color: var(--text-secondary);
+    padding: 28px;
+}
 
 /* BADGES */
 .badge {
@@ -269,10 +409,19 @@ header {
     font-weight: 600;
     white-space: nowrap;
 }
-.badge-hold    { background: rgba(139,148,158,0.15); color: #8b949e; }
-.badge-holding { background: rgba(63,185,80,0.15); color: #3fb950; }
+
+.badge-hold {
+    background: rgba(139, 148, 158, 0.15);
+    color: #8b949e;
+}
+
+.badge-holding {
+    background: rgba(63, 185, 80, 0.15);
+    color: #3fb950;
+}
+
 .badge-strategy {
-    background: rgba(188,140,255,0.15);
+    background: rgba(188, 140, 255, 0.15);
     color: #bc8cff;
     font-size: 0.73rem;
     padding: 3px 8px;
@@ -281,23 +430,31 @@ header {
 /* ═══════════════════════════════════════════
    P&L CHART
 ═══════════════════════════════════════════ */
-.chart-card { }
+.chart-card {}
+
 .chart-header {
     display: flex;
     align-items: center;
     justify-content: space-between;
     margin-bottom: 16px;
 }
+
 .chart-subtitle {
     font-size: 0.85rem;
     color: var(--text-secondary);
     font-weight: 600;
 }
+
 .chart-wrapper {
     position: relative;
     height: 220px;
 }
-#pnl-chart { width: 100% !important; height: 100% !important; }
+
+#pnl-chart {
+    width: 100% !important;
+    height: 100% !important;
+}
+
 .chart-empty {
     position: absolute;
     inset: 0;
@@ -310,8 +467,15 @@ header {
     gap: 10px;
     pointer-events: none;
 }
-.chart-empty-icon { font-size: 2.2rem; opacity: 0.4; }
-.chart-empty p { opacity: 0.6; }
+
+.chart-empty-icon {
+    font-size: 2.2rem;
+    opacity: 0.4;
+}
+
+.chart-empty p {
+    opacity: 0.6;
+}
 
 /* ═══════════════════════════════════════════
    AI CHAT FLOATING BUTTON & PANEL
@@ -337,10 +501,12 @@ header {
     transition: all 0.3s cubic-bezier(0.34, 1.56, 0.64, 1);
     animation: fab-pulse 3s ease-in-out infinite;
 }
+
 #ai-chat-fab:hover {
     transform: scale(1.12) translateY(-3px);
     box-shadow: 0 16px 48px rgba(102, 126, 234, 0.65), 0 0 0 8px rgba(102, 126, 234, 0.15);
 }
+
 #ai-chat-fab.open {
     background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);
     animation: none;
@@ -348,8 +514,15 @@ header {
 }
 
 @keyframes fab-pulse {
-    0%, 100% { box-shadow: 0 8px 32px rgba(102,126,234,0.5), 0 0 0 0 rgba(102,126,234,0.4); }
-    50%       { box-shadow: 0 8px 32px rgba(102,126,234,0.5), 0 0 0 12px rgba(102,126,234,0); }
+
+    0%,
+    100% {
+        box-shadow: 0 8px 32px rgba(102, 126, 234, 0.5), 0 0 0 0 rgba(102, 126, 234, 0.4);
+    }
+
+    50% {
+        box-shadow: 0 8px 32px rgba(102, 126, 234, 0.5), 0 0 0 12px rgba(102, 126, 234, 0);
+    }
 }
 
 /* AI Badge on FAB */
@@ -369,7 +542,10 @@ header {
     justify-content: center;
     border: 2px solid var(--bg-primary);
 }
-#ai-chat-fab .fab-badge.visible { display: flex; }
+
+#ai-chat-fab .fab-badge.visible {
+    display: flex;
+}
 
 /* Chat Panel */
 #ai-chat-panel {
@@ -388,12 +564,13 @@ header {
     border-radius: 24px;
     display: flex;
     flex-direction: column;
-    box-shadow: 0 24px 64px rgba(0,0,0,0.6), 0 0 0 1px rgba(255,255,255,0.05);
+    box-shadow: 0 24px 64px rgba(0, 0, 0, 0.6), 0 0 0 1px rgba(255, 255, 255, 0.05);
     transform: translateY(20px) scale(0.95);
     opacity: 0;
     pointer-events: none;
     transition: all 0.35s cubic-bezier(0.34, 1.56, 0.64, 1);
 }
+
 #ai-chat-panel.open {
     transform: translateY(0) scale(1);
     opacity: 1;
@@ -406,9 +583,10 @@ header {
     align-items: center;
     gap: 12px;
     padding: 18px 20px 14px;
-    border-bottom: 1px solid rgba(255,255,255,0.07);
+    border-bottom: 1px solid rgba(255, 255, 255, 0.07);
     flex-shrink: 0;
 }
+
 .chat-avatar {
     width: 38px;
     height: 38px;
@@ -420,7 +598,11 @@ header {
     font-size: 1.2rem;
     flex-shrink: 0;
 }
-.chat-header-info { flex: 1; }
+
+.chat-header-info {
+    flex: 1;
+}
+
 .chat-header-title {
     font-size: 0.95rem;
     font-weight: 700;
@@ -429,6 +611,7 @@ header {
     align-items: center;
     gap: 6px;
 }
+
 .chat-status-dot {
     width: 8px;
     height: 8px;
@@ -436,21 +619,24 @@ header {
     background: #3fb950;
     animation: pulse-dot 2s infinite;
 }
+
 .chat-header-sub {
     font-size: 0.72rem;
     color: #64748b;
     margin-top: 2px;
 }
+
 .chat-header-actions {
     display: flex;
     gap: 6px;
 }
+
 .chat-icon-btn {
     width: 30px;
     height: 30px;
     border-radius: 8px;
-    border: 1px solid rgba(255,255,255,0.08);
-    background: rgba(255,255,255,0.04);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    background: rgba(255, 255, 255, 0.04);
     color: #94a3b8;
     cursor: pointer;
     font-size: 0.85rem;
@@ -459,7 +645,11 @@ header {
     justify-content: center;
     transition: all 0.15s;
 }
-.chat-icon-btn:hover { background: rgba(255,255,255,0.1); color: #fff; }
+
+.chat-icon-btn:hover {
+    background: rgba(255, 255, 255, 0.1);
+    color: #fff;
+}
 
 /* Quick Analysis Chips */
 .chat-chips {
@@ -469,25 +659,30 @@ header {
     overflow-x: auto;
     scrollbar-width: none;
     flex-shrink: 0;
-    border-bottom: 1px solid rgba(255,255,255,0.05);
+    border-bottom: 1px solid rgba(255, 255, 255, 0.05);
 }
-.chat-chips::-webkit-scrollbar { display: none; }
+
+.chat-chips::-webkit-scrollbar {
+    display: none;
+}
+
 .chat-chip {
     flex-shrink: 0;
     padding: 5px 12px;
     border-radius: 20px;
     font-size: 0.72rem;
     font-weight: 600;
-    border: 1px solid rgba(102,126,234,0.3);
-    background: rgba(102,126,234,0.1);
+    border: 1px solid rgba(102, 126, 234, 0.3);
+    background: rgba(102, 126, 234, 0.1);
     color: #a5b4fc;
     cursor: pointer;
     transition: all 0.15s;
     white-space: nowrap;
 }
+
 .chat-chip:hover {
-    background: rgba(102,126,234,0.25);
-    border-color: rgba(102,126,234,0.6);
+    background: rgba(102, 126, 234, 0.25);
+    border-color: rgba(102, 126, 234, 0.6);
     color: #fff;
     transform: translateY(-1px);
 }
@@ -501,10 +696,17 @@ header {
     flex-direction: column;
     gap: 14px;
     scrollbar-width: thin;
-    scrollbar-color: rgba(255,255,255,0.08) transparent;
+    scrollbar-color: rgba(255, 255, 255, 0.08) transparent;
 }
-.chat-messages::-webkit-scrollbar { width: 4px; }
-.chat-messages::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.1); border-radius: 4px; }
+
+.chat-messages::-webkit-scrollbar {
+    width: 4px;
+}
+
+.chat-messages::-webkit-scrollbar-thumb {
+    background: rgba(255, 255, 255, 0.1);
+    border-radius: 4px;
+}
 
 /* Message Bubbles */
 .chat-msg {
@@ -513,12 +715,28 @@ header {
     max-width: 88%;
     animation: msg-in 0.25s ease;
 }
+
 @keyframes msg-in {
-    from { opacity: 0; transform: translateY(8px); }
-    to   { opacity: 1; transform: translateY(0); }
+    from {
+        opacity: 0;
+        transform: translateY(8px);
+    }
+
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
 }
-.chat-msg.user { align-self: flex-end; align-items: flex-end; }
-.chat-msg.ai   { align-self: flex-start; align-items: flex-start; }
+
+.chat-msg.user {
+    align-self: flex-end;
+    align-items: flex-end;
+}
+
+.chat-msg.ai {
+    align-self: flex-start;
+    align-items: flex-start;
+}
 
 .chat-bubble {
     padding: 10px 14px;
@@ -527,28 +745,50 @@ header {
     line-height: 1.6;
     word-break: break-word;
 }
+
 .chat-msg.user .chat-bubble {
     background: linear-gradient(135deg, #667eea, #764ba2);
     color: #fff;
     border-bottom-right-radius: 4px;
 }
+
 .chat-msg.ai .chat-bubble {
-    background: rgba(255,255,255,0.06);
-    border: 1px solid rgba(255,255,255,0.08);
+    background: rgba(255, 255, 255, 0.06);
+    border: 1px solid rgba(255, 255, 255, 0.08);
     color: #e2e8f0;
     border-bottom-left-radius: 4px;
 }
-.chat-bubble pre, .chat-bubble code {
+
+.chat-bubble pre,
+.chat-bubble code {
     font-size: 0.8rem;
-    background: rgba(0,0,0,0.3);
+    background: rgba(0, 0, 0, 0.3);
     padding: 2px 6px;
     border-radius: 4px;
     font-family: 'Courier New', monospace;
 }
-.chat-bubble strong { color: #a5b4fc; }
-.chat-bubble h3, .chat-bubble h4 { color: #c4b5fd; margin: 8px 0 4px; font-size: 0.88rem; }
-.chat-bubble ul, .chat-bubble ol { padding-left: 18px; margin: 4px 0; }
-.chat-bubble li { margin: 2px 0; }
+
+.chat-bubble strong {
+    color: #a5b4fc;
+}
+
+.chat-bubble h3,
+.chat-bubble h4 {
+    color: #c4b5fd;
+    margin: 8px 0 4px;
+    font-size: 0.88rem;
+}
+
+.chat-bubble ul,
+.chat-bubble ol {
+    padding-left: 18px;
+    margin: 4px 0;
+}
+
+.chat-bubble li {
+    margin: 2px 0;
+}
+
 .chat-msg-time {
     font-size: 0.65rem;
     color: #475569;
@@ -560,13 +800,14 @@ header {
     display: flex;
     gap: 4px;
     padding: 12px 16px;
-    background: rgba(255,255,255,0.06);
+    background: rgba(255, 255, 255, 0.06);
     border-radius: 16px;
     border-bottom-left-radius: 4px;
     width: fit-content;
     align-self: flex-start;
-    border: 1px solid rgba(255,255,255,0.08);
+    border: 1px solid rgba(255, 255, 255, 0.08);
 }
+
 .typing-dot {
     width: 7px;
     height: 7px;
@@ -574,26 +815,44 @@ header {
     background: #667eea;
     animation: typing-bounce 1.2s ease-in-out infinite;
 }
-.typing-dot:nth-child(2) { animation-delay: 0.2s; }
-.typing-dot:nth-child(3) { animation-delay: 0.4s; }
+
+.typing-dot:nth-child(2) {
+    animation-delay: 0.2s;
+}
+
+.typing-dot:nth-child(3) {
+    animation-delay: 0.4s;
+}
+
 @keyframes typing-bounce {
-    0%, 60%, 100% { transform: translateY(0); opacity: 0.4; }
-    30%           { transform: translateY(-6px); opacity: 1; }
+
+    0%,
+    60%,
+    100% {
+        transform: translateY(0);
+        opacity: 0.4;
+    }
+
+    30% {
+        transform: translateY(-6px);
+        opacity: 1;
+    }
 }
 
 /* Chat Input */
 .chat-input-area {
     padding: 12px 16px;
-    border-top: 1px solid rgba(255,255,255,0.07);
+    border-top: 1px solid rgba(255, 255, 255, 0.07);
     display: flex;
     gap: 10px;
     align-items: flex-end;
     flex-shrink: 0;
 }
+
 #ai-chat-input {
     flex: 1;
-    background: rgba(255,255,255,0.06);
-    border: 1px solid rgba(255,255,255,0.1);
+    background: rgba(255, 255, 255, 0.06);
+    border: 1px solid rgba(255, 255, 255, 0.1);
     border-radius: 14px;
     color: #e2e8f0;
     font-size: 0.875rem;
@@ -607,8 +866,14 @@ header {
     overflow-y: auto;
     scrollbar-width: thin;
 }
-#ai-chat-input:focus { border-color: rgba(102,126,234,0.5); }
-#ai-chat-input::placeholder { color: #475569; }
+
+#ai-chat-input:focus {
+    border-color: rgba(102, 126, 234, 0.5);
+}
+
+#ai-chat-input::placeholder {
+    color: #475569;
+}
 
 #ai-chat-send {
     width: 42px;
@@ -625,5 +890,259 @@ header {
     transition: all 0.2s;
     flex-shrink: 0;
 }
-#ai-chat-send:hover { transform: scale(1.08); box-shadow: 0 4px 16px rgba(102,126,234,0.5); }
-#ai-chat-send:disabled { opacity: 0.4; cursor: not-allowed; transform: none; }
+
+#ai-chat-send:hover {
+    transform: scale(1.08);
+    box-shadow: 0 4px 16px rgba(102, 126, 234, 0.5);
+}
+
+#ai-chat-send:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+    transform: none;
+}
+
+/* ==========================================================================
+   📱 모바일 디스플레이 초정밀 최적화 미디어 쿼리 (가로 스크롤 완전 방지)
+   ========================================================================== */
+@media (max-width: 600px) {
+
+    /* 1. 기본 레이아웃 및 가로 스크롤 차단 */
+    html,
+    body {
+        overflow-x: hidden;
+        font-size: 14px;
+        /* 전체적인 기준 폰트 크기 다운 */
+    }
+
+    .dashboard-container {
+        padding: 12px 14px 90px;
+        /* 여백 축소 및 AI 버튼 공간 확보 */
+        gap: 12px;
+    }
+
+    .glass-card {
+        padding: 14px 16px;
+        border-radius: 12px;
+    }
+
+    /* 2. 상단 네비게이션 바 모바일 정렬 */
+    .navbar {
+        flex-direction: column;
+        gap: 10px;
+        padding: 12px 16px !important;
+        margin-bottom: 10px;
+    }
+
+    .nav-user {
+        flex-wrap: wrap;
+        justify-content: center;
+        gap: 10px;
+        width: 100%;
+    }
+
+    .mode-toggle {
+        margin-right: 0;
+        padding: 2px 8px;
+    }
+
+    .btn-settings {
+        font-size: 0.8rem !important;
+        padding: 4px 8px !important;
+    }
+
+    /* 3. 헤더 및 제어 컴포넌트 세로 배치 */
+    header {
+        flex-direction: column;
+        align-items: stretch;
+        text-align: center;
+        gap: 10px;
+    }
+
+    .title-area h1 {
+        font-size: 1.5rem;
+    }
+
+    .hot-sectors {
+        font-size: 0.75rem;
+        padding: 4px 8px;
+        display: block;
+        word-break: keep-all;
+    }
+
+    .header-right {
+        flex-direction: column;
+        width: 100%;
+        gap: 8px;
+    }
+
+    .mini-log {
+        max-width: 100%;
+        width: 100%;
+        max-height: 52px;
+        padding: 6px 10px;
+        font-size: 0.72rem;
+    }
+
+    .sat-controls {
+        width: 100%;
+        justify-content: center;
+        margin-bottom: 0;
+        padding: 4px 10px;
+    }
+
+    .btn-toggle {
+        width: 100%;
+        padding: 10px;
+        font-size: 0.85rem;
+    }
+
+    /* 4. 자산 현황 요약 카드 텍스트 크기 조정 */
+    .card-value {
+        font-size: 1.35rem;
+    }
+
+    .card-subvalue {
+        font-size: 0.78rem;
+    }
+
+    /* 5. 🔥 핵심: 가로 슬라이드 주범인 주식 테이블을 세로형 카드로 대개조 */
+    .sat-table thead {
+        display: none;
+        /* 기존 가로형 테이블 헤더는 숨김 처리 */
+    }
+
+    .sat-table,
+    .sat-table tbody,
+    .sat-table tr,
+    .sat-table td {
+        display: block;
+        width: 100%;
+        box-sizing: border-box;
+    }
+
+    .sat-table tr {
+        margin-bottom: 10px;
+        background: rgba(255, 255, 255, 0.02);
+        border: 1px solid rgba(255, 255, 255, 0.05);
+        border-radius: 10px;
+        padding: 10px !important;
+    }
+
+    .sat-table tr:hover {
+        background: rgba(255, 255, 255, 0.04) !important;
+    }
+
+    .sat-table td {
+        text-align: right;
+        padding: 6px 0 !important;
+        border-bottom: 1px solid rgba(255, 255, 255, 0.03) !important;
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        font-size: 0.82rem;
+    }
+
+    .sat-table td:last-child {
+        border-bottom: none !important;
+    }
+
+    /* 첫 번째 td(종목명)를 카드의 제목 헤더 스타일로 변경 */
+    .sat-table td:first-child {
+        text-align: left;
+        font-size: 0.92rem;
+        border-bottom: 1px solid rgba(255, 255, 255, 0.1) !important;
+        padding-bottom: 6px !important;
+        margin-bottom: 4px;
+        display: block;
+    }
+
+    .sat-table td:first-child::before {
+        content: none !important;
+    }
+
+    /* 6. 가짜 가로 헤더 대신 각 항목 왼쪽에 라벨을 자동으로 부착 (Pure CSS) */
+    /* 6-A. 📡 위성 포지션 테이블 전용 라벨 */
+    .sat-table:not(#real-account-section .sat-table) tbody td:nth-child(2)::before {
+        content: "적용 전략";
+        color: var(--text-secondary);
+        font-weight: 600;
+    }
+
+    .sat-table:not(#real-account-section .sat-table) tbody td:nth-child(3)::before {
+        content: "보유 주식";
+        color: var(--text-secondary);
+        font-weight: 600;
+    }
+
+    .sat-table:not(#real-account-section .sat-table) tbody td:nth-child(4)::before {
+        content: "평가 금액";
+        color: var(--text-secondary);
+        font-weight: 600;
+    }
+
+    .sat-table:not(#real-account-section .sat-table) tbody td:nth-child(5)::before {
+        content: "상태";
+        color: var(--text-secondary);
+        font-weight: 600;
+    }
+
+    /* 6-B. 🏦 실제 한투증권 잔고 테이블 전용 라벨 */
+    #real-account-section .sat-table tbody td:nth-child(2)::before {
+        content: "보유 수량";
+        color: var(--text-secondary);
+        font-weight: 600;
+    }
+
+    #real-account-section .sat-table tbody td:nth-child(3)::before {
+        content: "매입 평단";
+        color: var(--text-secondary);
+        font-weight: 600;
+    }
+
+    #real-account-section .sat-table tbody td:nth-child(4)::before {
+        content: "현재 가격";
+        color: var(--text-secondary);
+        font-weight: 600;
+    }
+
+    #real-account-section .sat-table tbody td:nth-child(5)::before {
+        content: "평가 금액";
+        color: var(--text-secondary);
+        font-weight: 600;
+    }
+
+    #real-account-section .sat-table tbody td:nth-child(6)::before {
+        content: "실시간 수익률";
+        color: var(--text-secondary);
+        font-weight: 600;
+    }
+
+    /* 배지 크기 다운사이징 */
+    .badge {
+        padding: 2px 6px;
+        font-size: 0.7rem;
+    }
+
+    /* 7. 차트 영역 높이 축소 */
+    .chart-wrapper {
+        height: 170px;
+    }
+
+    /* 8. AI 플로팅 패널 모바일 화면 맞춤 */
+    #ai-chat-panel {
+        width: calc(100vw - 24px);
+        right: 12px;
+        bottom: 85px;
+        height: 480px;
+        max-height: calc(100vh - 110px);
+    }
+
+    #ai-chat-fab {
+        width: 52px;
+        height: 52px;
+        bottom: 20px;
+        right: 20px;
+        font-size: 1.4rem;
+    }
+}
