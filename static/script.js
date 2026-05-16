@@ -187,12 +187,12 @@ document.addEventListener('DOMContentLoaded', () => {
                     const realStocks = (d.stocks || []).filter(s => s.shares > 0);
                     if (kisTbody) {
                         if (realStocks.length > 0) {
-                            kisTbody.innerHTML = '';
+                            // 🟢 반복문 내부에서 직접 DOM을 건드리지 않고, 임시 문자열에 차곡차곡 모읍니다.
+                            let htmlBuffer = '';
                             realStocks.forEach(s => {
-                                // 한국 컨벤션: 수익 빨간색(+), 손실 파란색(-)
                                 const profitColor = s.profit_rt > 0 ? '#f85149' : (s.profit_rt < 0 ? '#58a6ff' : '#8b949e');
                                 const profitSign = s.profit_rt > 0 ? '+' : '';
-                                kisTbody.innerHTML += `
+                                htmlBuffer += `
                                     <tr>
                                         <td><b>${s.name}</b> <span style="color:#64748b;font-size:0.78rem;">${s.ticker}</span></td>
                                         <td>${s.shares.toLocaleString()}주</td>
@@ -202,6 +202,8 @@ document.addEventListener('DOMContentLoaded', () => {
                                         <td style="color: ${profitColor}; font-weight: 600;">${profitSign}${s.profit_rt.toFixed(2)}%</td>
                                     </tr>`;
                             });
+                            // 조립이 완전히 끝난 무결점 상태의 HTML을 한방에 꽂아넣어 깜빡임을 원천 차단합니다.
+                            kisTbody.innerHTML = htmlBuffer;
                         } else {
                             kisTbody.innerHTML = '<tr><td colspan="6" class="muted-center">보유 중인 주식이 없습니다.</td></tr>';
                         }
@@ -254,36 +256,51 @@ document.addEventListener('DOMContentLoaded', () => {
         const realSection = document.getElementById('real-account-section');
         const mockSection = document.getElementById('mock-notice-section');
 
-        if (realSection && mockSection) {
-            // 🟢 모의/실전 상관없이 증권사 API 데이터 조회를 위해 항상 폴링을 유지합니다.
-            startKisBalancePolling();
+        // 🟢 [버그 수정] 다른 기기에서 바꾼 스위치 버튼과 글씨 하이라이트 불빛 물리적 연동
+        const cb = document.getElementById('modeSwitch');
+        const lblReal = document.getElementById('label-real');
+        const lblMock = document.getElementById('label-mock');
 
+        if (cb && data.is_mock !== undefined) {
+            cb.checked = !!data.is_mock;
+            if (lblReal && lblMock) {
+                if (data.is_mock) {
+                    lblMock.classList.add('mode-active');
+                    lblReal.classList.remove('mode-active');
+                } else {
+                    lblReal.classList.add('mode-active');
+                    lblMock.classList.remove('mode-active');
+                }
+            }
+        }
+
+        if (realSection && mockSection) {
             if (isLive) {
                 realSection.style.display = 'block';
                 mockSection.style.display = 'none';
+                startKisBalancePolling(); // 실전: 자동 업데이트 시작
             } else {
                 realSection.style.display = 'none';
                 mockSection.style.display = 'block';
+                stopKisBalancePolling(); // 모의: 중지
 
-                // API 데이터(/api/kis_balance)가 로드되기 전 최초 1회만 백엔드 가상 장부 값으로 초기값 바인딩
-                if (document.getElementById('total-value').textContent === '-') {
-                    const totalAsset = data.mock_total_asset || 0;
-                    const totalValEl = document.getElementById('total-value');
-                    if (totalValEl) {
-                        totalValEl.textContent = totalAsset.toLocaleString() + '원';
-                    }
+                // 💎 [버그 수정] 모의투자일 때 기존 실전 자산의 흔적을 말끔히 소거하고 독립 가상자산 총액 강제 수치 대치
+                const totalAsset = data.mock_total_asset || 0;
+                const totalValEl = document.getElementById('total-value');
+                if (totalValEl) {
+                    totalValEl.textContent = totalAsset.toLocaleString() + '원';
+                }
 
-                    // 모의투자만의 실현 손익 및 수익률 카드 초기 연동
-                    const totalPnl = data.mock_pnl || 0;
-                    const pnlRt = data.mock_pnl_rt || 0;
-                    const pnlEl = document.getElementById('total-pnl');
-                    if (pnlEl) {
-                        const sign = totalPnl >= 0 ? '+' : '';
-                        const color = totalPnl > 0 ? '#f85149' : (totalPnl < 0 ? '#58a6ff' : '#8b949e');
-                        pnlEl.style.color = color;
-                        pnlEl.style.fontWeight = '700';
-                        pnlEl.textContent = `수익: ${sign}${totalPnl.toLocaleString()}원 (${sign}${pnlRt.toFixed(2)}%)`;
-                    }
+                // 모의투자만의 실현 손익 및 수익률 카드 연동
+                const totalPnl = data.mock_pnl || 0;
+                const pnlRt = data.mock_pnl_rt || 0;
+                const pnlEl = document.getElementById('total-pnl');
+                if (pnlEl) {
+                    const sign = totalPnl >= 0 ? '+' : '';
+                    const color = totalPnl > 0 ? '#f85149' : (totalPnl < 0 ? '#58a6ff' : '#8b949e');
+                    pnlEl.style.color = color;
+                    pnlEl.style.fontWeight = '700';
+                    pnlEl.textContent = `수익: ${sign}${totalPnl.toLocaleString()}원 (${sign}${pnlRt.toFixed(2)}%)`;
                 }
             }
         }
@@ -334,12 +351,13 @@ document.addEventListener('DOMContentLoaded', () => {
             document.getElementById('sat-num-display').textContent = data.num_satellites;
         }
 
-        // Dynamic Core cards
+        // 🟢 [최적화 1] 코어 카드가 그려질 때 중간 탈착 과정이 화면에 노출되지 않도록 가상 임시 저장소(Fragment)를 씁니다.
+        const topCardsContainer = document.getElementById('top-cards-container');
+        const satCard = topCardsContainer.lastElementChild;
         document.querySelectorAll('.core-card').forEach(e => e.remove());
 
+        const fragment = document.createDocumentFragment();
         let totalCoreValue = 0;
-        const topCardsContainer = document.getElementById('top-cards-container');
-        const satCard = topCardsContainer.lastElementChild; // 위성 합계 카드
 
         cores.forEach((core) => {
             totalCoreValue += (core.value || 0);
@@ -360,12 +378,14 @@ document.addEventListener('DOMContentLoaded', () => {
                 </div>
                 <div class="card-subvalue" style="color:#f59e0b;font-size:0.8rem;margin-top:4px">🔒 floor: ${core.floor}주 보호</div>
             `;
-            topCardsContainer.insertBefore(div, satCard);
+            fragment.appendChild(div);
         });
+        topCardsContainer.insertBefore(fragment, satCard); // 단 한번만 물리 결합하여 카드 출렁임 완벽 방어
 
         // ── Satellite Table ──
+        // 🟢 [최적화 2] 위성 테이블 역시 루프 안에서 내부 연산 버퍼 문자열로 먼저 다 이어붙입니다.
         if (sats.length > 0) {
-            satTbody.innerHTML = '';
+            let satHtmlBuffer = '';
             sats.forEach(s => {
                 const isHolding = s.shares > 0;
                 const statusBadge = isHolding
@@ -374,13 +394,10 @@ document.addEventListener('DOMContentLoaded', () => {
                 const stratBadge = s.strategy
                     ? `<span class="badge badge-strategy" style="cursor:pointer;" onclick="showStrategyInfo('${s.strategy}')" title="클릭하여 전략 상세 설명 보기">${s.strategy}</span>`
                     : '<span style="color:#8b949e">-</span>';
-                const sharesCell = isHolding
-                    ? `${s.shares.toLocaleString()}주`
-                    : `<span style="color:#64748b">-</span>`;
-                const valueCell = isHolding
-                    ? `${(s.value || 0).toLocaleString()}원`
-                    : `<span style="color:#64748b">-</span>`;
-                satTbody.innerHTML += `
+                const sharesCell = isHolding ? `${s.shares.toLocaleString()}주` : `<span style="color:#64748b">-</span>`;
+                const valueCell = isHolding ? `${(s.value || 0).toLocaleString()}원` : `<span style="color:#64748b">-</span>`;
+
+                satHtmlBuffer += `
                     <tr>
                         <td><b>${s.name}</b>
                             <span style="color:#64748b;font-size:0.78rem;margin-left:5px">${s.ticker}</span>
@@ -391,19 +408,18 @@ document.addEventListener('DOMContentLoaded', () => {
                         <td>${statusBadge}</td>
                     </tr>`;
             });
+            satTbody.innerHTML = satHtmlBuffer; // 원자적 단발성 주입
         }
 
         // ── Mini Log (Header) ──
+        // 🟢 [최적화 3] 상단 한 줄 로그 히스토리도 문자열 취합 후 한방에 밀어넣습니다.
         if (data.logs && data.logs.length > 0) {
             const recent = data.logs.slice(-6);
-            miniLog.innerHTML = '';
+            let logHtmlBuffer = '';
             recent.forEach(log => {
-                const div = document.createElement('div');
-                div.className = 'mini-log-entry';
-                div.innerHTML =
-                    `<span class="log-time">[${log.time}]</span>${log.message}`;
-                miniLog.appendChild(div);
+                logHtmlBuffer += `<div class="mini-log-entry"><span class="log-time">[${log.time}]</span>${log.message}</div>`;
             });
+            miniLog.innerHTML = logHtmlBuffer;
             miniLog.scrollTop = miniLog.scrollHeight;
         }
     }

@@ -961,7 +961,8 @@ class BotController:
 class BotManager:
     """모든 사용자의 봇 인스턴스를 관리합니다."""
     def __init__(self):
-        self.bots = {}        # { (user_id, is_mock): BotController } -> 쌍둥이 봇 바디 관리
+        # 🟢 초기값을 None으로 지정하여 '서버가 방금 막 켜진 최초 상태'임을 명시합니다.
+        self.last_assets = None
         self.ai_clients = {}  # { user_id: GeminiApi }               -> 공유형 단일 AI 엔진 관리
 
     def get_bot(self, user_id, user_data=None):

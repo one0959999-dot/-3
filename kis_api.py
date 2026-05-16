@@ -233,11 +233,50 @@ class KisApi:
         return None
 
     def search_stock_name(self, query: str):
-        """종목명 또는 코드로 KOSPI/KOSDAQ 종목 검색 (KIS API 사용)"""
+        """종목명 또는 코드로 KOSPI/KOSDAQ 종목 검색 (네이버 금융 실시간 초정밀 무적 검색 이식)"""
+        query = query.strip()
+        if not query:
+            return []
+            
+        try:
+            # 🟢 [버그 해결] 한국투자증권의 상품정보검색 API(CTPF1002R)는 실전/모의를 막론하고 
+            # 개인 App Key 계약 권한 제한으로 인해 결과 장부를 차단하여 백지 화면을 유발합니다.
+            # 계좌 권한 제약이 전혀 없는 네이버 금융 실시간 마스터 검색망을 연동하여 24시간 언제나 초성 검색까지 완벽 지원합니다.
+            url = "https://ac.finance.naver.com/ac"
+            params = {
+                "q": query,
+                "st": "111",
+                "r_format": "json",
+                "r_enc": "utf-8",
+                "r_unicode": "1",
+                "t_kwd": "expr",
+                "r_lt": "111"
+            }
+            
+            res = requests.get(url, params=params, timeout=3)
+            if res.status_code == 200:
+                data = res.json()
+                if "items" in data and data["items"] and data["items"][0]:
+                    results = []
+                    raw_items = data["items"][0]
+                    for item in raw_items:
+                        # 네이버 자동완성 결과 구조: ["종목명", "종목코드", "동의어", "초성", "구분"]
+                        if len(item) >= 2:
+                            name = item[0]
+                            ticker = item[1]
+                            # 국외 주식이나 인덱스 선물이 뒤섞이는 것을 막기 위해 순수 국내 6자리 숫자 종목코드만 필터링
+                            if ticker.isdigit() and len(ticker) == 6:
+                                results.append({'ticker': ticker, 'name': name})
+                    if results:
+                        return results
+        except Exception as naver_err:
+            print(f"⚠️ [네이버 검색망 통신 우회 실패] : {naver_err}")
+
+        # --- 🟡 [최종 백업] 기존 한국투자증권 오리지널 API 라인 보존 ---
         if not self._ensure_token():
             return []
         
-        url = "https://openapi.koreainvestment.com:9443/uapi/domestic-stock/v1/quotations/search-stock-info"
+        url = f"{self.base_url}/uapi/domestic-stock/v1/quotations/search-stock-info"
         headers = {
             "content-type": "application/json; charset=utf-8",
             "authorization": f"Bearer {self.access_token}",
@@ -247,11 +286,11 @@ class KisApi:
             "custtype": "P",
         }
         params = {
-            "PRDT_TYPE_CD": "300",   # 300 = 주식
+            "PRDT_TYPE_CD": "300",
             "PDNO": query if query.isdigit() else "",
             "PRDT_NAME": "" if query.isdigit() else query,
-            "COND_MRKT_DIV_CODE_1": "J",  # KOSPI
-            "COND_MRKT_DIV_CODE_2": "Q",  # KOSDAQ
+            "COND_MRKT_DIV_CODE_1": "J",
+            "COND_MRKT_DIV_CODE_2": "Q",
         }
         try:
             res = requests.get(url, headers=headers, params=params, timeout=5)
