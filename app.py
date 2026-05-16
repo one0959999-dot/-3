@@ -98,8 +98,15 @@ def kis_balance():
     if not bot or not bot.kis:
         return jsonify({"status": "error", "message": "API 설정이 필요합니다."})
     
+    # 💎 백그라운드 영속 스레드에 의해 이미 수집된 캐시 데이터가 있다면 지연 없이 즉시 반환
+    if bot.cached_balance:
+        return jsonify({"status": "success", "data": bot.cached_balance})
+    
+    # 서버 최초 구동 직후 캐시가 준비 안 된 최초 1회만 동기 조회 수행
     balance = bot.kis.get_account_balance()
     if balance:
+        bot.cached_balance = balance
+        bot._sync_internal_balances(balance)
         return jsonify({"status": "success", "data": balance})
     return jsonify({"status": "error", "message": "잔고 조회 실패"})
 
@@ -132,9 +139,28 @@ def get_daily_report():
         return jsonify({"status": "error", "message": "AI 설정이 필요합니다."})
         
     today_str = datetime.today().strftime('%Y-%m-%d')
+    weekday = datetime.today().weekday()
+    
+    # 1. 오늘 날짜로 생성된 리포트가 존재하면 즉시 반환
     if bot.daily_report and bot.daily_report.get('date') == today_str:
         return jsonify({"status": "success", "data": bot.daily_report})
     
+    # 2. 토요일(5) 또는 일요일(6) 등 주말/휴일장인 경우의 예외 처리
+    if weekday >= 5:
+        if bot.daily_report:
+            # 전날(금요일 등) 작성된 리포트가 있다면 리턴
+            return jsonify({"status": "success", "data": bot.daily_report})
+        else:
+            # 작성된 리포트가 아예 없다면 지정된 휴일 안내 멘트 리턴
+            return jsonify({
+                "status": "success",
+                "data": {
+                    "date": today_str,
+                    "report_markdown": "### 📢 알림\n\n금일은 휴일장입니다."
+                }
+            })
+            
+    # 3. 평일인데 아직 오늘 자 리포트가 생성되지 않은 경우 비동기 생성 시작
     threading.Thread(target=bot.generate_daily_report, daemon=True).start()
     return jsonify({"status": "waiting", "message": "리포트 생성 중..."})
 
