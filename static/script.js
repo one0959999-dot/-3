@@ -210,7 +210,18 @@ document.addEventListener('DOMContentLoaded', () => {
                     const errMsg = res.message || '잔고 조회 실패';
                     if (kisTbody) kisTbody.innerHTML = `<tr><td colspan="6" class="muted-center">⚠️ ${errMsg}</td></tr>`;
                     if (kisSummary) kisSummary.textContent = 'API 오류';
-                    // 오류 시 total-value 초기화하지 않음 (이전 값 유지)
+
+                    // 💎 [버그 수정] 한투 계좌 연결 실패 시 모의투자 금액이 지워지지 않고 실전에 남아 화면을 교란하는 오동작을 강제 차단
+                    const totalValEl = document.getElementById('total-value');
+                    if (totalValEl) {
+                        totalValEl.textContent = '연결 실패 (API 키 확인 필요)';
+                    }
+                    const pnlEl = document.getElementById('total-pnl');
+                    if (pnlEl) {
+                        pnlEl.textContent = '수익: 계좌 미연결';
+                        pnlEl.style.color = '#8b949e';
+                        pnlEl.style.fontWeight = 'normal';
+                    }
                 }
             })
             .catch(e => {
@@ -253,13 +264,14 @@ document.addEventListener('DOMContentLoaded', () => {
                 mockSection.style.display = 'block';
                 stopKisBalancePolling(); // 모의: 중지
 
-                // ── 모의투자 모드일 때 실전 자산 잔재 제거 및 독자 가상 자산 바인딩 ──
+                // 💎 [버그 수정] 모의투자일 때 기존 실전 자산의 흔적을 말끔히 소거하고 독립 가상자산 총액 강제 수치 대치
                 const totalAsset = data.mock_total_asset || 0;
                 const totalValEl = document.getElementById('total-value');
                 if (totalValEl) {
                     totalValEl.textContent = totalAsset.toLocaleString() + '원';
                 }
 
+                // 모의투자만의 실현 손익 및 수익률 카드 연동
                 const totalPnl = data.mock_pnl || 0;
                 const pnlRt = data.mock_pnl_rt || 0;
                 const pnlEl = document.getElementById('total-pnl');

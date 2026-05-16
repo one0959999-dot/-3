@@ -95,9 +95,23 @@ class GeminiApi:
             cores = portfolio_context.get('cores', [])
             satellites = portfolio_context.get('satellites', [])
             mode_str = "모의투자" if portfolio_context.get('is_mock', True) else "실전투자"
-            core_str = ", ".join([f"{c['name']}({c['shares']}주)" for c in cores]) or "없음"
-            sat_str = ", ".join([f"{s['name']}[{s['strategy']}]" for s in satellites]) or "없음"
-            context_prefix = f"[현황: {mode_str}]\n- 코어: {core_str}\n- 위성: {sat_str}\n\n"
+            
+            # 💎 [기능 확장] 눈먼 분석 방지: 종목 이름뿐만 아니라 실시간 현재가, 자산 가치까지 완벽하게 결합하여 AI에게 전달
+            core_lines = []
+            for c in cores:
+                core_lines.append(f"  * {c['name']}({c['ticker']}): {c['shares']}주 보유 | 현재가 {c.get('price', 0):,}원 | 총평가액 {c.get('value', 0):,}원")
+            core_str = "\n".join(core_lines) if core_lines else "  * 없음"
+            
+            sat_lines = []
+            for s in satellites:
+                sat_lines.append(f"  * {s['name']}({s['ticker']}): {s['shares']}주 보유 | 현재가 {s.get('price', 0):,}원 | 총평가액 {s.get('value', 0):,}원 | 적용전략: {s['strategy']}")
+            sat_str = "\n".join(sat_lines) if sat_lines else "  * 없음"
+            
+            context_prefix = (
+                f"[📊 현재 내 자산 운용 실시간 현황 - {mode_str}]\n"
+                f"■ 장기 코어 보유 포지션:\n{core_str}\n"
+                f"■ 단기 위성 트레이딩 포지션:\n{sat_str}\n\n"
+            )
 
         full_message = context_prefix + user_message
         self._conversation_history.append(types.Content(role="user", parts=[types.Part.from_text(text=full_message)]))
@@ -115,7 +129,11 @@ class GeminiApi:
                 self._conversation_history = self._conversation_history[-20:]
             return ai_reply
         except Exception as e:
-            return f"⚠️ 채팅 오류: {str(e)}"
+            # 💎 [예외 처리 고도화] API 키 누락이나 오류가 감지되면 알아보기 쉬운 직관적인 한글 메시지로 가로챕니다.
+            err_msg = str(e)
+            if "API Key not found" in err_msg or "API_KEY_INVALID" in err_msg:
+                return "🔑 **라씨 AI 안내**:\n입력된 Gemini API 키가 올바르지 않거나 등록되지 않았습니다. 우측 상단 **[계좌 설정]**에서 `AIzaSy...`로 시작하는 올바른 구글 API 키를 입력 후 저장해 주세요."
+            return f"⚠️ 채팅 오류: {err_msg}"
 
     def analyze_market(self, market_data_text):
         """시장 데이터 분석 리포트 생성"""
