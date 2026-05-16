@@ -173,52 +173,74 @@ def ai_chat():
     if not bot or not bot.gemini:
         return jsonify({"status": "error", "reply": "AI API 키를 등록해주세요."})
 
-    stock_analysis_context = None
-    query_ticker = None
-    stock_name = None
+    stock_analysis_context = ""
 
-    if "삼성전자" in user_message: query_ticker, stock_name = "005930", "삼성전자"
-    elif "하이닉스" in user_message: query_ticker, stock_name = "000660", "SK하이닉스"
-    elif "보령" in user_message: query_ticker, stock_name = "003850", "보령"
-    elif "현대차" in user_message: query_ticker, stock_name = "005380", "현대차"
-    elif "NAVER" in user_message or "네이버" in user_message: query_ticker, stock_name = "035420", "NAVER"
+    try:
+        from pykrx import stock as krx_stock
+        from stock_screener import fetch_ohlcv, calc_rsi
+        
+        target_tickers = []
+        
+        # 1. 사용자가 질문에 언급한 종목 스캔
+        for core in bot.core_positions:
+            if core.name in user_message: target_tickers.append((core.ticker, core.name))
+        for ticker, pos in bot.satellite_positions.items():
+            if pos.name in user_message: target_tickers.append((ticker, pos.name))
+            
+        # 2. 특정 종목 언급이 없다면 코어/위성 리스트 전체를 분석 대상으로 가져옴 (보유 수량 0주여도 무조건 가져옴!)
+        if not target_tickers and any(keyword in user_message for keyword in ["포트폴리오", "위성", "분석", "종목", "시장", "금요일", "어제"]):
+            for core in bot.core_positions:
+                target_tickers.append((core.ticker, core.name))
+            for ticker, pos in bot.satellite_positions.items():
+                target_tickers.append((ticker, pos.name))
 
-    if query_ticker:
-        try:
-            from pykrx import stock as krx_stock
-            from stock_screener import fetch_ohlcv, calc_rsi
+        # API 속도 방어를 위해 중복을 제거하고 최대 5개까지만 집중 분석합니다.
+        target_tickers = list(dict.fromkeys(target_tickers))[:5]
 
-            # 1. 차트 데이터를 먼저 60일치 긁어옵니다. (주말이어도 알아서 과거 영업일 데이터를 안전하게 들고 옴)
-            ohlcv_df = fetch_ohlcv(query_ticker, days=60)
-
-            if not ohlcv_df.empty:
-                # 🟢 핵심 수정: 오늘 날짜 대신 차트 데이터의 가장 마지막 인덱스(실제 최신 영업일 날짜)를 끄집어냅니다.
-                latest_biz_date = ohlcv_df.index[-1].strftime("%Y%m%d")
-                
-                # 추출한 최신 영업일 날짜로 재무 펀더멘탈을 조회하여 주말 공통 에러를 원천 차단합니다.
-                fund_df = krx_stock.get_market_fundamental_by_ticker(latest_biz_date, latest_biz_date, query_ticker)
-
-                if not fund_df.empty:
-                    per = fund_df.loc[query_ticker, 'PER']
-                    pbr = fund_df.loc[query_ticker, 'PBR']
-                    eps = fund_df.loc[query_ticker, 'EPS']
-                    div_yield = fund_df.loc[query_ticker, '배당수익률']
-
-                    close_series = ohlcv_df['close']
-                    rsi_series = calc_rsi(close_series, 14)
+        if target_tickers:
+            context_lines = ["[📈 요청받은 종목의 실시간 차트 및 재무 데이터 (AI 판단용)]"]
+            for ticker, name in target_tickers:
+                # 120일 이동평균선을 계산하기 위해 넉넉히 150일치 차트 데이터를 긁어옵니다.
+                ohlcv_df = fetch_ohlcv(ticker, days=150)
+                if not ohlcv_df.empty:
+                    latest_biz_date = ohlcv_df.index[-1].strftime("%Y%m%d")
+                    fund_df = krx_stock.get_market_fundamental_by_ticker(latest_biz_date, latest_biz_date, ticker)
                     
-                    current_price = int(close_series.iloc[-1])
-                    current_rsi = float(rsi_series.iloc[-1])
-
-                    stock_analysis_context = (
-                        f"종목명: {stock_name} ({query_ticker})\n"
-                        f"기준 영업일: {latest_biz_date[:4]}년 {latest_biz_date[4:6]}월 {latest_biz_date[6:]}일\n"
-                        f"1. [재무제표 지표] 현재가: {current_price:,}원 | PER: {per:.2f}배 | PBR: {pbr:.2f}배 | EPS: {eps:,}원 | 배당수익률: {div_yield:.2f}%\n"
-                        f"2. [기술적 차트 지표] 실시간 RSI(14): {current_rsi:.1f} (30 이하 과매도, 70 이상 과매수)\n"
-                        f"3. [최근 5거래일 종가 추이]: {[int(x) for x in close_series.tail(5).values]}"
+                    close_series = ohlcv_df['close']
+                    vol_series = ohlcv_df['volume']
+                    
+                    rsi_14 = calc_rsi(close_series, 14).iloc[-1]
+                    
+                    # 💡 AI 매뉴얼 1번 원칙: 120일선 계산
+                    sma_120 = close_series.rolling(120).mean().iloc[-1] if len(close_series) >= 120 else close_series.mean()
+                    current_price = close_series.iloc[-1]
+                    status_120 = "120일선 상단(상승장)" if current_price >= sma_120 else "120일선 하단(역배열 하락장)"
+                    
+                    # 💡 AI 매뉴얼 3번 원칙: 최근 영업일 거래량 폭증 여부 계산
+                    vol_today = vol_series.iloc[-1]
+                    vol_20_avg = vol_series.rolling(20).mean().iloc[-2] if len(vol_series) > 20 else 1
+                    vol_ratio = (vol_today / vol_20_avg * 100) if vol_20_avg > 0 else 100
+                    
+                    # 💡 AI 매뉴얼 2번 원칙: 재무제표 (PER, PBR)
+                    per = fund_df.loc[ticker, 'PER'] if not fund_df.empty else 0
+                    pbr = fund_df.loc[ticker, 'PBR'] if not fund_df.empty else 0
+                    
+                    context_lines.append(
+                        f"- {name}({ticker}): 현재가 {int(current_price):,}원 | 120일선 {int(sma_120):,}원 ({status_120}) | "
+                        f"RSI: {rsi_14:.1f} | 최근 거래량 평소 대비 {vol_ratio:.0f}% 수준 | PER: {per:.2f}, PBR: {pbr:.2f}"
                     )
-        except Exception as e:
-            print(f"⚠️ [AI 비서 데이터 바인딩 에러] : {e}")
+            
+            stock_analysis_context = "\n".join(context_lines)
+            
+            # 💡 [핵심] 깐깐한 AI를 제압하는 특수 명령어 추가
+            stock_analysis_context += "\n\n[🚨 AI 퀀트 시스템 핵심 지시사항]\n"
+            stock_analysis_context += "위 제공된 지표(120일선, 거래량 폭증 비율, PER, PBR 등)가 현재 시스템이 수집할 수 있는 **최대치의 실시간 데이터**입니다. "
+            stock_analysis_context += "수급(외국인/기관), ROE, 부채비율 등 제공되지 않은 데이터는 '적정 수준'으로 간주하고, "
+            stock_analysis_context += "데이터가 부족하다는 변명이나 추가 데이터를 요구하는 답변은 절대 금지합니다. "
+            stock_analysis_context += "오직 주어진 데이터만을 조합하여 분석 결과를 내놓으십시오."
+
+    except Exception as e:
+        print(f"⚠️ [AI 비서 데이터 바인딩 에러] : {e}")
 
     reply = bot.gemini.chat(
         user_message, 
