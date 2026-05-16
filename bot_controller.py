@@ -360,32 +360,76 @@ class BotController:
             return
 
         now = datetime.now()
-        self.add_log(f"--- 매매 신호 점검 ({now.strftime('%H:%M')}) ---")
+        current_time_str = now.strftime('%H:%M')
+        
+        # [수정] 한국 시장 통계상 수급과 거래량이 집중되어 승률이 가장 높은 '골든 타임'을 정의합니다.
+        # - 장 초반 주도주 수급 타임 (09:01 ~ 11:00)
+        # - 장 마감 직전 종가 형성 타임 (15:00 ~ 15:20)
+        is_golden_hours = ("09:01" <= current_time_str <= "11:00") or ("15:00" <= current_time_str <= "15:20")
+        
+        # 골든 타임이 아닐 때는 매매 연산을 건너뛰어 가짜 신호로 인한 뇌동매매와 손실을 원천 차단합니다.
+        if not is_golden_hours:
+            # 5분마다 로그가 너무 많이 쌓이는 것을 방지하기 위해 매 정시와 30분에만 안내 로그를 출력합니다.
+            if now.minute % 30 == 0:
+                self.add_log(f"💤 현재 시간({current_time_str})은 횡보 가능성이 높은 구간입니다. 오신호 손절 방지를 위해 봇 매매 대기 중...")
+            return
+
+        # 골든 타임 진입 시 정상적으로 5분 주기 신호 탐색을 수행합니다.
+        self.add_log(f"--- 🎯 골든 타임 매매 신호 점검 ({current_time_str}) ---")
 
         # [핵심 리팩토링] 매 사이클마다 한투증권(KIS)의 실제 예수금과 보유 주식 데이터를 가져와 시스템 장부를 강제 동기화합니다.
+        # ... (이하 기존 코드 동일) ...
         # 이로 인해 수수료, 세금, 미체결 등으로 인한 장부 왜곡 및 예수금 부족으로 인한 주문 에러를 원천 차단합니다.
         if self.kis:
             try:
                 real_balance = self.kis.get_account_balance()
                 if real_balance and 'stocks' in real_balance:
-                    # 1. 실제 예수금(현금) 동기화 (기존 코어/위성 간 배분 비율을 유지하면서 세금/수수료 오차를 자동 정산)
+                    # 1. [구조 개혁] 전체 자산 평가액(현금+주식) 기준 정밀 타겟 배분 방식으로 교체합니다.
                     real_cash = float(real_balance.get('total_cash', 0))
-                    virtual_cash_total = sum(c.cash for c in self.core_positions) + sum(s.cash for s in self.satellite_positions.values())
+                    real_stock_value = float(real_balance.get('total_value', 0))
+                    total_equity = real_cash + real_stock_value  # 계좌의 순수 총 자산 가치
                     
-                    if real_cash > 0 and virtual_cash_total > 0:
-                        adjustment_ratio = real_cash / virtual_cash_total
+                    if total_equity > 0:
+                        # CORE_RATIO(0.3)와 SATELLITE_RATIO(0.7)에 따른 이상적인 방별 목표 자산 정의
+                        target_core_pool = total_equity * CORE_RATIO
+                        target_sat_pool = total_equity * SATELLITE_RATIO
+                        
+                        # 1-A. 실제 증권사 데이터로부터 코어 주식들의 평가 금액 총합 계산
+                        current_core_stock_val = 0
+                        for real_stock in real_balance['stocks']:
+                            t = real_stock['ticker']
+                            for core in self.core_positions:
+                                if core.ticker == t:
+                                    current_core_stock_val += float(real_stock['value'])
+                                    break
+                                    
+                        # 코어 방에 배정되어야 할 정확한 잔여 현금 계산 (목표 자산 - 현재 주식 가치)
+                        # 코어 종목 수에 맞춰 균등 분배하되, 최소 0원 이하로 떨어지지 않도록 방어합니다.
+                        per_core_cash = max(0.0, (target_core_pool - current_core_stock_val) / max(1, len(self.core_positions)))
                         for core in self.core_positions:
-                            core.cash = round(core.cash * adjustment_ratio, 2)
-                        for sat in self.satellite_positions.values():
-                            sat.cash = round(sat.cash * adjustment_ratio, 2)
-                    elif real_cash > 0 and virtual_cash_total == 0:
-                        # 가상 장부상 현금이 0인데 실제 계좌에 현금이 남은 경우 균등 분배 초기화
-                        total_allocations = len(self.core_positions) + len(self.satellite_positions)
-                        split_cash = real_cash / total_allocations
-                        for core in self.core_positions:
-                            core.cash = split_cash
-                        for sat in self.satellite_positions.values():
-                            sat.cash = split_cash
+                            core.cash = round(per_core_cash, 2)
+                            
+                        # 1-B. 실제 증권사 데이터로부터 위성 주식들의 평가 금액 총합 계산
+                        current_sat_stock_val = 0
+                        for real_stock in real_balance['stocks']:
+                            t = real_stock['ticker']
+                            if t in self.satellite_positions:
+                                current_sat_stock_val += float(real_stock['value'])
+                                
+                        # 위성 전체 방에 남아야 할 잔여 현금 계산
+                        total_sat_cash = max(0.0, target_sat_pool - current_sat_stock_val)
+                        
+                        # 각 위성 슬롯별 가용 예산 분배 (기존에 주식을 안 들고 있는 슬롯에 현금 집중)
+                        # 주식을 들고 있는 위성은 예산이 주식에 묶여 있으므로 가용 현금을 0에 가깝게 리셋하여 중복 매수를 막고,
+                        # 주식이 없는 빈 슬롯은 다음 매수를 원활히 할 수 있도록 남은 현금을 정교하게 채워넣습니다.
+                        empty_sat_count = sum(1 for sat in self.satellite_positions.values() if int(sat.shares) == 0)
+                        
+                        for t, sat in self.satellite_positions.items():
+                            if int(sat.shares) > 0:
+                                sat.cash = 0.0  # 이미 주식으로 들고 있으므로 가용 현금 비움
+                            else:
+                                # 주식이 없는 빈 슬롯들이 남은 위성 예수금을 나눠 갖도록 매칭
+                                sat.cash = round(total_sat_cash / max(1, empty_sat_count), 2)
 
                     # 2. 실제 보유 주식 수(shares) 및 평균 매입단가(avg_price) 동기화
                     # 장부를 먼저 0으로 클리어한 후 실제 증권사 데이터만 매칭 주입합니다.
@@ -779,17 +823,26 @@ class BotController:
 class BotManager:
     """모든 사용자의 봇 인스턴스를 관리합니다."""
     def __init__(self):
-        self.bots = {}  # {user_id: BotController}
+        self.bots = {}        # { (user_id, is_mock): BotController } -> 쌍둥이 봇 바디 관리
+        self.ai_clients = {}  # { user_id: GeminiApi }               -> 공유형 단일 AI 엔진 관리
 
     def get_bot(self, user_id, user_data=None):
-        if user_id not in self.bots and user_data:
-            # 1. 현재 모드 확인
-            is_mock = bool(user_data.get('is_mock', 1))
+        if not user_data:
+            return self.bots.get((user_id, True))
             
-            # 2. 모드에 따라 'real_' 또는 'mock_' 접두사 선택
+        is_mock = bool(user_data.get('is_mock', 1))
+        bot_key = (user_id, is_mock)
+        
+        # 1. [AI 엔진 싱글톤화] 해당 유저의 공유형 AI 엔진이 메모리에 없다면 최초 1회만 생성
+        if user_id not in self.ai_clients and user_data.get('gemini_api_key'):
+            from gemini_api import GeminiApi
+            self.ai_clients[user_id] = GeminiApi(api_key=user_data.get('gemini_api_key').strip())
+            print(f"🤖 [AI 공유 엔진] User {user_id}를 위한 단일 AI 엔진이 생성되었습니다. (모든 모드에서 공유)")
+
+        # 2. 쌍둥이 봇 바디(실전 또는 모의)가 주머니에 없다면 생성
+        if bot_key not in self.bots:
             prefix = 'mock_' if is_mock else 'real_'
             
-            # 3. 해당 모드의 키를 가져와서 설정 구성
             kis_config = {
                 "app_key": user_data.get(f'{prefix}app_key'),
                 "app_secret": user_data.get(f'{prefix}app_secret'),
@@ -801,22 +854,21 @@ class BotManager:
                 "token": user_data.get('telegram_token'),
                 "chat_id": user_data.get('telegram_chat_id')
             }
-            gemini_config = {
-                "api_key": user_data.get('gemini_api_key')
-            }
             
-            # 봇 생성
-            self.bots[user_id] = BotController(
-                user_id, kis_config, tele_config, gemini_config,
+            # BotController 인스턴스(바디) 생성 (Gemini 키는 일단 제외하고 생성)
+            self.bots[bot_key] = BotController(
+                user_id, kis_config, tele_config, gemini_config=None,
                 core_stocks=user_data.get('core_stocks'),
                 is_mock=is_mock
             )
             
-        return self.bots.get(user_id)
+            # 3. [핵심] 생성된 봇 바디에 중앙에서 관리하는 '공유형 AI 엔진'을 똑같이 주입합니다.
+            self.bots[bot_key].gemini = self.ai_clients.get(user_id)
+            
+        return self.bots.get(bot_key)
 
     def stop_all(self):
         for bot in self.bots.values():
             bot.stop()
-
 # 글로벌 매니저 인스턴스
 manager = BotManager()

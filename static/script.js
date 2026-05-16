@@ -674,16 +674,24 @@ window.addCoreStock = function (ticker, name) {
 }
 
 window.saveCoreStocks = async function () {
-    const coreText = _coreStockList.map(s => `${s.ticker}:${s.name}`).join('\n');
     const isMock = document.getElementById('modeSwitch').checked ? 1 : 0;
+
+    // [핵심 수정] 백엔드의 json.loads 형식과 호환되도록 완벽한 JSON 문자열로 인코딩합니다.
+    const coreJsonStr = JSON.stringify(_coreStockList);
+
     const data = {
-        kis_app_key: document.getElementById('kisAppKey').value,
-        kis_app_secret: document.getElementById('kisAppSecret').value,
-        kis_account_no: document.getElementById('kisAccountNo').value,
+        // [오류 수정] 존재하지 않던 기존 'kisAppKey' ID 대신 화면에 실재하는 정확한 실전/모의 ID들을 매칭합니다.
+        real_app_key: document.getElementById('realAppKey').value,
+        real_app_secret: document.getElementById('realAppSecret').value,
+        real_account_no: document.getElementById('realAccountNo').value,
+        mock_app_key: document.getElementById('mockAppKey').value,
+        mock_app_secret: document.getElementById('mockAppSecret').value,
+        mock_account_no: document.getElementById('mockAccountNo').value,
+
         telegram_token: document.getElementById('teleToken').value,
         telegram_chat_id: document.getElementById('teleChatId').value,
         gemini_api_key: document.getElementById('geminiApiKey').value,
-        core_stocks: coreText,
+        core_stocks: coreJsonStr, // JSON 데이터 반영
         is_mock: isMock
     };
     try {
@@ -696,29 +704,30 @@ window.saveCoreStocks = async function () {
         if (result.status === 'success') {
             alert('코어 종목이 변경되었습니다. 시스템에 반영 중입니다.');
             closeCoreModal();
-            fetchStatus();
+            // 페이지를 새로고침하거나 상태를 동기화하여 변경된 코어 카드가 바로 표시되도록 합니다.
+            location.reload();
         } else { alert('저장 실패: ' + (result.message || '오류')); }
     } catch (e) { alert('서버 통신 오류'); }
 }
 
 window.saveAccountSettings = async function () {
     const isMock = document.getElementById('modeSwitch').checked ? 1 : 0;
+
+    // [핵심 수정] 설정 저장 시에도 코어 종목 데이터 유실을 방지하기 위해 형식을 JSON 문자열로 일치시킵니다.
+    const coreJsonStr = JSON.stringify(_coreStockList);
+
     const data = {
-        // 실전 데이터 수집 (HTML의 새로운 ID 사용)
         real_app_key: document.getElementById('realAppKey').value,
         real_app_secret: document.getElementById('realAppSecret').value,
         real_account_no: document.getElementById('realAccountNo').value,
-
-        // 모의 데이터 수집
         mock_app_key: document.getElementById('mockAppKey').value,
         mock_app_secret: document.getElementById('mockAppSecret').value,
         mock_account_no: document.getElementById('mockAccountNo').value,
 
-        // 공통 데이터
         telegram_token: document.getElementById('teleToken').value,
         telegram_chat_id: document.getElementById('teleChatId').value,
         gemini_api_key: document.getElementById('geminiApiKey').value,
-        core_stocks: _coreStockList.map(s => `${s.ticker}:${s.name}`).join('\n'),
+        core_stocks: coreJsonStr, // JSON 데이터 반영
         is_mock: isMock
     };
     try {
@@ -730,7 +739,7 @@ window.saveAccountSettings = async function () {
         if (result.status === 'success') {
             alert('계좌 설정이 저장되었습니다.');
             closeSettingsModal();
-            fetchStatus();
+            location.reload(); // 변경된 계좌 정보에 기반한 잔고 갱신을 위해 새로고침 처리
         } else { alert('저장 실패'); }
     } catch (e) { alert('서버 통신 오류'); }
 }
