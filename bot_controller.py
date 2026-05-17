@@ -623,6 +623,18 @@ class BotController:
                 if price <= 0:
                     continue
 
+                # 📈 [신규 연산 구조] 판다스를 이용하여 최근 14일 기준 ATR 실질 변동폭을 완벽하게 동적 산출합니다.
+                import pandas as pd
+                high_low = extended_df['high'] - extended_df['low']
+                high_close = (extended_df['high'] - extended_df['close'].shift(1)).abs()
+                low_close = (extended_df['low'] - extended_df['close'].shift(1)).abs()
+                tr = pd.concat([high_low, high_close, low_close], axis=1).max(axis=1)
+                atr_14 = tr.rolling(window=14, min_periods=1).mean().iloc[-1] if not tr.empty else 0
+                
+                # 상장 초기 혹은 무효 패킷 예외 조건 방어코드 구축: 변동폭이 잡히지 않으면 평단가의 2%를 최소 단위 마진 폭으로 자동 우회 적용합니다.
+                if atr_14 <= 0:
+                    atr_14 = pos_avg_price * 0.02
+
                 # pykrx 펀더멘털 데이터 1일 1회 캐시 연동 구조 (영속 스레드 안전화)
                 today_str = datetime.now().strftime('%Y-%m-%d')
                 cache_key = f"{ticker}_{today_str}"
@@ -653,40 +665,46 @@ class BotController:
                         pass
 
                 macro_context = self.kis.get_macro_context() if self.kis else "시황 정보 없음"
-                extended_strategy = f"{strat_name} | 실시간 재무상태: {financial_data} | 현재 거시 시황: {macro_context}"
+                
+                # 🤖 AI 판단 컨텍스트 장부에 최신 14일 ATR 실시간 변동폭 정보까지 추가 결합하여 두뇌 인지 능력을 대폭 업그레이드합니다.
+                extended_strategy = f"{strat_name} | 실시간 재무상태: {financial_data} | 현재 거시 시황: {macro_context} | 최근 14일 ATR 변동폭: {atr_14:.1f}원"
 
-                # 🟢 트레일링 스탑 (원자적 변수 처리 안전화)
+                # 🟢 변동성 적응형 트레일링 스탑 (수익 보전 매도 메커니즘)
                 if pos_shares > 0 and price > 0:
                     if price > pos_max_price:
                         with self.lock:
                             pos.max_price = price
                         pos_max_price = price
                     
-                    if pos_max_price >= pos_avg_price * 1.05:
-                        if price <= pos_max_price * 0.97:
-                            reason = "트레일링 스탑 (최고점 대비 -3% 이탈)"
-                            self.add_log(f"🎯 [{pos_name}] 트레일링 스탑 발동! 수익 보전을 위해 전량 매도합니다.")
+                    # 💡 [고도화 패치] 매입 평단가 대비 최소 1.0 * ATR 수준 이상의 확실한 추세적 수익권에 들어섰을 때만 시동을 겁니다.
+                    # 찰나의 노이즈가 아닌 확실한 꼭대기 고점 대비 1.5 * ATR 폭을 실시간 침범 이탈할 시 자금을 완벽하게 익절 회수합니다.
+                    if pos_max_price >= pos_avg_price + (1.0 * atr_14):
+                        dynamic_trailing_stop = pos_max_price - (1.5 * atr_14)
+                        if price <= dynamic_trailing_stop:
+                            reason = f"ATR 트레일링 스탑 (최고점 대비 1.5*ATR: {int(dynamic_trailing_stop):,}원 이탈)"
+                            self.add_log(f"🎯 [{pos_name}] 변동성 추적 익절선 이탈! 수익 확정을 위해 전량 매도합니다.")
                             if self.kis:
                                 self.kis.sell_market_order(ticker, pos_shares)
                             with self.lock:
                                 qty, profit = pos.sell(price)
                             log_trade_journal(self.user_id, ticker, pos_name, 'SELL', price, strat_name, reason, profit=profit)
-                            self._send_telegram(f"🎯 [{pos_name}] 트레일링 스탑 익절 완료! 손익: {profit:+,.0f}원")
+                            self._send_telegram(f"🎯 [{pos_name}] ATR 변동성 익절 완료! 손익: {profit:+,.0f}원")
                             with self.lock:
                                 pos.max_price = 0  
                             continue
 
-                # 🔴 하드 손절선 (-5% 강제 기계 청산)
+                # 🔴 변동성 적응형 하드 손절선 (최종 위험 한계 청산 메커니즘)
                 if pos_shares > 0 and pos_avg_price > 0:
-                    current_profit_rt = (price / pos_avg_price) - 1
-                    if current_profit_rt <= -0.05:
-                        reason = "기계적 손절 (-5% 도달)"
-                        self.add_log(f"🚨 [{pos_name}] 하드 손절선(-5%) 이탈 감지! 보호를 위해 즉시 시장가 매도합니다.")
+                    # 💡 [고도화 패치] 단순 기계적 일률 -5% 규격을 버리고, 해당 주식 고유 하루 변동폭의 2.5배 폭(`2.5 * ATR`)을 평단가에서 완전 하향 차감 차단합니다.
+                    dynamic_hard_stop = pos_avg_price - (2.5 * atr_14)
+                    if price <= dynamic_hard_stop:
+                        reason = f"ATR 변동성 하드 손절 (방어선 {int(dynamic_hard_stop):,}원 이탈)"
+                        self.add_log(f"🚨 [{pos_name}] 변동성 위험 한계점 돌파! 노이즈가 아닌 추세 하락으로 판단하여 전량 시장가 매도합니다.")
                         if self.kis:
                             self.kis.sell_market_order(ticker, pos_shares)
                         with self.lock:
                             qty, profit = pos.sell(price)
-                        msg = f"💥 [{pos_name}] 기계적 손절 완료: {qty}주 @ {price:,}원 | 손익: {profit:+,.0f}원"
+                        msg = f"💥 [{pos_name}] ATR 변동성 손절 완료: {qty}주 @ {price:,}원 | 손익: {profit:+,.0f}원"
                         self.add_log(msg)
                         log_trade_journal(self.user_id, ticker, pos_name, 'SELL', price, strat_name, reason, profit=profit)
                         self._send_telegram(msg)
