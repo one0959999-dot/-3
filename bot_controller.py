@@ -928,11 +928,13 @@ class BotController:
 
             new_info = []
             if not is_bull_market:
-                self.add_log("🚨 [하락장 감지] 코스피 또는 코스닥 지수가 20일선 밑으로 깨졌습니다. '3방패(헷지) + 2창(알파)' 전략으로 포지션을 전환합니다.")
+                self.add_log("🚨 [하락장 감지] 코스피 또는 코스닥 지수가 20일선 밑으로 깨졌습니다. '4방패(헷지) + 1창(알파)' 양방향 인버스 체계로 포지션을 전환합니다.")
                 
+                # 💡 코스닥 인버스만 편입되던 한계를 극복하기 위해 코스피 인버스(114800) 종목을 헷지 자산 풀에 추가 바인딩합니다.
                 defensive_etfs = [
                     {'ticker': '261240', 'name': 'KODEX 미국달러선물', 'strategy_name': 'EMA 5/20', 'return_pct': 0.0},
                     {'ticker': '411060', 'name': 'ACE KRX금현물', 'strategy_name': 'EMA 5/20', 'return_pct': 0.0},
+                    {'ticker': '114800', 'name': 'KODEX 인버스', 'strategy_name': 'EMA 5/20', 'return_pct': 0.0},
                     {'ticker': '251340', 'name': 'KODEX 코스닥150선물인버스', 'strategy_name': 'EMA 5/20', 'return_pct': 0.0}
                 ]
                 
