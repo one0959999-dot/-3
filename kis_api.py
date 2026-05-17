@@ -175,6 +175,7 @@ class KisApi:
         acnt_prdt = self.account_no[8:] if len(self.account_no) > 8 else "01"
 
         url  = f"{self.base_url}/uapi/domestic-stock/v1/trading/order-cash"
+    
     def sell_panic_market_order(self, stock_code: str, qty: int):
         """서킷브레이커 발동 시 자산 수호를 위해 슬리피지를 감수하고 즉시 100% 전량 체결시키는 순수 시장가 매도"""
         if qty <= 0 or not self._ensure_token():
@@ -201,7 +202,7 @@ class KisApi:
                 data = res.json()
                 if data.get('rt_cd') == '0':
                     odno = data['output'].get('ODNO', '-')
-                    print(f"[KIS] 긴급 매도 주문 완료 | {stock_code} {qty}주 | 주문번호: {odno}")
+                    print(f"[KIS] 긴급 시장가 매도 주문 완료 | {stock_code} {qty}주 | 주문번호: {odno}")
                     return data
                 else:
                     msg_cd = data.get('msg_cd', '')
