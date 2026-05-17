@@ -617,28 +617,39 @@ class BotController:
                     extended_df = self._get_extended_ohlcv(core_ticker, cp)
                     core_signal, _, core_rsi = get_rsi_signal(core_ticker, kis_api=self.kis, df=extended_df)
 
-                    if core_signal == 'BUY' and core_cash >= cp:
+                    # 🟢 [보완] 코어 매수에도 order_pending 락 적용 및 비동기 잔고 처리로 통일
+                    if core_signal == 'BUY' and core_cash >= cp and not getattr(core, 'order_pending', False):
                         qty = int(core_cash // cp)
                         if qty > 0:
                             if self.kis:
-                                self.kis.buy_market_order(core_ticker, qty)
-                            actual_qty = core.buy(cp)
-                            msg = f"💎 {core_name} 매수 {actual_qty}주 @ {cp:,}원 (RSI:{core_rsi:.1f}) → 총 {core_shares + actual_qty}주"
-                            self.add_log(msg)
-                            self._send_telegram(msg)
+                                order_res = self.kis.buy_market_order(core_ticker, qty)
+                                if order_res:
+                                    with self.lock:
+                                        core.order_pending = True  # 중복 매수 락 체결
+                                        
+                                    msg = f"💎 {core_name} 매수 주문 전송 완료 (비동기 잔고 대기) | {qty}주 @ {cp:,}원 (RSI:{core_rsi:.1f})"
+                                    self.add_log(msg)
+                                    self._send_telegram(msg)
 
-                    elif core_signal == 'SELL' and core_shares > core_floor_shares:
+                    # 🟢 [보완] 코어 매도에도 order_pending 락 적용 및 비동기 잔고 처리로 통일
+                    elif core_signal == 'SELL' and core_shares > core_floor_shares and not getattr(core, 'order_pending', False):
                         sellable = core_shares - core_floor_shares
                         if sellable > 0:
                             if self.kis:
-                                self.kis.sell_market_order(core_ticker, sellable)
-                            qty, profit = core.sell(cp)
-                            if qty > 0:
-                                msg = f"💎 {core_name} 익절 매도 {qty}주 @ {cp:,}원 (RSI:{core_rsi:.1f}) | 이익 {profit:,.0f}원"
-                                self.add_log(msg)
-                                today_str = now.strftime('%Y-%m-%d')
-                                self.daily_pnl[today_str] = self.daily_pnl.get(today_str, 0) + profit
-                                self._send_telegram(msg)
+                                order_res = self.kis.sell_market_order(core_ticker, sellable)
+                                if order_res:
+                                    with self.lock:
+                                        core.order_pending = True  # 중복 매도 락 체결
+                                        
+                                    # (대략적인 손익 기록용)
+                                    profit = (cp - core.avg_price) * sellable
+                                    msg = f"💎 {core_name} 익절 매도 주문 전송 완료 | {sellable}주 @ {cp:,}원 (RSI:{core_rsi:.1f}) | 예상 이익 {profit:,.0f}원"
+                                    self.add_log(msg)
+                                    self._send_telegram(msg)
+                                    
+                                    with self.lock:
+                                        today_str = now.strftime('%Y-%m-%d')
+                                        self.daily_pnl[today_str] = self.daily_pnl.get(today_str, 0) + profit
                     else:
                         self.add_log(f"  [{core_name}] HOLD (RSI:{core_rsi:.1f}, floor:{core_floor_shares}주 보호)")
                 except Exception as e:
@@ -703,7 +714,7 @@ class BotController:
                 macro_context = self.kis.get_macro_context() if self.kis else "시황 정보 없음"
                 extended_strategy = f"{strat_name} | 실시간 재무상태: {financial_data} | 현재 거시 시황: {macro_context} | 최근 14일 ATR 변동폭: {atr_14:.1f}원"
 
-                if pos_shares > 0 and price > 0:
+                if pos_shares > 0 and price > 0 and not getattr(pos, 'order_pending', False):
                     if price > pos_max_price:
                         with self.lock: pos.max_price = price
                         pos_max_price = price
@@ -713,27 +724,48 @@ class BotController:
                         if price <= dynamic_trailing_stop:
                             reason = f"ATR 트레일링 스탑 (최고점 대비 1.5*ATR: {int(dynamic_trailing_stop):,}원 이탈)"
                             self.add_log(f"🎯 [{pos_name}] 변동성 추적 익절선 이탈! 수익 확정을 위해 전량 매도합니다.")
-                            if self.kis: self.kis.sell_market_order(ticker, pos_shares)
-                            with self.lock: qty, profit = pos.sell(price)
-                            log_trade_journal(self.user_id, ticker, pos_name, 'SELL', price, strat_name, reason, profit=profit)
-                            self._send_telegram(f"🎯 [{pos_name}] ATR 변동성 익절 완료! 손익: {profit:+,.0f}원")
-                            with self.lock: pos.max_price = 0  
+                            
+                            if self.kis: 
+                                order_res = self.kis.sell_market_order(ticker, pos_shares)
+                                if order_res:
+                                    with self.lock: 
+                                        pos.order_pending = True  # 🟢 중복 매도 락 체결
+                                        pos.max_price = 0  
+                                        
+                                    # 🟢 로컬 장부(pos.sell) 동기화 대기용 예상 손익 계산
+                                    profit = (price - pos_avg_price) * pos_shares
+                                    
+                                    log_trade_journal(self.user_id, ticker, pos_name, 'SELL', price, strat_name, reason, profit=profit)
+                                    self._send_telegram(f"🎯 [{pos_name}] ATR 변동성 익절 전송 완료 (비동기 잔고 대기)! 예상 손익: {profit:+,.0f}원")
+                                    
+                                    with self.lock:
+                                        today = datetime.now().strftime('%Y-%m-%d')
+                                        self.daily_pnl[today] = self.daily_pnl.get(today, 0) + profit
                             continue
 
-                if pos_shares > 0 and pos_avg_price > 0:
+                if pos_shares > 0 and pos_avg_price > 0 and not getattr(pos, 'order_pending', False):
                     dynamic_hard_stop = pos_avg_price - (2.5 * atr_14)
                     if price <= dynamic_hard_stop:
                         reason = f"ATR 변동성 하드 손절 (방어선 {int(dynamic_hard_stop):,}원 이탈)"
                         self.add_log(f"🚨 [{pos_name}] 변동성 위험 한계점 돌파! 추세 하락으로 판단 전량 시장가 매도.")
-                        if self.kis: self.kis.sell_market_order(ticker, pos_shares)
-                        with self.lock: qty, profit = pos.sell(price)
-                        msg = f"💥 [{pos_name}] ATR 변동성 손절 완료: {qty}주 @ {price:,}원 | 손익: {profit:+,.0f}원"
-                        self.add_log(msg)# (위쪽 코드 그대로 유지 - ATR 하드 손절 로직 끝부분)
-                        log_trade_journal(self.user_id, ticker, pos_name, 'SELL', price, strat_name, reason, profit=profit)
-                        self._send_telegram(msg)
-                        with self.lock:
-                            today = datetime.now().strftime('%Y-%m-%d')
-                            self.daily_pnl[today] = self.daily_pnl.get(today, 0) + profit
+                        
+                        if self.kis: 
+                            order_res = self.kis.sell_market_order(ticker, pos_shares)
+                            if order_res:
+                                with self.lock: 
+                                    pos.order_pending = True  # 🟢 중복 매도 락 체결
+                                
+                                # 🟢 로컬 장부(pos.sell) 동기화 대기용 예상 손익 계산
+                                profit = (price - pos_avg_price) * pos_shares
+                                
+                                msg = f"💥 [{pos_name}] ATR 변동성 손절 전송 완료 (비동기 잔고 대기) | 예상 손익: {profit:+,.0f}원"
+                                self.add_log(msg)
+                                log_trade_journal(self.user_id, ticker, pos_name, 'SELL', price, strat_name, reason, profit=profit)
+                                self._send_telegram(msg)
+                                
+                                with self.lock:
+                                    today = datetime.now().strftime('%Y-%m-%d')
+                                    self.daily_pnl[today] = self.daily_pnl.get(today, 0) + profit
                         continue
 
                 # ⚡ [Fast Track] 알고리즘 즉각 매수 파트
