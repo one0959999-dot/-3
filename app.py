@@ -103,9 +103,17 @@ def kis_balance():
         return jsonify({"status": "success", "data": bot.cached_balance})
     
     # 🚨 [계좌 화면 딜레이 원인 완벽 제거] 
-    # 과거에는 여기서 증권사 서버로 동기식 조회를 하느라 웹 화면 전체가 수 초간 멈췄습니다.
-    # 이제 조회를 기다리지 않고 빈 틀(0원)만 즉시 던져주어 화면 멈춤(딜레이)을 0초로 만듭니다. 
-    # (진짜 데이터는 백그라운드 스레드가 1~2초 내에 알아서 채워 넣고 다음 번에 자연스럽게 표시됩니다)
+    # 캐시가 비어있을 때(모드 전환 직후 등) 빈 틀(0원)을 던져주고 스레드를 10초간 무작정 기다리게 했던 로직을 폐기합니다.
+    # 딱 한 번만 동기식으로 즉각 조회(약 0.5초 소요)하여 10초의 체감 딜레이 없이 진짜 잔고를 즉시 화면에 꽂아줍니다.
+    try:
+        real_balance = bot.kis.get_account_balance()
+        if real_balance:
+            bot.cached_balance = real_balance
+            bot._sync_internal_balances(real_balance)
+            return jsonify({"status": "success", "data": real_balance})
+    except Exception as e:
+        print(f"즉시 잔고 조회 에러: {e}")
+    
     return jsonify({
         "status": "success", 
         "data": {

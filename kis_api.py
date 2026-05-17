@@ -228,11 +228,20 @@ class KisApi:
                                 "profit_rt": float(s.get('evlu_pfls_rt', 0))
                             })
                     
+                    # 🟢 [버그 해결] 파이썬 논리 연산자(or)의 맹점으로 인해 문자열 "0"이 채택되어 잔고가 0원으로 증발하는 현상 완벽 차단
+                    def _safe_parse(k1, k2):
+                        v1 = summary.get(k1)
+                        v2 = summary.get(k2)
+                        # 값이 존재하고 "0"이나 빈 값이 아니면 해당 진짜 데이터를 우선 채택합니다.
+                        if v1 and v1 != "0" and v1 != "": return float(v1)
+                        if v2 and v2 != "0" and v2 != "": return float(v2)
+                        return 0.0
+
                     return {
                         "stocks": parsed_stocks,
-                        "total_cash": float(summary.get('prvs_rcdl_excc_amt') or summary.get('dnca_tot_amt') or 0), # D+2 예수금
-                        "total_value": float(summary.get('tot_evlu_amt') or summary.get('evlu_amt_smtl_amt') or 0), # 총 평가금액
-                        "total_purchase": float(summary.get('pchs_amt_smtl_amt') or summary.get('tot_pchs_amt') or 0), # 매입금액 합계
+                        "total_cash": _safe_parse('prvs_rcdl_excc_amt', 'dnca_tot_amt'), # D+2 예수금
+                        "total_value": _safe_parse('tot_evlu_amt', 'evlu_amt_smtl_amt'), # 총 평가금액
+                        "total_purchase": _safe_parse('pchs_amt_smtl_amt', 'tot_pchs_amt') # 매입금액 합계
                     }
                 else:
                     msg1 = data.get('msg1', '')
