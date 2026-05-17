@@ -564,11 +564,7 @@ class BotController:
                 signal, price, ind_val = get_signal_by_strategy(ticker, strat_name, kis_api=self.kis)
                 if price > 0:
                     pos._last_price = price  # 대시보드 웹 화면에 위성 종목 현재가가 정상 출력되도록 바인딩합니다.
-                # 🟢 [신규 추가 코드] 거시경제 매크로 데이터 확보 및 전략 문장 결합
-                macro_context = self.kis.get_macro_context() if self.kis else "시황 정보 없음"
-                extended_strategy = f"{strat_name} | 실시간 재무상태: {financial_data} | 현재 거시 시황: {macro_context}"
-
-                # 🔴 [필수 추가] 하드 손절선(Hard Stop-Loss) 로직 (-5% 하락 시 기계적 매도)
+                    
                 # 💡 [AI 뇌 확장 & IP 차단 방지] pykrx 펀더멘털 조회는 하루 1회 캐싱된 데이터만 사용합니다.
                 today_str = datetime.now().strftime('%Y-%m-%d')
                 cache_key = f"{ticker}_{today_str}"
@@ -594,7 +590,11 @@ class BotController:
                     except Exception:
                         pass
 
-                    # 🟢 [신규 추가 코드] 트레일링 스탑 (고점 대비 -3% 추적 청산)
+                # 🟢 [신규 추가 코드] 거시경제 매크로 데이터 확보 및 전략 문장 결합
+                macro_context = self.kis.get_macro_context() if self.kis else "시황 정보 없음"
+                extended_strategy = f"{strat_name} | 실시간 재무상태: {financial_data} | 현재 거시 시황: {macro_context}"
+
+                # 🟢 [신규 추가 코드] 트레일링 스탑 (고점 대비 -3% 추적 청산)
                 if pos.shares > 0 and price > 0:
                     # 매수 이후 최고가 갱신
                     if price > pos.max_price:
@@ -1084,10 +1084,15 @@ class BotController:
         }
 
     def get_status(self):
+        # 🔒 웹 API 호출 도중 딕셔너리 크기가 변형되어 발생하는 런타임 에러 방지
+        with self.lock:
+            safe_core_positions = list(self.core_positions)
+            safe_satellite_items = list(self.satellite_positions.items())
+
         cores_data = []
         total_core_stock_val = 0
         total_core_cash_val = 0
-        for core in self.core_positions:
+        for core in safe_core_positions:
             cp = getattr(core, '_last_price', 0) or 0
             core_value = core.shares * cp
             total_core_stock_val += core_value
@@ -1106,7 +1111,7 @@ class BotController:
         satellites = []
         total_sat_stock_val = 0
         total_sat_cash_val = 0
-        for ticker, pos in self.satellite_positions.items():
+        for ticker, pos in safe_satellite_items:
             sp = getattr(pos, '_last_price', 0) or 0
             sat_value = pos.shares * sp
             total_sat_stock_val += sat_value
