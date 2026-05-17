@@ -513,21 +513,24 @@ class BotController:
             if now.minute % 10 == 0:
                 self.add_log("🦅 [관망 모드 유지 중] 시장의 진정이 확인될 때까지 현금을 보유하고 저점을 탐색합니다.")
             
+            # KOSPI 지수 대용인 KODEX 200(069500) ETF를 통해 바닥 반등 여부 확인
             if self.kis:
-                kospi_cp = self.kis.get_current_price("0001")
+                # 💡 "0001" 대신 API 에러가 나지 않는 "069500" (KODEX 200)을 사용합니다!
+                kospi_cp = self.kis.get_current_price("069500") 
                 if kospi_cp:
-                    extended_df = self._get_extended_ohlcv("0001", kospi_cp)
+                    extended_df = self._get_extended_ohlcv("069500", kospi_cp)
                     if not extended_df.empty and len(extended_df) >= 5:
                         c = extended_df['close']
+                        # 단기 5일 이평선 강돌파를 '저점 반등' 시그널로 판단
                         ema_5 = c.ewm(span=5, adjust=False).mean().iloc[-1]
                         
                         if kospi_cp > ema_5:
                             msg = "🚀 [저점 반등 확인!] KOSPI 지수가 단기 이평선을 회복했습니다. 관망 모드를 해제하고 딥(Dip) 매수를 재개합니다."
                             self.add_log(msg)
                             self._send_telegram(msg)
-                            self.is_crisis_mode = False
-                            self.peak_total_asset = 0
-            return
+                            self.is_crisis_mode = False  # 관망 모드 해제
+                            self.peak_total_asset = 0    # MDD 고점 초기화
+            return  # 위기 모드 중에는 아래의 개별 종목 매매(BUY/SELL) 로직을 실행하지 않음
 
         if self.kis:
             try:
