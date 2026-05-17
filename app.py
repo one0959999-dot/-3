@@ -209,16 +209,21 @@ def ai_chat():
                     close_series = ohlcv_df['close']
                     vol_series = ohlcv_df['volume']
                     
-                    rsi_14 = calc_rsi(close_series, 14).iloc[-1]
+                    rsi_14 = calc_rsi(close_series, 14).iloc[-1] if not close_series.empty else 50
                     
-                    # 💡 매뉴얼 1번 원칙: 120일선 기준 현재 주가의 위치 분석
-                    sma_120 = close_series.rolling(120).mean().iloc[-1] if len(close_series) >= 120 else close_series.mean()
-                    current_price = close_series.iloc[-1]
+                    # 💡 매뉴얼 1번 원칙: 120일선 기준 현재 주가의 위치 분석 (결측치 및 상장 초기 방어코드 추가)
+                    if not close_series.empty:
+                        sma_120 = close_series.rolling(window=120, min_periods=1).mean().iloc[-1]
+                        current_price = close_series.iloc[-1]
+                    else:
+                        sma_120 = 0
+                        current_price = 0
+                        
                     status_120 = "120일선 위에 안착함 (상승 추세 진행중)" if current_price >= sma_120 else "120일선 아래에 위치함 (역배열 하락 추세)"
                     
                     # 💡 매뉴얼 3번 원칙: 평소 대비 최근 거래량이 폭증했는지 분석
-                    vol_today = vol_series.iloc[-1]
-                    vol_20_avg = vol_series.rolling(20).mean().iloc[-2] if len(vol_series) > 20 else 1
+                    vol_today = vol_series.iloc[-1] if not vol_series.empty else 0
+                    vol_20_avg = vol_series.rolling(window=20, min_periods=1).mean().iloc[-2] if len(vol_series) > 1 else 1
                     vol_ratio = (vol_today / vol_20_avg * 100) if vol_20_avg > 0 else 100
                     
                     # 💡 매뉴얼 2번 원칙: 투자 가치를 결정하는 재무제표 밸류에이션 (PER, PBR)

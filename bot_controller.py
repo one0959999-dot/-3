@@ -122,11 +122,15 @@ class BotController:
                             
                     # 🔒 [스레드 보호 및 트래픽 방지] 락을 사용하여 에러를 막고, API 한도를 넘지 않게 대기시간 상향
                     with self.lock:
-                        sat_items = list(self.satellite_positions.items())
+                        sat_keys = list(self.satellite_positions.keys())
 
-                    for ticker, pos in sat_items:
+                    for ticker in sat_keys:
                         sp = self.kis.get_current_price(ticker)
-                        if sp: pos._last_price = sp
+                        if sp: 
+                            with self.lock:
+                                # 리스트를 도는 동안 메인 스레드에서 종목이 삭제되었을 수 있으므로 재검증
+                                if ticker in self.satellite_positions:
+                                    self.satellite_positions[ticker]._last_price = sp
                         # 💡 0.05초 -> 0.2초로 상향하여 KIS 서버 IP 차단(Rate Limit) 원천 방지
                         time.sleep(0.2) 
             except Exception as e:
@@ -185,7 +189,7 @@ class BotController:
                 self.add_log(f"⚠️ 내부 장부 동기화 중 오류 발생: {e}")
 
     def _init_dummy_cores(self):
-        """정지 상태에서도 코어 종목을 화면에 표시하기 위해 초기 세팅 및 KIS 잔고 동기화"""
+        """정지 상태에서도 코어 종목을 화면에 표시하기 위해 초기 세팅 및 KIS 잔고 동기화 (비동기 처리로 딜레이 제거)"""
         self.core_positions = []
         if self.user_core_stocks:
             for c in self.user_core_stocks:
@@ -195,20 +199,24 @@ class BotController:
             self.core_positions.append(CorePosition("047040", "대우건설", initial_cash=0))
             
         if self.kis:
-            try:
-                real_balance = self.kis.get_account_balance()
-                if real_balance and 'stocks' in real_balance:
-                    for real_stock in real_balance['stocks']:
-                        t = real_stock['ticker']
-                        q = int(real_stock['shares'])
-                        p = float(real_stock['purchase_price'])
-                        for core in self.core_positions:
-                            if core.ticker == t:
-                                core.shares = q
-                                core.avg_price = p
-                                break
-            except Exception as e:
-                self.add_log(f"초기 잔고 동기화 실패: {e}")
+            def _async_init_balance():
+                try:
+                    real_balance = self.kis.get_account_balance()
+                    if real_balance and 'stocks' in real_balance:
+                        for real_stock in real_balance['stocks']:
+                            t = real_stock['ticker']
+                            q = int(real_stock['shares'])
+                            p = float(real_stock['purchase_price'])
+                            for core in self.core_positions:
+                                if core.ticker == t:
+                                    core.shares = q
+                                    core.avg_price = p
+                                    break
+                except Exception as e:
+                    self.add_log(f"초기 잔고 동기화 실패: {e}")
+            
+            # API 응답 대기로 인한 화면 멈춤(딜레이)을 방지하기 위해 비동기 스레드로 실행합니다.
+            threading.Thread(target=_async_init_balance, daemon=True).start()
 
     # ─── 로그 ───
     def add_log(self, msg):
@@ -876,8 +884,21 @@ class BotController:
                         if len(new_info) == n_needed:
                             break
 
-            # 3. 새 종목 편입 및 예산 할당
-            per_budget = freed_cash / n_needed if n_needed > 0 else 0
+            # 3. 새 종목 편입 및 예산 할당 (정밀 자금 재분배 로직 적용)
+            total_available_cash = freed_cash
+            for ticker in keep_tickers:
+                total_available_cash += self.satellite_positions[ticker].cash
+                self.satellite_positions[ticker].cash = 0
+                
+            # 신규 진입 종목 + 기존 유지 종목 중 매수되지 않아 현금을 기다리는 빈 슬롯 합산
+            total_slots_for_cash = n_needed + sum(1 for t in keep_tickers if self.satellite_positions[t].shares == 0)
+            per_budget = total_available_cash / total_slots_for_cash if total_slots_for_cash > 0 else 0
+            
+            # 기존 빈 자리 현금 채우기
+            for ticker in keep_tickers:
+                if self.satellite_positions[ticker].shares == 0:
+                    self.satellite_positions[ticker].cash = per_budget
+                    
             added_lines = []
             for c in new_info:
                 self.satellite_positions[c['ticker']] = Position(c['ticker'], c['name'], per_budget)
@@ -928,12 +949,17 @@ class BotController:
         self.add_log("🧠 [AI 자아성찰] 한 주간의 매매 결과를 분석하여 새로운 투자 원칙을 수립합니다...")
         
         from database import get_db_connection
-        conn = get_db_connection()
-        rows = conn.execute('''
-            SELECT date(created_at) as date, stock_name, action, price, ai_reason, profit 
-            FROM trade_journal WHERE user_id = ? ORDER BY created_at DESC LIMIT 30
-        ''', (self.user_id,)).fetchall()
-        conn.close()
+        try:
+            conn = get_db_connection()
+            rows = conn.execute('''
+                SELECT date(created_at) as date, stock_name, action, price, ai_reason, profit 
+                FROM trade_journal WHERE user_id = ? ORDER BY created_at DESC LIMIT 30
+            ''', (self.user_id,)).fetchall()
+        except Exception as e:
+            self.add_log(f"⚠️ 자아성찰 DB 조회 중 오류: {e}")
+            rows = []
+        finally:
+            conn.close()
 
         if not rows:
             self.add_log("ℹ️ 이번 주 매매 기록이 없어 자아성찰을 건너뜁니다.")
