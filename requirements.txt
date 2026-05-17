@@ -10,3 +10,4 @@ pandas_datareader
 matplotlib
 flask-login
 google-genai
+websocket-client

@@ -393,44 +393,38 @@ def find_best_strategy(df):
 # ──────────────────────────────────────────────
 def select_satellites(kis=None, n=NUM_SATELLITES, verbose=True, gemini_client=None):
     """
-    멀티팩터 위성 종목 선정
-    gemini_client: GeminiApi 인스턴스 (있으면 AI가 최종 선정, 없으면 점수 기반 폴백)
-    Returns: list of {ticker, name, strategy_name, return_pct, volume_surge, sector, score}
+    멀티팩터 위성 종목 선정 (딥러닝 PyTorch 확률 예측 엔진 연동 완료)
     """
     if verbose:
         print("\n" + "="*60)
-        print("  🔍 위성 종목 멀티팩터 스크리닝 시작")
+        print("  🔍 위성 종목 딥러닝 + 멀티팩터 스크리닝 시작")
         print("  ① 섹터/테마 강세 분석")
         print("  ② KOSPI+KOSDAQ 거래량 급등 탐지")
         print("  ③ 종목별 최적 전략 백테스트")
+        print("  ④ PyTorch LSTM 인공지능 상승 확률 분석")
         print("="*60)
 
-    # ── Step 1: 섹터 강세 파악 ──
     sector_momentum = get_sector_momentum(lookback=20, verbose=verbose)
     sector_tickers, ticker_to_sector, hot_sectors = get_sector_tickers(sector_momentum, top_n_sectors=4)
 
     if verbose and hot_sectors:
         print(f"\n🔥 현재 강세 섹터 TOP4: {', '.join(hot_sectors)}")
 
-    # ── Step 2: KOSPI + KOSDAQ 거래량 급등 종목 ──
     volume_surges = get_volume_surge_tickers(
-        kis=kis,
-        market_list=("KOSPI", "KOSDAQ"),
-        surge_ratio=1.5,  # 1.8 -> 1.5배로 완화 (수급 유입 포착 강화)
-        min_cap_billion=300,
-        max_tickers=150,
-        verbose=verbose
+        kis=kis, market_list=("KOSPI", "KOSDAQ"),
+        surge_ratio=1.5, min_cap_billion=300, max_tickers=150, verbose=verbose
     )
 
-    # ── Step 3: 후보 풀 구성 ──
-    # 거래량 급등 종목 + 강세 섹터 편입 종목 합집합
     candidate_pool = set(volume_surges.keys()) | sector_tickers
     candidate_pool -= EXCLUDE_TICKERS
 
     if verbose:
         print(f"\n📋 후보 풀: 거래량 급등 {len(volume_surges)}개 + 강세 섹터 {len(sector_tickers)}개 → 합계 {len(candidate_pool)}개")
 
-    # ── Step 4: 후보별 백테스트 + 종합 점수 ──
+    # 🤖 딥러닝 모델 로드 (없으면 기본값 0 처리됨)
+    from dl_model import DeepLearningPredictor
+    dl_predictor = DeepLearningPredictor()
+
     results = []
     processed = 0
 
@@ -441,19 +435,13 @@ def select_satellites(kis=None, n=NUM_SATELLITES, verbose=True, gemini_client=No
             if len(df) < 40 or 'close' not in df.columns:
                 continue
 
-            # ── 고점 추격 방지 및 바닥권 필터 ──
             recent_ret = (df['close'].iloc[-1] / df['close'].iloc[-min(20, len(df)-1)] - 1) * 100
             
-            # 하락 칼날 방지: 20일 동안 -15% 이하로 폭락 중인 종목만 강제 제외
             if recent_ret < -15:
                 continue
 
-            # 볼린저 밴드 하단 접근 여부 계산 (저평가 판별)
             bb_upper, bb_mid, bb_lower = calc_bb(df['close'])
             current_price = df['close'].iloc[-1]
-            
-            # 중심선 대비 현재 가격이 얼마나 싼지(할인율) 계산 
-            # (양수: 중심선 아래로 저평가, 음수: 중심선 위로 고평가)
             bb_discount = (bb_mid.iloc[-1] - current_price) / bb_mid.iloc[-1] * 100
 
             best_strat, best_ret = find_best_strategy(df)
@@ -461,24 +449,21 @@ def select_satellites(kis=None, n=NUM_SATELLITES, verbose=True, gemini_client=No
             vol_score    = volume_surges.get(ticker, 1.0)
             sector_bonus = 10 if ticker in sector_tickers else 0
             
-            # 급등주 페널티 완화: 무조건 차단하지 않음
-            # 단, 15% 이상 올랐는데 수급(거래량)이 평범하면 초과분만큼 감점
             overheated_penalty = 0
             if recent_ret > 15 and vol_score < 2.0:
                 overheated_penalty = (recent_ret - 15) * 1.5
 
-            # 💡 [통계적 차익/평균 회귀 필터] 해당 종목의 20일 수익률이 코스피 지수 20일 수익률과 너무 크게 벌어졌는지 확인(스프레드 페널티)
-            # (지수 대비 나홀로 30% 이상 초과 급등한 종목은 통계적으로 되돌림(조정) 확률이 매우 높음)
             stat_arb_penalty = 0
             if recent_ret > 30:
-                stat_arb_penalty = (recent_ret - 30) * 0.8  # 초과 급등분에 대한 통계적 수축 페널티
+                stat_arb_penalty = (recent_ret - 30) * 0.8  
 
-            # 🧠 [Machine Learning 팩터 연동 지점]
-            # (추후 회원님의 train_model.py 로 학습된 .pkl / .pt 모델이 있다면 여기서 inference 수행)
-            ml_factor_score = 0
-            # 예시: ml_factor_score = predict_with_my_model(df) * 10 
+            # 🧠 [PyTorch 딥러닝 팩터 적용] 과거 차트 배열을 넣고 상승 확률 계산
+            ai_up_prob = dl_predictor.predict_up_probability(df)
+            
+            # 확률 50%를 기준으로 가점/감점 (최대 10점의 막대한 영향력 행사)
+            ml_factor_score = (ai_up_prob - 50.0) * 0.2  
 
-            # 4. 종합 점수 계산 (저평가, 수급, 통계적 괴리율 페널티, ML 팩터 모두 결합)
+            # 최종 퀀트 점수 산출
             score = (best_ret 
                      + (vol_score - 1) * 6 
                      + sector_bonus 
@@ -495,6 +480,7 @@ def select_satellites(kis=None, n=NUM_SATELLITES, verbose=True, gemini_client=No
                 'volume_surge':  float(round(vol_score, 2)),
                 'sector':        ticker_to_sector.get(ticker, '-'),
                 'momentum_20d':  float(round(recent_ret, 2)),
+                'dl_prob':       float(round(ai_up_prob, 1)), # 딥러닝 확률 기록
                 'score':         float(round(score, 2)),
             })
             processed += 1
@@ -505,7 +491,6 @@ def select_satellites(kis=None, n=NUM_SATELLITES, verbose=True, gemini_client=No
         except Exception:
             continue
 
-    # ── Step 5: 점수 내림차순 정렬 후 AI 선정 또는 폴백 ──
     results.sort(key=lambda x: x['score'], reverse=True)
     
     selected = None
@@ -515,13 +500,10 @@ def select_satellites(kis=None, n=NUM_SATELLITES, verbose=True, gemini_client=No
         ai_result = gemini_client.ai_select_satellites(results, hot_sectors, n)
         if ai_result:
             selected = ai_result
-            if verbose:
-                print("   ✅ AI 선정 완료!")
+            if verbose: print("   ✅ AI 텍스트 선정 완료!")
         else:
-            if verbose:
-                print("   ⚠️ AI 선정 실패 (폴백: 기존 득점 순으로 선정)")
+            if verbose: print("   ⚠️ AI 선정 실패 (폴백: 기존 득점 순으로 선정)")
 
-    # AI 선정이 안 됐거나 Gemini 클라이언트가 없는 경우 (폴백)
     if not selected:
         selected = results[:n]
 
@@ -532,9 +514,10 @@ def select_satellites(kis=None, n=NUM_SATELLITES, verbose=True, gemini_client=No
         for rank, c in enumerate(selected, 1):
             vol_tag = f"📈거래량{c.get('volume_surge', 1.0):.1f}x" if c.get('volume_surge', 1.0) > 1.5 else ""
             sec_tag = f"🔥{c.get('sector', '-')}" if c.get('sector', '-') != '-' else ""
+            dl_tag = f" 🧠[상승확률: {c.get('dl_prob', 0):.1f}%]" if c.get('dl_prob', 0) > 0 else ""
             ai_tag = f" 🤖[AI 선정: {c.get('ai_reason', '')}]" if c.get('ai_selected') else ""
             
-            print(f"\n  {rank}위. [{c['name']}] ({c['ticker']}){ai_tag}")
+            print(f"\n  {rank}위. [{c['name']}] ({c['ticker']}){dl_tag}{ai_tag}")
             print(f"       전략: {c['strategy_name']}  /  6개월 수익: {c.get('return_pct', 0):+.1f}%")
             print(f"       20일 모멘텀: {c.get('momentum_20d', 0):+.1f}%  {vol_tag}  {sec_tag}")
             print(f"       종합점수: {c.get('score', 0):.1f}점")

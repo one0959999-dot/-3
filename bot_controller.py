@@ -22,6 +22,7 @@ from datetime import datetime
 from kis_api import KisApi
 from telegram_bot import TelegramNotifier
 from gemini_api import GeminiApi
+from kis_websocket import KisWebSocket  # ◀ 추가됨
 from strategy import CorePosition, Position, get_rsi_signal, get_signal_by_strategy, REINVEST_RATIO
 from stock_screener import select_satellites, generate_daily_market_report
 from main import load_config
@@ -122,42 +123,55 @@ class BotController:
         self._init_dummy_cores()
         self._restore_state()
         
-        # 💎 [구조 개선] 봇 가동 여부와 무관하게 24시간 잔고를 수집하는 독립 영속 스레드 가동
+        # 🟢 [웹소켓 실시간 가격 수신용 메모리 딕셔너리]
+        self.live_prices = {}
+        self.ws_client = None
+
+        # 증권사 키가 정상적으로 있으면 웹소켓 가동 시작
+        if self.kis:
+            app_key = self.kis.get_approval_key()
+            if app_key:
+                # 콜백 함수: 웹소켓으로 가격이 들어올 때마다 live_prices 갱신 (지연시간 0.01초)
+                def on_price_update(ticker, price):
+                    self.live_prices[ticker] = price
+                self.ws_client = KisWebSocket(app_key, is_mock=self._is_mock, price_callback=on_price_update)
+                self.ws_client.start()
+
+        # 💎 [구조 개선] 잔고를 수집하고 웹소켓 구독을 관리하는 영속 스레드 가동
         self.perpetual_thread = threading.Thread(target=self._perpetual_sync_loop, daemon=True)
         self.perpetual_thread.start()
         
-        self.add_log(f"User {user_id} Bot Controller 및 실시간 영속 동기화 스레드 가동 완료.")
+        self.add_log(f"User {user_id} Bot Controller 및 실시간 웹소켓 통신망 가동 완료.")
 
     def _perpetual_sync_loop(self):
-        """봇 가동과 상관없이 10초마다 백그라운드에서 한투 API를 찔러 최신 주가와 잔고를 캐싱합니다."""
+        """봇 가동과 상관없이 백그라운드에서 '잔고'만 캐싱합니다. (가격은 웹소켓이 실시간으로 꽂아줌 API 차단 안 당함)"""
         while True:
             try:
                 if self.kis:
-                    # 1. 증권사 실제 잔고 비동기 캐싱 및 내부 장부 동기화
+                    # 1. 증권사 실제 잔고 비동기 캐싱 및 내부 장부 동기화 (조회 제한 여유로움)
                     real_balance = self.kis.get_account_balance()
                     if real_balance:
                         self.cached_balance = real_balance
                         self._sync_internal_balances(real_balance)
                     
-                    # 2. 실전/모의 활성화된 전 종목 실시간 현재가 비동기 갱신
-                    for core in self.core_positions:
-                        cp = self.kis.get_current_price(core.ticker)
-                        if cp: 
-                            with self.lock:
-                                core._last_price = cp
-                        time.sleep(0.05) # 💡 트래픽 폭주 방지 딜레이
-                            
-                    # 🔒 [스레드 보호 및 트래픽 방지]
-                    with self.lock:
-                        sat_keys = list(self.satellite_positions.keys())
+                    # 2. 웹소켓 감시망에 현재 포트폴리오 종목들이 제대로 등록되어 있는지 주기적 확인 및 갱신
+                    if self.ws_client:
+                        with self.lock:
+                            # 코어 종목 + 위성 종목 + KOSPI 지수 대용(KODEX 200)을 모두 웹소켓 구독 목록에 담음
+                            current_tickers = [c.ticker for c in self.core_positions] + list(self.satellite_positions.keys())
+                            if "069500" not in current_tickers:
+                                current_tickers.append("069500")
 
-                    for ticker in sat_keys:
-                        sp = self.kis.get_current_price(ticker)
-                        if sp: 
-                            with self.lock:
-                                if ticker in self.satellite_positions:
-                                    self.satellite_positions[ticker]._last_price = sp
-                        time.sleep(0.2) 
+                        # 새로 감시해야 할 종목 구독
+                        for t in current_tickers:
+                            if t not in self.ws_client.subscribed_tickers:
+                                self.ws_client.subscribe(t)
+                        
+                        # 팔아서 더 이상 감시 안 해도 되는 종목 구독 해제
+                        for t in list(self.ws_client.subscribed_tickers):
+                            if t not in current_tickers:
+                                self.ws_client.unsubscribe(t)
+
             except Exception as e:
                 print(f"[_perpetual_sync_loop 에러] {e}")
             time.sleep(10)
@@ -515,8 +529,8 @@ class BotController:
             
             # KOSPI 지수 대용인 KODEX 200(069500) ETF를 통해 바닥 반등 여부 확인
             if self.kis:
-                # 💡 "0001" 대신 API 에러가 나지 않는 "069500" (KODEX 200)을 사용합니다!
-                kospi_cp = self.kis.get_current_price("069500") 
+                # 💡 실시간 웹소켓 메모리에 들어온 0.1초 전 가격을 즉시 사용 (딜레이 0, 차단 위험 0)
+                kospi_cp = self.live_prices.get("069500")
                 if kospi_cp:
                     extended_df = self._get_extended_ohlcv("069500", kospi_cp)
                     if not extended_df.empty and len(extended_df) >= 5:
@@ -578,7 +592,8 @@ class BotController:
             safe_core_positions = list(self.core_positions)
             
         for core in safe_core_positions:
-            cp = self.kis.get_current_price(core.ticker) if self.kis else None
+            # 💡 증권사에 묻지 않고, 웹소켓이 메모리에 밀어넣어둔 가격을 즉시 꺼내 씀!
+            cp = self.live_prices.get(core.ticker)
             if not cp or cp <= 0: 
                 continue
                 
@@ -639,8 +654,9 @@ class BotController:
                     pos_cash = pos.cash
                     pos_name = pos.name
 
-                price = self.kis.get_current_price(ticker) if self.kis else 0
-                if price <= 0: continue
+                # 💡 증권사에 묻지 않고, 웹소켓이 메모리에 밀어넣어둔 가격을 즉시 꺼내 씀!
+                price = self.live_prices.get(ticker)
+                if not price or price <= 0: continue
                     
                 with self.lock: pos._last_price = price
                     
@@ -708,7 +724,7 @@ class BotController:
                         if self.kis: self.kis.sell_market_order(ticker, pos_shares)
                         with self.lock: qty, profit = pos.sell(price)
                         msg = f"💥 [{pos_name}] ATR 변동성 손절 완료: {qty}주 @ {price:,}원 | 손익: {profit:+,.0f}원"
-                        self.add_log(msg)
+                        self.add_log(msg)# (위쪽 코드 그대로 유지 - ATR 하드 손절 로직 끝부분)
                         log_trade_journal(self.user_id, ticker, pos_name, 'SELL', price, strat_name, reason, profit=profit)
                         self._send_telegram(msg)
                         with self.lock:
@@ -716,56 +732,30 @@ class BotController:
                             self.daily_pnl[today] = self.daily_pnl.get(today, 0) + profit
                         continue
 
-                # 🔵 AI 매수 조율 파트 (NLP 뉴스 감성분석 연동)
+                # ⚡ [Fast Track] 알고리즘 즉각 매수 파트 (LLM 및 뉴스 크롤링 지연 시간 원천 제거)
                 if signal == 'BUY' and pos_shares == 0:
                     if not is_golden_hours: continue 
 
-                    reason = "조건 충족 자동 매수"
-                    if self.gemini:
-                        recent_logs = get_recent_trades(self.user_id, ticker, limit=5)
-                        custom_rules = load_ai_rules(self.user_id)
-                        
-                        live_news = fetch_recent_news(pos_name)
-                        enriched_strategy = f"{extended_strategy} | 📰 실시간 뉴스 컨텍스트: {live_news}"
-                        
-                        is_approved, reason = self.gemini.ai_approve_trade(
-                            signal='BUY', stock_name=pos_name, ticker=ticker, price=price, 
-                            strategy=enriched_strategy, indicator_val=ind_val, hot_sectors=self.hot_sectors,
-                            recent_trades=recent_logs, custom_rules=custom_rules
-                        )
-                        
-                        if not is_approved:
-                            self.add_log(f"🚫 AI 매수 거절 (차트/뉴스/학습 융합): [{pos_name}] - {reason}")
-                            continue 
-
+                    reason = "기술적 지표 조건 충족 (Fast Track 자동 매수)"
                     qty = int(pos_cash // price)
+                    
                     if qty > 0:
                         if self.kis: self.kis.buy_market_order(ticker, qty)
                         with self.lock: actual_qty = pos.buy(price)
                         if actual_qty > 0:
-                            msg = f"📈 [{pos_name}] AI 매수 승인: {actual_qty}주 @ {price:,}원 [{strat_name} → {ind_val:.1f}]"
+                            msg = f"📈 [{pos_name}] 알고리즘 즉각 매수 체결: {actual_qty}주 @ {price:,}원 [{strat_name} → {ind_val:.1f}]"
                             self.add_log(msg)
                             log_trade_journal(self.user_id, ticker, pos_name, 'BUY', price, strat_name, reason)
                             self._send_telegram(msg)
 
-                # 🔵 AI 매도 조율 파트
+                # ⚡ [Fast Track] 알고리즘 즉각 매도 파트 (LLM 지연 시간 원천 제거)
                 elif signal == 'SELL' and pos_shares > 0:
-                    reason = "조건 충족 자동 매도"
-                    if self.gemini:
-                        recent_logs = get_recent_trades(self.user_id, ticker, limit=5)
-                        custom_rules = load_ai_rules(self.user_id)
-                        is_approved, reason = self.gemini.ai_approve_trade(
-                            signal='SELL', stock_name=pos_name, ticker=ticker, price=price, 
-                            strategy=f"{strat_name} | 실시간 재무상태: {financial_data}", indicator_val=ind_val, 
-                            hot_sectors=self.hot_sectors, recent_trades=recent_logs, custom_rules=custom_rules
-                        )
-                        if not is_approved:
-                            self.add_log(f"✋ AI 매도 보류 (수익 극대화 홀딩 판단): [{pos_name}] - {reason}")
-                            continue
-
+                    reason = "기술적 지표 조건 충족 (Fast Track 자동 매도)"
+                    
                     if self.kis: self.kis.sell_market_order(ticker, pos_shares)
                     with self.lock: qty, profit = pos.sell(price)
-                    msg = f"📉 [{pos_name}] AI 매도 승인: {qty}주 @ {price:,}원 | 손익: {profit:+,.0f}원"
+                    
+                    msg = f"📉 [{pos_name}] 알고리즘 즉각 매도 체결: {qty}주 @ {price:,}원 | 손익: {profit:+,.0f}원"
                     self.add_log(msg)
                     log_trade_journal(self.user_id, ticker, pos_name, 'SELL', price, strat_name, reason, profit=profit)
                     self._send_telegram(msg)
