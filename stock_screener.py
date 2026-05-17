@@ -46,7 +46,7 @@ from datetime import datetime, timedelta
 # ──────────────────────────────────────────────
 _ohlcv_cache = {}  # {(ticker, days): (date_str, DataFrame)}
 
-def fetch_ohlcv(ticker, days=200):
+def fetch_ohlcv(ticker, days=200, kis=None):
     today_str = datetime.today().strftime('%Y%m%d')
     key = (ticker, days)
 
@@ -54,9 +54,18 @@ def fetch_ohlcv(ticker, days=200):
     if key in _ohlcv_cache and _ohlcv_cache[key][0] == today_str:
         return _ohlcv_cache[key][1]
 
-    end   = datetime.today()
-    start = end - timedelta(days=days + 90)
     try:
+        # 🟢 [pykrx 최적화] KIS API 인스턴스가 주어지면 pykrx를 회피하고 KIS API로 즉시 조회하여 IP 차단을 방어합니다.
+        if kis is not None:
+            df = kis.get_ohlcv(ticker, "D")
+            if df is not None and not df.empty:
+                result = df.dropna(subset=['close']).tail(days)
+                _ohlcv_cache[key] = (today_str, result)
+                return result
+
+        # KIS API가 없거나 통신 실패한 경우에만 백업으로 pykrx 사용
+        end   = datetime.today()
+        start = end - timedelta(days=days + 90)
         time.sleep(0.05)  # API Rate limit 방어
         df = stock.get_market_ohlcv_by_date(
             start.strftime("%Y%m%d"), end.strftime("%Y%m%d"), ticker
@@ -238,7 +247,7 @@ def get_volume_surge_tickers(kis=None,
             continue
         try:
             # 💡 days=80 대신 백테스트 기간인 BACKTEST_DAYS(130)로 일치시켜 캐시된 데이터를 재사용하게 만듭니다.
-            df = fetch_ohlcv(ticker, days=BACKTEST_DAYS)
+            df = fetch_ohlcv(ticker, days=BACKTEST_DAYS, kis=kis) # 🟢 kis 파라미터 추가
             if len(df) < 30 or 'volume' not in df.columns:
                 continue
             if df['close'].iloc[-1] < 1000:
@@ -338,15 +347,32 @@ STRATEGY_REGISTRY = {
 def backtest(df, sig_series, initial=1_000_000):
     c = df['close']
     cash, holding, buy_price = float(initial), 0, 0
+    fee_rate = 0.00015 # 0.015% 온라인 수수료
+    tax_rate = 0.0018  # 0.18% 증권거래세
+    
     for date in df.index:
         price = int(c.loc[date])
         sig   = sig_series.get(date, 0) if isinstance(sig_series, pd.Series) else 0
-        if sig == 1 and holding == 0 and cash >= price:
-            holding = cash // price; cash -= holding * price; buy_price = price
+        
+        # 매수 (수수료 가산)
+        if sig == 1 and holding == 0 and cash >= price * (1 + fee_rate):
+            cost_per_share = price * (1 + fee_rate)
+            holding = int(cash // cost_per_share)
+            if holding > 0:
+                cash -= holding * cost_per_share
+                buy_price = price
+                
+        # 매도 (수수료 및 세금 차감)
         elif sig == -1 and holding > 0:
-            cash += holding * price; holding = 0
+            revenue_per_share = price * (1 - fee_rate - tax_rate)
+            cash += holding * revenue_per_share
+            holding = 0
+            
+    # 백테스트 종료 시 잔여 보유 물량 강제 청산 가치 계산
     if holding > 0:
-        cash += holding * int(c.iloc[-1])
+        revenue_per_share = int(c.iloc[-1]) * (1 - fee_rate - tax_rate)
+        cash += holding * revenue_per_share
+        
     return (cash - initial) / initial * 100
 
 def find_best_strategy(df):

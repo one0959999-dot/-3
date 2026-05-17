@@ -98,9 +98,44 @@ class KisApi:
             print(f"[KIS] 현재가 조회 통신 시간 초과/오류: {e}")
             return None
 
+    def get_realtime_price_data(self, stock_code: str):
+        """특정 종목의 당일 시/고/저/종가 실시간 데이터 전체 조회 (보조지표 왜곡 방지용)"""
+        if not self._ensure_token():
+            return None
+            
+        url = f"{self.base_url}/uapi/domestic-stock/v1/quotations/inquire-price"
+        headers = {
+            "content-type": "application/json; charset=utf-8",
+            "authorization": f"Bearer {self.access_token}",
+            "appkey": self.app_key,
+            "appsecret": self.app_secret,
+            "tr_id": "FHKST01010100"
+        }
+        params = {
+            "fid_cond_mrkt_div_code": "J",
+            "fid_input_iscd": stock_code
+        }
+        try:
+            res = requests.get(url, headers=headers, params=params, timeout=3)
+            if res.status_code == 200:
+                data = res.json()
+                if data['rt_cd'] == '0':
+                    out = data['output']
+                    return {
+                        'open': float(out['stck_oprc']),
+                        'high': float(out['stck_hgpr']),
+                        'low': float(out['stck_lwpr']),
+                        'close': float(out['stck_prpr']),
+                        'volume': float(out['acml_vol'])
+                    }
+                return None
+            return None
+        except Exception as e:
+            return None        
+
     def _place_order(self, stock_code: str, qty: int, side: str):
         """
-        시장가 주문 공통 로직
+        시장가 주문 공통 로직 (최유리지정가로 변경하여 슬리피지 원천 차단)
         side: 'BUY' | 'SELL'
         """
         if not self._ensure_token():
@@ -122,9 +157,9 @@ class KisApi:
             "CANO":           acnt_no,
             "ACNT_PRDT_CD":   acnt_prdt,
             "PDNO":           stock_code,
-            "ORD_DVSN":       "01",   # 01 = 시장가
+            "ORD_DVSN":       "03",   # 🟢 03 = 최유리지정가 (매수시 최우선 매도호가, 매도시 최우선 매수호가로 슬리피지 방어)
             "ORD_QTY":        str(qty),
-            "ORD_UNPR":       "0",    # 시장가는 0
+            "ORD_UNPR":       "0",    # 최유리지정가도 단가 0으로 전송
         }
 
         try:

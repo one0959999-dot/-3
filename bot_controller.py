@@ -246,7 +246,7 @@ class BotController:
                 return df.copy()
         return pd.DataFrame()
 
-    # 💎 [신규 고도화] 캐싱된 어제까지의 일봉 정보에 5분 주기 실시간 가격(cp)을 단기 인덱스로 병합하는 무적의 데이터 합성 기능
+    # 💎 [신규 고도화] 캐싱된 어제까지의 일봉 정보에 당일 실시간 시/고/저/종가를 단기 인덱스로 병합하는 무적의 데이터 합성 기능
     def _get_extended_ohlcv(self, ticker, current_price):
         import pandas as pd
         base_df = self._get_cached_base_ohlcv(ticker)
@@ -255,14 +255,28 @@ class BotController:
                 return self.kis.get_ohlcv(ticker, "D")
             return pd.DataFrame()
             
-        today_row = pd.DataFrame([{
-            'date': pd.to_datetime(datetime.now().date()),
-            'open': float(current_price),
-            'high': float(current_price),
-            'low': float(current_price),
-            'close': float(current_price),
-            'volume': 0.0
-        }])
+        # 🟢 [버그 해결] 현재가 하나로 도배하지 않고 실시간 KIS API로 오늘 하루의 진짜 O/H/L/C를 가져와 합성합니다.
+        realtime_data = self.kis.get_realtime_price_data(ticker) if self.kis else None
+        
+        if realtime_data:
+            today_row = pd.DataFrame([{
+                'date': pd.to_datetime(datetime.now().date()),
+                'open': realtime_data['open'],
+                'high': realtime_data['high'],
+                'low': realtime_data['low'],
+                'close': realtime_data['close'],
+                'volume': realtime_data['volume']
+            }])
+        else:
+            today_row = pd.DataFrame([{
+                'date': pd.to_datetime(datetime.now().date()),
+                'open': float(current_price),
+                'high': float(current_price),
+                'low': float(current_price),
+                'close': float(current_price),
+                'volume': 0.0
+            }])
+            
         extended_df = pd.concat([base_df, today_row], ignore_index=True)
         return extended_df
 
@@ -534,6 +548,23 @@ class BotController:
                 if real_balance and 'stocks' in real_balance:
                     self._sync_internal_balances(real_balance)
                     self.add_log("🔄 [잔고 동기화 완료] 실제 계좌의 실시간 자산 데이터가 가상 장부에 연동되었습니다.")
+                    
+                    # 🚨 [신규 알파 로직] 계좌 단위 서킷브레이커 (MDD -10% 하락 시 전면 정지)
+                    current_total_asset = float(real_balance.get('total_cash', 0)) + float(real_balance.get('total_value', 0))
+                    
+                    if not hasattr(self, 'peak_total_asset'):
+                        self.peak_total_asset = current_total_asset
+                    elif current_total_asset > self.peak_total_asset:
+                        self.peak_total_asset = current_total_asset
+                        
+                    if getattr(self, 'peak_total_asset', 0) > 0:
+                        mdd = ((current_total_asset / self.peak_total_asset) - 1) * 100
+                        if mdd <= -10.0:
+                            msg = f"💥 [서킷브레이커 발동] 전체 계좌가 고점 대비 {mdd:.2f}% 폭락했습니다! 자산 보호를 위해 봇 감시를 영구 중지합니다."
+                            self.add_log(msg)
+                            self._send_telegram(msg)
+                            self.stop() # 봇 완전 정지
+                            return
             except Exception as e:
                 self.add_log(f"⚠️ [잔고 동기화 실패] 증권사 잔고 로드 실패 (안전을 위해 기존 데이터로 대치): {e}")
 
