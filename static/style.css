@@ -1304,3 +1304,41 @@ body.theme-warm-beige [style*="color:#8b949e"] {
     color: #64748b !important;
     -webkit-text-fill-color: #64748b !important;
 }
+
+/* 10. 🛠️ 위성 종목 갯수 조절 UI (모의투자 라이트 모드 맞춤형 디자인) */
+
+/* 전체 조절 칸 배경 및 테두리 */
+body.theme-warm-beige .sat-controls {
+    background: #ffffff !important;
+    border: 1px solid #cbd5e1 !important;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05) !important;
+}
+
+/* '위성', '종목' 글자 색상 (너무 튀지 않는 짙은 회색) */
+body.theme-warm-beige .sat-controls span {
+    color: #475569 !important;
+    -webkit-text-fill-color: #475569 !important;
+}
+
+/* 가운데 숫자(5) 색상 (가장 뚜렷한 진검정) */
+body.theme-warm-beige .sat-controls .sat-count-val {
+    color: #0f172a !important;
+    -webkit-text-fill-color: #0f172a !important;
+    font-weight: 800 !important;
+}
+
+/* +, - 조절 버튼 디자인 (실전투자의 박스 형태를 화이트 톤으로 구현) */
+body.theme-warm-beige .sat-adj-btn {
+    background: #f8fafc !important;
+    border: 1px solid #cbd5e1 !important;
+    color: #0f172a !important;
+    -webkit-text-fill-color: #0f172a !important;
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05) !important;
+    border-radius: 5px !important;
+}
+
+/* +, - 버튼 마우스 오버 시 색상 변화 */
+body.theme-warm-beige .sat-adj-btn:hover {
+    background: #e2e8f0 !important;
+    border-color: #94a3b8 !important;
+}
