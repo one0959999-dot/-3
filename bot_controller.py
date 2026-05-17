@@ -37,6 +37,10 @@ class BotController:
         self.num_satellites = 5
         self._is_mock     = is_mock   # DB에서 읽은 사용자 설정값
         
+        # 💡 [독립 자산배분 격리] 전역 변수 공유로 인한 실전/모의 간섭 버그를 원천 차단하기 위해 인스턴스 변수로 격리합니다.
+        self.core_ratio      = CORE_RATIO
+        self.satellite_ratio = SATELLITE_RATIO
+
         # 코어 종목 리스트 (JSON 파싱)
         try:
             self.user_core_stocks = json.loads(core_stocks) if core_stocks else []
@@ -149,8 +153,9 @@ class BotController:
                 # 💡 [버그 해결] 가짜 장부를 버리고 모의/실전 무관하게 한투증권 앱의 '진짜 잔고'를 그대로 가져옵니다.
                 # 어플 잔고가 0원이면 봇의 예산도 0원으로 정확하게 동기화됩니다.
                 if total_equity >= 0:
-                    target_core_pool = total_equity * CORE_RATIO
-                    target_sat_pool = total_equity * SATELLITE_RATIO
+                    # 💡 전역 변수 대신 인스턴스 격리 변수인 self.core_ratio 와 self.satellite_ratio 를 연산에 적용합니다.
+                    target_core_pool = total_equity * self.core_ratio
+                    target_sat_pool = total_equity * self.satellite_ratio
                     
                     current_core_stock_val = sum([float(s['value']) for s in real_balance['stocks'] if any(c.ticker == s['ticker'] for c in self.core_positions)])
                     per_core_cash = max(0.0, (target_core_pool - current_core_stock_val) / max(1, len(self.core_positions)))
@@ -310,8 +315,9 @@ class BotController:
         self._send_telegram("🔍 위성 종목 & 전략 선정!\n" + "\n".join(log_lines))
 
         # 2. 자금 배분
-        core_budget = total_cash * CORE_RATIO
-        sat_budget  = total_cash * SATELLITE_RATIO
+        # 💡 격리된 개별 인스턴스 자산 배분 비중 변수(self)를 사용합니다.
+        core_budget = total_cash * self.core_ratio
+        sat_budget  = total_cash * self.satellite_ratio
         per_sat     = sat_budget / self.num_satellites if self.num_satellites > 0 else 0
 
         # 3. 코어 포지션 초기화
@@ -821,33 +827,38 @@ class BotController:
             # 📉 [신규 퀀트 로직] 시장 국면(상승/하락) 판별 및 하이브리드 포트폴리오 스위칭 (3방패 2창)
             is_bull_market = True
             try:
-                # 안정적인 KIS API의 get_ohlcv 함수를 우회 활용 (업종코드 코스닥: '2001')
                 if self.kis:
-                    index_df = self.kis.get_ohlcv("2001", "D")
-                    if not index_df.empty and len(index_df) >= 20:
-                        index_close = index_df['close']
-                        index_ma20 = index_close.rolling(20).mean().iloc[-1]
-                        current_index = index_close.iloc[-1]
+                    # 💡 [고도화 반영] 코스피("0001")와 코스닥("2001") 지수 데이터를 동시에 확보합니다.
+                    kospi_df = self.kis.get_ohlcv("0001", "D")
+                    kosdaq_df = self.kis.get_ohlcv("2001", "D")
+                    
+                    kospi_bull = True
+                    if not kospi_df.empty and len(kospi_df) >= 20:
+                        kospi_bull = kospi_df['close'].iloc[-1] >= kospi_df['close'].rolling(20).mean().iloc[-1]
                         
-                        if current_index < index_ma20:
-                            is_bull_market = False
+                    kosdaq_bull = True
+                    if not kosdaq_df.empty and len(kosdaq_df) >= 20:
+                        kosdaq_bull = kosdaq_df['close'].iloc[-1] >= kosdaq_df['close'].rolling(20).mean().iloc[-1]
+                    
+                    # 🛡️ 안전 제일주의: 코스피나 코스닥 중 하나라도 20일선 아래로 깨지면 시장 전체를 위험 국면으로 판별합니다.
+                    is_bull_market = kospi_bull and kosdaq_bull
             except Exception as e:
                 self.add_log(f"⚠️ 시장 지수 판별 중 오류 발생(기본 상승장 간주): {e}")
 
             # 🟢 [신규 추가 코드] 거시 시장 국면에 따른 동적 자산 배분(Dynamic Asset Allocation) 비율 조정
-            global CORE_RATIO, SATELLITE_RATIO
+            # 💡 전역 변수 공유 간섭 문제를 해결하기 위해 개별 인스턴스 격리 변수(self)를 조작합니다.
             if not is_bull_market:
-                CORE_RATIO = 0.60       # 하락장에서는 코어(보수적 자산) 비중 증대
-                SATELLITE_RATIO = 0.40  # 위성 트레이딩 자금 축소 (현금 확보 및 헷지)
-                self.add_log(f"📊 [동적 자산배분] 약세장 방어 모드 가동: 코어 {CORE_RATIO*100}% / 위성 {SATELLITE_RATIO*100}% 변환")
+                self.core_ratio = 0.60       # 하락장에서는 코어(보수적 자산) 비중 증대
+                self.satellite_ratio = 0.40  # 위성 트레이딩 자금 축소 (현금 확보 및 헷지)
+                self.add_log(f"📊 [동적 자산배분] 약세장 방어 모드 가동: 코어 {self.core_ratio*100}% / 위성 {self.satellite_ratio*100}% 변환")
             else:
-                CORE_RATIO = 0.30       # 상승장 기본 비율 유지
-                SATELLITE_RATIO = 0.70
-                self.add_log(f"📊 [동적 자산배분] 강세장 공격 모드 가동: 코어 {CORE_RATIO*100}% / 위성 {SATELLITE_RATIO*100}% 변환")
+                self.core_ratio = 0.30       # 상승장 기본 비율 유지
+                self.satellite_ratio = 0.70
+                self.add_log(f"📊 [동적 자산배분] 강세장 공격 모드 가동: 코어 {self.core_ratio*100}% / 위성 {self.satellite_ratio*100}% 변환")
 
             new_info = []
             if not is_bull_market:
-                self.add_log("🚨 [하락장 감지] 코스닥 지수가 20일선 밑으로 깨졌습니다. '3방패(헷지) + 2창(알파)' 전략으로 포지션을 전환합니다.")
+                self.add_log("🚨 [하락장 감지] 코스피 또는 코스닥 지수가 20일선 밑으로 깨졌습니다. '3방패(헷지) + 2창(알파)' 전략으로 포지션을 전환합니다.")
                 
                 # 방패 역할을 할 ETF 리스트 (달러, 금, 곱버스)
                 # 하락장 방어에 탁월한 EMA 5/20 교차 전략을 부여하여 단기 모멘텀으로만 진입/청산합니다.
@@ -874,7 +885,7 @@ class BotController:
                             if len(new_info) == n_needed:
                                 break
             else:
-                self.add_log("📈 [상승장 확인] 20일선 위에서 순항 중입니다. 주도주/모멘텀 기반 개별 주식 위성 스크리닝을 진행합니다.")
+                self.add_log("📈 [상승장 확인] 코스피와 코스닥 모두 20일선 위에서 순항 중입니다. 주도주/모멘텀 기반 개별 주식 위성 스크리닝을 진행합니다.")
                 raw_info, self.hot_sectors = select_satellites(kis=self.kis, n=self.num_satellites + n_needed, verbose=False, gemini_client=self.gemini)
                 for c in raw_info:
                     if c['ticker'] not in keep_tickers:
