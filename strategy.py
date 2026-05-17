@@ -172,7 +172,7 @@ def get_signal_by_strategy(ticker, strategy_name, kis_api=None, df=None):
 
 
 class Position:
-    """개별 종목 포지션 상태 관리"""
+    """개별 종목 포지션 상태 관리 (실전 거래세 및 매매 수수료 완벽 시뮬레이션 적용)"""
     def __init__(self, ticker, name, budget):
         self.ticker    = ticker
         self.name      = name
@@ -183,29 +183,55 @@ class Position:
         self.avg_price = 0           # 평균 매수가
         self.trades    = []          # 거래 기록
         self.max_price = 0
+        
+        # 한국 금융시장 표준 수수료 및 거래세율 정의
+        self.fee_rate = 0.00015      # 실전 및 모의 온라인 매매 수수료 기본율 (0.015%)
+        self.tax_rate = 0.0018       # 장내 매도 시 국가 증권거래세율 (0.18%)
 
     def buy(self, price, all_in=True):
         if self.shares > 0 or self.cash < price:
             return 0
-        qty = int(self.cash // price)
+            
+        # 수수료 비용을 미리 산정하여 초과 매수로 인한 예수금 펑크(마이너스) 버그 현상을 방지합니다.
+        qty = int(self.cash // (price * (1 + self.fee_rate)))
         if qty == 0:
             return 0
+            
+        stock_cost = qty * price
+        brokerage_fee = round(stock_cost * self.fee_rate, 2)
+        total_cost = stock_cost + brokerage_fee
+        
         self.shares    = qty
-        self.avg_price = price
-        self.cash     -= qty * price
-        self.trades.append({'type': 'BUY', 'price': price, 'qty': qty, 'time': datetime.now()})
+        self.avg_price = round(total_cost / qty, 2) # 수수료가 포함된 정밀한 실전 평단가 산출
+        self.cash     -= total_cost
+        
+        self.trades.append({
+            'type': 'BUY', 'price': price, 'qty': qty, 
+            'fee': brokerage_fee, 'tax': 0.0, 'time': datetime.now()
+        })
         return qty
 
     def sell(self, price):
         if self.shares == 0:
             return 0, 0
-        revenue = self.shares * price
-        profit  = revenue - (self.avg_price * self.shares)
-        self.cash  += revenue
+            
+        gross_revenue = self.shares * price
+        brokerage_fee = round(gross_revenue * self.fee_rate, 2)
+        trading_tax   = round(gross_revenue * self.tax_rate, 2)
+        total_deduction = brokerage_fee + trading_tax
+        net_revenue   = gross_revenue - total_deduction # 수수료와 세금이 원천징수된 실제 인출 가능 현금
+        
+        profit  = net_revenue - (self.avg_price * self.shares)
+        self.cash  += net_revenue
         qty         = self.shares
+        
         self.shares = 0
         self.avg_price = 0
-        self.trades.append({'type': 'SELL', 'price': price, 'qty': qty, 'profit': profit, 'time': datetime.now()})
+        
+        self.trades.append({
+            'type': 'SELL', 'price': price, 'qty': qty, 
+            'fee': brokerage_fee, 'tax': trading_tax, 'profit': profit, 'time': datetime.now()
+        })
         return qty, profit
 
     @property
@@ -214,7 +240,7 @@ class Position:
 
 
 class CorePosition:
-    """코어 포지션 - RSI 신호 기반 트레이딩, 단 최소 수량(Floor)은 항상 유지"""
+    """코어 포지션 - RSI 신호 기반 트레이딩, 단 최소 수량(Floor)은 항상 유지 (수수료 모델 이식 완료)"""
     def __init__(self, ticker, name, initial_cash):
         self.ticker      = ticker
         self.name        = name
@@ -225,24 +251,36 @@ class CorePosition:
         self.cash        = initial_cash
         self.buy_log     = []
         self.sell_log    = []
+        
+        self.fee_rate = 0.00015   # 수수료율 (0.015%)
+        self.tax_rate = 0.0018    # 거래세율 (0.18%)
 
     def buy(self, price, cash_to_use=None):
         """매수 (cash_to_use 미지정 시 전액 매수)"""
         budget = cash_to_use if cash_to_use else self.cash
-        qty = int(min(budget, self.cash) // price)
+        available_budget = min(budget, self.cash)
+        
+        qty = int(available_budget // (price * (1 + self.fee_rate)))
         if qty == 0:
             return 0
-        cost = qty * price
-        total_cost = self.avg_price * self.shares + cost
+            
+        stock_cost = qty * price
+        brokerage_fee = round(stock_cost * self.fee_rate, 2)
+        total_cost = stock_cost + brokerage_fee
+        
+        current_total_investment = self.avg_price * self.shares + total_cost
         self.shares    += qty
-        self.avg_price  = total_cost / self.shares if self.shares > 0 else price
-        self.cash      -= cost
+        self.avg_price  = round(current_total_investment / self.shares, 2)
+        self.cash      -= total_cost
+        
         if self.floor_shares == 0:
             self.floor_shares = max(1, int(self.shares * CORE_MIN_FLOOR_RATIO))
+            
         self.buy_log.append({
             'time': datetime.now().strftime('%Y-%m-%d %H:%M'),
             'price': price, 'qty': qty,
             'total_shares': self.shares,
+            'fee': brokerage_fee,
             'reason': 'initial' if len(self.buy_log) == 0 else 'reinvest'
         })
         return qty
@@ -252,14 +290,20 @@ class CorePosition:
         sellable = self.shares - self.floor_shares
         if sellable <= 0:
             return 0, 0
-        revenue = sellable * price
-        profit  = revenue - (self.avg_price * sellable)
-        self.cash   += revenue
+            
+        gross_revenue = sellable * price
+        brokerage_fee = round(gross_revenue * self.fee_rate, 2)
+        trading_tax   = round(gross_revenue * self.tax_rate, 2)
+        net_revenue   = gross_revenue - (brokerage_fee + trading_tax)
+        
+        profit  = net_revenue - (self.avg_price * sellable)
+        self.cash   += net_revenue
         self.shares -= sellable
+        
         self.sell_log.append({
             'time': datetime.now().strftime('%Y-%m-%d %H:%M'),
             'price': price, 'qty': sellable, 'profit': profit,
-            'remaining': self.shares
+            'fee': brokerage_fee, 'tax': trading_tax, 'remaining': self.shares
         })
         return sellable, profit
 
