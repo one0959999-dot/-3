@@ -665,7 +665,7 @@ class BotController:
 
                     # 🟢 [최종보완] 코어 매수: 10분(600초) 쿨타임 적용으로 미체결 중복 주문 완벽 차단
                     if core_signal == 'BUY' and core_cash >= cp and (time.time() - getattr(core, 'last_order_time', 0) > 600):
-                        qty = int(core_cash // cp)
+                        qty = int((core_cash * 0.98) // cp)
                         if qty > 0:
                             if self.kis:
                                 order_res = self.kis.buy_market_order(core_ticker, qty)
@@ -821,9 +821,9 @@ class BotController:
 
                 # ⚡ [Fast Track] 알고리즘 즉각 매수 파트
                 if signal == 'BUY' and pos_shares == 0 and is_cooldown_passed:
-                    if not is_golden_hours: continue 
+                    if not is_golden_hours: continue
                     reason = "기술적 지표 조건 충족 (Fast Track 자동 매수)"
-                    qty = int(pos_cash // price)
+                    qty = int((pos_cash * 0.98) // price)
                     
                     if qty > 0:
                         if self.kis: 

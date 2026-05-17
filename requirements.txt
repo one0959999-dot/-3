@@ -11,3 +11,6 @@ matplotlib
 flask-login
 google-genai
 websocket-client
+yfinance
+torch
+scikit-learn
