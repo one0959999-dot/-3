@@ -327,6 +327,11 @@
             color: #f8fafc !important;
         }
     </style>
+
+    <script>
+        // 전역 변수로 유저의 누적 투자원금을 설정합니다. (봇이 자동 갱신할 수 있도록 let 사용)
+        let USER_INVESTED_CAPITAL = {{ user.data.initial_cash or 10000000 }};
+    </script>
 </head>
 
 <body>
@@ -495,6 +500,16 @@
                 <input type="text" id="mockAccountNo" value="{{ user.data.mock_account_no or '' }}">
             </div>
             <hr style="border:0; border-top:1px solid rgba(255,255,255,0.05); margin:1rem 0;">
+
+            <div class="settings-group"
+                style="background: rgba(59, 130, 246, 0.1); border: 1px solid rgba(59, 130, 246, 0.3); padding: 10px; border-radius: 8px; margin-bottom: 15px;">
+                <label style="color: #60a5fa;">💰 총 투자 원금 (누적 입금액)</label>
+                <input type="number" id="initialCash" value="{{ user.data.initial_cash or 10000000 }}"
+                    placeholder="예: 25000000">
+                <p style="font-size:0.75rem; color:#94a3b8; margin-top:6px; line-height: 1.4;">※ 봇이 <b>자동으로 입출금을 감지하여
+                        갱신</b>합니다. 오차가 발생했을 때만 수동으로 수정 후 저장하세요.</p>
+            </div>
+
             <div class="settings-group">
                 <label>텔레그램 봇 토큰</label>
                 <input type="text" id="teleToken" value="{{ user.data.telegram_token or '' }}">

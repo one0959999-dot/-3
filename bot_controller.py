@@ -193,21 +193,29 @@ class BotController:
                 # 🚨 [신규 추가] 외부 입금(월급 등) 자동 추적 및 원금 실시간 보정 알고리즘
                 current_asset_cost = real_cash + real_purchase # 주가 변동성이 제거된 순수 자산 원가
                 if self.last_asset_cost is not None:
-                    # 10초 동안 발생한 매매 실현손익을 반영한 기대 원가 계산
-                    expected_asset_cost = self.last_asset_cost + self.pnl_this_turn
-                    self.pnl_this_turn = 0.0 # 정산 완료 후 대기 비움
-                    
-                    # 기대 원가보다 현재 자산 원가가 늘어났다면 그것은 100% 외부 이체(입금)분임
-                    deposit_delta = current_asset_cost - expected_asset_cost
-                    if deposit_delta > 1000: # 1,000원 이상의 유의미한 입금액만 필터링
-                        from database import get_db_connection
-                        conn = get_db_connection()
-                        conn.execute('UPDATE users SET initial_cash = initial_cash + ? WHERE id = ?', (deposit_delta, self.user_id))
-                        conn.commit()
-                        conn.close()
-                        self.add_log(f"💰 [자율 원금 감지] 외부 입금(월급 등) 포착: +{deposit_delta:,.0f}원 -> 투자 원금 자동 상향 조정 완료.")
-                
-                self.last_asset_cost = current_asset_cost
+                    # KIS 서버 지연 방어: 봇이 매도를 했는데 아직 증권사 잔고가 갱신 안 됐다면 환각을 막기 위해 정산을 다음으로 보류함
+                    if self.pnl_this_turn != 0 and abs(current_asset_cost - self.last_asset_cost) < 100:
+                        pass 
+                    else:
+                        expected_asset_cost = self.last_asset_cost + self.pnl_this_turn
+                        self.pnl_this_turn = 0.0 # 정산 완료 후 대기 비움
+                        
+                        deposit_delta = current_asset_cost - expected_asset_cost
+                        if deposit_delta > 10000 or deposit_delta < -10000: # 1만원 이상 변동 시 입출금으로 간주 (수수료 오차 제외)
+                            from database import get_db_connection
+                            conn = get_db_connection()
+                            conn.execute('UPDATE users SET initial_cash = initial_cash + ? WHERE id = ?', (deposit_delta, self.user_id))
+                            conn.commit()
+                            conn.close()
+                            
+                            if deposit_delta > 0:
+                                self.add_log(f"💰 [자율 원금 감지] 외부 입금 포착: +{deposit_delta:,.0f}원 -> 투자 원금 자동 상향.")
+                            else:
+                                self.add_log(f"💸 [자율 원금 감지] 외부 출금 포착: {deposit_delta:,.0f}원 -> 투자 원금 자동 하향.")
+                        
+                        self.last_asset_cost = current_asset_cost
+                else:
+                    self.last_asset_cost = current_asset_cost
                 
                 if total_equity >= 0:
                     target_core_pool = total_equity * self.core_ratio
@@ -1253,11 +1261,18 @@ class BotController:
         else:
             mock_total_asset = 0; mock_pnl = 0; mock_pnl_rt = 0
 
+        # 🚨 [UI 덮어쓰기 방지] DB에서 가장 최신화된 원금을 직접 꺼내서 웹 화면으로 쏴줍니다.
+        from database import get_db_connection
+        conn = get_db_connection()
+        row = conn.execute('SELECT initial_cash FROM users WHERE id = ?', (self.user_id,)).fetchone()
+        conn.close()
+        current_initial_cash = float(row['initial_cash']) if row else 10000000
+
         return {
             "is_running": self.is_running, "is_mock": self._is_mock, "has_keys": self.kis is not None,
             "logs": self.logs[-30:], "hot_sectors": self.hot_sectors, "num_satellites": self.num_satellites,
             "cores": cores_data, "satellites": satellites, "mock_total_asset": mock_total_asset,
-            "mock_pnl": mock_pnl, "mock_pnl_rt": mock_pnl_rt
+            "mock_pnl": mock_pnl, "mock_pnl_rt": mock_pnl_rt, "initial_cash": current_initial_cash
         }
 
     def refresh_websocket(self):

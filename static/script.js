@@ -248,6 +248,16 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // ── Main UI Update ──
     function updateUI(data) {
+        // 🚨 [UI 덮어쓰기 방지] 백엔드에서 갱신한 최신 원금을 실시간으로 자바스크립트 변수와 설정창 입력칸에 동기화
+        if (data.initial_cash !== undefined) {
+            USER_INVESTED_CAPITAL = data.initial_cash;
+            const inputEl = document.getElementById('initialCash');
+            // 사용자가 직접 타이핑 중이 아닐 때만 숫자를 자동으로 바꿔줍니다.
+            if (inputEl && document.activeElement !== inputEl) {
+                inputEl.value = data.initial_cash;
+            }
+        }
+
         // ══ 실전/모의 모드 구분 ══
         const isLive = (data.is_mock === false || data.is_mock === 0);
         const realSection = document.getElementById('real-account-section');
