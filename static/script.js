@@ -169,7 +169,8 @@ document.addEventListener('DOMContentLoaded', () => {
 
                     const pnlEl = document.getElementById('total-pnl');
                     if (pnlEl) {
-                        if (totalPurchase > 0) {
+                        // 🚨 [버그 수정 완료] totalPurchase 조건문을 지우고 USER_INVESTED_CAPITAL(원금) 기반으로 마이너스, 플러스 제한 없이 상시 출력되도록 전환
+                        if (USER_INVESTED_CAPITAL > 0) {
                             const sign = totalPnl >= 0 ? '+' : '';
                             // 한국 증권 컨벤션: 이익 빨간색, 손실 파란색
                             const color = totalPnl > 0 ? '#f85149' : (totalPnl < 0 ? '#58a6ff' : '#8b949e');
@@ -178,7 +179,7 @@ document.addEventListener('DOMContentLoaded', () => {
                             pnlEl.textContent = `수익: ${sign}${totalPnl.toLocaleString()}원 (${sign}${pnlRt.toFixed(2)}%)`;
                         } else {
                             pnlEl.style.color = '#8b949e';
-                            pnlEl.textContent = '수익: 매입 내역 없음';
+                            pnlEl.textContent = '수익: 원금 계산 대기 중';
                         }
                     }
 

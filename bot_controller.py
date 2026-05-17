@@ -190,6 +190,20 @@ class BotController:
                 real_purchase = float(real_balance.get('total_purchase', 0))
                 total_equity = real_cash + real_stock_value
                 
+                # 🚨 [신규 추가] 아침 9시 첫 구동 시 현재 계좌의 총 돈을 원금으로 자동 지정 (계좌 자동 역추적 시스템)
+                from database import get_db_connection
+                conn = get_db_connection()
+                row = conn.execute('SELECT initial_cash FROM users WHERE id = ?', (self.user_id,)).fetchone()
+                db_initial_cash = float(row['initial_cash']) if row else 10000000.0
+                conn.close()
+
+                if db_initial_cash == 10000000.0:  # DB 원금이 기본값인 경우 현재 계좌 상황에 맞춰 스냅샷 자동 초기화
+                    conn = get_db_connection()
+                    conn.execute('UPDATE users SET initial_cash = ? WHERE id = ?', (total_equity, self.user_id))
+                    conn.commit()
+                    conn.close()
+                    self.add_log(f"💰 [원금 자율 추적 개시] 현재 계좌의 총자산 {total_equity:,.0f}원을 시스템의 최초 원금으로 자동 동기화했습니다.")
+                
                 # 🚨 [신규 추가] 외부 입금(월급 등) 자동 추적 및 원금 실시간 보정 알고리즘
                 current_asset_cost = real_cash + real_purchase # 주가 변동성이 제거된 순수 자산 원가
                 if self.last_asset_cost is not None:
