@@ -175,6 +175,41 @@ class KisApi:
         acnt_prdt = self.account_no[8:] if len(self.account_no) > 8 else "01"
 
         url  = f"{self.base_url}/uapi/domestic-stock/v1/trading/order-cash"
+        body = {
+            "CANO":           acnt_no,
+            "ACNT_PRDT_CD":   acnt_prdt,
+            "PDNO":           stock_code,
+            "ORD_DVSN":       "03",   # 🟢 03 = 최유리지정가 (슬리피지 방어)
+            "ORD_QTY":        str(qty),
+            "ORD_UNPR":       "0",
+        }
+
+        try:
+            res = requests.post(url, headers=self._order_headers(tr_id), data=json.dumps(body), timeout=5)
+
+            if res.status_code == 200:
+                data = res.json()
+                if data.get('rt_cd') == '0':
+                    odno = data['output'].get('ODNO', '-')
+                    label = '매수' if side == 'BUY' else '매도'
+                    print(f"[KIS] {label} 주문 완료 | {stock_code} {qty}주 | 주문번호: {odno}")
+                    return data
+                else:
+                    msg_cd = data.get('msg_cd', '')
+                    print(f"[KIS] 주문 실패: {data.get('msg1', res.text)}")
+                    # 토큰 만료(EGW00123/EGW00121) → 재발급 후 1회 재시도
+                    if msg_cd in ('EGW00123', 'EGW00121'):
+                        print("[KIS] 토큰 만료 → 재발급 후 재시도")
+                        self.access_token = None
+                        self._ensure_token()
+                        return self._place_order(stock_code, qty, side)
+                    return None
+            else:
+                print(f"[KIS] 주문 통신 오류: {res.status_code} {res.text}")
+                return None
+        except Exception as e:
+            print(f"[KIS] 주문 요청 통신 시간 초과/오류: {e}")
+            return None
     
     def sell_panic_market_order(self, stock_code: str, qty: int):
         """서킷브레이커 발동 시 자산 수호를 위해 슬리피지를 감수하고 즉시 100% 전량 체결시키는 순수 시장가 매도"""
