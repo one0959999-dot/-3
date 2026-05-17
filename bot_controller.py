@@ -58,6 +58,7 @@ class BotController:
 
         # 월별 재선정 카운터
         self.last_screen_month = None
+        self.last_screen_date = None
 
         # 현재 강세 섹터 (대시보드 표시용)
         self.hot_sectors = []
@@ -93,13 +94,13 @@ class BotController:
         # 캐시 컨테이너 정의
         self.cached_balance = None
         self.ohlcv_cache = {}  # 💎 [신규 추가] 대량 트래픽 폭주 및 IP 차단 완벽 방어용 일봉 캐시 주머니
+        
+        # 🔒 [스레드 안전성] 딕셔너리 동시 접근으로 인한 런타임 에러 방지용 락
+        self.lock = threading.Lock()
             
         # 봇 정지 상태에서도 코어 종목 UI를 표시하기 위해 미리 로드
         self._init_dummy_cores()
         self._restore_state()
-        
-        # 🔒 [스레드 안전성] 딕셔너리 동시 접근으로 인한 런타임 에러 방지용 락
-        self.lock = threading.Lock()
         
         # 💎 [구조 개선] 봇 가동 여부와 무관하게 24시간 잔고를 수집하는 독립 영속 스레드 가동
         self.perpetual_thread = threading.Thread(target=self._perpetual_sync_loop, daemon=True)
@@ -121,7 +122,9 @@ class BotController:
                     # 2. 실전/모의 활성화된 전 종목 실시간 현재가 비동기 갱신
                     for core in self.core_positions:
                         cp = self.kis.get_current_price(core.ticker)
-                        if cp: core._last_price = cp
+                        if cp: 
+                            with self.lock:
+                                core._last_price = cp
                         time.sleep(0.05) # 💡 트래픽 폭주 방지 딜레이
                             
                     # 🔒 [스레드 보호 및 트래픽 방지] 락을 사용하여 에러를 막고, API 한도를 넘지 않게 대기시간 상향
@@ -190,7 +193,7 @@ class BotController:
                         sat.shares = q
                         sat.avg_price = p
             except Exception as e:
-                self.add_log(f"⚠️ 내부 장부 동기화 중 오류 발생: {e}")
+                print(f"⚠️ 내부 장부 동기화 중 오류 발생: {e}")
 
     def _init_dummy_cores(self):
         """정지 상태에서도 코어 종목을 화면에 표시하기 위해 초기 세팅 및 KIS 잔고 동기화 (비동기 처리로 딜레이 제거)"""
@@ -212,12 +215,12 @@ class BotController:
                             q = int(real_stock['shares'])
                             p = float(real_stock['purchase_price'])
                             for core in self.core_positions:
-                        if core.ticker == t:
-                            core.shares = q
-                            core.avg_price = p
-                            break
+                                if core.ticker == t:
+                                    core.shares = q
+                                    core.avg_price = p
+                                    break
                 except Exception as e:
-                    self.add_log(f"초기 잔고 동기화 실패: {e}")
+                    print(f"초기 잔고 동기화 실패: {e}")
             
             # API 응답 대기로 인한 화면 멈춤(딜레이)을 방지하기 위해 비동기 스레드로 실행합니다.
             threading.Thread(target=_async_init_balance, daemon=True).start()
@@ -233,7 +236,7 @@ class BotController:
         
         if self.kis:
             df = self.kis.get_ohlcv(ticker, "D")
-            if not df.empty and 'date' in df.columns:
+            if df is not None and not df.empty and 'date' in df.columns:
                 df['date'] = pd.to_datetime(df['date'])
                 # 실시간 가격 합성 연산의 왜곡을 방지하기 위해 오늘 장중 미완성 봉 데이터 행은 완벽하게 필터링 후 캐싱
                 df = df[df['date'].dt.date < datetime.now().date()].reset_index(drop=True)
@@ -313,8 +316,6 @@ class BotController:
             )
         else:
             self.telegram = None
-        
-        pass
             
         self._init_dummy_cores()
         self.add_log("🔑 변경된 API 키 및 계좌 설정이 시스템에 실시간 반영되었습니다.")
@@ -322,7 +323,6 @@ class BotController:
     def update_mode(self, is_mock, total_cash=10000000):
         """
         봇을 멈추지 않고 실전/모의 모드를 즉시 전환하며, 해당 모드의 독립 장부를 새로 로드합니다.
-        (더 이상 UI 모드 전환 시 호출되지 않으며, 시스템 안정성을 위해 파괴적인 리셋 기능을 무력화합니다.)
         """
         mode_name = "모의투자" if is_mock else "실전투자"
         self.add_log(f"ℹ️ UI 모드가 {mode_name} 화면으로 전환되었습니다. (현재 모니터링은 독립적으로 유지됩니다.)")
@@ -349,7 +349,6 @@ class BotController:
         self._send_telegram("🔍 위성 종목 & 전략 선정!\n" + "\n".join(log_lines))
 
         # 2. 자금 배분
-        # 💡 격리된 개별 인스턴스 자산 배분 비중 변수(self)를 사용합니다.
         core_budget = total_cash * self.core_ratio
         sat_budget  = total_cash * self.satellite_ratio
         per_sat     = sat_budget / self.num_satellites if self.num_satellites > 0 else 0
@@ -441,7 +440,7 @@ class BotController:
             }
             save_portfolio_state(self.user_id, state, self._is_mock)
         except Exception as e:
-            self.add_log(f"⚠️ 상태 저장 실패: {e}")
+            print(f"⚠️ 상태 저장 실패: {e}")
 
     def _restore_state(self):
         """DB에서 포트폴리오 상태 복구. 성공하면 True 반환."""
@@ -497,7 +496,7 @@ class BotController:
             self.add_log(f"✅ 복구 완료: 코어 {len(self.core_positions)}개, 위성 {len(self.satellite_positions)}개")
             return True
         except Exception as e:
-            self.add_log(f"⚠️ 상태 복구 실패 (새로 초기화): {e}")
+            print(f"⚠️ 상태 복구 실패 (새로 초기화): {e}")
             return False
 
     # ─── 트레이딩 잡 ───
@@ -552,48 +551,45 @@ class BotController:
                 core_name = core.name
                 core_ticker = core.ticker
             
-            core_val = core_shares * cp
-            self.add_log(
-                f"💎 {core_name} 현황: {core_shares}주 "
-                f"(floor: {core_floor_shares}주) "
-                f"× {cp:,}원 = {core_val:,}원"
-            )
+                core_val = core_shares * cp
+                self.add_log(
+                    f"💎 {core_name} 현황: {core_shares}주 "
+                    f"(floor: {core_floor_shares}주) "
+                    f"× {cp:,}원 = {core_val:,}원"
+                )
 
-            # 코어 매매 로직 (RSI) - 로컬 메모리 합성 차트 강제 바인딩 (Rate Limit 제로화)
-            try:
-                from strategy import get_rsi_signal
-                extended_df = self._get_extended_ohlcv(core_ticker, cp)
-                core_signal, _, core_rsi = get_rsi_signal(core_ticker, kis_api=self.kis, df=extended_df)
+                # 코어 매매 로직 (RSI) - 로컬 메모리 합성 차트 강제 바인딩 (Rate Limit 제로화)
+                try:
+                    from strategy import get_rsi_signal
+                    extended_df = self._get_extended_ohlcv(core_ticker, cp)
+                    core_signal, _, core_rsi = get_rsi_signal(core_ticker, kis_api=self.kis, df=extended_df)
 
-                if core_signal == 'BUY' and core_cash >= cp:
-                    qty = int(core_cash // cp)
-                    if qty > 0:
-                        if self.kis:
-                            self.kis.buy_market_order(core_ticker, qty)
-                        with self.lock:
-                            actual_qty = core.buy(cp)
-                        msg = f"💎 {core_name} 매수 {actual_qty}주 @ {cp:,}원 (RSI:{core_rsi:.1f}) → 총 {core_shares + actual_qty}주"
-                        self.add_log(msg)
-                        self._send_telegram(msg)
-
-                elif core_signal == 'SELL' and core_shares > core_floor_shares:
-                    sellable = core_shares - core_floor_shares
-                    if sellable > 0:
-                        if self.kis:
-                            self.kis.sell_market_order(core_ticker, sellable)
-                        with self.lock:
-                            qty, profit = core.sell(cp)
+                    if core_signal == 'BUY' and core_cash >= cp:
+                        qty = int(core_cash // cp)
                         if qty > 0:
-                            msg = f"💎 {core_name} 익절 매도 {qty}주 @ {cp:,}원 (RSI:{core_rsi:.1f}) | 이익 {profit:,.0f}원"
+                            if self.kis:
+                                self.kis.buy_market_order(core_ticker, qty)
+                            actual_qty = core.buy(cp)
+                            msg = f"💎 {core_name} 매수 {actual_qty}주 @ {cp:,}원 (RSI:{core_rsi:.1f}) → 총 {core_shares + actual_qty}주"
                             self.add_log(msg)
-                            with self.lock:
+                            self._send_telegram(msg)
+
+                    elif core_signal == 'SELL' and core_shares > core_floor_shares:
+                        sellable = core_shares - core_floor_shares
+                        if sellable > 0:
+                            if self.kis:
+                                self.kis.sell_market_order(core_ticker, sellable)
+                            qty, profit = core.sell(cp)
+                            if qty > 0:
+                                msg = f"💎 {core_name} 익절 매도 {qty}주 @ {cp:,}원 (RSI:{core_rsi:.1f}) | 이익 {profit:,.0f}원"
+                                self.add_log(msg)
                                 today_str = now.strftime('%Y-%m-%d')
                                 self.daily_pnl[today_str] = self.daily_pnl.get(today_str, 0) + profit
-                            self._send_telegram(msg)
-                else:
-                    self.add_log(f"  [{core_name}] HOLD (RSI:{core_rsi:.1f}, floor:{core_floor_shares}주 보호)")
-            except Exception as e:
-                self.add_log(f"  [{core_name}] 점검 중 오류: {str(e)}")
+                                self._send_telegram(msg)
+                    else:
+                        self.add_log(f"  [{core_name}] HOLD (RSI:{core_rsi:.1f}, floor:{core_floor_shares}주 보호)")
+                except Exception as e:
+                    self.add_log(f"  [{core_name}] 점검 중 오류: {str(e)}")
 
 
         # ── 위성 신호 점검 (종목별 최적 전략 적용) ──
@@ -671,7 +667,6 @@ class BotController:
                                 self.kis.sell_market_order(ticker, pos_shares)
                             with self.lock:
                                 qty, profit = pos.sell(price)
-                            from database import log_trade_journal
                             log_trade_journal(self.user_id, ticker, pos_name, 'SELL', price, strat_name, reason, profit=profit)
                             self._send_telegram(f"🎯 [{pos_name}] 트레일링 스탑 익절 완료! 손익: {profit:+,.0f}원")
                             with self.lock:
@@ -690,7 +685,6 @@ class BotController:
                             qty, profit = pos.sell(price)
                         msg = f"💥 [{pos_name}] 기계적 손절 완료: {qty}주 @ {price:,}원 | 손익: {profit:+,.0f}원"
                         self.add_log(msg)
-                        from database import log_trade_journal
                         log_trade_journal(self.user_id, ticker, pos_name, 'SELL', price, strat_name, reason, profit=profit)
                         self._send_telegram(msg)
                         with self.lock:
@@ -705,7 +699,6 @@ class BotController:
 
                     reason = "조건 충족 자동 매수"
                     if self.gemini:
-                        from database import get_recent_trades, load_ai_rules
                         recent_logs = get_recent_trades(self.user_id, ticker, limit=5)
                         custom_rules = load_ai_rules(self.user_id)
                         
@@ -734,7 +727,6 @@ class BotController:
                         if actual_qty > 0:
                             msg = f"📈 [{pos_name}] AI 매수 승인: {actual_qty}주 @ {price:,}원 [{strat_name} → {ind_val:.1f}]"
                             self.add_log(msg)
-                            from database import log_trade_journal
                             log_trade_journal(self.user_id, ticker, pos_name, 'BUY', price, strat_name, reason)
                             self._send_telegram(msg)
 
@@ -742,7 +734,6 @@ class BotController:
                 elif signal == 'SELL' and pos_shares > 0:
                     reason = "조건 충족 자동 매도"
                     if self.gemini:
-                        from database import get_recent_trades, load_ai_rules
                         recent_logs = get_recent_trades(self.user_id, ticker, limit=5)
                         custom_rules = load_ai_rules(self.user_id)
                         
@@ -769,7 +760,6 @@ class BotController:
                     msg = (f"📉 [{pos_name}] AI 매도 승인: {qty}주 @ {price:,}원 "
                            f"| 손익: {profit:+,.0f}원 [{strat_name} → {ind_val:.1f}]")
                     self.add_log(msg)
-                    from database import log_trade_journal
                     log_trade_journal(self.user_id, ticker, pos_name, 'SELL', price, strat_name, reason, profit=profit)
                     self._send_telegram(msg)
 
@@ -779,7 +769,6 @@ class BotController:
 
                     # 위성 익절 수익금 50% 코어 재투자 원자적 처리 안정화
                     if profit > 0:
-                        from strategy import REINVEST_RATIO
                         with self.lock:
                             if self.core_positions and pos.cash >= profit * REINVEST_RATIO:
                                 reinvest = profit * REINVEST_RATIO
@@ -813,13 +802,18 @@ class BotController:
             from pykrx import stock as krx_stock
             from datetime import timedelta
             
-            # 1. 기존 종목 점검
-            for ticker, pos in list(self.satellite_positions.items()):
+            # 1. 기존 종목 점검 (안전한 스레드 순회를 위해 복사 장부 생성)
+            with self.lock:
+                sat_items = list(self.satellite_positions.items())
+            
+            for ticker, pos in sat_items:
                 if pos.shares == 0:
                     freed_cash += pos.cash
-                    del self.satellite_positions[ticker]
-                    if ticker in self.satellite_strategies:
-                        del self.satellite_strategies[ticker]
+                    with self.lock:
+                        if ticker in self.satellite_positions:
+                            del self.satellite_positions[ticker]
+                        if ticker in self.satellite_strategies:
+                            del self.satellite_strategies[ticker]
                     self.add_log(f"🔄 위성 교체 (미매수 대기 제거): {pos.name}")
                     continue
                     
@@ -854,21 +848,25 @@ class BotController:
                     else:
                         if self.kis:
                             self.kis.sell_market_order(ticker, pos.shares)
-                        qty, profit = pos.sell(price)
+                        with self.lock:
+                            qty, profit = pos.sell(price)
                         
                         if profit > 0 and self.core_positions:
                             reinvest = profit * REINVEST_RATIO
-                            if pos.cash >= reinvest:
-                                pos.cash -= reinvest
-                                split = reinvest / len(self.core_positions)
-                                for core in self.core_positions:
-                                    core.cash += split
-                                self.add_log(f"🔄 위성 수익 {profit:,.0f}원 중 {reinvest:,.0f}원 코어 편입")
+                            with self.lock:
+                                if pos.cash >= reinvest:
+                                    pos.cash -= reinvest
+                                    split = reinvest / len(self.core_positions)
+                                    for core in self.core_positions:
+                                        core.cash += split
+                                    self.add_log(f"🔄 위성 수익 {profit:,.0f}원 중 {reinvest:,.0f}원 코어 편입")
                                 
                         freed_cash += pos.cash
-                        del self.satellite_positions[ticker]
-                        if ticker in self.satellite_strategies:
-                            del self.satellite_strategies[ticker]
+                        with self.lock:
+                            if ticker in self.satellite_positions:
+                                del self.satellite_positions[ticker]
+                            if ticker in self.satellite_strategies:
+                                del self.satellite_strategies[ticker]
                         self.add_log(f"🔄 위성 매도 및 교체: {pos.name} ({profit_rt:+.2f}%)")
 
             n_needed = self.num_satellites - len(keep_tickers)
@@ -882,25 +880,22 @@ class BotController:
             is_bull_market = True
             try:
                 if self.kis:
-                    # 💡 [고도화 반영] 코스피("0001")와 코스닥("2001") 지수 데이터를 동시에 확보합니다.
                     kospi_df = self.kis.get_ohlcv("0001", "D")
                     kosdaq_df = self.kis.get_ohlcv("2001", "D")
                     
                     kospi_bull = True
-                    if not kospi_df.empty and len(kospi_df) >= 20:
+                    if kospi_df is not None and not kospi_df.empty and len(kospi_df) >= 20 and 'close' in kospi_df.columns:
                         kospi_bull = kospi_df['close'].iloc[-1] >= kospi_df['close'].rolling(20).mean().iloc[-1]
                         
                     kosdaq_bull = True
-                    if not kosdaq_df.empty and len(kosdaq_df) >= 20:
+                    if kosdaq_df is not None and not kosdaq_df.empty and len(kosdaq_df) >= 20 and 'close' in kosdaq_df.columns:
                         kosdaq_bull = kosdaq_df['close'].iloc[-1] >= kosdaq_df['close'].rolling(20).mean().iloc[-1]
                     
-                    # 🛡️ 안전 제일주의: 코스피나 코스닥 중 하나라도 20일선 아래로 깨지면 시장 전체를 위험 국면으로 판별합니다.
                     is_bull_market = kospi_bull and kosdaq_bull
             except Exception as e:
                 self.add_log(f"⚠️ 시장 지수 판별 중 오류 발생(기본 상승장 간주): {e}")
 
-            # 🟢 [신규 추가 코드] 거시 시장 국면에 따른 동적 자산 배분 비율 조정
-            # 💡 전역 변수 공유 간섭 문제를 해결하기 위해 개별 인스턴스 격리 변수(self)를 조작합니다.
+            # 🟢 거시 시장 국면에 따른 동적 자산 배분 비율 조정
             if not is_bull_market:
                 self.core_ratio = 0.60       
                 self.satellite_ratio = 0.40  
@@ -956,14 +951,15 @@ class BotController:
                     self.satellite_positions[ticker].cash = per_budget
                     
             added_lines = []
-            for c in new_info:
-                self.satellite_positions[c['ticker']] = Position(c['ticker'], c['name'], per_budget)
-                self.satellite_strategies[c['ticker']] = c['strategy_name']
-                self.add_log(f"✨ 새 위성 편입: {c['name']} → [{c['strategy_name']}] {c['return_pct']:+.1f}%")
-                added_lines.append(f"  {c['name']} → [{c['strategy_name']}]")
-                
-            keep_info = [c for c in self.satellite_info if c['ticker'] in keep_tickers]
-            self.satellite_info = keep_info + new_info
+            with self.lock:
+                for c in new_info:
+                    self.satellite_positions[c['ticker']] = Position(c['ticker'], c['name'], per_budget)
+                    self.satellite_strategies[c['ticker']] = c['strategy_name']
+                    self.add_log(f"✨ 새 위성 편입: {c['name']} → [{c['strategy_name']}] {c['return_pct']:+.1f}%")
+                    added_lines.append(f"  {c['name']} → [{c['strategy_name']}]")
+                    
+                keep_info = [c for c in self.satellite_info if c['ticker'] in keep_tickers]
+                self.satellite_info = keep_info + new_info
 
             msg = f"📅 데일리 위성 리밸런싱 완료! (유지: {len(keep_tickers)} / 교체: {n_needed})\n" + "\n".join(added_lines)
             self._send_telegram(msg)
@@ -1034,7 +1030,6 @@ class BotController:
         job_thread.start()
 
     def _run_loop(self, total_cash):
-        import schedule
         self.scheduler = schedule.Scheduler()
 
         restored = self._restore_state()
@@ -1051,7 +1046,6 @@ class BotController:
         self.trading_job()  
         
         if getattr(self, 'last_screen_date', None) != datetime.now().date():
-            prefix = 'mock_' if self._is_mock else 'real_'
             now_time_str = datetime.now().strftime('%H:%M')
             if "09:00" <= now_time_str <= "15:30":
                 self.add_log("오늘 날짜의 위성 리밸런싱 기록이 없어 즉시 실행합니다...")
