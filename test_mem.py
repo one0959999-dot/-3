@@ -2,7 +2,7 @@ import json
 import sqlite3
 import sys
 
-conn = sqlite3.connect('/home/ubuntu/lassi_bot/users.db')
+conn = sqlite3.connect('/home/ubuntu/lassi_bot/lassi.db')
 c = conn.cursor()
 
 # Get the last log message

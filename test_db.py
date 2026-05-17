@@ -3,7 +3,7 @@ import json
 import os  # 1. os 모듈을 추가합니다.
 
 # 2. 고정된 경로 대신 파일 위치 기준 경로를 사용합니다.
-db_path = os.path.join(os.path.dirname(__file__), 'users.db')
+db_path = os.path.join(os.path.dirname(__file__), 'lassi.db')
 conn = sqlite3.connect(db_path)
 
 # 3. 커서 생성 (이 줄이 빠져서 에러가 났던 것입니다!)

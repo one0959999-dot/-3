@@ -1,5 +1,9 @@
-import json, sqlite3
-conn=sqlite3.connect('users.db')
+import json, sqlite3, os
+
+# 🎉 수정 후: 본진 데이터베이스인 lassi.db 파일명을 절대 경로로 안전하게 정조준합니다.
+db_path = os.path.join(os.path.dirname(__file__), 'lassi.db')
+conn = sqlite3.connect(db_path)
+
 c=conn.cursor()
 c.execute('SELECT state_json FROM bot_states WHERE user_id=1')
 row=c.fetchone()
