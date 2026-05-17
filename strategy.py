@@ -40,10 +40,6 @@ def get_recent_prices(ticker, days=30):
 
 
 def get_rsi_signal(ticker):
-    """
-    RSI(9) 기반 현재 매매 신호 반환
-    Returns: ('BUY' | 'SELL' | 'HOLD', current_price, rsi_value)
-    """
     prices = get_recent_prices(ticker, days=30)
     if len(prices) < RSI_PERIOD + 2:
         return 'HOLD', 0, 0
@@ -53,14 +49,17 @@ def get_rsi_signal(ticker):
     prev_rsi    = rsi_series.iloc[-2]
     price       = int(prices.iloc[-1])
 
+    # [수정 후] 30 선을 아래에서 위로 뚫고 올라올 때만 매수!
     if prev_rsi < RSI_OVERSOLD and current_rsi >= RSI_OVERSOLD:
         return 'BUY', price, current_rsi
     elif prev_rsi > RSI_OVERBOUGHT and current_rsi <= RSI_OVERBOUGHT:
         return 'SELL', price, current_rsi
-    elif current_rsi < RSI_OVERSOLD:
-        return 'BUY', price, current_rsi
-    elif current_rsi > RSI_OVERBOUGHT:
-        return 'SELL', price, current_rsi
+    
+    # ❌ 아래 두 줄(떨어지는 칼날 매수, 맹목적 과매수 매도)은 삭제하거나 주석 처리합니다.
+    # elif current_rsi < RSI_OVERSOLD:
+    #     return 'BUY', price, current_rsi
+    # elif current_rsi > RSI_OVERBOUGHT:
+    #     return 'SELL', price, current_rsi
 
     return 'HOLD', price, current_rsi
 
@@ -106,12 +105,16 @@ def get_signal_by_strategy(ticker, strategy_name):
         return 'HOLD'
     def _thresh(ind, lo, hi):
         cur, prev = ind.iloc[-1], ind.iloc[-2]
+        
+        # [수정 후] 기준선을 아래에서 위로 돌파(반등)할 때만 매수, 위에서 아래로 깨질 때만 매도
         if prev < lo and cur >= lo: return 'BUY', cur
         if prev > hi and cur <= hi: return 'SELL', cur
-        if cur < lo: return 'BUY', cur
-        if cur > hi: return 'SELL', cur
+        
+        # ❌ 아래 두 줄 역시 과매도/과매수 구간에서 무조건 신호를 쏘므로 주석 처리합니다.
+        # if cur < lo: return 'BUY', cur
+        # if cur > hi: return 'SELL', cur
+        
         return 'HOLD', cur
-
     try:
         sn = strategy_name
         if "RSI(9)" in sn:
