@@ -248,18 +248,19 @@ class KisApi:
             "tr_id": tr_id,
         }
         
+        # 🚨 [치명적 버그 수정] KIS 실전/모의 트레이딩 잔고 API는 파라미터 키명이 무조건 '소문자'여야 작동합니다.
         params = {
-            "CANO": acnt_no,
-            "ACNT_PRDT_CD": acnt_prdt,
-            "AFHR_FLPR_YN": "N",
-            "OFL_YN": "N",
-            "INQR_DVSN": "02",
-            "UNPR_DVSN": "01",
-            "FUND_STTL_ICLD_YN": "N",
-            "FNCG_AMT_AUTO_RDPT_YN": "N",
-            "PRCS_DVSN": "00",
-            "CTX_AREA_FK100": "",
-            "CTX_AREA_NK100": ""
+            "cano": acnt_no,
+            "acnt_prdt_cd": acnt_prdt,
+            "afhr_flpr_yn": "N",
+            "ofl_yn": "N",
+            "inqr_dvsn": "02",
+            "unpr_dvsn": "01",
+            "fund_sttl_icld_yn": "N",
+            "fncg_amt_auto_rdpt_yn": "N",
+            "prcs_dvsn": "00",
+            "ctx_area_fk100": "",
+            "ctx_area_nk100": ""
         }
         
         try:
