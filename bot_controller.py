@@ -1026,6 +1026,13 @@ class BotController:
             )
             self.thread.start()
             update_bot_status(self.user_id, True)
+            
+            # 🟢 [추가] 봇 시작 시 텔레그램으로 즉각 보고
+            mode_str = "모의투자" if self._is_mock else "실전투자"
+            self.add_log(f"▶️ [{mode_str}] 매매 봇이 시작되었습니다.")
+            if self.telegram:
+                self.telegram.send_message(f"▶️ [{mode_str}] 봇 감시를 시작합니다.\n- 현재 모드에 맞춰 종목 감시 및 자동 매매가 활성화되었습니다.")
+                
             return True
         return False
 
@@ -1035,7 +1042,11 @@ class BotController:
             update_bot_status(self.user_id, False)
             if self.thread:
                 self.thread.join(timeout=3)
-            self.add_log("봇이 정지되었습니다.")
+                
+            # 🟢 [추가] 봇 정지 시 텔레그램으로 즉각 보고
+            self.add_log("⏸️ 매매 봇이 일시 정지되었습니다.")
+            if self.telegram:
+                self.telegram.send_message("⏸️ 봇 감시가 일시 정지되었습니다.\n- 대기 상태로 전환되어 매수/매도가 중단됩니다.")
 
     # ─── 대시보드 상태 반환 ───
     def get_pnl_data(self):

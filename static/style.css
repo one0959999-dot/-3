@@ -1342,3 +1342,59 @@ body.theme-warm-beige .sat-adj-btn:hover {
     background: #e2e8f0 !important;
     border-color: #94a3b8 !important;
 }
+
+/* 11. 🛠️ 팝업창(모달: 코어 설정, 계좌 설정, 리포트 등) 모의투자 라이트 테마 동기화 */
+
+/* 모달 전체 배경을 하얀색으로 밝게 변경 */
+body.theme-warm-beige .modal-content {
+    background: #ffffff !important;
+    border: 1px solid #cbd5e1 !important;
+    box-shadow: 0 10px 40px rgba(0, 0, 0, 0.1) !important;
+}
+
+/* 우측 상단 닫기(X) 버튼 색상 */
+body.theme-warm-beige .close-modal {
+    color: #64748b !important;
+}
+
+body.theme-warm-beige .close-modal:hover {
+    color: #0f172a !important;
+}
+
+/* 입력칸(코어 검색칸, API 설정칸 등) 밝은 톤으로 통일 */
+body.theme-warm-beige .settings-group input,
+body.theme-warm-beige .core-search-box input {
+    background: #f8fafc !important;
+    border: 1px solid #cbd5e1 !important;
+    color: #0f172a !important;
+    -webkit-text-fill-color: #0f172a !important;
+}
+
+/* 코어 주식 검색 결과 리스트 마우스 오버(Hover) 효과 밝게 */
+body.theme-warm-beige .search-result-item:hover {
+    background: #f1f5f9 !important;
+}
+
+/* 추가/검색/저장 버튼은 텍스트가 잘 보이도록 강제 흰색 지정 */
+body.theme-warm-beige .btn-save-keys,
+body.theme-warm-beige .core-search-box button,
+body.theme-warm-beige .btn-add-core {
+    color: #ffffff !important;
+    -webkit-text-fill-color: #ffffff !important;
+    font-weight: 700 !important;
+}
+
+/* 코어 종목으로 선택된 '태그' 배경 및 글자색 보정 (연두색 테마) */
+body.theme-warm-beige .core-tag {
+    background: #ecfdf5 !important;
+    border: 1px solid #10b981 !important;
+    color: #047857 !important;
+    -webkit-text-fill-color: #047857 !important;
+}
+
+/* 일일 시장 분석 리포트 내용 글자색 블랙 톤으로 고정 */
+body.theme-warm-beige #report-content,
+body.theme-warm-beige #strat-desc {
+    color: #334155 !important;
+    -webkit-text-fill-color: #334155 !important;
+}
