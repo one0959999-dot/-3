@@ -541,6 +541,29 @@ class BotController:
         else:
             self.add_log(f"--- 🎯 골든 타임 매수/매도 전면 점검 ({current_time_str}) ---")
 
+        # 🦅 [신규 알파 로직] 관망 및 저점 탐색 모드 (Crisis Mode) 체크
+        if getattr(self, 'is_crisis_mode', False):
+            if now.minute % 10 == 0:
+                self.add_log("🦅 [관망 모드 유지 중] 시장의 진정이 확인될 때까지 현금을 보유하고 저점을 탐색합니다.")
+            
+            # KOSPI 지수(0001)를 통해 바닥 반등 여부 확인
+            if self.kis:
+                kospi_cp = self.kis.get_current_price("0001")
+                if kospi_cp:
+                    extended_df = self._get_extended_ohlcv("0001", kospi_cp)
+                    if not extended_df.empty and len(extended_df) >= 5:
+                        c = extended_df['close']
+                        # 단기 5일 이평선 강돌파를 '저점 반등' 시그널로 판단
+                        ema_5 = c.ewm(span=5, adjust=False).mean().iloc[-1]
+                        
+                        if kospi_cp > ema_5:
+                            msg = "🚀 [저점 반등 확인!] KOSPI 지수가 단기 이평선을 회복했습니다. 관망 모드를 해제하고 확보된 현금으로 딥(Dip) 매수를 재개합니다."
+                            self.add_log(msg)
+                            self._send_telegram(msg)
+                            self.is_crisis_mode = False  # 관망 모드 해제, 정상 매매 루프 재진입
+                            self.peak_total_asset = 0    # MDD 고점 초기화
+            return  # 위기 모드 중에는 아래의 개별 종목 매매(BUY/SELL) 로직을 실행하지 않음
+
         # 증권사 계좌 실제 현금 잔고 동기화 (영속 스레드와 상호 간섭 최소화)
         if self.kis:
             try:
@@ -549,7 +572,7 @@ class BotController:
                     self._sync_internal_balances(real_balance)
                     self.add_log("🔄 [잔고 동기화 완료] 실제 계좌의 실시간 자산 데이터가 가상 장부에 연동되었습니다.")
                     
-                    # 🚨 [신규 알파 로직] 계좌 단위 서킷브레이커 (MDD -10% 하락 시 전면 정지)
+                    # 🚨 [신규 알파 로직] 계좌 단위 서킷브레이커 (MDD -10% 하락 시 전량 매도 후 관망 모드 진입)
                     current_total_asset = float(real_balance.get('total_cash', 0)) + float(real_balance.get('total_value', 0))
                     
                     if not hasattr(self, 'peak_total_asset'):
@@ -560,10 +583,29 @@ class BotController:
                     if getattr(self, 'peak_total_asset', 0) > 0:
                         mdd = ((current_total_asset / self.peak_total_asset) - 1) * 100
                         if mdd <= -10.0:
-                            msg = f"💥 [서킷브레이커 발동] 전체 계좌가 고점 대비 {mdd:.2f}% 폭락했습니다! 자산 보호를 위해 봇 감시를 영구 중지합니다."
+                            msg = f"💥 [서킷브레이커 발동] 계좌 MDD {mdd:.2f}% 폭락! 봇을 끄지 않고, 전량 현금화 후 '관망(저점 탐색) 모드'로 전환합니다."
                             self.add_log(msg)
                             self._send_telegram(msg)
-                            self.stop() # 봇 완전 정지
+                            
+                            # 🛡️ 1. 코어 종목 전량 긴급 매도
+                            with self.lock:
+                                safe_core_positions = list(self.core_positions)
+                            for core in safe_core_positions:
+                                if core.shares > 0:
+                                    self.kis.sell_market_order(core.ticker, core.shares)
+                                    self.add_log(f"   🔥 [긴급 청산] 코어 종목 {core.name} {core.shares}주 매도 접수 완료")
+                                    
+                            # 🛡️ 2. 위성 종목 전량 긴급 매도
+                            with self.lock:
+                                safe_satellite_items = list(self.satellite_positions.items())
+                            for ticker, pos in safe_satellite_items:
+                                if pos.shares > 0:
+                                    self.kis.sell_market_order(ticker, pos.shares)
+                                    self.add_log(f"   🔥 [긴급 청산] 위성 종목 {pos.name} {pos.shares}주 매도 접수 완료")
+                            
+                            # 🛡️ 3. 봇을 끄지 않고 위기 모드 플래그 ON
+                            self._send_telegram("🚨 [청산 및 관망 시작] 모든 주식을 매도하여 100% 현금을 확보했습니다. 시장이 바닥을 칠 때까지 매수를 멈추고 대기합니다.")
+                            self.is_crisis_mode = True 
                             return
             except Exception as e:
                 self.add_log(f"⚠️ [잔고 동기화 실패] 증권사 잔고 로드 실패 (안전을 위해 기존 데이터로 대치): {e}")
