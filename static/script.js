@@ -405,6 +405,9 @@ document.addEventListener('DOMContentLoaded', () => {
                 const sharesCell = isHolding ? `${s.shares.toLocaleString()}주` : `<span style="color:#64748b">-</span>`;
                 const valueCell = isHolding ? `${(s.value || 0).toLocaleString()}원` : `<span style="color:#64748b">-</span>`;
 
+                // 🟢 [신규 추가] 백엔드에서 전달받은 최고가(max_price)를 포맷팅합니다.
+                const maxPriceStr = (s.max_price && s.max_price > 0) ? `${s.max_price.toLocaleString()}원` : '갱신 대기';
+
                 satHtmlBuffer += `
                     <tr>
                         <td><b>${s.name}</b>
@@ -412,7 +415,10 @@ document.addEventListener('DOMContentLoaded', () => {
                         </td>
                         <td>${stratBadge}</td>
                         <td>${sharesCell}</td>
-                        <td>${valueCell}</td>
+                        <td>
+                            <div>${valueCell}</div>
+                            ${isHolding ? `<div style="font-size:0.75rem; color:#f59e0b; margin-top:3px;">고점: ${maxPriceStr}</div>` : ''}
+                        </td>
                         <td>${statusBadge}</td>
                     </tr>`;
             });

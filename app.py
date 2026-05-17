@@ -259,18 +259,37 @@ def set_mode():
     data = request.json
     is_mock = int(data.get('is_mock', 1))
     
-    # 1. DB 업데이트
+    # 1. DB 업데이트 및 최신 데이터 로드
     from database import get_db_connection
     conn = get_db_connection()
     conn.execute('UPDATE users SET is_mock = ? WHERE id = ?', (is_mock, current_user.id))
     conn.commit()
+    user_data = conn.execute('SELECT * FROM users WHERE id = ?', (current_user.id,)).fetchone()
     conn.close()
     
-    # [핵심 수정] 로그인 세션 메모리(current_user.data)의 모드 상태를 즉시 변경해 줍니다.
-    current_user.data['is_mock'] = is_mock
+    # 2. 로그인 세션 메모리에 변경된 DB 데이터를 통째로 덮어씌워 완벽 동기화합니다.
+    for k, v in dict(user_data).items():
+        current_user.data[k] = v
     
-    # 새롭게 전환된 모드에 맞는 쌍둥이 봇 인스턴스를 백엔드 메모리에 깨끗하게 생성 및 복구해 둡니다.
-    get_current_bot()
+    # 3. 새롭게 전환된 봇 인스턴스를 가져오고 모드 전환 및 최신 API 키를 즉시 주입합니다.
+    bot = get_current_bot()
+    if bot:
+        bot.update_mode(bool(is_mock))
+        prefix = 'mock_' if is_mock else 'real_'
+        bot.reload_api_keys(
+            kis_config={
+                "app_key": current_user.data.get(f'{prefix}app_key'),
+                "app_secret": current_user.data.get(f'{prefix}app_secret'),
+                "account_no": current_user.data.get(f'{prefix}account_no'),
+                "is_mock": bool(is_mock)
+            },
+            telegram_config={
+                "token": current_user.data.get('telegram_token'),
+                "chat_id": current_user.data.get('telegram_chat_id')
+            },
+            gemini_config={"api_key": current_user.data.get('gemini_api_key')},
+            core_stocks=current_user.data.get('core_stocks')
+        )
         
     return jsonify({"status": "success", "is_mock": is_mock})
 
