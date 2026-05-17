@@ -935,7 +935,8 @@ class BotController:
                     {'ticker': '261240', 'name': 'KODEX 미국달러선물', 'strategy_name': 'EMA 5/20', 'return_pct': 0.0},
                     {'ticker': '411060', 'name': 'ACE KRX금현물', 'strategy_name': 'EMA 5/20', 'return_pct': 0.0},
                     {'ticker': '114800', 'name': 'KODEX 인버스', 'strategy_name': 'EMA 5/20', 'return_pct': 0.0},
-                    {'ticker': '251340', 'name': 'KODEX 코스닥150선물인버스', 'strategy_name': 'EMA 5/20', 'return_pct': 0.0}
+                    {'ticker': '251340', 'name': 'KODEX 코스닥150선물인버스', 'strategy_name': 'EMA 5/20', 'return_pct': 0.0},
+                    {'ticker': '329750', 'name': 'TIGER 미국채10년선물', 'strategy_name': 'EMA 5/20', 'return_pct': 0.0} # 🌟 기관급 방어구 추가
                 ]
                 
                 for etf in defensive_etfs:
