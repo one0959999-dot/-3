@@ -330,7 +330,7 @@
 
     <script>
         // 전역 변수로 유저의 누적 투자원금을 설정합니다. (봇이 자동 갱신할 수 있도록 let 사용)
-        let USER_INVESTED_CAPITAL = {{ user.data.initial_cash or 10000000 }};
+        let USER_INVESTED_CAPITAL = Number("{{ user.data.initial_cash or 10000000 }}");
     </script>
 </head>
 
