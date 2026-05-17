@@ -1151,28 +1151,66 @@ header {
    [테마 클래스] 모의투자 모드 (따뜻한 베이지)
    ========================================= */
 
-/* 전체 배경 및 텍스트 색상 */
+/* 1. CSS 변수 자체를 어두운 톤으로 덮어씌워 전체 텍스트 색상을 검은색 계열로 강제 변환 */
 body.theme-warm-beige {
-    background-color: #f4efe6 !important;
-    /* 부드러운 베이지 배경색 */
-    color: #2c3e50 !important;
-    /* 시인성 높은 다크 그레이 글자색 */
+    --bg-primary: #f4efe6;
+    --bg-secondary: #e8dfd1;
+    --card-bg: rgba(255, 255, 255, 0.85);
+    --card-border: rgba(0, 0, 0, 0.15);
+    --text-primary: #0f172a !important;
+    /* 아주 짙은 검은색/네이비 */
+    --text-secondary: #475569 !important;
+    /* 짙은 회색 */
+
+    background-color: var(--bg-primary) !important;
+    color: var(--text-primary) !important;
 }
 
-/* 🟢 [가독성 개선] 모의투자 모드일 때, 코어/위성 카드 테마 오버라이드 */
+/* 2. 밝은 그라데이션이 들어가 있어 안 보이던 메인 타이틀과 숫자 값들을 블랙으로 고정 */
+body.theme-warm-beige .title-area h1,
+body.theme-warm-beige .card-value.highlight {
+    background: none !important;
+    -webkit-text-fill-color: #0f172a !important;
+    color: #0f172a !important;
+}
+
+/* 3. 각종 제목(h2, h3), 로그, 카드 숫자 등 하드코딩된 텍스트들을 블랙 톤으로 강제 변경 */
+body.theme-warm-beige h1,
+body.theme-warm-beige h2,
+body.theme-warm-beige h3,
+body.theme-warm-beige .card-value,
+body.theme-warm-beige .satellite-card h2,
+body.theme-warm-beige .chart-card h2,
+body.theme-warm-beige .mini-log-entry {
+    color: #0f172a !important;
+}
+
+/* 4. 카드 배경 및 테두리 가독성 최적화 */
 body.theme-warm-beige .glass-card,
 body.theme-warm-beige .info-card {
     background: rgba(255, 255, 255, 0.95) !important;
-    border-color: #e4dcd0 !important;
-    color: #2c3e50 !important;
-    box-shadow: 0 4px 20px rgba(165, 150, 130, 0.15) !important;
+    border-color: #d6d3d1 !important;
+    color: #0f172a !important;
+    box-shadow: 0 4px 20px rgba(165, 150, 130, 0.2) !important;
 }
 
-/* 테이블 헤더 및 셀 텍스트 색상 최적화 */
-body.theme-warm-beige th {
-    color: #7f8c8d !important;
+/* 5. 위성 종목 테이블 및 보유 잔고 테이블의 헤더/데이터 셀 블랙 톤 최적화 */
+body.theme-warm-beige th,
+body.theme-warm-beige .sat-table th {
+    color: #334155 !important;
+    font-weight: 700 !important;
+    border-bottom: 2px solid #cbd5e1 !important;
 }
 
-body.theme-warm-beige td {
-    color: #2c3e50 !important;
+body.theme-warm-beige td,
+body.theme-warm-beige .sat-table td {
+    color: #0f172a !important;
+    border-bottom: 1px solid #e2e8f0 !important;
+}
+
+/* 6. 서브텍스트 및 회색 글씨(muted) 가독성 확보 */
+body.theme-warm-beige .card-subvalue,
+body.theme-warm-beige .muted-center,
+body.theme-warm-beige .mini-log-entry .log-time {
+    color: #475569 !important;
 }
