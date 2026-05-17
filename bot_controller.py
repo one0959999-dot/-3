@@ -87,8 +87,12 @@ class BotController:
         self.cached_balance = None
             
         # 봇 정지 상태에서도 코어 종목 UI를 표시하기 위해 미리 로드
+        # 봇 정지 상태에서도 코어 종목 UI를 표시하기 위해 미리 로드
         self._init_dummy_cores()
         self._restore_state()
+        
+        # 🔒 [스레드 안전성] 딕셔너리 동시 접근으로 인한 런타임 에러 방지용 락
+        self.lock = threading.Lock()
         
         # 💎 [구조 개선] 봇 가동 여부와 무관하게 24시간 잔고를 수집하는 독립 영속 스레드 가동
         self.perpetual_thread = threading.Thread(target=self._perpetual_sync_loop, daemon=True)
@@ -113,11 +117,15 @@ class BotController:
                         if cp: core._last_price = cp
                         time.sleep(0.05) # 💡 트래픽 폭주 방지 딜레이
                             
-                    # 💡 list()로 감싸 스레드간 동시 접근으로 인한 딕셔너리 변형 에러(RuntimeError)를 방지합니다.
-                    for ticker, pos in list(self.satellite_positions.items()):
+                    # 🔒 [스레드 보호 및 트래픽 방지] 락을 사용하여 에러를 막고, API 한도를 넘지 않게 대기시간 상향
+                    with self.lock:
+                        sat_items = list(self.satellite_positions.items())
+
+                    for ticker, pos in sat_items:
                         sp = self.kis.get_current_price(ticker)
                         if sp: pos._last_price = sp
-                        time.sleep(0.05) # 💡 트래픽 폭주 방지 딜레이
+                        # 💡 0.05초 -> 0.2초로 상향하여 KIS 서버 IP 차단(Rate Limit) 원천 방지
+                        time.sleep(0.2) 
             except Exception as e:
                 print(f"[_perpetual_sync_loop 에러] {e}")
             time.sleep(10)
@@ -603,14 +611,16 @@ class BotController:
 
 
        # ── 위성 신호 점검 (종목별 최적 전략 적용) ──
-        # ── 위성 신호 점검 (종목별 최적 전략 적용) ──
-        # ── 위성 신호 점검 (종목별 최적 전략 적용) ──
-        for ticker, pos in self.satellite_positions.items():
+        # 🔒 안전한 반복을 위해 락을 걸고 리스트를 복사합니다.
+        with self.lock:
+            trading_sat_items = list(self.satellite_positions.items())
+
+        for ticker, pos in trading_sat_items:
             try:
                 strat_name = self.satellite_strategies.get(ticker, 'RSI(9) 30/70')
                 signal, price, ind_val = get_signal_by_strategy(ticker, strat_name)
                 if price > 0:
-                    pos._last_price = price  # [추가] 대시보드 웹 화면에 위성 종목 현재가가 정상 출력되도록 바인딩합니다.
+                    pos._last_price = price  # 대시보드 웹 화면에 위성 종목 현재가가 정상 출력되도록 바인딩합니다.
 
                 # 💡 [AI 뇌 확장] 차트만 보는 것을 막기 위해 실시간 펀더멘털 데이터를 긁어와 AI에게 같이 넘겨줍니다.
                 financial_data = "재무 데이터 조회 불가"
@@ -625,6 +635,24 @@ class BotController:
                         financial_data = f"PER: {per:.2f}배, PBR: {pbr:.2f}배"
                 except Exception:
                     pass
+
+                # 🔴 [필수 추가] 하드 손절선(Hard Stop-Loss) 로직 (-5% 하락 시 기계적 매도)
+                if pos.shares > 0 and pos.avg_price > 0:
+                    current_profit_rt = (price / pos.avg_price) - 1
+                    if current_profit_rt <= -0.05:
+                        reason = "기계적 손절 (-5% 도달)"
+                        self.add_log(f"🚨 [{pos.name}] 하드 손절선(-5%) 이탈 감지! 보호를 위해 즉시 시장가 매도합니다.")
+                        if self.kis:
+                            self.kis.sell_market_order(ticker, pos.shares)
+                        qty, profit = pos.sell(price)
+                        msg = f"💥 [{pos.name}] 기계적 손절 완료: {qty}주 @ {price:,}원 | 손익: {profit:+,.0f}원"
+                        self.add_log(msg)
+                        log_trade_journal(self.user_id, ticker, pos.name, 'SELL', price, strat_name, reason, profit=profit)
+                        if self.telegram:
+                            self.telegram.send_message(msg)
+                        today = datetime.now().strftime('%Y-%m-%d')
+                        self.daily_pnl[today] = self.daily_pnl.get(today, 0) + profit
+                        continue # 매도 후 아래의 일반 신호(BUY/SELL) 체크는 건너뜀
 
                 if signal == 'BUY' and pos.shares == 0:
                     if not is_golden_hours:
@@ -814,14 +842,60 @@ class BotController:
                 self._save_state()
                 return
 
-            # 2. 빈 자리 개수만큼 새 종목 스크리닝
-            raw_info, self.hot_sectors = select_satellites(kis=self.kis, n=self.num_satellites + n_needed, verbose=False, gemini_client=self.gemini)
+            # 📉 [신규 퀀트 로직] 시장 국면(상승/하락) 판별 및 하이브리드 포트폴리오 스위칭 (3방패 2창)
+            is_bull_market = True
+            try:
+                # 코스닥 지수(코드 '2001')의 20일 이동평균선 확인
+                end_dt_idx = now
+                start_dt_idx = end_dt_idx - timedelta(days=40)
+                index_df = krx_stock.get_index_ohlcv_by_date(start_dt_idx.strftime("%Y%m%d"), end_dt_idx.strftime("%Y%m%d"), "2001")
+                if not index_df.empty and len(index_df) >= 20:
+                    index_close = index_df['종가']
+                    index_ma20 = index_close.rolling(20).mean().iloc[-1]
+                    current_index = index_close.iloc[-1]
+                    
+                    # 현재 지수가 20일선 아래면 하락장으로 규정
+                    if current_index < index_ma20:
+                        is_bull_market = False
+            except Exception as e:
+                self.add_log(f"⚠️ 시장 지수 판별 중 오류 발생(기본 상승장 간주): {e}")
+
             new_info = []
-            for c in raw_info:
-                if c['ticker'] not in keep_tickers:
-                    new_info.append(c)
-                    if len(new_info) == n_needed:
-                        break
+            if not is_bull_market:
+                self.add_log("🚨 [하락장 감지] 코스닥 지수가 20일선 밑으로 깨졌습니다. '3방패(헷지) + 2창(알파)' 전략으로 포지션을 전환합니다.")
+                
+                # 방패 역할을 할 ETF 리스트 (달러, 금, 곱버스)
+                # 하락장 방어에 탁월한 EMA 5/20 교차 전략을 부여하여 단기 모멘텀으로만 진입/청산합니다.
+                defensive_etfs = [
+                    {'ticker': '261240', 'name': 'KODEX 미국달러선물', 'strategy_name': 'EMA 5/20', 'return_pct': 0.0},
+                    {'ticker': '411060', 'name': 'ACE KRX금현물', 'strategy_name': 'EMA 5/20', 'return_pct': 0.0},
+                    {'ticker': '251340', 'name': 'KODEX 코스닥150선물인버스', 'strategy_name': 'EMA 5/20', 'return_pct': 0.0}
+                ]
+                
+                # 1. 빈 자리에 방어 ETF 3개를 우선적으로 할당
+                for etf in defensive_etfs:
+                    if etf['ticker'] not in keep_tickers and etf['ticker'] not in self.satellite_positions and len(new_info) < n_needed:
+                        new_info.append(etf)
+                        
+                # 2. 남은 빈 자리(창)는 지수를 이기는 강력한 개별 주식으로 채움
+                remaining_slots = n_needed - len(new_info)
+                if remaining_slots > 0:
+                    self.add_log(f"⚔️ 하락장을 역행하는 알파 헌팅을 위해 {remaining_slots}개 슬롯을 개별 주식으로 탐색합니다.")
+                    # 겹치는 종목을 건너뛰기 위해 충분한 수( * 3 )를 스크리닝
+                    raw_info, self.hot_sectors = select_satellites(kis=self.kis, n=remaining_slots * 3, verbose=False, gemini_client=self.gemini)
+                    for c in raw_info:
+                        if c['ticker'] not in keep_tickers and c['ticker'] not in [x['ticker'] for x in defensive_etfs]:
+                            new_info.append(c)
+                            if len(new_info) == n_needed:
+                                break
+            else:
+                self.add_log("📈 [상승장 확인] 20일선 위에서 순항 중입니다. 주도주/모멘텀 기반 개별 주식 위성 스크리닝을 진행합니다.")
+                raw_info, self.hot_sectors = select_satellites(kis=self.kis, n=self.num_satellites + n_needed, verbose=False, gemini_client=self.gemini)
+                for c in raw_info:
+                    if c['ticker'] not in keep_tickers:
+                        new_info.append(c)
+                        if len(new_info) == n_needed:
+                            break
 
             # 3. 새 종목 편입 및 예산 할당
             per_budget = freed_cash / n_needed if n_needed > 0 else 0
