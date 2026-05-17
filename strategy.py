@@ -183,7 +183,8 @@ class Position:
         self.avg_price = 0           # 평균 매수가
         self.trades    = []          # 거래 기록
         self.max_price = 0
-        self.order_pending = False   # 🟢 중복 주문 방지용 락 플래그 추가
+        self.order_pending = False   # (기존 유지)
+        self.last_order_time = 0.0   # 🟢 [최종보완] 10분 절대 쿨타임 측정용 타임스탬프
         
         # 한국 금융시장 표준 수수료 및 거래세율 정의
         self.fee_rate = 0.00015      # 실전 및 모의 온라인 매매 수수료 기본율 (0.015%)

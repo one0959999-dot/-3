@@ -204,10 +204,10 @@ class BotController:
 
                 for core in self.core_positions: 
                     core.shares = 0
-                    core.order_pending = False # 🟢 잔고가 최신화되면 오더 락 해제
+                    # ❌ (맹목적 락 해제 코드 삭제 완료)
                 for sat in self.satellite_positions.values(): 
                     sat.shares = 0
-                    sat.order_pending = False  # 🟢 잔고가 최신화되면 오더 락 해제
+                    # ❌ (맹목적 락 해제 코드 삭제 완료)
 
                 for real_stock in real_balance['stocks']:
                     t = real_stock['ticker']
@@ -617,29 +617,29 @@ class BotController:
                     extended_df = self._get_extended_ohlcv(core_ticker, cp)
                     core_signal, _, core_rsi = get_rsi_signal(core_ticker, kis_api=self.kis, df=extended_df)
 
-                    # 🟢 [보완] 코어 매수에도 order_pending 락 적용 및 비동기 잔고 처리로 통일
-                    if core_signal == 'BUY' and core_cash >= cp and not getattr(core, 'order_pending', False):
+                    # 🟢 [최종보완] 코어 매수: 10분(600초) 쿨타임 적용으로 미체결 중복 주문 완벽 차단
+                    if core_signal == 'BUY' and core_cash >= cp and (time.time() - getattr(core, 'last_order_time', 0) > 600):
                         qty = int(core_cash // cp)
                         if qty > 0:
                             if self.kis:
                                 order_res = self.kis.buy_market_order(core_ticker, qty)
                                 if order_res:
                                     with self.lock:
-                                        core.order_pending = True  # 중복 매수 락 체결
+                                        core.last_order_time = time.time()  # 🟢 현재 시각 타임스탬프 탁본
                                         
-                                    msg = f"💎 {core_name} 매수 주문 전송 완료 (비동기 잔고 대기) | {qty}주 @ {cp:,}원 (RSI:{core_rsi:.1f})"
+                                    msg = f"💎 {core_name} 매수 주문 전송 완료 (10분 쿨타임 가동) | {qty}주 @ {cp:,}원 (RSI:{core_rsi:.1f})"
                                     self.add_log(msg)
                                     self._send_telegram(msg)
 
-                    # 🟢 [보완] 코어 매도에도 order_pending 락 적용 및 비동기 잔고 처리로 통일
-                    elif core_signal == 'SELL' and core_shares > core_floor_shares and not getattr(core, 'order_pending', False):
+                    # 🟢 [최종보완] 코어 매도: 10분(600초) 쿨타임 적용
+                    elif core_signal == 'SELL' and core_shares > core_floor_shares and (time.time() - getattr(core, 'last_order_time', 0) > 600):
                         sellable = core_shares - core_floor_shares
                         if sellable > 0:
                             if self.kis:
                                 order_res = self.kis.sell_market_order(core_ticker, sellable)
                                 if order_res:
                                     with self.lock:
-                                        core.order_pending = True  # 중복 매도 락 체결
+                                        core.last_order_time = time.time()  # 🟢 현재 시각 타임스탬프 탁본
                                         
                                     # (대략적인 손익 기록용)
                                     profit = (cp - core.avg_price) * sellable
@@ -714,7 +714,10 @@ class BotController:
                 macro_context = self.kis.get_macro_context() if self.kis else "시황 정보 없음"
                 extended_strategy = f"{strat_name} | 실시간 재무상태: {financial_data} | 현재 거시 시황: {macro_context} | 최근 14일 ATR 변동폭: {atr_14:.1f}원"
 
-                if pos_shares > 0 and price > 0 and not getattr(pos, 'order_pending', False):
+                # 🟢 [최종보완] 위성 종목 10분 절대 쿨타임 변수 캐싱
+                is_cooldown_passed = (time.time() - getattr(pos, 'last_order_time', 0) > 600)
+
+                if pos_shares > 0 and price > 0 and is_cooldown_passed:
                     if price > pos_max_price:
                         with self.lock: pos.max_price = price
                         pos_max_price = price
@@ -729,21 +732,20 @@ class BotController:
                                 order_res = self.kis.sell_market_order(ticker, pos_shares)
                                 if order_res:
                                     with self.lock: 
-                                        pos.order_pending = True  # 🟢 중복 매도 락 체결
+                                        pos.last_order_time = time.time()  # 🟢 쿨타임 타임스탬프 기록
                                         pos.max_price = 0  
                                         
-                                    # 🟢 로컬 장부(pos.sell) 동기화 대기용 예상 손익 계산
                                     profit = (price - pos_avg_price) * pos_shares
                                     
                                     log_trade_journal(self.user_id, ticker, pos_name, 'SELL', price, strat_name, reason, profit=profit)
-                                    self._send_telegram(f"🎯 [{pos_name}] ATR 변동성 익절 전송 완료 (비동기 잔고 대기)! 예상 손익: {profit:+,.0f}원")
+                                    self._send_telegram(f"🎯 [{pos_name}] ATR 익절 전송 완료 (10분 쿨타임 가동)! 예상 손익: {profit:+,.0f}원")
                                     
                                     with self.lock:
                                         today = datetime.now().strftime('%Y-%m-%d')
                                         self.daily_pnl[today] = self.daily_pnl.get(today, 0) + profit
                             continue
 
-                if pos_shares > 0 and pos_avg_price > 0 and not getattr(pos, 'order_pending', False):
+                if pos_shares > 0 and pos_avg_price > 0 and is_cooldown_passed:
                     dynamic_hard_stop = pos_avg_price - (2.5 * atr_14)
                     if price <= dynamic_hard_stop:
                         reason = f"ATR 변동성 하드 손절 (방어선 {int(dynamic_hard_stop):,}원 이탈)"
@@ -753,12 +755,11 @@ class BotController:
                             order_res = self.kis.sell_market_order(ticker, pos_shares)
                             if order_res:
                                 with self.lock: 
-                                    pos.order_pending = True  # 🟢 중복 매도 락 체결
+                                    pos.last_order_time = time.time()  # 🟢 쿨타임 타임스탬프 기록
                                 
-                                # 🟢 로컬 장부(pos.sell) 동기화 대기용 예상 손익 계산
                                 profit = (price - pos_avg_price) * pos_shares
                                 
-                                msg = f"💥 [{pos_name}] ATR 변동성 손절 전송 완료 (비동기 잔고 대기) | 예상 손익: {profit:+,.0f}원"
+                                msg = f"💥 [{pos_name}] ATR 손절 전송 완료 (10분 쿨타임 가동) | 예상 손익: {profit:+,.0f}원"
                                 self.add_log(msg)
                                 log_trade_journal(self.user_id, ticker, pos_name, 'SELL', price, strat_name, reason, profit=profit)
                                 self._send_telegram(msg)
@@ -769,7 +770,7 @@ class BotController:
                         continue
 
                 # ⚡ [Fast Track] 알고리즘 즉각 매수 파트
-                if signal == 'BUY' and pos_shares == 0 and not getattr(pos, 'order_pending', False):
+                if signal == 'BUY' and pos_shares == 0 and is_cooldown_passed:
                     if not is_golden_hours: continue 
                     reason = "기술적 지표 조건 충족 (Fast Track 자동 매수)"
                     qty = int(pos_cash // price)
@@ -778,25 +779,23 @@ class BotController:
                         if self.kis: 
                             order_res = self.kis.buy_market_order(ticker, qty)
                             if order_res:
-                                # 🟢 스레드 블로킹 유발 지연(sleep) 제거 및 중복 매수 락 체결
                                 with self.lock:
-                                    pos.order_pending = True 
+                                    pos.last_order_time = time.time()  # 🟢 쿨타임 타임스탬프 기록
                                 
-                                msg = f"📈 [{pos_name}] 알고리즘 즉각 매수 전송 완료 (비동기 잔고 동기화 대기 중)"
+                                msg = f"📈 [{pos_name}] 알고리즘 즉각 매수 전송 완료 (10분 쿨타임 가동)"
                                 self.add_log(msg)
                                 log_trade_journal(self.user_id, ticker, pos_name, 'BUY', price, strat_name, reason)
                                 self._send_telegram(msg)
 
                 # ⚡ [Fast Track] 알고리즘 즉각 매도 파트 
-                elif signal == 'SELL' and pos_shares > 0 and not getattr(pos, 'order_pending', False):
+                elif signal == 'SELL' and pos_shares > 0 and is_cooldown_passed:
                     reason = "기술적 지표 조건 충족 (Fast Track 자동 매도)"
                     
                     if self.kis: 
                         order_res = self.kis.sell_market_order(ticker, pos_shares)
                         if order_res:
-                            # 🟢 스레드 블로킹 유발 지연(sleep) 제거 및 중복 매도 락 체결
                             with self.lock:
-                                pos.order_pending = True 
+                                pos.last_order_time = time.time()  # 🟢 쿨타임 타임스탬프 기록 
                             
                             # (대략적인 손익 기록용)
                             profit = (price - pos_avg_price) * pos_shares 
