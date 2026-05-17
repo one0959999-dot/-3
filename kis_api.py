@@ -45,6 +45,28 @@ class KisApi:
             print(f"[KIS] 토큰 발급 실패: {res.text}")
             return None
 
+    def get_approval_key(self):
+        """웹소켓 실시간 접속을 위한 웹소켓용 Approval Key 발급"""
+        url = f"{self.base_url}/oauth2/Approval"
+        headers = {"content-type": "application/json; charset=utf-8"}
+        body = {
+            "grant_type": "client_credentials",
+            "appkey": self.app_key,
+            "secretkey": self.app_secret
+        }
+        try:
+            res = requests.post(url, headers=headers, data=json.dumps(body), timeout=5)
+            if res.status_code == 200:
+                approval_key = res.json().get('approval_key')
+                print("[KIS] 웹소켓 실시간 인증키(Approval Key) 발급 성공!")
+                return approval_key
+            else:
+                print(f"[KIS] 웹소켓 인증키 발급 실패: {res.text}")
+                return None
+        except Exception as e:
+            print(f"[KIS] 웹소켓 인증키 발급 통신 에러: {e}")
+            return None        
+
     def _ensure_token(self):
         """토큰이 없거나 만료되었으면 자동 발급"""
         if not self.access_token or not self.token_expiry or datetime.now() >= self.token_expiry:

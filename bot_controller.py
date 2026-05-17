@@ -732,48 +732,61 @@ class BotController:
                             self.daily_pnl[today] = self.daily_pnl.get(today, 0) + profit
                         continue
 
-                # ⚡ [Fast Track] 알고리즘 즉각 매수 파트 (LLM 및 뉴스 크롤링 지연 시간 원천 제거)
+                # ⚡ [Fast Track] 알고리즘 즉각 매수 파트
                 if signal == 'BUY' and pos_shares == 0:
                     if not is_golden_hours: continue 
-
                     reason = "기술적 지표 조건 충족 (Fast Track 자동 매수)"
                     qty = int(pos_cash // price)
                     
                     if qty > 0:
-                        if self.kis: self.kis.buy_market_order(ticker, qty)
-                        with self.lock: actual_qty = pos.buy(price)
-                        if actual_qty > 0:
-                            msg = f"📈 [{pos_name}] 알고리즘 즉각 매수 체결: {actual_qty}주 @ {price:,}원 [{strat_name} → {ind_val:.1f}]"
-                            self.add_log(msg)
-                            log_trade_journal(self.user_id, ticker, pos_name, 'BUY', price, strat_name, reason)
-                            self._send_telegram(msg)
+                        if self.kis: 
+                            order_res = self.kis.buy_market_order(ticker, qty)
+                            if order_res:
+                                # 💡 맹목적 기록(pos.buy) 대신, 증권사 실제 체결 잔고를 2초 뒤 당겨와서 완벽 동기화
+                                time.sleep(2.0)
+                                real_balance = self.kis.get_account_balance()
+                                if real_balance: self._sync_internal_balances(real_balance)
+                                
+                                msg = f"📈 [{pos_name}] 알고리즘 즉각 매수 전송 완료 (체결 내역 잔고 동기화 대기 중)"
+                                self.add_log(msg)
+                                log_trade_journal(self.user_id, ticker, pos_name, 'BUY', price, strat_name, reason)
+                                self._send_telegram(msg)
 
-                # ⚡ [Fast Track] 알고리즘 즉각 매도 파트 (LLM 지연 시간 원천 제거)
+                # ⚡ [Fast Track] 알고리즘 즉각 매도 파트 
                 elif signal == 'SELL' and pos_shares > 0:
                     reason = "기술적 지표 조건 충족 (Fast Track 자동 매도)"
                     
-                    if self.kis: self.kis.sell_market_order(ticker, pos_shares)
-                    with self.lock: qty, profit = pos.sell(price)
-                    
-                    msg = f"📉 [{pos_name}] 알고리즘 즉각 매도 체결: {qty}주 @ {price:,}원 | 손익: {profit:+,.0f}원"
-                    self.add_log(msg)
-                    log_trade_journal(self.user_id, ticker, pos_name, 'SELL', price, strat_name, reason, profit=profit)
-                    self._send_telegram(msg)
+                    if self.kis: 
+                        order_res = self.kis.sell_market_order(ticker, pos_shares)
+                        if order_res:
+                            # 💡 슬리피지가 반영된 정확한 이익(Profit)을 계산하기 위해 실제 매도 체결 후 계좌 상태 반영
+                            time.sleep(2.0)
+                            real_balance = self.kis.get_account_balance()
+                            if real_balance: self._sync_internal_balances(real_balance)
+                            
+                            # (대략적인 손익 기록용)
+                            profit = (price - pos_avg_price) * pos_shares 
+                            
+                            msg = f"📉 [{pos_name}] 알고리즘 전량 매도 전송 완료 | 예상 손익: {profit:+,.0f}원"
+                            self.add_log(msg)
+                            log_trade_journal(self.user_id, ticker, pos_name, 'SELL', price, strat_name, reason, profit=profit)
+                            self._send_telegram(msg)
 
-                    with self.lock:
-                        today = datetime.now().strftime('%Y-%m-%d')
-                        self.daily_pnl[today] = self.daily_pnl.get(today, 0) + profit
-
-                    if profit > 0:
-                        with self.lock:
-                            if self.core_positions and pos.cash >= profit * REINVEST_RATIO:
-                                reinvest = profit * REINVEST_RATIO
-                                pos.cash -= reinvest
-                                split_amount = reinvest / len(self.core_positions)
-                                for core in self.core_positions: core.cash += split_amount
-                                msg_dist = f"🔄 위성 수익 {profit:,.0f}원 중 {reinvest:,.0f}원 코어 매수자금 편입"
-                                self.add_log(msg_dist)
-                                self._send_telegram(msg_dist)
+                            with self.lock:
+                                today = datetime.now().strftime('%Y-%m-%d')
+                                self.daily_pnl[today] = self.daily_pnl.get(today, 0) + profit
+                            
+                            # 수익 재투자 로직 (실제 잔고 바탕)
+                            if profit > 0:
+                                with self.lock:
+                                    if self.core_positions and pos.cash >= profit * REINVEST_RATIO:
+                                        reinvest = profit * REINVEST_RATIO
+                                        pos.cash -= reinvest
+                                        split_amount = reinvest / len(self.core_positions)
+                                        for core in self.core_positions: core.cash += split_amount
+                                        msg_dist = f"🔄 위성 수익 중 {reinvest:,.0f}원 코어 매수자금 편입 완료"
+                                        self.add_log(msg_dist)
+                                        self._send_telegram(msg_dist)
 
             except Exception as e:
                 self.add_log(f"⚠️ [{ticker}] 오류: {e}")
