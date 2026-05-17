@@ -94,7 +94,6 @@ class BotController:
         self.cached_balance = None
             
         # 봇 정지 상태에서도 코어 종목 UI를 표시하기 위해 미리 로드
-        # 봇 정지 상태에서도 코어 종목 UI를 표시하기 위해 미리 로드
         self._init_dummy_cores()
         self._restore_state()
         
@@ -151,7 +150,6 @@ class BotController:
                 total_equity = real_cash + real_stock_value
                 
                 # 💡 [버그 해결] 가짜 장부를 버리고 모의/실전 무관하게 한투증권 앱의 '진짜 잔고'를 그대로 가져옵니다.
-                # 어플 잔고가 0원이면 봇의 예산도 0원으로 정확하게 동기화됩니다.
                 if total_equity >= 0:
                     # 💡 전역 변수 대신 인스턴스 격리 변수인 self.core_ratio 와 self.satellite_ratio 를 연산에 적용합니다.
                     target_core_pool = total_equity * self.core_ratio
@@ -274,9 +272,6 @@ class BotController:
         else:
             self.telegram = None
         
-        # [수정] 제미나이 AI 객체는 단일 두뇌(공유형) 체제를 엄격히 유지해야 하므로,
-        # 개별 봇 몸체에서 인스턴스를 독단적으로 새로 생성하여 메모리 주소를 파괴하지 않도록 코드를 제거합니다.
-        # 최신 두뇌의 실시간 주입 및 키 동기화는 이제 상단의 BotManager.get_bot에서 완벽하게 통합 전담 처리합니다.
         pass
             
         self._init_dummy_cores()
@@ -287,9 +282,6 @@ class BotController:
         봇을 멈추지 않고 실전/모의 모드를 즉시 전환하며, 해당 모드의 독립 장부를 새로 로드합니다.
         (더 이상 UI 모드 전환 시 호출되지 않으며, 시스템 안정성을 위해 파괴적인 리셋 기능을 무력화합니다.)
         """
-        # 모드가 바뀌더라도 기존 봇의 정체성(실전 또는 모의)을 훼손하지 않도록
-        # KIS API 모드 변경 및 캐시 파기(self.cached_balance = None) 로직을 전면 제거합니다.
-        
         mode_name = "모의투자" if is_mock else "실전투자"
         self.add_log(f"ℹ️ UI 모드가 {mode_name} 화면으로 전환되었습니다. (현재 모니터링은 독립적으로 유지됩니다.)")
         pass
@@ -382,7 +374,6 @@ class BotController:
     def _save_state(self):
         """현재 포트폴리오 상태를 DB에 저장 (JSON 에러 방지 수정본)"""
         try:
-            # [수정본 코드] 객체들을 숫자나 문자열로 확실히 변환하여 저장합니다.
             state = {
                 "cores": [
                      {"ticker": c.ticker, "name": c.name,
@@ -402,13 +393,10 @@ class BotController:
                 "hot_sectors": self.hot_sectors,
                 "num_satellites": self.num_satellites,
                 "last_screen_month": getattr(self, 'last_screen_month', None),
-                # [핵심 추가] 파이썬 date 객체를 문자열로 안전하게 변환하여 저장합니다.
-                # 이를 통해 서버가 불시에 재시작되더라도 오늘 이미 실행한 위성 리밸런싱이 중복 작동하는 것을 완벽히 방지합니다.
                 "last_screen_date": self.last_screen_date.strftime('%Y-%m-%d') if getattr(self, 'last_screen_date', None) else None,
                 "daily_pnl": self.daily_pnl,
                 "daily_report": self.daily_report,
             }
-            # 데이터베이스 장부 분리를 위해 인자값에 self._is_mock을 정확히 추가해 줍니다.
             save_portfolio_state(self.user_id, state, self._is_mock)
         except Exception as e:
             self.add_log(f"⚠️ 상태 저장 실패: {e}")
@@ -416,7 +404,6 @@ class BotController:
     def _restore_state(self):
         """DB에서 포트폴리오 상태 복구. 성공하면 True 반환."""
         try:
-            # 실전/모의 모드에 맞는 독자 장부를 불러오도록 self._is_mock 인자를 추가합니다.
             state = load_portfolio_state(self.user_id, self._is_mock)
             if not state or not state.get("cores"):
                 return False
@@ -452,18 +439,15 @@ class BotController:
             self.last_screen_date     = datetime.strptime(lsd_str, '%Y-%m-%d').date() if lsd_str else None
             self.daily_pnl            = state.get("daily_pnl", {})
 
-            # [핵심 수정] 장 휴무일(주말)에는 직전 거래일(금요일 등)의 리포트를 대시보드에서 볼 수 있도록 복구 정책을 바꿉니다.
             restored_report = state.get("daily_report", None)
             today_str = datetime.now().strftime('%Y-%m-%d')
             
             if restored_report:
-                # 1) 오늘 날짜 리포트이거나, 2) 오늘이 장 휴무일인 주말(토=5, 일=6)이라면 파기하지 않고 그대로 유지합니다.
                 if restored_report.get('date') == today_str or datetime.now().weekday() >= 5:
                     self.daily_report = restored_report
                     if datetime.now().weekday() >= 5:
                         self.add_log(f"📋 장 휴무일(주말)이므로 직전 거래일 분석 리포트({restored_report.get('date')})를 화면에 유지합니다.")
                 else:
-                    # 평일인데 오늘 자 리포트가 아니면 오전 11시에 최신 분석을 받아오기 위해 비워둡니다.
                     self.daily_report = None  
             else:
                 self.daily_report = None
@@ -482,8 +466,6 @@ class BotController:
 
         now = datetime.now()
         
-        # 🟢 [버그 해결] 토요일(5) 또는 일요일(6) 등 주말일 때는 주식 장이 열리지 않으므로 즉시 연산을 종료합니다.
-        # 이로 인해 주말에 서버를 몇 번을 껐다 켜도 유령 매수 신호나 텔레그램 오발송이 완벽하게 차단됩니다.
         if now.weekday() >= 5:
             if now.minute % 30 == 0:
                 self.add_log(f"💤 오늘은 주말 휴무일({now.strftime('%A')})입니다. 가짜 신호 방지를 위해 매매 감시를 중단하고 휴식합니다.")
@@ -491,21 +473,14 @@ class BotController:
 
         current_time_str = now.strftime('%H:%M')
         
-       # [수정] 한국 시장 통계상 수급과 거래량이 집중되어 승률이 가장 높은 '골든 타임'을 정의합니다.
-        # - 장 초반 주도주 수급 타임 (09:01 ~ 11:00)
-        # - 장 마감 직전 종가 형성 타임 (15:00 ~ 15:20)
         is_golden_hours = ("09:01" <= current_time_str <= "11:00") or ("15:00" <= current_time_str <= "15:20")
         
-        # 골든 타임이 아닐 때는 신규 매수(BUY)만 제한하고, 보유 종목에 대한 매도(SELL) 및 손절 관리는 계속 감시합니다.
         if not is_golden_hours:
             if now.minute % 30 == 0:
                 self.add_log(f"🕒 현재 시간({current_time_str})은 횡보 구간입니다. 신규 매수(BUY)는 중지하되 보유 종목 리스크 관리(SELL)는 유지합니다.")
-            # return으로 종료하지 않고 매도 감시를 위해 아래 루프를 계속 진행시킵니다.
         else:
             self.add_log(f"--- 🎯 골든 타임 매수/매도 전면 점검 ({current_time_str}) ---")
 
-        # [핵심 리팩토링] 하드코딩된 중복 잔고 동기화 로직 제거 및 통합 함수 호출
-        # 이미 완벽하게 구현된 _sync_internal_balances 함수를 재사용하여 트래픽 낭비를 줄입니다.
         if self.kis:
             try:
                 real_balance = self.kis.get_account_balance()
@@ -516,69 +491,79 @@ class BotController:
                 self.add_log(f"⚠️ [잔고 동기화 실패] 증권사 잔고 로드 실패 (안전을 위해 기존 데이터로 대치): {e}")
 
         # ── 코어 현재가 및 신호 점검 ──
-        # 🔒 안전한 반복과 주문을 위해 락을 걸어 데이터를 보호합니다.
         with self.lock:
             safe_core_positions = list(self.core_positions)
             
         for core in safe_core_positions:
             cp = self.kis.get_current_price(core.ticker) if self.kis else None
             if not cp: continue
-            core._last_price = cp  # [추가] 대시보드 웹 화면에 실시간 현재가가 정상 출력되도록 바인딩합니다.
+            core._last_price = cp  
             
-            core_val = core.shares * cp
+            # 🔒 [스레드 안전성 고도화] 백그라운드 실시간 갱신과의 충돌(0주 순간 스킵)을 막기 위해 락 공간 내에서 스냅샷 캡처
+            with self.lock:
+                current_shares = core.shares
+                current_floor_shares = core.floor_shares
+                current_cash = core.cash
+
+            core_val = current_shares * cp
             self.add_log(
-                f"💎 {core.name} 현황: {core.shares}주 "
-                f"(floor: {core.floor_shares}주) "
+                f"💎 {core.name} 현황: {current_shares}주 "
+                f"(floor: {current_floor_shares}주) "
                 f"× {cp:,}원 = {core_val:,}원"
             )
 
-            # 코어 매매 로직 (RSI) - KIS API 객체 전달
             try:
                 core_signal, _, core_rsi = get_rsi_signal(core.ticker, kis_api=self.kis)
 
-                if core_signal == 'BUY' and core.cash >= (cp or 1):
-                    qty = core.buy(cp)
-                    if qty > 0:
-                        if self.kis:
+                if core_signal == 'BUY' and current_cash >= (cp or 1):
+                    if self.kis:
+                        qty = int(current_cash // cp)
+                        if qty > 0:
                             self.kis.buy_market_order(core.ticker, qty)
+                    with self.lock:
+                        qty = core.buy(cp)
+                    if qty > 0:
                         msg = f"💎 {core.name} 매수 {qty}주 @ {cp:,}원 (RSI:{core_rsi:.1f}) → 총 {core.shares}주"
                         self.add_log(msg)
                         self._send_telegram(msg)
 
-                elif core_signal == 'SELL' and core.shares > core.floor_shares:
+                elif core_signal == 'SELL' and current_shares > current_floor_shares:
                     if self.kis:
-                        sellable = core.shares - core.floor_shares
+                        sellable = current_shares - current_floor_shares
                         self.kis.sell_market_order(core.ticker, sellable)
-                    qty, profit = core.sell(cp)
+                    with self.lock:
+                        qty, profit = core.sell(cp)
                     if qty > 0:
                         msg = f"💎 {core.name} 익절 매도 {qty}주 @ {cp:,}원 (RSI:{core_rsi:.1f}) | 이익 {profit:,.0f}원"
                         self.add_log(msg)
                         self.daily_pnl[now.strftime('%Y-%m-%d')] = self.daily_pnl.get(now.strftime('%Y-%m-%d'), 0) + profit
                         self._send_telegram(msg)
                 else:
-                    self.add_log(f"  [{core.name}] HOLD (RSI:{core_rsi:.1f}, floor:{core.floor_shares}주 보호)")
+                    self.add_log(f"  [{core.name}] HOLD (RSI:{core_rsi:.1f}, floor:{current_floor_shares}주 보호)")
             except Exception as e:
                 self.add_log(f"  [{core.name}] 점검 중 오류: {str(e)}")
 
-
-       # ── 위성 신호 점검 (종목별 최적 전략 적용) ──
-        # 🔒 안전한 반복을 위해 락을 걸고 리스트를 복사합니다.
+        # ── 위성 신호 점검 (종목별 최적 전략 적용) ──
         with self.lock:
             trading_sat_items = list(self.satellite_positions.items())
 
         for ticker, pos in trading_sat_items:
             try:
                 strat_name = self.satellite_strategies.get(ticker, 'RSI(9) 30/70')
-                # 💡 pykrx 대신 한투 KIS API 객체를 전달하여 안전하게 과거 시세를 조회합니다.
                 signal, price, ind_val = get_signal_by_strategy(ticker, strat_name, kis_api=self.kis)
                 if price > 0:
-                    pos._last_price = price  # 대시보드 웹 화면에 위성 종목 현재가가 정상 출력되도록 바인딩합니다.
+                    pos._last_price = price  
                     
-                # 💡 [AI 뇌 확장 & IP 차단 방지] pykrx 펀더멘털 조회는 하루 1회 캐싱된 데이터만 사용합니다.
+                # 🔒 [스레드 안전성 고도화] 레이스 컨디션 방지를 위한 인스턴스 정보 로컬 스냅샷 저장
+                with self.lock:
+                    current_shares = pos.shares
+                    current_cash = pos.cash
+                    current_avg_price = pos.avg_price
+                    current_max_price = pos.max_price
+
                 today_str = datetime.now().strftime('%Y-%m-%d')
                 cache_key = f"{ticker}_{today_str}"
                 
-                # 안전하게 캐시 딕셔너리 초기화 확인
                 if not hasattr(self, 'fundamental_cache'):
                     self.fundamental_cache = {}
                     
@@ -595,57 +580,57 @@ class BotController:
                             per = fund_df.loc[ticker, 'PER']
                             pbr = fund_df.loc[ticker, 'PBR']
                             financial_data = f"PER: {per:.2f}배, PBR: {pbr:.2f}배"
-                            self.fundamental_cache[cache_key] = financial_data # 하루 1번만 가져오고 캐시 저장
+                            self.fundamental_cache[cache_key] = financial_data 
                     except Exception:
                         pass
 
-                # 🟢 [신규 추가 코드] 거시경제 매크로 데이터 확보 및 전략 문장 결합
                 macro_context = self.kis.get_macro_context() if self.kis else "시황 정보 없음"
                 extended_strategy = f"{strat_name} | 실시간 재무상태: {financial_data} | 현재 거시 시황: {macro_context}"
 
-                # 🟢 [신규 추가 코드] 트레일링 스탑 (고점 대비 -3% 추적 청산)
-                if pos.shares > 0 and price > 0:
-                    # 매수 이후 최고가 갱신
-                    if price > pos.max_price:
-                        pos.max_price = price
+                # 🟢 트레일링 스탑 (고점 대비 -3% 추적 청산)
+                if current_shares > 0 and price > 0:
+                    if price > current_max_price:
+                        with self.lock:
+                            pos.max_price = price
+                        current_max_price = price
                     
-                    # 평균 매수가 대비 5% 이상 수익권에 진입한 적이 있는 종목이
-                    # 당기 최고점 대비 3% 이상 주가가 흘러내렸을 때 보수적 익절 단행
-                    if pos.max_price >= pos.avg_price * 1.05:
-                        if price <= pos.max_price * 0.97:
+                    if current_max_price >= current_avg_price * 1.05:
+                        if price <= current_max_price * 0.97:
                             reason = "트레일링 스탑 (최고점 대비 -3% 이탈)"
                             self.add_log(f"🎯 [{pos.name}] 트레일링 스탑 발동! 수익 보전을 위해 전량 매도합니다.")
                             if self.kis:
-                                self.kis.sell_market_order(ticker, pos.shares)
-                            qty, profit = pos.sell(price)
+                                self.kis.sell_market_order(ticker, current_shares)
+                            with self.lock:
+                                qty, profit = pos.sell(price)
                             log_trade_journal(self.user_id, ticker, pos.name, 'SELL', price, strat_name, reason, profit=profit)
                             self._send_telegram(f"🎯 [{pos.name}] 트레일링 스탑 익절 완료! 손익: {profit:+,.0f}원")
-                            pos.max_price = 0  # 초기화
+                            with self.lock:
+                                pos.max_price = 0  
                             continue
 
-                # 🔴 [필수 추가] 하드 손절선(Hard Stop-Loss) 로직 (-5% 하락 시 기계적 매도)
-                if pos.shares > 0 and pos.avg_price > 0:
-                    current_profit_rt = (price / pos.avg_price) - 1
+                # 🔴 하드 손절선(Hard Stop-Loss) 로직 (-5% 하락 시 기계적 매도)
+                if current_shares > 0 and current_avg_price > 0:
+                    current_profit_rt = (price / current_avg_price) - 1
                     if current_profit_rt <= -0.05:
                         reason = "기계적 손절 (-5% 도달)"
                         self.add_log(f"🚨 [{pos.name}] 하드 손절선(-5%) 이탈 감지! 보호를 위해 즉시 시장가 매도합니다.")
                         if self.kis:
-                            self.kis.sell_market_order(ticker, pos.shares)
-                        qty, profit = pos.sell(price)
+                            self.kis.sell_market_order(ticker, current_shares)
+                        with self.lock:
+                            qty, profit = pos.sell(price)
                         msg = f"💥 [{pos.name}] 기계적 손절 완료: {qty}주 @ {price:,}원 | 손익: {profit:+,.0f}원"
                         self.add_log(msg)
                         log_trade_journal(self.user_id, ticker, pos.name, 'SELL', price, strat_name, reason, profit=profit)
                         self._send_telegram(msg)
                         today = datetime.now().strftime('%Y-%m-%d')
                         self.daily_pnl[today] = self.daily_pnl.get(today, 0) + profit
-                        continue # 매도 후 아래의 일반 신호(BUY/SELL) 체크는 건너뜀
+                        continue 
 
-                if signal == 'BUY' and pos.shares == 0:
+                if signal == 'BUY' and current_shares == 0:
                     if not is_golden_hours:
-                        continue # 골든타임이 아닐 때는 매수(BUY) 금지
+                        continue 
 
                     reason = "조건 충족 자동 매수"
-                    # 1. AI에게 매수 권한 위임 (차트 보조지표 + 재무 데이터 융합)
                     if self.gemini:
                         recent_logs = get_recent_trades(self.user_id, ticker, limit=5)
                         custom_rules = load_ai_rules(self.user_id)
@@ -655,7 +640,6 @@ class BotController:
                             stock_name=pos.name, 
                             ticker=ticker, 
                             price=price, 
-                            # 🔄 [수정 변경]기존 strategy 대신 매크로 시황이 포함된 extended_strategy를 주입
                             strategy=extended_strategy, 
                             indicator_val=ind_val, 
                             hot_sectors=self.hot_sectors,
@@ -667,22 +651,21 @@ class BotController:
                             self.add_log(f"🚫 AI 매수 거절 (재무/차트/학습 융합 판단): [{pos.name}] - {reason}")
                             continue 
 
-                    # 2. 승인 시 주문 실행
                     if self.kis:
-                        qty = int(pos.cash // price)
+                        qty = int(current_cash // price)
                         if qty > 0:
                             self.kis.buy_market_order(ticker, qty)
                     
-                    qty = pos.buy(price)
+                    with self.lock:
+                        qty = pos.buy(price)
                     if qty > 0:
                         msg = f"📈 [{pos.name}] AI 매수 승인: {qty}주 @ {price:,}원 [{strat_name} → {ind_val:.1f}]"
                         self.add_log(msg)
                         log_trade_journal(self.user_id, ticker, pos.name, 'BUY', price, strat_name, reason)
                         self._send_telegram(msg)
 
-                elif signal == 'SELL' and pos.shares > 0:
+                elif signal == 'SELL' and current_shares > 0:
                     reason = "조건 충족 자동 매도"
-                    # 1. AI에게 매도(SELL) 권한까지 완전히 이양하여 조기 청산을 막고 수익 극대화를 유도
                     if self.gemini:
                         recent_logs = get_recent_trades(self.user_id, ticker, limit=5)
                         custom_rules = load_ai_rules(self.user_id)
@@ -703,48 +686,40 @@ class BotController:
                             self.add_log(f"✋ AI 매도 보류 (수익 극대화 홀딩 판단): [{pos.name}] - {reason}")
                             continue
 
-                    # 2. AI가 하락 위험을 감지하여 털고 나가라고 승인했을 때만 매도 실행
                     if self.kis:
-                        self.kis.sell_market_order(ticker, pos.shares)
-                    qty, profit = pos.sell(price)
+                        self.kis.sell_market_order(ticker, current_shares)
+                    with self.lock:
+                        qty, profit = pos.sell(price)
                     msg = (f"📉 [{pos.name}] AI 매도 승인: {qty}주 @ {price:,}원 "
                            f"| 손익: {profit:+,.0f}원 [{strat_name} → {ind_val:.1f}]")
                     self.add_log(msg)
                     log_trade_journal(self.user_id, ticker, pos.name, 'SELL', price, strat_name, reason, profit=profit)
                     self._send_telegram(msg)
 
-                    # 일별 수익 기록
                     today = datetime.now().strftime('%Y-%m-%d')
                     self.daily_pnl[today] = self.daily_pnl.get(today, 0) + profit
 
-                    # 수익 발생 시 코어 재투자 (멀티 코어 균등 분배)
                     if profit > 0 and self.core_positions:
                         reinvest = profit * REINVEST_RATIO
-                        if pos.cash >= reinvest:
-                            pos.cash -= reinvest
-                            split_amount = reinvest / len(self.core_positions)
-                            
-                            for core in self.core_positions:
-                                core.cash += split_amount
+                        if current_cash >= reinvest:
+                            with self.lock:
+                                pos.cash -= reinvest
+                                split_amount = reinvest / len(self.core_positions)
+                                for core in self.core_positions:
+                                    core.cash += split_amount
                                 
                             msg_dist = f"🔄 위성 수익 {profit:,.0f}원 중 {reinvest:,.0f}원을 코어({len(self.core_positions)}개) 매수자금으로 균등 편입"
                             self.add_log(msg_dist)
                             self._send_telegram(msg_dist)
-                else:
-                    # 매수/매도 조건이 아닐 때 HOLD 로그 생략
-                    pass
-
             except Exception as e:
                 self.add_log(f"⚠️ [{ticker}] 오류: {e}")
 
-        # 매 사이클 후 상태 저장 (재시작 시 복구용)
         self._save_state()
 
     def _rescreen_satellites(self):
         """위성 종목 데일리 리밸런싱 (B+C 혼합형)"""
         try:
             now = datetime.now()
-            # 동일 날짜에 중복 실행 방지
             if getattr(self, 'last_screen_date', None) == now.date():
                 return
                 
@@ -755,10 +730,9 @@ class BotController:
             from pykrx import stock as krx_stock
             from datetime import timedelta
             
-            # 1. 기존 종목 점검 (추세 우상향 또는 주도 섹터면 유지, 아니면 매도)
+            # 1. 기존 종목 점검
             for ticker, pos in list(self.satellite_positions.items()):
                 if pos.shares == 0:
-                    # 미매수 상태면 교체
                     freed_cash += pos.cash
                     del self.satellite_positions[ticker]
                     if ticker in self.satellite_strategies:
@@ -768,7 +742,6 @@ class BotController:
                     
                 price = self.kis.get_current_price(ticker) if self.kis else 0
                 
-                # 추세 및 모멘텀 확인
                 is_uptrend = False
                 try:
                     end_dt = now
@@ -796,12 +769,10 @@ class BotController:
                         reason = "추세 우상향" if is_uptrend else "주도 섹터"
                         self.add_log(f"🛡️ 위성 보존 ({reason}): {pos.name} ({profit_rt:+.2f}%)")
                     else:
-                        # 추세 꺾임 & 모멘텀 소진 시 매도
                         if self.kis:
                             self.kis.sell_market_order(ticker, pos.shares)
                         qty, profit = pos.sell(price)
                         
-                        # 매도 후 수익 발생 시 50% 코어 재투자
                         if profit > 0 and self.core_positions:
                             reinvest = profit * REINVEST_RATIO
                             if pos.cash >= reinvest:
@@ -824,7 +795,7 @@ class BotController:
                 self._save_state()
                 return
 
-            # 📉 [신규 퀀트 로직] 시장 국면(상승/하락) 판별 및 하이브리드 포트폴리오 스위칭 (3방패 2창)
+            # 📉 [신규 퀀트 로직] 시장 국면(상승/하락) 판별 및 하이브리드 포트폴리오 스위칭
             is_bull_market = True
             try:
                 if self.kis:
@@ -845,14 +816,14 @@ class BotController:
             except Exception as e:
                 self.add_log(f"⚠️ 시장 지수 판별 중 오류 발생(기본 상승장 간주): {e}")
 
-            # 🟢 [신규 추가 코드] 거시 시장 국면에 따른 동적 자산 배분(Dynamic Asset Allocation) 비율 조정
+            # 🟢 [신규 추가 코드] 거시 시장 국면에 따른 동적 자산 배분 비율 조정
             # 💡 전역 변수 공유 간섭 문제를 해결하기 위해 개별 인스턴스 격리 변수(self)를 조작합니다.
             if not is_bull_market:
-                self.core_ratio = 0.60       # 하락장에서는 코어(보수적 자산) 비중 증대
-                self.satellite_ratio = 0.40  # 위성 트레이딩 자금 축소 (현금 확보 및 헷지)
+                self.core_ratio = 0.60       
+                self.satellite_ratio = 0.40  
                 self.add_log(f"📊 [동적 자산배분] 약세장 방어 모드 가동: 코어 {self.core_ratio*100}% / 위성 {self.satellite_ratio*100}% 변환")
             else:
-                self.core_ratio = 0.30       # 상승장 기본 비율 유지
+                self.core_ratio = 0.30       
                 self.satellite_ratio = 0.70
                 self.add_log(f"📊 [동적 자산배분] 강세장 공격 모드 가동: 코어 {self.core_ratio*100}% / 위성 {self.satellite_ratio*100}% 변환")
 
@@ -860,24 +831,19 @@ class BotController:
             if not is_bull_market:
                 self.add_log("🚨 [하락장 감지] 코스피 또는 코스닥 지수가 20일선 밑으로 깨졌습니다. '3방패(헷지) + 2창(알파)' 전략으로 포지션을 전환합니다.")
                 
-                # 방패 역할을 할 ETF 리스트 (달러, 금, 곱버스)
-                # 하락장 방어에 탁월한 EMA 5/20 교차 전략을 부여하여 단기 모멘텀으로만 진입/청산합니다.
                 defensive_etfs = [
                     {'ticker': '261240', 'name': 'KODEX 미국달러선물', 'strategy_name': 'EMA 5/20', 'return_pct': 0.0},
                     {'ticker': '411060', 'name': 'ACE KRX금현물', 'strategy_name': 'EMA 5/20', 'return_pct': 0.0},
                     {'ticker': '251340', 'name': 'KODEX 코스닥150선물인버스', 'strategy_name': 'EMA 5/20', 'return_pct': 0.0}
                 ]
                 
-                # 1. 빈 자리에 방어 ETF 3개를 우선적으로 할당
                 for etf in defensive_etfs:
                     if etf['ticker'] not in keep_tickers and etf['ticker'] not in self.satellite_positions and len(new_info) < n_needed:
                         new_info.append(etf)
                         
-                # 2. 남은 빈 자리(창)는 지수를 이기는 강력한 개별 주식으로 채움
                 remaining_slots = n_needed - len(new_info)
                 if remaining_slots > 0:
                     self.add_log(f"⚔️ 하락장을 역행하는 알파 헌팅을 위해 {remaining_slots}개 슬롯을 개별 주식으로 탐색합니다.")
-                    # 겹치는 종목을 건너뛰기 위해 충분한 수( * 3 )를 스크리닝
                     raw_info, self.hot_sectors = select_satellites(kis=self.kis, n=remaining_slots * 3, verbose=False, gemini_client=self.gemini)
                     for c in raw_info:
                         if c['ticker'] not in keep_tickers and c['ticker'] not in [x['ticker'] for x in defensive_etfs]:
@@ -893,17 +859,15 @@ class BotController:
                         if len(new_info) == n_needed:
                             break
 
-            # 3. 새 종목 편입 및 예산 할당 (정밀 자금 재분배 로직 적용)
+            # 3. 새 종목 편입 및 예산 할당
             total_available_cash = freed_cash
             for ticker in keep_tickers:
                 total_available_cash += self.satellite_positions[ticker].cash
                 self.satellite_positions[ticker].cash = 0
                 
-            # 신규 진입 종목 + 기존 유지 종목 중 매수되지 않아 현금을 기다리는 빈 슬롯 합산
             total_slots_for_cash = n_needed + sum(1 for t in keep_tickers if self.satellite_positions[t].shares == 0)
             per_budget = total_available_cash / total_slots_for_cash if total_slots_for_cash > 0 else 0
             
-            # 기존 빈 자리 현금 채우기
             for ticker in keep_tickers:
                 if self.satellite_positions[ticker].shares == 0:
                     self.satellite_positions[ticker].cash = per_budget
@@ -915,7 +879,6 @@ class BotController:
                 self.add_log(f"✨ 새 위성 편입: {c['name']} → [{c['strategy_name']}] {c['return_pct']:+.1f}%")
                 added_lines.append(f"  {c['name']} → [{c['strategy_name']}]")
                 
-            # satellite_info 업데이트
             keep_info = [c for c in self.satellite_info if c['ticker'] in keep_tickers]
             self.satellite_info = keep_info + new_info
 
@@ -926,7 +889,6 @@ class BotController:
             self._save_state()
             
         except Exception as e:
-            # 💡 [핵심 수정] 외부 API 오류 발생 시 스레드가 죽지 않도록 예외 처리
             self.add_log(f"🚨 위성 리밸런싱 중 오류 발생 (스케줄러 보호됨): {e}")
 
     def generate_daily_report(self):
@@ -939,10 +901,8 @@ class BotController:
                 self.add_log("✅ 일일 시장 분석 리포트 생성 완료")
                 self._save_state()
                 
-                # [추가] 리포트가 정상 생성되면 설정된 텔레그램 채널로 요약본을 즉시 발송합니다.
                 msg = "📝 [🎯 11시 장중 시장 분석 리포트 알림]\n\n"
                 if isinstance(report_data, dict):
-                    # 리포트 딕셔너리 내부에서 요약(summary) 또는 본문(content)을 안전하게 추출합니다.
                     msg += report_data.get('summary', report_data.get('content', '11시 시장 분석이 완료되었습니다. 자세한 정보는 대시보드 팝업창을 확인하세요!'))
                 else:
                     msg += str(report_data)
@@ -950,7 +910,6 @@ class BotController:
         except Exception as e:
             self.add_log(f"⚠️ 일일 리포트 생성 중 오류: {e}")
 
-    # 🟢 [여기에 새로 추가] 주간 자아성찰 함수 🟢
     def _weekly_self_reflection(self):
         """[AI 자가 학습] 일주일간의 매매 기록을 바탕으로 오답 노트를 작성하고 룰을 업데이트합니다."""
         self.add_log("🧠 [AI 자아성찰] 한 주간의 매매 결과를 분석하여 새로운 투자 원칙을 수립합니다...")
@@ -988,7 +947,6 @@ class BotController:
 
     # ─── 봇 시작/정지 ───
     def _run_threaded(self, job_func):
-        """무거운 스케줄러 작업을 메인 매매 루프와 분리하여 백그라운드 스레드에서 실행합니다."""
         job_thread = threading.Thread(target=job_func, daemon=True)
         job_thread.start()
 
@@ -1002,17 +960,15 @@ class BotController:
         else:
             self.add_log("📊 기존 포트폴리오로 매매를 재개합니다.")
 
-        # 5분 매매 감시는 가볍고 즉각적이어야 하므로 그대로 실행하되, 나머지 무거운 작업들은 _run_threaded를 통해 비동기로 실행
         self.scheduler.every(5).minutes.do(self.trading_job)
         self.scheduler.every().day.at("11:00").do(lambda: self._run_threaded(self.generate_daily_report))
         self.scheduler.every().day.at("09:05").do(lambda: self._run_threaded(self._rescreen_satellites))
-        
-        # 매주 금요일 장 마감 후 성찰 스케줄 비동기 처리
         self.scheduler.every().friday.at("16:00").do(lambda: self._run_threaded(self._weekly_self_reflection))
 
-        self.trading_job()  # 즉시 1회 실행
+        self.trading_job()  
         
         if getattr(self, 'last_screen_date', None) != datetime.now().date():
+            prefix = 'mock_' if self._is_mock else 'real_'
             now_time_str = datetime.now().strftime('%H:%M')
             if "09:00" <= now_time_str <= "15:30":
                 self.add_log("오늘 날짜의 위성 리밸런싱 기록이 없어 즉시 실행합니다...")
@@ -1020,18 +976,14 @@ class BotController:
             else:
                 self.add_log("오늘 날짜의 위성 리밸런싱 기록이 없으나 정규장 시간이 아니므로 정규 스케줄러(09:05)까지 대기합니다.")
 
-        # 오늘 날짜의 리포트가 없더라도, 현재 시간이 11시 이전이라면 미리 생성하지 않고 11시 정각 스케줄러를 기다립니다.
         today = datetime.today().strftime('%Y-%m-%d')
         if not self.daily_report or self.daily_report.get('date') != today:
             now = datetime.now()
-            
-            # 평일이고 오전 11시가 이미 지났는데 오늘 자 리포트가 누락된 경우에만 즉시 생성합니다.
             if now.weekday() < 5 and now.strftime('%H:%M') >= "11:00":
                 self.add_log("오전 11시가 지났으나 오늘 자 시장 분석 리포트가 없어 즉시 재생성합니다...")
                 self.daily_report = None
                 self.generate_daily_report()
             elif now.weekday() >= 5:
-                # 주말일 때는 과거 리포트 주소가 대시보드 메모리에 잘 안착해 있다면 소중히 유지합니다.
                 if self.daily_report:
                     self.add_log(f"📋 주말 장 휴무 모드: 이전 거래일 리포트({self.daily_report.get('date')})를 대시보드 화면에 노출합니다.")
                 else:
@@ -1040,7 +992,6 @@ class BotController:
                 self.add_log("오늘 자 시장 분석 리포트가 아직 없으나, 평일 11시 이전이므로 정규 분석 스케줄을 대기합니다.")
 
         while self.is_running:
-            # 💡 전역 큐가 아닌 새로 만든 내 봇의 독립 스케줄러 작업만 실행하도록 변경합니다.
             self.scheduler.run_pending()
             time.sleep(1)
 
@@ -1059,7 +1010,6 @@ class BotController:
             self.thread.start()
             update_bot_status(self.user_id, True)
             
-            # 🟢 [추가] 봇 시작 시 텔레그램으로 즉각 보고
             mode_str = "모의투자" if self._is_mock else "실전투자"
             self.add_log(f"▶️ [{mode_str}] 매매 봇이 시작되었습니다.")
             self._send_telegram("▶️ 봇 감시를 시작합니다.\n- 현재 모드에 맞춰 종목 감시 및 자동 매매가 활성화되었습니다.")
@@ -1074,13 +1024,11 @@ class BotController:
             if self.thread:
                 self.thread.join(timeout=3)
                 
-            # 🟢 [추가] 봇 정지 시 텔레그램으로 즉각 보고
             self.add_log("⏸️ 매매 봇이 일시 정지되었습니다.")
             self._send_telegram("⏸️ 봇 감시가 일시 정지되었습니다.\n- 대기 상태로 전환되어 매수/매도가 중단됩니다.")
 
     # ─── 대시보드 상태 반환 ───
     def get_pnl_data(self):
-        """일별 수익률 데이터 반환 (Chart.js용)"""
         sorted_days = sorted(self.daily_pnl.keys())
         return {
             "labels": sorted_days,
@@ -1088,7 +1036,6 @@ class BotController:
         }
 
     def get_status(self):
-        # 🔒 웹 API 호출 도중 딕셔너리 크기가 변형되어 발생하는 런타임 에러 방지
         with self.lock:
             safe_core_positions = list(self.core_positions)
             safe_satellite_items = list(self.satellite_positions.items())
@@ -1130,16 +1077,12 @@ class BotController:
                 "budget":   getattr(pos, 'initial_cash', getattr(pos, 'budget', 0))
             })
 
-       # 💡 [버그 해결] 가짜 계산식을 모두 버리고, 무조건 한투 API 서버에서 받아온 진짜 내역만 화면에 직결시킵니다.
         if self.cached_balance:
             api_cash = float(self.cached_balance.get('total_cash', 0))
             api_stock_val = float(self.cached_balance.get('total_value', 0))
             api_purchase = float(self.cached_balance.get('total_purchase', 0))
             
-            # 총 자산 = 앱 기준 예수금 + 현재 주식 평가금 총액
             mock_total_asset = api_cash + api_stock_val
-            
-            # 수익금 = 현재 주식 평가금액 - 주식 매입 원금 (실시간 주식 손익)
             mock_pnl = api_stock_val - api_purchase
             mock_pnl_rt = (mock_pnl / api_purchase * 100) if api_purchase > 0 else 0
         else:
@@ -1156,7 +1099,6 @@ class BotController:
             "num_satellites": self.num_satellites,
             "cores":         cores_data,
             "satellites":    satellites,
-            # 계산된 진짜 한투 자산을 프론트엔드로 전송
             "mock_total_asset": mock_total_asset,
             "mock_pnl": mock_pnl,
             "mock_pnl_rt": mock_pnl_rt
@@ -1165,10 +1107,9 @@ class BotController:
 class BotManager:
     """모든 사용자의 봇 인스턴스를 관리합니다."""
     def __init__(self):
-        # 🟢 초기값을 None으로 지정하여 '서버가 방금 막 켜진 최초 상태'임을 명시합니다.
         self.last_assets = None
-        self.bots = {}        # 🚨 [버그 해결] 봇 인스턴스들을 관리할 핵심 주머니 딕셔너리를 누락 없이 생성합니다.
-        self.ai_clients = {}  # { user_id: GeminiApi }               -> 공유형 단일 AI 엔진 관리
+        self.bots = {}        
+        self.ai_clients = {}  
 
     def get_bot(self, user_id, user_data=None):
         if not user_data:
@@ -1177,21 +1118,16 @@ class BotManager:
         is_mock = bool(user_data.get('is_mock', 1))
         bot_key = (user_id, is_mock)
         
-        # 1. [버그 수정] 단일 AI 엔진 싱글톤 및 실시간 키 갱신 구조화
-        # 사용자가 키를 처음 등록하거나 변경했을 때, 기존 인스턴스가 주머니에 있더라도 최신 키 정보로 확실하게 자동 리로드합니다.
         if user_data.get('gemini_api_key'):
             api_key_clean = user_data.get('gemini_api_key').strip()
             
-            # AI 객체가 아예 없거나, 기존 객체가 들고 있는 키값과 새로 전달받은 키값이 다를 때만 인스턴스를 동적으로 교체합니다.
             if user_id not in self.ai_clients or getattr(self.ai_clients[user_id], '_current_key', '') != api_key_clean:
                 from gemini_api import GeminiApi
-                # pyrefly: ignore [unexpected-keyword]
                 new_ai = GeminiApi(api_key=api_key_clean)
-                new_ai._current_key = api_key_clean  # 키 변경 추적용 임시 바인딩 속성
+                new_ai._current_key = api_key_clean  
                 self.ai_clients[user_id] = new_ai
                 print(f"🤖 [AI 공유 엔진 활성화/갱신] User {user_id}의 최신 API 키로 공유형 AI 두뇌 세팅 완료.")
 
-        # 2. 쌍둥이 봇 바디(실전 또는 모의)가 주머니에 없다면 생성
         if bot_key not in self.bots:
             prefix = 'mock_' if is_mock else 'real_'
             
@@ -1213,8 +1149,6 @@ class BotManager:
                 is_mock=is_mock
             )
             
-        # 3. [핵심] 최초 생성 시점뿐만 아니라,get_bot이 실행될 때마다(매 API 트래픽마다) 
-        # 항상 중앙 매니저의 최신 AI 두뇌 인스턴스 주소를 봇 바디에 강제로 실시간 주입 및 리바인딩합니다.
         if user_id in self.ai_clients:
             self.bots[bot_key].gemini = self.ai_clients[user_id]
             
@@ -1223,5 +1157,6 @@ class BotManager:
     def stop_all(self):
         for bot in self.bots.values():
             bot.stop()
+
 # 글로벌 매니저 인스턴스
 manager = BotManager()
