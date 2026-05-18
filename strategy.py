@@ -59,6 +59,9 @@ def get_rsi_signal(ticker, kis_api=None, df=None):
     prev_rsi    = rsi_series.iloc[-2]
     price       = int(prices.iloc[-1])
 
+    # 🚨 [강제 작동 테스트 스위치] 코어 종목도 즉시 매수 신호를 쏩니다!
+    return 'BUY', price, current_rsi
+
     # 🟢 무릎 매수: 이전엔 30 밑이었는데, 지금 30을 위로 돌파(골든크로스)할 때만 매수
     if prev_rsi < RSI_OVERSOLD and current_rsi >= RSI_OVERSOLD:
         return 'BUY', price, current_rsi
@@ -97,6 +100,9 @@ def get_signal_by_strategy(ticker, strategy_name, kis_api=None, df=None):
     h = df['high']
     l = df['low']
     price = int(c.iloc[-1])
+
+    # 🚨 [강제 작동 테스트 스위치] 복잡한 계산을 무시하고 즉시 매수 신호를 쏩니다!
+    return 'BUY', price, 100.0
 
     def _ema(s, n): return s.ewm(span=n, adjust=False).mean()
     def _sma(s, n): return s.rolling(n).mean()
