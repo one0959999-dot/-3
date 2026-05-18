@@ -1382,65 +1382,91 @@ class BotController:
         return {"labels": sorted_days, "values": [round(self.daily_pnl[d]) for d in sorted_days]}
 
     def get_status(self):
-        with self.lock:
-            safe_core_positions = list(self.core_positions)
-            safe_satellite_items = list(self.satellite_positions.items())
+        try:
+            with self.lock:
+                safe_core_positions = list(self.core_positions)
+                safe_satellite_items = list(self.satellite_positions.items())
 
-        # 실시간 웹소켓 연동 데이터 통합 연산용 누적 변수 초기화
-        total_realtime_stock_val = 0.0
+            # 실시간 웹소켓 연동 데이터 통합 연산용 누적 변수 초기화
+            total_realtime_stock_val = 0.0
 
-        cores_data = []
-        for core in safe_core_positions:
-            # 🚨 [백업 오차 패치] 엔진이 미처 연산하기 전이면 웹소켓 실시간 가격 및 평단가를 순차 백업으로 활용
-            cp = getattr(core, '_last_price', 0) or self.live_prices.get(core.ticker, 0) or core.avg_price or 0
-            core_val = core.shares * cp
-            total_realtime_stock_val += core_val # 실시간 코어 평가 금액 누적
+            cores_data = []
+            for core in safe_core_positions:
+                try:
+                    # 🚨 찰나의 순간 문자가 들어와도 무조건 실수(float)로 강제 변환하여 에러 원천 차단
+                    cp_raw = getattr(core, '_last_price', 0) or self.live_prices.get(core.ticker, 0) or core.avg_price or 0
+                    cp = float(cp_raw)
+                except:
+                    cp = 0.0
+                    
+                core_val = float(core.shares) * cp
+                total_realtime_stock_val += core_val # 실시간 코어 평가 금액 누적
+                
+                cores_data.append({
+                    "name": core.name, "ticker": core.ticker, "shares": core.shares,
+                    "floor": core.floor_shares, "price": cp, "value": core_val,
+                    "budget": getattr(core, 'initial_cash', 0), "strategy": "장기 우상향" if core.ticker != CORE_TICKER else "RSI + floor 보호"
+                })
+
+            satellites = []
+            for ticker, pos in safe_satellite_items:
+                try:
+                    # 🚨 찰나의 순간 문자가 들어와도 무조건 실수(float)로 강제 변환
+                    sp_raw = getattr(pos, '_last_price', 0) or self.live_prices.get(ticker, 0) or pos.avg_price or 0
+                    sp = float(sp_raw)
+                except:
+                    sp = 0.0
+                    
+                sat_val = float(pos.shares) * sp
+                total_realtime_stock_val += sat_val # 실시간 위성 평가 금액 누적
+                
+                satellites.append({
+                    "name": pos.name, "ticker": ticker, "strategy": self.satellite_strategies.get(ticker, '-'),
+                    "shares": pos.shares, "price": sp, "value": sat_val,
+                    "budget": getattr(pos, 'initial_cash', getattr(pos, 'budget', 0))
+                })
+
+            if self.cached_balance:
+                api_cash = float(self.cached_balance.get('total_cash', 0))
+                # 🟢 [정밀도 리패치] 웹소켓 실시간 연산 합계액으로 강제 치환
+                api_stock_val = total_realtime_stock_val
+                api_purchase = float(self.cached_balance.get('total_purchase', 0))
+                mock_total_asset = api_cash + api_stock_val
+                mock_pnl = api_stock_val - api_purchase
+                mock_pnl_rt = (mock_pnl / api_purchase * 100) if api_purchase > 0 else 0
+            else:
+                mock_total_asset = 0.0; mock_pnl = 0.0; mock_pnl_rt = 0.0
+
+            # 🚨 DB 조회 중 발생하는 락(Lock) 에러 대비 안전망 추가
+            try:
+                from database import get_db_connection
+                conn = get_db_connection()
+                cash_col = "mock_initial_cash" if self._is_mock else "real_initial_cash"
+                row = conn.execute(f'SELECT {cash_col} FROM users WHERE id = ?', (self.user_id,)).fetchone()
+                conn.close()
+                current_initial_cash = float(row[cash_col]) if row and row[cash_col] is not None else 10000000.0
+            except Exception as e:
+                print(f"⚠️ DB 원금 조회 지연(안전 패스): {e}")
+                current_initial_cash = 10000000.0
+
+            return {
+                "is_running": self.is_running, "is_mock": self._is_mock, "has_keys": self.kis is not None,
+                "logs": self.logs[-30:], "hot_sectors": self.hot_sectors, "num_satellites": self.num_satellites,
+                "cores": cores_data, "satellites": satellites, "mock_total_asset": mock_total_asset,
+                "mock_pnl": mock_pnl, "mock_pnl_rt": mock_pnl_rt, "initial_cash": current_initial_cash
+            }
             
-            cores_data.append({
-                "name": core.name, "ticker": core.ticker, "shares": core.shares,
-                "floor": core.floor_shares, "price": cp, "value": core_val,
-                "budget": core.initial_cash, "strategy": "장기 우상향" if core.ticker != CORE_TICKER else "RSI + floor 보호"
-            })
-
-        satellites = []
-        for ticker, pos in safe_satellite_items:
-            # 🚨 [백업 오차 패치] 엔진이 미처 연산하기 전이면 웹소켓 실시간 가격 및 평단가를 순차 백업으로 활용
-            sp = getattr(pos, '_last_price', 0) or self.live_prices.get(ticker, 0) or pos.avg_price or 0
-            sat_val = pos.shares * sp
-            total_realtime_stock_val += sat_val # 실시간 위성 평가 금액 누적
-            
-            satellites.append({
-                "name": pos.name, "ticker": ticker, "strategy": self.satellite_strategies.get(ticker, '-'),
-                "shares": pos.shares, "price": sp, "value": sat_val,
-                "budget": getattr(pos, 'initial_cash', getattr(pos, 'budget', 0))
-            })
-
-        if self.cached_balance:
-            api_cash = float(self.cached_balance.get('total_cash', 0))
-            # 🟢 [정밀도 리패치] 증권사 API의 지연된 평가금액 대신 웹소켓 실시간 연산 합계액으로 강제 치환하여 완벽하게 일치시킵니다.
-            api_stock_val = total_realtime_stock_val
-            api_purchase = float(self.cached_balance.get('total_purchase', 0))
-            mock_total_asset = api_cash + api_stock_val
-            mock_pnl = api_stock_val - api_purchase
-            mock_pnl_rt = (mock_pnl / api_purchase * 100) if api_purchase > 0 else 0
-        else:
-            mock_total_asset = 0; mock_pnl = 0; mock_pnl_rt = 0
-
-        # 🚨 [UI 덮어쓰기 방지] DB에서 가장 최신화된 원금을 직접 꺼내서 웹 화면으로 쏴줍니다.
-        from database import get_db_connection
-        conn = get_db_connection()
-        # 🟢 현재 웹 화면에 켜진 모드에 맞춰서 올바른 장부 데이터를 꺼내옵니다.
-        cash_col = "mock_initial_cash" if self._is_mock else "real_initial_cash"
-        row = conn.execute(f'SELECT {cash_col} FROM users WHERE id = ?', (self.user_id,)).fetchone()
-        conn.close()
-        current_initial_cash = float(row[cash_col]) if row and row[cash_col] is not None else 10000000
-
-        return {
-            "is_running": self.is_running, "is_mock": self._is_mock, "has_keys": self.kis is not None,
-            "logs": self.logs[-30:], "hot_sectors": self.hot_sectors, "num_satellites": self.num_satellites,
-            "cores": cores_data, "satellites": satellites, "mock_total_asset": mock_total_asset,
-            "mock_pnl": mock_pnl, "mock_pnl_rt": mock_pnl_rt, "initial_cash": current_initial_cash
-        }
+        except Exception as critical_e:
+            import traceback
+            print(f"🚨 get_status 치명적 에러 (서버 다운 방어 완료): {critical_e}")
+            traceback.print_exc()
+            # 서버가 500 에러로 죽는 것을 방지하기 위해 빈 껍데기 포맷 반환
+            return {
+                "is_running": False, "is_mock": True, "has_keys": False,
+                "logs": [{"time": "Error", "message": f"상태 조회 중 일시적 오류 발생: {str(critical_e)}"}], 
+                "hot_sectors": [], "num_satellites": 5, "cores": [], "satellites": [], 
+                "mock_total_asset": 0, "mock_pnl": 0, "mock_pnl_rt": 0, "initial_cash": 10000000
+            }
 
 class BotManager:
     def __init__(self):

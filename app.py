@@ -102,39 +102,41 @@ def status():
 @login_required
 def kis_balance():
     """실시간 한국투자증권 계좌 잔고 조회 API"""
-    bot = get_current_bot()
-    if not bot or not bot.kis:
-        return jsonify({"status": "error", "message": "API 설정이 필요합니다."})
-    
-    # 🟢 [동기화 핵심 로직] 하단 표(위성/코어 종목 칸)와 똑같은 코드로 '실시간 주식 평가 합계액'을 먼저 구합니다.
-    live_status = bot.get_status()
-    realtime_stock_value = sum(c['value'] for c in live_status.get('cores', [])) + sum(s['value'] for s in live_status.get('satellites', []))
-    
-    # 💎 백그라운드 영속 스레드에 의해 이미 수집된 캐시 데이터가 있다면 지연 없이 즉시 반환하되, 
-    # 증권사의 10초 지연 평가금액 대신, 방금 계산한 '웹소켓 실시간 합산액'으로 덮어씌워 보냅니다.
-    if bot.cached_balance:
-        patched_balance = dict(bot.cached_balance)
-        patched_balance['total_value'] = realtime_stock_value
-        return jsonify({"status": "success", "data": patched_balance})
-    
-    # 🚨 [계좌 화면 딜레이 원인 완벽 제거] 
     try:
+        bot = get_current_bot()
+        if not bot or not bot.kis:
+            return jsonify({"status": "error", "message": "API 설정이 필요합니다."})
+        
+        # 🟢 [동기화 핵심 로직] 계산 중 에러 방지를 위해 float() 래핑 추가
+        live_status = bot.get_status()
+        realtime_stock_value = sum(float(c.get('value', 0)) for c in live_status.get('cores', [])) + sum(float(s.get('value', 0)) for s in live_status.get('satellites', []))
+        
+        # 💎 캐시 덮어쓰기 반환
+        if bot.cached_balance:
+            patched_balance = dict(bot.cached_balance)
+            patched_balance['total_value'] = realtime_stock_value
+            return jsonify({"status": "success", "data": patched_balance})
+        
+        # 🚨 [계좌 화면 딜레이 원인 완벽 제거] 
         real_balance = bot.kis.get_account_balance()
         if real_balance:
             bot.cached_balance = real_balance
             bot._sync_internal_balances(real_balance)
             
             patched_balance = dict(real_balance)
-            patched_balance['total_value'] = realtime_stock_value # 여기도 똑같이 덮어쓰기
+            patched_balance['total_value'] = realtime_stock_value 
             return jsonify({"status": "success", "data": patched_balance})
+            
     except Exception as e:
-        print(f"즉시 잔고 조회 에러: {e}")
-    
+        import traceback
+        print(f"🚨 kis_balance 치명적 에러 방어: {e}")
+        traceback.print_exc()
+        
     return jsonify({
         "status": "success", 
         "data": {
             "total_cash": 0, 
-            "total_value": realtime_stock_value, 
+            "total_value": 0, 
             "total_purchase": 0, 
             "stocks": []
         }
