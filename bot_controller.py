@@ -1079,6 +1079,8 @@ class BotController:
                     self.add_log(f"🧹 위성 교체 (미매수 대기 제거): {pos.name}")
                     continue
                     
+                # 🟢 [API 과부하 방어] KIS 서버에 현재가를 묻기 전에 0.2초 대기합니다.
+                time.sleep(0.2)
                 price = self.kis.get_current_price(ticker) if self.kis else 0
                 is_uptrend = False
                 try:
@@ -1132,6 +1134,8 @@ class BotController:
 
             is_bull_market = True
             try:
+                # 🟢 [API 과부하 방어] 시장 지수(KOSPI, KOSDAQ)를 조회하기 전에 0.2초 대기합니다.
+                time.sleep(0.2)
                 if self.kis:
                     kospi_df = self.kis.get_ohlcv("0001", "D"); kosdaq_df = self.kis.get_ohlcv("2001", "D")
                     kospi_bull = kospi_df['close'].iloc[-1] >= kospi_df['close'].rolling(20).mean().iloc[-1] if kospi_df is not None and not kospi_df.empty else True
@@ -1187,6 +1191,8 @@ class BotController:
                 total_inv_vol = 0.0
                 
                 for t in target_tickers:
+                    # 🟢 [API 과부하 방어] 종목별 OHLCV 차트를 불러오기 전에 0.2초 대기합니다.
+                    time.sleep(0.2)
                     df = self._get_cached_base_ohlcv(t)
                     if not df.empty and len(df) > 14:
                         high_low = df['high'] - df['low']
