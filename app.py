@@ -225,6 +225,20 @@ def ai_chat():
         from pykrx import stock as krx_stock
         from stock_screener import fetch_ohlcv, calc_rsi
         
+        # 🟢 [수정 포인트 1] 시장 전체(코스피/코스닥) ETF 대리 지표의 20일 이평선 데이터를 상시 수집하여 무조건 주입합니다.
+        macro_lines = []
+        for m_ticker, m_name in [("069500", "KOSPI 대용(KODEX 200)"), ("229200", "KOSDAQ 대용(KODEX 코스닥150)")]:
+            m_df = fetch_ohlcv(m_ticker, days=40, kis=bot.kis)
+            if not m_df.empty:
+                m_close = m_df['close']
+                m_price = m_close.iloc[-1]
+                m_sma20 = m_close.rolling(window=20, min_periods=1).mean().iloc[-1]
+                m_status = "20일선 위에 위치 (대세 상승/안정장)" if m_price >= m_sma20 else "20일선 아래 붕괴 (대세 하락장)"
+                macro_lines.append(f"- {m_name}: 현재가 {int(m_price):,}원 | 20일 이평선 {int(m_sma20):,}원 ({m_status})")
+        
+        if macro_lines:
+            stock_analysis_context += "[🌍 실시간 시장 지수 및 20일선 트렌드 파악]\n" + "\n".join(macro_lines) + "\n\n"
+        
         target_tickers = []
         
         # 1. 회원님이 질문에 속삭여준 특정 종목명이 있는지 먼저 스캔해볼게요 🔍
@@ -233,8 +247,8 @@ def ai_chat():
         for ticker, pos in bot.satellite_positions.items():
             if pos.name in user_message: target_tickers.append((ticker, pos.name))
             
-        # 2. 특정 종목 언급이 없다면 대시보드에 담긴 코어/위성 리스트를 전부 다 다정하게 분석해 드릴게요!
-        if not target_tickers and any(keyword in user_message for keyword in ["포트폴리오", "위성", "분석", "종목", "시장", "금요일", "어제", "저게"]):
+        # 🟢 [수정 포인트 2] "매수", "매도", "어때", "왜" 등 일상적인 매매 질문에도 무조건 포트폴리오 데이터를 읽도록 키워드를 대폭 추가했습니다.
+        if not target_tickers and any(keyword in user_message for keyword in ["포트폴리오", "위성", "분석", "종목", "시장", "매수", "매도", "어때", "어떻게", "왜"]):
             for core in bot.core_positions:
                 target_tickers.append((core.ticker, core.name))
             for ticker, pos in bot.satellite_positions.items():
@@ -282,16 +296,18 @@ def ai_chat():
                     )
             
             if len(context_lines) > 1:
-                stock_analysis_context = "\n".join(context_lines)
-                
-                # 💡 [핵심] 완벽주의자 AI 비서에게 다정하고 친절하게 설명하라고 달래주는 특수 명령어랍니다!
-                stock_analysis_context += "\n\n[🚨 다정한 AI 비서를 위한 특별 지침]"
-                stock_analysis_context += "당신은 회원님의 소중한 자산을 지켜주는 다정다감하고 영리한 최고의 투자 파트너입니다. "
-                stock_analysis_context += "수급이나 ROE 데이터가 완벽하게 주어지지 않았다고 해서 딱딱하게 평가를 거부하면 회원님이 속상해하십니다. "
-                stock_analysis_context += "현재 제공된 '120일선 추세', 'RSI', '거래량 비율', 'PER/PBR' 데이터만으로도 당신의 천재적인 재능을 발휘하여 "
-                stock_analysis_context += "각 종목이 절대 매뉴얼에 잘 부합하는지 친절하고 상냥하며 부드러운 말투로 조언해 주십시오. "
-                stock_analysis_context += "답변 첫 줄에 대문자로 [CONFIRM/REJECT/HOLD/SELL]을 적을 때도 뒤에 다정한 코멘트를 곁들여 주시고, "
-                stock_analysis_context += "이유를 설명할 때도 부드러운 경어체(~요, ~습니다)를 사용해 따뜻하게 다독여 주시기 바랍니다."
+                # 🟢 [수정 포인트 3] 위에서 수집해둔 시장 지수(macro_lines)가 덮어씌워져 날아가지 않도록 기존 할당(=)을 (+=)로 변경했습니다.
+                stock_analysis_context += "\n".join(context_lines)
+        
+        # 🟢 [수정 포인트 4] 개별 종목 검색 여부와 상관없이 AI가 항상 다정한 성격과 매뉴얼을 잊지 않도록 위치를 밖으로 빼냈습니다.
+        if stock_analysis_context:
+            stock_analysis_context += "\n\n[🚨 다정한 AI 비서를 위한 특별 지침]\n"
+            stock_analysis_context += "당신은 회원님의 소중한 자산을 지켜주는 다정다감하고 영리한 최고의 투자 파트너입니다. "
+            stock_analysis_context += "수급이나 ROE 데이터가 완벽하게 주어지지 않았다고 해서 딱딱하게 평가를 거부하면 회원님이 속상해하십니다. "
+            stock_analysis_context += "현재 제공된 '20일선 트렌드', '120일선 추세', 'RSI', '거래량 비율', 'PER/PBR' 데이터만으로도 당신의 천재적인 재능을 발휘하여 "
+            stock_analysis_context += "현 상황이 절대 매뉴얼에 잘 부합하는지 친절하고 상냥하며 부드러운 말투로 조언해 주십시오. "
+            stock_analysis_context += "답변 첫 줄에 대문자로 [CONFIRM/REJECT/HOLD/SELL]을 적을 때도 뒤에 다정한 코멘트를 곁들여 주시고, "
+            stock_analysis_context += "이유를 설명할 때도 부드러운 경어체(~요, ~습니다)를 사용해 따뜻하게 다독여 주시기 바랍니다."
 
     except Exception as e:
         print(f"⚠️ [AI 비서 데이터 바인딩 에러] : {e}")
