@@ -566,8 +566,7 @@ class BotController:
 
         current_time_str = now.strftime('%H:%M')
         # 🟢 [족쇄 파괴 1] 11시~15시 사이의 휴식 제한을 없애고 09:01 ~ 15:20 장중 내내 풀가동!
-        # 🚨 [강제 작동 테스트 스위치] 시간 제한 해제
-        is_golden_hours = True 
+        is_golden_hours = ("09:01" <= current_time_str <= "15:20")
         
         if not is_golden_hours:
             if now.minute % 30 == 0:
@@ -651,7 +650,7 @@ class BotController:
             # 💡 증권사에 묻지 않고, 웹소켓이 메모리에 밀어넣어둔 가격을 즉시 꺼내 씀!
             cp = self.live_prices.get(core.ticker)
             if not cp or cp <= 0: 
-                cp = 50000  # 🚨 [강제 작동 테스트 스위치] 장외 시간 등 가격 수신 불가 시 가상 가격 5만원 투입
+                continue
                 
             with self.lock:
                 core._last_price = cp
@@ -670,8 +669,7 @@ class BotController:
                     core_signal, _, core_rsi = get_rsi_signal(core_ticker, kis_api=self.kis, df=extended_df)
 
                     # 🟢 [최종보완] 코어 매수: 10분(600초) 쿨타임 적용으로 미체결 중복 주문 완벽 차단
-                    # 🚨 [강제 작동 테스트 스위치] 쿨타임 무시 및 조건 즉시 통과
-                    if core_signal == 'BUY' and core_cash >= cp and (time.time() - getattr(core, 'last_order_time', 0) >= 0):
+                    if core_signal == 'BUY' and core_cash >= cp and (time.time() - getattr(core, 'last_order_time', 0) > 600):
                         qty = int((core_cash * 0.98) // cp)
                         if qty > 0:
                             if self.kis:
@@ -726,8 +724,7 @@ class BotController:
 
                 # 💡 증권사에 묻지 않고, 웹소켓이 메모리에 밀어넣어둔 가격을 즉시 꺼내 씀!
                 price = self.live_prices.get(ticker)
-                if not price or price <= 0: 
-                    price = 50000 # 🚨 [강제 작동 테스트 스위치] 임의 가격 강제 투입
+                if not price or price <= 0: continue
                     
                 with self.lock: pos._last_price = price
                     
@@ -771,8 +768,7 @@ class BotController:
                 extended_strategy = f"{strat_name} | 실시간 재무상태: {financial_data} | 현재 거시 시황: {macro_context} | 최근 14일 ATR 변동폭: {atr_14:.1f}원"
 
                 # 🟢 [최종보완] 위성 종목 10분 절대 쿨타임 변수 캐싱
-                # 🚨 [강제 작동 테스트 스위치] 10분 쿨타임 해제
-                is_cooldown_passed = True
+                is_cooldown_passed = (time.time() - getattr(pos, 'last_order_time', 0) > 600)
 
                 if pos_shares > 0 and price > 0 and is_cooldown_passed:
                     if price > pos_max_price:
@@ -845,10 +841,6 @@ class BotController:
                         decision, ai_reason = self.gemini.ai_approve_trade(
                             signal, pos_name, ticker, price, strat_name, ind_val, self.hot_sectors, recent_trades, custom_rules
                         )
-                        
-                        # 🚨 [강제 작동 테스트 스위치] AI가 거절(REJECT)해도 무조건 강제 승인 처리
-                        decision = True
-                        ai_reason = "테스트 목적 무조건 강제 승인 통과"
                         
                         if decision:
                             reason = f"AI 승인 (사유: {ai_reason})"
