@@ -155,10 +155,10 @@ class KisApi:
         except Exception as e:
             return None        
 
-    def _place_order(self, stock_code: str, qty: int, side: str):
+    def _place_order(self, stock_code: str, qty: int, side: str, price: int = 0):
         """
-        시장가 주문 공통 로직 (최유리지정가로 변경하여 슬리피지 원천 차단)
-        side: 'BUY' | 'SELL'
+        시장가/지정가 하이브리드 주문 로직 (NXT 대체거래소 지원)
+        price가 0이면 정규장용 최유리지정가(03), price가 주어지면 시간외 NXT용 지정가(00)로 자동 스위칭
         """
         if not self._ensure_token():
             return None
@@ -174,14 +174,18 @@ class KisApi:
         acnt_no   = self.account_no[:8]
         acnt_prdt = self.account_no[8:] if len(self.account_no) > 8 else "01"
 
+        # 🟢 [NXT 하이브리드 라우팅] 실시간 가격이 들어오면 일반 지정가(00)로, 아니면 최유리지정가(03) 적용
+        ord_dvsn = "00" if price > 0 else "03"
+        ord_unpr = str(int(price)) if price > 0 else "0"
+
         url  = f"{self.base_url}/uapi/domestic-stock/v1/trading/order-cash"
         body = {
             "CANO":           acnt_no,
             "ACNT_PRDT_CD":   acnt_prdt,
             "PDNO":           stock_code,
-            "ORD_DVSN":       "03",   # 🟢 03 = 최유리지정가 (슬리피지 방어)
+            "ORD_DVSN":       ord_dvsn,   
             "ORD_QTY":        str(qty),
-            "ORD_UNPR":       "0",
+            "ORD_UNPR":       ord_unpr,
         }
 
         try:
@@ -192,7 +196,8 @@ class KisApi:
                 if data.get('rt_cd') == '0':
                     odno = data['output'].get('ODNO', '-')
                     label = '매수' if side == 'BUY' else '매도'
-                    print(f"[KIS] {label} 주문 완료 | {stock_code} {qty}주 | 주문번호: {odno}")
+                    order_type_str = '지정가(NXT)' if price > 0 else '최유리지정가(정규장)'
+                    print(f"[KIS] {label} 주문 완료 [{order_type_str}] | {stock_code} {qty}주 | 주문번호: {odno}")
                     return data
                 else:
                     msg_cd = data.get('msg_cd', '')
@@ -202,7 +207,7 @@ class KisApi:
                         print("[KIS] 토큰 만료 → 재발급 후 재시도")
                         self.access_token = None
                         self._ensure_token()
-                        return self._place_order(stock_code, qty, side)
+                        return self._place_order(stock_code, qty, side, price)
                     return None
             else:
                 print(f"[KIS] 주문 통신 오류: {res.status_code} {res.text}")
@@ -210,65 +215,18 @@ class KisApi:
         except Exception as e:
             print(f"[KIS] 주문 요청 통신 시간 초과/오류: {e}")
             return None
-    
-    def sell_panic_market_order(self, stock_code: str, qty: int):
-        """서킷브레이커 발동 시 자산 수호를 위해 슬리피지를 감수하고 즉시 100% 전량 체결시키는 순수 시장가 매도"""
-        if qty <= 0 or not self._ensure_token():
-            return None
-
-        # 1. 실전/모의 웹 허브 TR ID 및 전용 통신 URL 정의
-        tr_id = "VTTC0801U" if self.is_mock else "TTTC0801U"
-        url = f"{self.base_url}/uapi/domestic-stock/v1/trading/order-cash"
-        
-        body = {
-            "CANO":           self.account_no[:8],
-            "ACNT_PRDT_CD":   self.account_no[8:] if len(self.account_no) > 8 else "01",
-            "PDNO":           stock_code,
-            "ORD_DVSN":       "01",   # 🚨 01 = 순수 시장가 (하한가로 던져서라도 무조건 100% 즉시 강제 체결)
-            "ORD_QTY":        str(qty),
-            "ORD_UNPR":       "0",
-        }
-        
-        try:
-            # 2. 타임아웃 5초를 반영하여 KIS 증권사 허브 인입 실행
-            res = requests.post(url, headers=self._order_headers(tr_id), data=json.dumps(body), timeout=5)
-
-            if res.status_code == 200:
-                data = res.json()
-                if data.get('rt_cd') == '0':
-                    odno = data['output'].get('ODNO', '-')
-                    print(f"[KIS] 긴급 시장가 매도 주문 완료 | {stock_code} {qty}주 | 주문번호: {odno}")
-                    return data
-                else:
-                    msg_cd = data.get('msg_cd', '')
-                    print(f"[KIS] 주문 실패: {data.get('msg1', res.text)}")
-                    
-                    # 3. KIS 원격 게이트웨이 보안 토큰 만료 예외 대응 및 자가 재귀 복구
-                    if msg_cd in ('EGW00123', 'EGW00121'):
-                        print("[KIS] 토큰 만료 → 재발급 후 긴급 매도 재시도")
-                        self.access_token = None
-                        self._ensure_token()
-                        return self.sell_panic_market_order(stock_code, qty) # 🚨 패닉셀 자가 재시도
-                    return None
-            else:
-                print(f"[KIS] 주문 통신 오류: {res.status_code} {res.text}")
-                return None
-                
-        except Exception as e:
-            print(f"[KIS] 긴급 패닉셀 시장가 주문 통신 에러: {e}")
-            return None
-        
-    def buy_market_order(self, stock_code: str, qty: int):
-        """시장가 매수 주문"""
+            
+    def buy_market_order(self, stock_code: str, qty: int, price: int = 0):
+        """시장가/지정가 하이브리드 매수 주문"""
         if qty <= 0:
             return None
-        return self._place_order(stock_code, qty, 'BUY')
+        return self._place_order(stock_code, qty, 'BUY', price)
         
-    def sell_market_order(self, stock_code: str, qty: int):
-        """시장가 매도 주문"""
+    def sell_market_order(self, stock_code: str, qty: int, price: int = 0):
+        """시장가/지정가 하이브리드 매도 주문"""
         if qty <= 0:
             return None
-        return self._place_order(stock_code, qty, 'SELL')
+        return self._place_order(stock_code, qty, 'SELL', price)
 
     def get_account_balance(self):
         """계좌 잔고 및 종목 보유 내역 조회 (실제 계좌)"""
