@@ -819,37 +819,46 @@ class BotController:
                                     self.daily_pnl[today] = self.daily_pnl.get(today, 0) + profit
                         continue
 
-                # ⚡ [Fast Track] 알고리즘 즉각 매수 파트
-                if signal == 'BUY' and pos_shares == 0 and is_cooldown_passed:
-                    if not is_golden_hours: continue
-                    reason = "기술적 지표 조건 충족 (Fast Track 자동 매수)"
-                    qty = int((pos_cash * 0.98) // price)
-                    
-                    if qty > 0:
-                        if self.kis: 
-                            order_res = self.kis.buy_market_order(ticker, qty)
-                            if order_res:
-                                with self.lock:
-                                    pos.last_order_time = time.time()  # 🟢 쿨타임 타임스탬프 기록
-                                
-                                msg = f"📈 [{pos_name}] 알고리즘 즉각 매수 전송 완료 (10분 쿨타임 가동)"
-                                # 🤖 [AI 매수 승인] 알고리즘 매수 신호 발생 시 AI 최종 판단
+                # ⚡ [매매 집행 파트]
+                # 만약 AI 비서가 탑재되어 있다면 AI 승인 단계를 거치고, 없다면 즉각(Fast Track) 매매를 진행합니다.
                 if signal == 'BUY' and pos_shares == 0 and is_cooldown_passed:
                     if not is_golden_hours: continue
                     
-                    self.add_log(f"🤔 [{pos_name}] 매수 신호 포착! AI의 판단을 요청합니다...")
-                    
-                    # DB에서 과거 매매 기록과 AI 자가 규칙 불러오기
-                    recent_trades = get_recent_trades(self.user_id, ticker)
-                    custom_rules = load_ai_rules(self.user_id)
-                    
-                    # 개발자님이 만드신 ai_approve_trade 호출!
-                    decision, ai_reason = self.gemini.ai_approve_trade(
-                        signal, pos_name, ticker, price, strat_name, ind_val, self.hot_sectors, recent_trades, custom_rules
-                    )
-                    
-                    if decision:
-                        reason = f"AI 승인 (사유: {ai_reason})"
+                    if self.gemini:
+                        # 🤖 [AI 매수 승인] 알고리즘 매수 신호 발생 시 AI 최종 판단
+                        self.add_log(f"🤔 [{pos_name}] 매수 신호 포착! AI의 판단을 요청합니다...")
+                        
+                        # DB에서 과거 매매 기록과 AI 자가 규칙 불러오기
+                        recent_trades = get_recent_trades(self.user_id, ticker)
+                        custom_rules = load_ai_rules(self.user_id)
+                        
+                        # 개발자님이 만드신 ai_approve_trade 호출!
+                        decision, ai_reason = self.gemini.ai_approve_trade(
+                            signal, pos_name, ticker, price, strat_name, ind_val, self.hot_sectors, recent_trades, custom_rules
+                        )
+                        
+                        if decision:
+                            reason = f"AI 승인 (사유: {ai_reason})"
+                            qty = int((pos_cash * 0.98) // price)
+                            
+                            if qty > 0:
+                                if self.kis: 
+                                    order_res = self.kis.buy_market_order(ticker, qty)
+                                    if order_res:
+                                        with self.lock:
+                                            pos.last_order_time = time.time()  # 🟢 쿨타임 타임스탬프 기록
+                                        
+                                        msg = f"📈 [{pos_name}] AI 승인 매수 완료 (10분 쿨타임)\n👉 {ai_reason}"
+                                        self.add_log(msg)
+                                        log_trade_journal(self.user_id, ticker, pos_name, 'BUY', price, strat_name, reason)
+                                        self._send_telegram(msg)
+                        else:
+                            msg = f"🛑 [{pos_name}] AI 매수 거절 (REJECT)\n👉 {ai_reason}"
+                            self.add_log(msg)
+                            self._send_telegram(msg)
+                    else:
+                        # ⚡ [Fast Track] AI 비서가 없을 경우 알고리즘 즉각 매수
+                        reason = "기술적 지표 조건 충족 (Fast Track 자동 매수)"
                         qty = int((pos_cash * 0.98) // price)
                         
                         if qty > 0:
@@ -859,28 +868,69 @@ class BotController:
                                     with self.lock:
                                         pos.last_order_time = time.time()  # 🟢 쿨타임 타임스탬프 기록
                                     
-                                    msg = f"📈 [{pos_name}] AI 승인 매수 완료 (10분 쿨타임)\n👉 {ai_reason}"
+                                    msg = f"📈 [{pos_name}] 알고리즘 즉각 매수 전송 완료 (10분 쿨타임 가동)"
                                     self.add_log(msg)
                                     log_trade_journal(self.user_id, ticker, pos_name, 'BUY', price, strat_name, reason)
                                     self._send_telegram(msg)
-                    else:
-                        msg = f"🛑 [{pos_name}] AI 매수 거절 (REJECT)\n👉 {ai_reason}"
-                        self.add_log(msg)
-                        self._send_telegram(msg)
 
-                # 🤖 [AI 매도 승인] 알고리즘 매도 신호 발생 시 AI 최종 판단
                 elif signal == 'SELL' and pos_shares > 0 and is_cooldown_passed:
-                    self.add_log(f"🤔 [{pos_name}] 매도 신호 포착! AI의 판단을 요청합니다...")
-                    
-                    recent_trades = get_recent_trades(self.user_id, ticker)
-                    custom_rules = load_ai_rules(self.user_id)
-                    
-                    decision, ai_reason = self.gemini.ai_approve_trade(
-                        signal, pos_name, ticker, price, strat_name, ind_val, self.hot_sectors, recent_trades, custom_rules
-                    )
-                    
-                    if decision:
-                        reason = f"AI 승인 (사유: {ai_reason})"
+                    if self.gemini:
+                        # 🤖 [AI 매도 승인] 알고리즘 매도 신호 발생 시 AI 최종 판단
+                        self.add_log(f"🤔 [{pos_name}] 매도 신호 포착! AI의 판단을 요청합니다...")
+                        
+                        recent_trades = get_recent_trades(self.user_id, ticker)
+                        custom_rules = load_ai_rules(self.user_id)
+                        
+                        decision, ai_reason = self.gemini.ai_approve_trade(
+                            signal, pos_name, ticker, price, strat_name, ind_val, self.hot_sectors, recent_trades, custom_rules
+                        )
+                        
+                        if decision:
+                            reason = f"AI 승인 (사유: {ai_reason})"
+                            
+                            if self.kis: 
+                                order_res = self.kis.sell_market_order(ticker, pos_shares)
+                                if order_res:
+                                    with self.lock:
+                                        pos.last_order_time = time.time()  # 🟢 쿨타임 타임스탬프 기록 
+                                    
+                                    profit = (price - pos_avg_price) * pos_shares 
+                                    
+                                    msg = f"📉 [{pos_name}] AI 승인 전량 매도 완료 | 예상 손익: {profit:+,.0f}원\n👉 {ai_reason}"
+                                    self.add_log(msg)
+                                    log_trade_journal(self.user_id, ticker, pos_name, 'SELL', price, strat_name, reason, profit=profit)
+                                    self._send_telegram(msg)
+
+                                    with self.lock:
+                                        self.pnl_this_turn += profit
+                                        today = datetime.now().strftime('%Y-%m-%d')
+                                        self.daily_pnl[today] = self.daily_pnl.get(today, 0) + profit
+                                    
+                                    # 수익 재투자 로직 (실제 잔고 바탕)
+                                    if profit > 0:
+                                        with self.lock:
+                                            if self.core_positions and pos.cash >= profit * REINVEST_RATIO:
+                                                reinvest = profit * REINVEST_RATIO
+                                                pos.cash -= reinvest
+                                                split_amount = reinvest / len(self.core_positions)
+                                                for core in self.core_positions: core.cash += split_amount
+                                                msg_dist = f"🔄 위성 수익 중 {reinvest:,.0f}원 코어 매수자금 편입 완료"
+                                                self.add_log(msg_dist)
+                                                self._send_telegram(msg_dist)
+                                                
+                                                total_asset_now = float(self.cached_balance.get('total_cash', 0)) + float(self.cached_balance.get('total_value', 0)) if self.cached_balance else 0
+                                                if total_asset_now > 0:
+                                                    new_core_target = (total_asset_now * self.core_ratio) + reinvest
+                                                    self.core_ratio = new_core_target / total_asset_now
+                                                    self.satellite_ratio = 1.0 - self.core_ratio
+                                                    self.add_log(f"📊 [복리 엔진 가동] 코어 포트폴리오 목표 비중이 {self.core_ratio*100:.2f}% 로 상향되었습니다.")
+                        else:
+                            msg = f"🛡️ [{pos_name}] AI 매도 보류 (HOLD)\n👉 {ai_reason}"
+                            self.add_log(msg)
+                            self._send_telegram(msg)
+                    else:
+                        # ⚡ [Fast Track] AI 비서가 없을 경우 알고리즘 즉각 매도
+                        reason = "기술적 지표 조건 충족 (Fast Track 자동 매도)"
                         
                         if self.kis: 
                             order_res = self.kis.sell_market_order(ticker, pos_shares)
@@ -890,7 +940,7 @@ class BotController:
                                 
                                 profit = (price - pos_avg_price) * pos_shares 
                                 
-                                msg = f"📉 [{pos_name}] AI 승인 전량 매도 완료 | 예상 손익: {profit:+,.0f}원\n👉 {ai_reason}"
+                                msg = f"📉 [{pos_name}] 알고리즘 전량 매도 전송 완료 | 예상 손익: {profit:+,.0f}원"
                                 self.add_log(msg)
                                 log_trade_journal(self.user_id, ticker, pos_name, 'SELL', price, strat_name, reason, profit=profit)
                                 self._send_telegram(msg)
@@ -918,56 +968,6 @@ class BotController:
                                                 self.core_ratio = new_core_target / total_asset_now
                                                 self.satellite_ratio = 1.0 - self.core_ratio
                                                 self.add_log(f"📊 [복리 엔진 가동] 코어 포트폴리오 목표 비중이 {self.core_ratio*100:.2f}% 로 상향되었습니다.")
-                    else:
-                        msg = f"🛡️ [{pos_name}] AI 매도 보류 (HOLD)\n👉 {ai_reason}"
-                        self.add_log(msg)
-                        self._send_telegram(msg).add_log(msg)
-                                log_trade_journal(self.user_id, ticker, pos_name, 'BUY', price, strat_name, reason)
-                                self._send_telegram(msg)
-
-                # ⚡ [Fast Track] 알고리즘 즉각 매도 파트 
-                elif signal == 'SELL' and pos_shares > 0 and is_cooldown_passed:
-                    reason = "기술적 지표 조건 충족 (Fast Track 자동 매도)"
-                    
-                    if self.kis: 
-                        order_res = self.kis.sell_market_order(ticker, pos_shares)
-                        if order_res:
-                            with self.lock:
-                                pos.last_order_time = time.time()  # 🟢 쿨타임 타임스탬프 기록 
-                            
-                            # (대략적인 손익 기록용)
-                            profit = (price - pos_avg_price) * pos_shares 
-                            
-                            msg = f"📉 [{pos_name}] 알고리즘 전량 매도 전송 완료 | 예상 손익: {profit:+,.0f}원"
-                            self.add_log(msg)
-                            log_trade_journal(self.user_id, ticker, pos_name, 'SELL', price, strat_name, reason, profit=profit)
-                            self._send_telegram(msg)
-
-                            with self.lock:
-                                # 🚨 [신규 추가] 실현손익 기록 연동
-                                self.pnl_this_turn += profit
-                                today = datetime.now().strftime('%Y-%m-%d')
-                                self.daily_pnl[today] = self.daily_pnl.get(today, 0) + profit
-                            
-                            # 수익 재투자 로직 (실제 잔고 바탕)
-                            if profit > 0:
-                                with self.lock:
-                                    if self.core_positions and pos.cash >= profit * REINVEST_RATIO:
-                                        reinvest = profit * REINVEST_RATIO
-                                        pos.cash -= reinvest
-                                        split_amount = reinvest / len(self.core_positions)
-                                        for core in self.core_positions: core.cash += split_amount
-                                        msg_dist = f"🔄 위성 수익 중 {reinvest:,.0f}원 코어 매수자금 편입 완료"
-                                        self.add_log(msg_dist)
-                                        self._send_telegram(msg_dist)
-                                        
-                                        # 🚨 [버그 수정] 잔고 동기화 루프에 의해 현금이 덮어씌워지지 않도록 목표 비율 자체를 영구 상향 조절
-                                        total_asset_now = float(self.cached_balance.get('total_cash', 0)) + float(self.cached_balance.get('total_value', 0)) if self.cached_balance else 0
-                                        if total_asset_now > 0:
-                                            new_core_target = (total_asset_now * self.core_ratio) + reinvest
-                                            self.core_ratio = new_core_target / total_asset_now
-                                            self.satellite_ratio = 1.0 - self.core_ratio
-                                            self.add_log(f"📊 [복리 엔진 가동] 코어 포트폴리오 목표 비중이 {self.core_ratio*100:.2f}% 로 상향되었습니다.")
 
             except Exception as e:
                 self.add_log(f"⚠️ [{ticker}] 오류: {e}")
