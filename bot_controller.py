@@ -751,6 +751,9 @@ class BotController:
                         self.add_log(f"  [{core_name}] HOLD (RSI:{core_rsi:.1f}, floor:{core_floor_shares}주 보호)")
                 except Exception as e:
                     self.add_log(f"  [{core_name}] 점검 중 오류: {str(e)}")
+            
+            # 🟢 [API 셧다운 방어] 한 종목 분석이 끝날 때마다 0.2초씩 쉬어 증권사 방화벽 차단을 완벽히 방지합니다.
+            time.sleep(0.2)
 
         with self.lock:
             trading_sat_items = list(self.satellite_positions.items())
@@ -1037,14 +1040,16 @@ class BotController:
                                             self.add_log(msg_dist)
                                             self._send_telegram(msg_dist)
                                             
-                                            total_asset_now = float(self.cached_balance.get('total_cash', 0)) + float(self.cached_balance.get('total_value', 0)) if self.cached_balance else 0
                                             if total_asset_now > 0:
-                                                new_core_target = (total_asset_now * self.core_ratio) + reinvest
-                                                self.core_ratio = new_core_target / total_asset_now
-                                                self.satellite_ratio = 1.0 - self.core_ratio
+                                                    new_core_target = (total_asset_now * self.core_ratio) + reinvest
+                                                    self.core_ratio = new_core_target / total_asset_now
+                                                    self.satellite_ratio = 1.0 - self.core_ratio
 
             except Exception as e:
                 self.add_log(f"⚠️ [{ticker}] 오류: {e}")
+                
+            # 🟢 [API 셧다운 방어] 위성 종목 스캔 시에도 0.2초 딜레이를 주어 서버 과부하를 막습니다.
+            time.sleep(0.2)
 
         self._save_state()
 
