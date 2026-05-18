@@ -591,8 +591,24 @@ class BotController:
         if not is_golden_hours:
             if now.minute % 30 == 0:
                 self.add_log(f"🕒 현재 시간({current_time_str}) 장 마감 또는 휴식 구간입니다.")
+                # 🟢 장 외 시간 돌입 시 뱃지 상태를 즉시 휴식 중으로 일괄 변경
+                with self.lock:
+                    for core in self.core_positions:
+                        core.status = "휴식 중 💤"
+                        core.status_msg = f"현재 시간({current_time_str})은 정규 장 및 장외 대체거래소 감시 마감 시간입니다."
+                    for sat in self.satellite_positions.values():
+                        sat.status = "휴식 중 💤"
+                        sat.status_msg = f"현재 시간({current_time_str})은 정규 장 및 장외 대체거래소 감시 마감 시간입니다."
         else:
             self.add_log(f"--- 🎯 실시간 매수/매도 전면 점검 ({current_time_str}) ---")
+            # 🟢 사이클 매 주기 시작 시 기본 감시 상태로 리셋
+            with self.lock:
+                for core in self.core_positions:
+                    core.status = "감시 중 👀"
+                    core.status_msg = "지표를 실시간 추적하며 최적의 매매 타이밍을 스캔 중입니다."
+                for sat in self.satellite_positions.values():
+                    sat.status = "감시 중 👀"
+                    sat.status_msg = "지표를 실시간 추적하며 최적의 매매 타이밍을 스캔 중입니다."
 
         # 🦅 [신규 알파 로직] 관망 및 저점 탐색 모드 (Crisis Mode) 체크
         if getattr(self, 'is_crisis_mode', False):
@@ -623,7 +639,6 @@ class BotController:
                 real_balance = self.kis.get_account_balance()
                 if real_balance and 'stocks' in real_balance:
                     self._sync_internal_balances(real_balance)
-                    self.add_log("🔄 [잔고 동기화 완료] 실제 계좌의 실시간 자산 데이터 연동 완료.")
                     
                     # 🚨 [신규 알파 로직] 계좌 단위 서킷브레이커 (-10% 하락 시 전량 매도 후 관망)
                     current_total_asset = float(real_balance.get('total_cash', 0)) + float(real_balance.get('total_value', 0))
@@ -645,6 +660,8 @@ class BotController:
                                 safe_core_positions = list(self.core_positions)
                             for core in safe_core_positions:
                                 if core.shares > 0:
+                                    core.status = "긴급 청산 🔥"
+                                    core.status_msg = "계좌 전체 서킷브레이커 발동으로 인해 포지션을 시장가 긴급 매도 중입니다."
                                     self.kis.sell_panic_market_order(core.ticker, core.shares)
                                     self.add_log(f"   🔥 [긴급 강제 청산] 코어 종목 {core.name} {core.shares}주 순수 시장가 매도 완료")
                                     
@@ -652,6 +669,8 @@ class BotController:
                                 safe_satellite_items = list(self.satellite_positions.items())
                             for ticker, pos in safe_satellite_items:
                                 if pos.shares > 0:
+                                    pos.status = "긴급 청산 🔥"
+                                    pos.status_msg = "계좌 전체 서킷브레이커 발동으로 인해 포지션을 시장가 긴급 매도 중입니다."
                                     self.kis.sell_panic_market_order(ticker, pos.shares)
                                     self.add_log(f"   🔥 [긴급 강제 청산] 위성 종목 {pos.name} {pos.shares}주 순수 시장가 매도 완료")
                             
@@ -665,7 +684,8 @@ class BotController:
             safe_core_positions = list(self.core_positions)
             
         for core in safe_core_positions:
-            cp = self.live_prices.get(core.ticker)
+            # 🟢 [먹통 완벽 해결] 실시간 웹소켓 가격 공백 시 삼중 연동 백업으로 가격 산출 (실명 버그 영구 해제)
+            cp = self.live_prices.get(core.ticker) or getattr(core, 'kis_current_price', 0) or (self.kis.get_current_price(core.ticker) if self.kis else 0)
             if not cp or cp <= 0: 
                 continue
                 
@@ -678,7 +698,6 @@ class BotController:
                 core_ticker = core.ticker
             
                 core_val = core_shares * cp
-                self.add_log(f"💎 {core_name} 현황: {core_shares}주 (floor: {core_floor_shares}주) × {cp:,}원 = {core_val:,}원")
 
                 try:
                     from strategy import get_rsi_signal
@@ -688,12 +707,16 @@ class BotController:
                     if core_signal == 'BUY' and core_cash >= cp and (time.time() - getattr(core, 'last_order_time', 0) > 600):
                         qty = int((core_cash * 0.98) // cp)
                         if qty > 0:
+                            core.status = "주문 전송 🛒"
+                            core.status_msg = f"기술적 지표 과매도(RSI: {core_rsi:.1f}) 만족. {cp:,}원에 {qty}주 매수 주문을 전송하고 있습니다."
                             if self.kis:
                                 # 🟢 [NXT 패치] price=int(cp) 파라미터 추가
                                 order_res = self.kis.buy_market_order(core_ticker, qty, price=int(cp))
                                 if order_res:
                                     with self.lock:
                                         core.last_order_time = time.time()  
+                                        core.status = "체결 대기 ⏳"
+                                        core.status_msg = "매수 주문이 한국투자증권 인프라에 접수되었습니다. 체결 처리를 대기하고 있습니다."
                                         
                                     msg = f"💎 {core_name} 매수 주문 전송 완료 (10분 쿨타임 가동) | {qty}주 @ {cp:,}원 (RSI:{core_rsi:.1f})"
                                     self.add_log(msg)
@@ -702,12 +725,16 @@ class BotController:
                     elif core_signal == 'SELL' and core_shares > core_floor_shares and (time.time() - getattr(core, 'last_order_time', 0) > 600):
                         sellable = core_shares - core_floor_shares
                         if sellable > 0:
+                            core.status = "주문 전송 🛒"
+                            core.status_msg = f"기술적 지표 과매수(RSI: {core_rsi:.1f}) 만족. 수익 실현을 위해 {cp:,}원에 {sellable}주 매도 주문을 전송하고 있습니다."
                             if self.kis:
                                 # 🟢 [NXT 패치] price=int(cp) 파라미터 추가
                                 order_res = self.kis.sell_market_order(core_ticker, sellable, price=int(cp))
                                 if order_res:
                                     with self.lock:
                                         core.last_order_time = time.time()  
+                                        core.status = "체결 대기 ⏳"
+                                        core.status_msg = "매도 주문이 정상 접수되었습니다. 시장에서 체결 물량이 매칭되기를 기다리는 중입니다."
                                         
                                     profit = (cp - core.avg_price) * sellable
                                     msg = f"💎 {core_name} 익절 매도 주문 전송 완료 | {sellable}주 @ {cp:,}원 (RSI:{core_rsi:.1f}) | 예상 이익 {profit:,.0f}원"
@@ -719,6 +746,8 @@ class BotController:
                                         today_str = now.strftime('%Y-%m-%d')
                                         self.daily_pnl[today_str] = self.daily_pnl.get(today_str, 0) + profit
                     else:
+                        core.status = "관망 (HOLD) ⏸️"
+                        core.status_msg = f"현재 지표(RSI: {core_rsi:.1f})가 알고리즘 매매 임계구간에 진입하지 않아 안전 관망 상태를 지속합니다."
                         self.add_log(f"  [{core_name}] HOLD (RSI:{core_rsi:.1f}, floor:{core_floor_shares}주 보호)")
                 except Exception as e:
                     self.add_log(f"  [{core_name}] 점검 중 오류: {str(e)}")
@@ -736,7 +765,8 @@ class BotController:
                     pos_cash = pos.cash
                     pos_name = pos.name
 
-                price = self.live_prices.get(ticker)
+                # 🟢 [먹통 완벽 해결] 위성 종목도 마찬가지로 다중 경로 가격 트래킹 시스템 적용
+                price = self.live_prices.get(ticker) or getattr(pos, 'kis_current_price', 0) or (self.kis.get_current_price(ticker) if self.kis else 0)
                 if not price or price <= 0: continue
                     
                 with self.lock: pos._last_price = price
@@ -779,6 +809,11 @@ class BotController:
 
                 macro_context = self.kis.get_macro_context() if self.kis else "시황 정보 없음"
                 is_cooldown_passed = (time.time() - getattr(pos, 'last_order_time', 0) > 600)
+                
+                # 기본 홀드 뱃지 문구 할당
+                if signal == 'HOLD' or not is_cooldown_passed:
+                    pos.status = "관망 (HOLD) ⏸️"
+                    pos.status_msg = f"지표 수치({ind_val:.1f})가 전략 기준선 바깥에 머무르고 있거나 현재 도배 방지 10분 쿨타임 구간에 잡혀있습니다."
 
                 if pos_shares > 0 and price > 0 and is_cooldown_passed:
                     if price > pos_max_price:
@@ -789,6 +824,8 @@ class BotController:
                         dynamic_trailing_stop = pos_max_price - (1.5 * atr_14)
                         if price <= dynamic_trailing_stop:
                             reason = f"ATR 트레일링 스탑 (최고점 대비 1.5*ATR: {int(dynamic_trailing_stop):,}원 이탈)"
+                            pos.status = "주문 전송 🛒"
+                            pos.status_msg = f"최고가 대비 트레일링 익절 조건 충족! 자산 방어를 위해 {price:,}원에 전량 시장가 주문을 던집니다."
                             self.add_log(f"🛡️ [{pos_name}] 변동성 추적 익절선 이탈! 수익 확정을 위해 전량 매도합니다.")
                             
                             if self.kis: 
@@ -798,6 +835,8 @@ class BotController:
                                     with self.lock: 
                                         pos.last_order_time = time.time()  
                                         pos.max_price = 0  
+                                        pos.status = "체결 대기 ⏳"
+                                        pos.status_msg = "트레일링 스탑 익절 주문이 증권사 노드에 정식 전송되었습니다."
                                         
                                     profit = (price - pos_avg_price) * pos_shares
                                     
@@ -814,6 +853,8 @@ class BotController:
                     dynamic_hard_stop = pos_avg_price - (2.5 * atr_14)
                     if price <= dynamic_hard_stop:
                         reason = f"ATR 변동성 하드 손절 (방어선 {int(dynamic_hard_stop):,}원 이탈)"
+                        pos.status = "주문 전송 🛒"
+                        pos.status_msg = f"매입 단가 대비 2.5*ATR 손절선 돌파 위험 감지. 리스크 원천 봉쇄를 위해 {price:,}원에 긴급 주문을 전송합니다."
                         self.add_log(f"🚨 [{pos_name}] 변동성 위험 한계점 돌파! 추세 하락으로 판단 전량 매도.")
                         
                         if self.kis: 
@@ -822,6 +863,8 @@ class BotController:
                             if order_res:
                                 with self.lock: 
                                     pos.last_order_time = time.time()  
+                                    pos.status = "체결 대기 ⏳"
+                                    pos.status_msg = "손절 방어 매도 주문의 거래소 정산 체결 처리를 대기하고 있습니다."
                                 
                                 profit = (price - pos_avg_price) * pos_shares
                                 
@@ -840,6 +883,9 @@ class BotController:
                     if not is_golden_hours: continue
                     
                     if self.gemini:
+                        # 🟢 AI 최종 판단 요청 전 단계 스냅샷 뱃지 바인딩
+                        pos.status = "AI 심사 중 🤖"
+                        pos.status_msg = f"차트상 매수 시그널 발생! (지표값: {ind_val:.2f}). 현재 Gemini 대형언어모델 매매 승인 장부 컨텍스트 전송 후 최종 가부(APPROVE/REJECT) 심사를 기다리는 중입니다."
                         self.add_log(f"🤔 [{pos_name}] 매수 신호 포착! AI의 판단을 요청합니다...")
                         recent_trades = get_recent_trades(self.user_id, ticker)
                         custom_rules = load_ai_rules(self.user_id)
@@ -852,18 +898,25 @@ class BotController:
                             qty = int((pos_cash * 0.98) // price)
                             
                             if qty > 0:
+                                pos.status = "주문 전송 🛒"
+                                pos.status_msg = f"AI 비서 종합 승인 완료. {price:,}원에 {qty}주 분량의 매수 오더 패킷을 거래소 백엔드로 발송 중입니다."
                                 if self.kis: 
                                     # 🟢 [NXT 패치] price=int(price) 파라미터 추가
                                     order_res = self.kis.buy_market_order(ticker, qty, price=int(price))
                                     if order_res:
                                         with self.lock:
                                             pos.last_order_time = time.time()  
+                                            pos.status = "체결 대기 ⏳"
+                                            pos.status_msg = f"AI 매수 주문 집행 성공. 계좌 원장 원격 반영 대기 중. 사유: {ai_reason}"
                                         
                                         msg = f"📈 [{pos_name}] AI 승인 매수 완료 (10분 쿨타임)\n👉 {ai_reason}"
                                         self.add_log(msg)
                                         log_trade_journal(self.user_id, ticker, pos_name, 'BUY', price, strat_name, reason)
                                         self._send_telegram(msg)
                         else:
+                            # 🟢 AI 거절 판정 패스 로그 및 뱃지 세팅
+                            pos.status = "AI 거절 🛑"
+                            pos.status_msg = f"기술적 지표는 매수 우위이나, AI가 거시 경제 시황 및 리스크 검증 결과 부적합 판정을 내렸습니다. (사유: {ai_reason})"
                             msg = f"🛑 [{pos_name}] AI 매수 거절 (REJECT)\n👉 {ai_reason}"
                             self.add_log(msg)
                             self._send_telegram(msg)
@@ -872,12 +925,15 @@ class BotController:
                         qty = int((pos_cash * 0.98) // price)
                         
                         if qty > 0:
+                            pos.status = "주문 전송 🛒"
+                            pos.status_msg = f"AI 미연동 모드 - 지표 다이렉트 매수 가동. {price:,}원에 {qty}주 주문 발송."
                             if self.kis: 
                                 # 🟢 [NXT 패치] price=int(price) 파라미터 추가
                                 order_res = self.kis.buy_market_order(ticker, qty, price=int(price))
                                 if order_res:
                                     with self.lock:
                                         pos.last_order_time = time.time()  
+                                        pos.status = "체결 대기 ⏳"
                                     
                                     msg = f"📈 [{pos_name}] 알고리즘 즉각 매수 전송 완료 (10분 쿨타임 가동)"
                                     self.add_log(msg)
@@ -886,6 +942,9 @@ class BotController:
 
                 elif signal == 'SELL' and pos_shares > 0 and is_cooldown_passed:
                     if self.gemini:
+                        # 🟢 AI 최종 매도 승인 절차 뱃지 할당
+                        pos.status = "AI 심사 중 🤖"
+                        pos.status_msg = f"전략상 매도 신호 감지(지표: {ind_val:.2f}). 포지션 청산 여부에 대해 최종 AI 승인 컨텍스트를 분석 중입니다."
                         self.add_log(f"🤔 [{pos_name}] 매도 신호 포착! AI의 판단을 요청합니다...")
                         recent_trades = get_recent_trades(self.user_id, ticker)
                         custom_rules = load_ai_rules(self.user_id)
@@ -895,12 +954,16 @@ class BotController:
                         
                         if decision:
                             reason = f"AI 승인 (사유: {ai_reason})"
+                            pos.status = "주문 전송 🛒"
+                            pos.status_msg = f"AI 청산 매도 승인 완료. {price:,}원에 보유 수량 {pos_shares}주 전량 매도 주문을 넣었습니다."
                             if self.kis: 
                                 # 🟢 [NXT 패치] price=int(price) 파라미터 추가
                                 order_res = self.kis.sell_market_order(ticker, pos_shares, price=int(price))
                                 if order_res:
                                     with self.lock:
                                         pos.last_order_time = time.time()  
+                                        pos.status = "체결 대기 ⏳"
+                                        pos.status_msg = "AI 청산 매도 주문 접수 완료. 원격 스와핑 체결을 기다리는 중입니다."
                                     
                                     profit = (price - pos_avg_price) * pos_shares 
                                     
@@ -931,17 +994,23 @@ class BotController:
                                                     self.core_ratio = new_core_target / total_asset_now
                                                     self.satellite_ratio = 1.0 - self.core_ratio
                         else:
+                            # 🟢 매도 보류 판정 뱃지 전환
+                            pos.status = "AI 거절(보유) 🛑"
+                            pos.status_msg = f"지표는 매수 과열이나 AI 연산 결과 추가 랠리 및 모멘텀 지속이 예상되어 매도를 전면 보류(HOLD)합니다. 사유: {ai_reason}"
                             msg = f"🛡️ [{pos_name}] AI 매도 보류 (HOLD)\n👉 {ai_reason}"
                             self.add_log(msg)
                             self._send_telegram(msg)
                     else:
                         reason = "기술적 지표 조건 충족 (Fast Track 자동 매도)"
+                        pos.status = "주문 전송 🛒"
+                        pos.status_msg = f"알고리즘 매도 시그널 즉각 집행. {price:,}원 시장가 매도 오더 패킷 발송."
                         if self.kis: 
                             # 🟢 [NXT 패치] price=int(price) 파라미터 추가
                             order_res = self.kis.sell_market_order(ticker, pos_shares, price=int(price))
                             if order_res:
                                 with self.lock:
                                     pos.last_order_time = time.time()  
+                                    pos.status = "체결 대기 ⏳"
                                 
                                 profit = (price - pos_avg_price) * pos_shares 
                                 

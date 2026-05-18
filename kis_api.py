@@ -524,27 +524,6 @@ class KisApi:
             pass
         return " | ".join(macro_info) if macro_info else "시장 지수 실시간 조회 불가"
 
-    # ▼▼ 여기서부터 새로 추가된 부분 ▼▼
-    def get_approval_key(self):
-        """웹소켓 실시간 접속을 위한 전용 암호키(Approval Key) 발급"""
-        url = f"{self.base_url}/oauth2/Approval"
-        headers = {"content-type": "application/json; utf-8"}
-        body = {
-            "grant_type": "client_credentials",
-            "appkey": self.app_key,
-            "secretkey": self.app_secret
-        }
-        try:
-            res = requests.post(url, headers=headers, data=json.dumps(body), timeout=5)
-            if res.status_code == 200:
-                return res.json().get('approval_key')
-            else:
-                print(f"[KIS WS] Approval Key 발급 실패: {res.text}")
-                return None
-        except Exception as e:
-            print(f"[KIS WS] Approval Key 요청 중 통신 오류: {e}")
-            return None
-
 if __name__ == '__main__':
     # 테스트 코드
     pass
