@@ -339,7 +339,8 @@ class KisApi:
                     return {
                         "stocks": parsed_stocks,
                         "total_cash": _safe_parse('prvs_rcdl_excc_amt', 'dnca_tot_amt'), # D+2 예수금
-                        "total_value": _safe_parse('tot_evlu_amt', 'evlu_amt_smtl_amt'), # 총 평가금액
+                        # 🚨 [버그 수정 완료] tot_evlu_amt(총자산)이 아니라, 유가증권(주식) 평가금액만 가져오도록 수정
+                        "total_value": _safe_parse('scts_evlu_amt', 'evlu_amt_smtl_amt'), # 순수 주식 평가금액
                         "total_purchase": _safe_parse('pchs_amt_smtl_amt', 'tot_pchs_amt') # 매입금액 합계
                     }
                 else:

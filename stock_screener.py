@@ -59,8 +59,10 @@ def fetch_ohlcv(ticker, days=200, kis=None):
             return _ohlcv_cache[key][1]
 
     try:
-        # 🟢 [pykrx 최적화] KIS API 인스턴스가 주어지면 pykrx를 회피하고 KIS API로 즉시 조회하여 IP 차단을 방어합니다.
+        # 🟢 [pykrx 최적화] KIS API 인스턴스가 주어지면 pykrx를 회피하고 KIS API로 즉시 조회
         if kis is not None:
+            # 🚨 [숨 고르기 패치] 모의투자 API 초당 4회 제한을 우회하기 위해 0.25초 쉬어갑니다!
+            time.sleep(0.25)
             df = kis.get_ohlcv(ticker, "D")
             if df is not None and not df.empty:
                 result = df.dropna(subset=['close']).tail(days)

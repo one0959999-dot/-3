@@ -119,7 +119,7 @@ class BotController:
         # 🔒 [스레드 안전성] 딕셔너리 동시 접근으로 인한 런타임 에러 방지용 락
         self.lock = threading.Lock()
         
-        # 🚨 [신규 추가] 월급 및 외부 입금 자동 추적용 독립 장부 변수
+        # �� [신규 추가] 월급 및 외부 입금 자동 추적용 독립 장부 변수
         self.last_asset_cost = None
         self.pnl_this_turn = 0.0
             
@@ -251,28 +251,43 @@ class BotController:
 
                 for core in self.core_positions: 
                     core.shares = 0
-                    # ❌ (맹목적 락 해제 코드 삭제 완료)
                 for sat in self.satellite_positions.values(): 
                     sat.shares = 0
-                    # ❌ (맹목적 락 해제 코드 삭제 완료)
 
+                # 🌟 [문제 해결 핵심 로직] 증권사 잔고를 순회하며 봇 장부와 동기화
                 for real_stock in real_balance['stocks']:
                     t = real_stock['ticker']
                     q = int(real_stock['shares'])
                     p = float(real_stock['purchase_price'])
+                    stock_name = real_stock.get('name', t)
 
+                    is_core = False
                     for core in self.core_positions:
                         if core.ticker == t:
                             core.shares = q
                             core.avg_price = p
                             if core.floor_shares == 0 and q > 0:
                                 core.floor_shares = max(1, int(q * CORE_MIN_FLOOR_RATIO))
+                            is_core = True
                             break
 
-                    if t in self.satellite_positions:
-                        sat = self.satellite_positions[t]
-                        sat.shares = q
-                        sat.avg_price = p
+                    # 코어 종목이 아닌 경우 위성 종목에서 찾음
+                    if not is_core:
+                        if t in self.satellite_positions:
+                            sat = self.satellite_positions[t]
+                            sat.shares = q
+                            sat.avg_price = p
+                        else:
+                            # 🚨 [새로운 기능 추가] 사용자가 임의로(수동으로) 산 종목을 발견하면 무시하지 않고 즉시 봇이 납치합니다!
+                            self.add_log(f"🌟 [미등록 종목 감지] 장부에 없던 '{stock_name}'을 발견하여 위성 포지션으로 강제 편입합니다!")
+                            new_sat = Position(t, stock_name, 0.0)
+                            new_sat.shares = q
+                            new_sat.avg_price = p
+                            self.satellite_positions[t] = new_sat
+                            self.satellite_strategies[t] = 'RSI(9) 30/70' # 기본 모니터링 전략 할당
+                            # AI가 볼 수 있게 info에도 강제 주입
+                            if not any(x['ticker'] == t for x in self.satellite_info):
+                                self.satellite_info.append({'ticker': t, 'name': stock_name, 'strategy_name': 'RSI(9) 30/70', 'return_pct': 0.0, 'sector': '-'})
             except Exception as e:
                 print(f"⚠️ 내부 장부 동기화 중 오류 발생: {e}")
 
@@ -779,7 +794,7 @@ class BotController:
                         dynamic_trailing_stop = pos_max_price - (1.5 * atr_14)
                         if price <= dynamic_trailing_stop:
                             reason = f"ATR 트레일링 스탑 (최고점 대비 1.5*ATR: {int(dynamic_trailing_stop):,}원 이탈)"
-                            self.add_log(f"🎯 [{pos_name}] 변동성 추적 익절선 이탈! 수익 확정을 위해 전량 매도합니다.")
+                            self.add_log(f"�� [{pos_name}] 변동성 추적 익절선 이탈! 수익 확정을 위해 전량 매도합니다.")
                             
                             if self.kis: 
                                 order_res = self.kis.sell_market_order(ticker, pos_shares)
@@ -1002,7 +1017,7 @@ class BotController:
                     with self.lock:
                         if ticker in self.satellite_positions: del self.satellite_positions[ticker]
                         if ticker in self.satellite_strategies: del self.satellite_strategies[ticker]
-                    self.add_log(f"🔄 위성 교체 (미매수 대기 제거): {pos.name}")
+                    self.add_log(f"�� 위성 교체 (미매수 대기 제거): {pos.name}")
                     continue
                     
                 price = self.kis.get_current_price(ticker) if self.kis else 0
@@ -1414,70 +1429,6 @@ class BotController:
             "cores": cores_data, "satellites": satellites, "mock_total_asset": mock_total_asset,
             "mock_pnl": mock_pnl, "mock_pnl_rt": mock_pnl_rt, "initial_cash": current_initial_cash
         }
-
-    def refresh_websocket(self):
-        """매일 새벽 호출되어 24시간 만료되는 웹소켓 암호키(Approval Key)를 자동으로 재발급하고 연결을 연장합니다."""
-        self.add_log("🔄 [웹소켓 키 연장] KIS 규정에 따른 24시간 만료 대비 실시간 웹소켓 재시작 루틴 가동...")
-        try:
-            if self.kis:
-                # 1. 기존 가동 중인 웹소켓 클라이언트 채널 안전하게 파괴
-                if self.ws_client:
-                    try:
-                        self.ws_client.stop()  # 🚨 [버그 수정] ws.close() 대신 stop()을 호출하여 좀비 스레드 무한 증식을 완벽 차단
-                    except Exception:
-                        pass
-                
-                # 2. 증권사로부터 새로운 24시간짜리 무적 접속 권한키 발급
-                app_key = self.kis.get_approval_key()
-                if app_key:
-                    def on_price_update(ticker, price):
-                        self.live_prices[ticker] = price
-                    
-                    # 기존에 실시간 감시하고 있던 종목 임시 백업
-                    old_subscribed = list(self.ws_client.subscribed_tickers) if self.ws_client else []
-                    
-                    from kis_websocket import KisWebSocket
-                    self.ws_client = KisWebSocket(app_key, is_mock=self._is_mock, price_callback=on_price_update)
-                    self.ws_client.start()
-                    
-                    # 네트워크 안정화 딜레이 부여 후 백업된 종목 실시간 채널 재구독 등록
-                    time.sleep(3.0)
-                    for t in old_subscribed:
-                        self.ws_client.subscribe(t)
-                        
-                    self.add_log("✅ [웹소켓 키 연장 완료] 새로운 암호키 갱신 및 기존 실시간 감시 채널 복구 전원 성공!")
-                    self._send_telegram("📡 실시간 웹소켓 전용 접속 키(Approval Key) 24시간 만료 전 자동 연장 및 재구독 성공!")
-                else:
-                    self.add_log("❌ [웹소켓 키 연장 실패] 증권사 공용 방화벽 인증 실패 (키 발급 거절).")
-        except Exception as e:
-            self.add_log(f"❌ [웹소켓 키 연장 오류] 자동 재연결 제어 장치 장애: {e}")
-
-    def run_lstm_training(self):
-        """매주 토요일 새벽 2시, 메인 프로세스 간섭 없이 독립된 서브 백그라운드로 딥러닝 모델 훈련 실행"""
-        self.add_log("🧠 [AI 자율 진화] 주말 자동화 스케줄러에 의해 시장 상위 200대 주도주 패턴 LSTM 재학습을 가동합니다.")
-        self._send_telegram("🧠 주말 AI 자율 진화 모드 시작: 코스피/코스닥 거래대금 최상위 200대 주도주 차트 빅데이터 딥러닝 훈련에 돌입합니다.")
-        
-        try:
-            import os
-            import sys
-            import subprocess
-            
-            # 현재 가동 중인 가상환경(venv) 내부의 진짜 파이썬 실행 파일 경로 추적
-            python_executable = sys.executable
-            base_dir = os.path.dirname(os.path.abspath(__file__))
-            script_path = os.path.join(base_dir, "train_lstm.py")
-            
-            # 💡 [메모리 수호] 훈련 연산 중 램 부족으로 메인 봇이 같이 기절하는 것을 원천 차단코자 독립 서브프로세스로 분리 격리 가동
-            result = subprocess.run([python_executable, script_path], capture_output=True, text=True)
-            
-            if result.returncode == 0:
-                self.add_log("✅ [AI 자율 진화 완료] 이번 주 주도주 200개 기반 LSTM 가중치 모델 파일(.pth) 자동 갱신 완료!")
-                self._send_telegram("🎉 [AI 자율 진화 완료] 이번 주 시장을 지배한 상위 200개 주식의 파동 패턴 완전 마스터 및 AI 매매 신경망 교체 성공!")
-            else:
-                self.add_log(f"❌ [AI 자율 진화 실패] train_lstm.py 학습 도중 오류가 검출되었습니다:\n{result.stderr}")
-                self._send_telegram("⚠️ [AI 자율 진화 실패] 주말 딥러닝 자율 학습 도중 에러가 발견되었습니다. (로그 확인 필요)")
-        except Exception as e:
-            self.add_log(f"❌ [AI 자율 진화 오류] 서브 프로세스 통제 장치 장애: {e}")
 
 class BotManager:
     def __init__(self):
