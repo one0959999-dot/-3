@@ -977,9 +977,13 @@ class BotController:
     def _rescreen_satellites(self):
         try:
             now = datetime.now()
-            if getattr(self, 'last_screen_date', None) == now.date(): return
+            
+            # 🟢 [수정 포인트 1] 하루 한 번만 실행되도록 막아둔 족쇄를 파괴하고, 장중 언제라도 실행되도록 변경합니다.
+            now_time_str = now.strftime('%H:%M')
+            if not ("09:00" <= now_time_str <= "15:20") or now.weekday() >= 5:
+                return # 장 시간이 아니면 스캔 종료
                 
-            self.add_log("📅 데일리 위성 리밸런싱 실행...")
+            self.add_log("🦅 [AI 실시간 종목 교체] 부진한 종목 퇴출 및 놀고 있는 빈자리에 즉각 주도주를 발굴하여 채웁니다...")
             keep_tickers = set()
             freed_cash = 0
             from pykrx import stock as krx_stock
@@ -1229,6 +1233,10 @@ class BotController:
         self.scheduler.every(5).minutes.do(self.trading_job)
         self.scheduler.every().day.at("11:00").do(lambda: self._run_threaded(self.generate_daily_report))
         self.scheduler.every().day.at("09:05").do(lambda: self._run_threaded(self._rescreen_satellites))
+        
+        # 🟢 [수정 포인트 2] 매 1시간마다 수시로 포트폴리오를 스캔해서 성과가 꺾였거나 빈자리가 난 곳을 가차 없이 갈아치웁니다.
+        self.scheduler.every(1).hours.do(lambda: self._run_threaded(self._rescreen_satellites))
+        
         self.scheduler.every().friday.at("16:00").do(lambda: self._run_threaded(self._weekly_self_reflection))
         
         # 🟢 [개선 1 반영] 매일 오전 08:00 정각에 24시간 만료되는 웹소켓 접속키를 연장하고 소켓을 재부팅합니다.
