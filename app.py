@@ -107,13 +107,8 @@ def kis_balance():
         if not bot or not bot.kis:
             return jsonify({"status": "error", "message": "API 설정이 필요합니다."})
         
-        # 🟢 1. 봇 장부에 있는 실시간 웹소켓 가격을 모두 꺼내서 딕셔너리로 준비합니다.
-        live_status = bot.get_status()
-        rt_prices = {}
-        for c in live_status.get('cores', []):
-            rt_prices[c['ticker']] = float(c.get('price', 0))
-        for s in live_status.get('satellites', []):
-            rt_prices[s['ticker']] = float(s.get('price', 0))
+        # 🟢 [수정됨] 봇의 get_status()를 거치지 않고, 실시간 웹소켓 메모리에 직접 접근하여 무한루프 및 둔갑 버그 차단
+        rt_prices = bot.live_prices if hasattr(bot, 'live_prices') else {}
             
         def patch_balance(balance_data):
             patched = dict(balance_data)
@@ -129,7 +124,7 @@ def kis_balance():
                 shares = float(new_stock.get('shares', 0))
                 purchase_p = float(new_stock.get('purchase_price', 0))
                 
-                # 🚨 [핵심 동기화] 봇의 실시간 가격이 있으면 덮어쓰고, 없으면 기존 증권사 가격 유지
+                # 🚨 [핵심 동기화] 웹소켓 실시간 가격이 있으면 최우선 덮어쓰고, 없으면 증권사가 보낸 진짜 현재가 사용
                 current_p = rt_prices.get(ticker, float(new_stock.get('current_price', 0)))
                 
                 new_stock['current_price'] = current_p

@@ -259,6 +259,7 @@ class BotController:
                     t = real_stock['ticker']
                     q = int(real_stock['shares'])
                     p = float(real_stock['purchase_price'])
+                    c_p = float(real_stock.get('current_price', p)) # 🟢 신규: KIS 진짜 현재가를 추출합니다.
                     stock_name = real_stock.get('name', t)
 
                     is_core = False
@@ -266,6 +267,7 @@ class BotController:
                         if core.ticker == t:
                             core.shares = q
                             core.avg_price = p
+                            core.kis_current_price = c_p # 🟢 신규: 매입가 둔갑을 막기 위해 봇 장부에 진짜 현재가 백업
                             if core.floor_shares == 0 and q > 0:
                                 core.floor_shares = max(1, int(q * CORE_MIN_FLOOR_RATIO))
                             is_core = True
@@ -277,12 +279,14 @@ class BotController:
                             sat = self.satellite_positions[t]
                             sat.shares = q
                             sat.avg_price = p
+                            sat.kis_current_price = c_p # 🟢 신규: 매입가 둔갑을 막기 위해 봇 장부에 진짜 현재가 백업
                         else:
                             # 🚨 [새로운 기능 추가] 사용자가 임의로(수동으로) 산 종목을 발견하면 무시하지 않고 즉시 봇이 납치합니다!
                             self.add_log(f"🌟 [미등록 종목 감지] 장부에 없던 '{stock_name}'을 발견하여 위성 포지션으로 강제 편입합니다!")
                             new_sat = Position(t, stock_name, 0.0)
                             new_sat.shares = q
                             new_sat.avg_price = p
+                            new_sat.kis_current_price = c_p # 🟢 신규: 현재가 백업
                             self.satellite_positions[t] = new_sat
                             self.satellite_strategies[t] = 'RSI(9) 30/70' # 기본 모니터링 전략 할당
                             # AI가 볼 수 있게 info에도 강제 주입
@@ -1249,7 +1253,8 @@ class BotController:
         needs_rescreen = len(self.satellite_positions) < self.num_satellites or any(p.shares == 0 for p in self.satellite_positions.values())
         if getattr(self, 'last_screen_date', None) != datetime.now().date() or needs_rescreen:
             now_time_str = datetime.now().strftime('%H:%M')
-            if "09:00" <= now_time_str <= "15:30": self._rescreen_satellites()
+            # 🚨 [시간 연장 수정 완료] 봇 재구동 시 빈자리 채우기 동작도 19:50까지 완벽하게 작동하도록 수정
+            if "09:00" <= now_time_str <= "19:50": self._rescreen_satellites()
 
         today = datetime.today().strftime('%Y-%m-%d')
         if not self.daily_report or self.daily_report.get('date') != today:
@@ -1371,8 +1376,8 @@ class BotController:
             cores_data = []
             for core in safe_core_positions:
                 try:
-                    # 🚨 찰나의 순간 문자가 들어와도 무조건 실수(float)로 강제 변환하여 에러 원천 차단
-                    cp_raw = getattr(core, '_last_price', 0) or self.live_prices.get(core.ticker, 0) or core.avg_price or 0
+                    # 🚨 [수정됨] 매입가(avg_price)로 둔갑하는 버그 차단! 백업해둔 진짜 현재가(kis_current_price)를 먼저 참조합니다.
+                    cp_raw = getattr(core, '_last_price', 0) or self.live_prices.get(core.ticker, 0) or getattr(core, 'kis_current_price', 0) or core.avg_price or 0
                     cp = float(cp_raw)
                 except:
                     cp = 0.0
@@ -1389,8 +1394,8 @@ class BotController:
             satellites = []
             for ticker, pos in safe_satellite_items:
                 try:
-                    # 🚨 찰나의 순간 문자가 들어와도 무조건 실수(float)로 강제 변환
-                    sp_raw = getattr(pos, '_last_price', 0) or self.live_prices.get(ticker, 0) or pos.avg_price or 0
+                    # 🚨 [수정됨] 매입가(avg_price)로 둔갑하는 버그 차단! 백업해둔 진짜 현재가(kis_current_price)를 먼저 참조합니다.
+                    sp_raw = getattr(pos, '_last_price', 0) or self.live_prices.get(ticker, 0) or getattr(pos, 'kis_current_price', 0) or pos.avg_price or 0
                     sp = float(sp_raw)
                 except:
                     sp = 0.0
