@@ -247,8 +247,8 @@ def ai_chat():
         for ticker, pos in bot.satellite_positions.items():
             if pos.name in user_message: target_tickers.append((ticker, pos.name))
             
-        # 🟢 [수정 포인트 2] "매수", "매도", "어때", "왜" 등 일상적인 매매 질문에도 무조건 포트폴리오 데이터를 읽도록 키워드를 대폭 추가했습니다.
-        if not target_tickers and any(keyword in user_message for keyword in ["포트폴리오", "위성", "분석", "종목", "시장", "매수", "매도", "어때", "어떻게", "왜"]):
+        # 🟢 [족쇄 파괴] 사용자가 무슨 단어로 질문하든 상관없이, 특정 종목을 지정하지 않았다면 무조건 내 포트폴리오 차트를 몽땅 긁어서 AI에게 강제로 먹여줍니다!
+        if not target_tickers:
             for core in bot.core_positions:
                 target_tickers.append((core.ticker, core.name))
             for ticker, pos in bot.satellite_positions.items():
