@@ -106,19 +106,27 @@ def kis_balance():
     if not bot or not bot.kis:
         return jsonify({"status": "error", "message": "API 설정이 필요합니다."})
     
-    # 💎 백그라운드 영속 스레드에 의해 이미 수집된 캐시 데이터가 있다면 지연 없이 즉시 반환
+    # 🟢 [동기화 핵심 로직] 하단 표(위성/코어 종목 칸)와 똑같은 코드로 '실시간 주식 평가 합계액'을 먼저 구합니다.
+    live_status = bot.get_status()
+    realtime_stock_value = sum(c['value'] for c in live_status.get('cores', [])) + sum(s['value'] for s in live_status.get('satellites', []))
+    
+    # 💎 백그라운드 영속 스레드에 의해 이미 수집된 캐시 데이터가 있다면 지연 없이 즉시 반환하되, 
+    # 증권사의 10초 지연 평가금액 대신, 방금 계산한 '웹소켓 실시간 합산액'으로 덮어씌워 보냅니다.
     if bot.cached_balance:
-        return jsonify({"status": "success", "data": bot.cached_balance})
+        patched_balance = dict(bot.cached_balance)
+        patched_balance['total_value'] = realtime_stock_value
+        return jsonify({"status": "success", "data": patched_balance})
     
     # 🚨 [계좌 화면 딜레이 원인 완벽 제거] 
-    # 캐시가 비어있을 때(모드 전환 직후 등) 빈 틀(0원)을 던져주고 스레드를 10초간 무작정 기다리게 했던 로직을 폐기합니다.
-    # 딱 한 번만 동기식으로 즉각 조회(약 0.5초 소요)하여 10초의 체감 딜레이 없이 진짜 잔고를 즉시 화면에 꽂아줍니다.
     try:
         real_balance = bot.kis.get_account_balance()
         if real_balance:
             bot.cached_balance = real_balance
             bot._sync_internal_balances(real_balance)
-            return jsonify({"status": "success", "data": real_balance})
+            
+            patched_balance = dict(real_balance)
+            patched_balance['total_value'] = realtime_stock_value # 여기도 똑같이 덮어쓰기
+            return jsonify({"status": "success", "data": patched_balance})
     except Exception as e:
         print(f"즉시 잔고 조회 에러: {e}")
     
@@ -126,7 +134,7 @@ def kis_balance():
         "status": "success", 
         "data": {
             "total_cash": 0, 
-            "total_value": 0, 
+            "total_value": realtime_stock_value, 
             "total_purchase": 0, 
             "stocks": []
         }
