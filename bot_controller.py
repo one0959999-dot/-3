@@ -190,18 +190,36 @@ class BotController:
                 real_purchase = float(real_balance.get('total_purchase', 0))
                 total_equity = real_cash + real_stock_value
                 
-                # 🚨 [원금 완벽 자동화] 회원이 직접 기입할 필요 없이, DB 원금이 1000만 원(초기 디폴트값)일 때만 현재 자산을 절대 원금으로 영구 세팅합니다.
+                # 🚨 [원금 자율 역추적 및 영구 잠금 엔진]
+                # 회원이 직접 설정창에 타이핑할 필요 없이, 봇이 실시간 계좌의 '진짜 원금(예수금+매입금)'을 스스로 캡처합니다.
+                pure_principal = real_cash + real_purchase
+
                 if not getattr(self, 'initial_capital_captured', False):
+                    import os
                     from database import get_db_connection
                     conn = get_db_connection()
                     cash_col = "mock_initial_cash" if self._is_mock else "real_initial_cash"
-                    row = conn.execute(f'SELECT {cash_col} FROM users WHERE id = ?', (self.user_id,)).fetchone()
-                    db_cash = float(row[cash_col]) if row else 10000000.0
                     
-                    if db_cash == 10000000.0 and total_equity > 0:
-                        conn.execute(f'UPDATE users SET {cash_col} = ? WHERE id = ?', (total_equity, self.user_id))
+                    # 💡 자물쇠(flag 파일)를 생성하여, 봇이 오직 1번만 계좌를 스캔하고 진짜 원금을 영구 고정하도록 만듭니다.
+                    flag_file = f"{cash_col}_{self.user_id}_locked.flag"
+                    
+                    if not os.path.exists(flag_file) and pure_principal > 0:
+                        conn.execute(f'UPDATE users SET {cash_col} = ? WHERE id = ?', (pure_principal, self.user_id))
                         conn.commit()
-                        self.add_log(f"💰 [최초 1회 원금 세팅] 현재 자산 {total_equity:,.0f}원을 절대 원금으로 자동 고정했습니다.")
+                        with open(flag_file, 'w') as f:
+                            f.write("Locked to prevent PnL reset on reboots.")
+                        self.add_log(f"💰 [원금 자율 셋업 완료] 기입 없이 실시간 계좌를 스캔하여 진짜 원금 {pure_principal:,.0f}원으로 영구 고정했습니다.")
+                    else:
+                        row = conn.execute(f'SELECT {cash_col} FROM users WHERE id = ?', (self.user_id,)).fetchone()
+                        db_cash = float(row[cash_col]) if row else 10000000.0
+                        
+                        if db_cash == 10000000.0 and pure_principal > 0:
+                            conn.execute(f'UPDATE users SET {cash_col} = ? WHERE id = ?', (pure_principal, self.user_id))
+                            conn.commit()
+                            self.add_log(f"💰 [최초 1회 원금 역계산] 주가 등락이 배제된 실제 투자 원금 {pure_principal:,.0f}원으로 자동 세팅 완료.")
+                            with open(flag_file, 'w') as f:
+                                f.write("Locked to prevent PnL reset on reboots.")
+                    
                     conn.close()
                     self.initial_capital_captured = True
                 
@@ -1498,18 +1516,7 @@ class BotController:
                     "status": getattr(pos, 'status', '감시 중 👀'), "status_msg": getattr(pos, 'status_msg', '지표 점검 중...')
                 })
 
-            if self.cached_balance:
-                api_cash = float(self.cached_balance.get('total_cash', 0))
-                # 🟢 [정밀도 리패치] 웹소켓 실시간 연산 합계액으로 강제 치환
-                api_stock_val = total_realtime_stock_val
-                api_purchase = float(self.cached_balance.get('total_purchase', 0))
-                mock_total_asset = api_cash + api_stock_val
-                mock_pnl = api_stock_val - api_purchase
-                mock_pnl_rt = (mock_pnl / api_purchase * 100) if api_purchase > 0 else 0
-            else:
-                mock_total_asset = 0.0; mock_pnl = 0.0; mock_pnl_rt = 0.0
-
-            # 🚨 DB 조회 중 발생하는 락(Lock) 에러 대비 안전망 추가
+            # 🚨 DB 조회 중 발생하는 락(Lock) 에러 대비 안전망 추가 (먼저 절대 원금을 가져옵니다)
             try:
                 from database import get_db_connection
                 conn = get_db_connection()
@@ -1520,6 +1527,19 @@ class BotController:
             except Exception as e:
                 print(f"⚠️ DB 원금 조회 지연(안전 패스): {e}")
                 current_initial_cash = 10000000.0
+
+            if self.cached_balance:
+                api_cash = float(self.cached_balance.get('total_cash', 0))
+                # 🟢 [정밀도 리패치] 웹소켓 실시간 연산 합계액으로 강제 치환
+                api_stock_val = total_realtime_stock_val
+                mock_total_asset = api_cash + api_stock_val
+                
+                # 🚨 [회원님 요구사항 100% 반영 - 총 계좌 수익률 공식 전면 개편] 
+                # 오직 (현재 총 평가금액) - (절대 원금) 공식을 통해 순수 손익만 표시합니다.
+                mock_pnl = mock_total_asset - current_initial_cash
+                mock_pnl_rt = (mock_pnl / current_initial_cash * 100) if current_initial_cash > 0 else 0
+            else:
+                mock_total_asset = 0.0; mock_pnl = 0.0; mock_pnl_rt = 0.0
 
             return {
                 "is_running": self.is_running, "is_mock": self._is_mock, "has_keys": self.kis is not None,
