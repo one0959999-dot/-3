@@ -1,3 +1,24 @@
+// ── Toast 알림 ──
+function showToast(message, type = 'success', duration = 3000) {
+    let container = document.getElementById('toast-container');
+    if (!container) {
+        container = document.createElement('div');
+        container.id = 'toast-container';
+        container.style.cssText = 'position:fixed;top:24px;right:24px;z-index:9999;display:flex;flex-direction:column;gap:8px;';
+        document.body.appendChild(container);
+    }
+    const toast = document.createElement('div');
+    const borderColor = type === 'success' ? 'rgba(63,185,80,0.5)' : type === 'error' ? 'rgba(248,81,73,0.5)' : 'rgba(88,166,255,0.5)';
+    toast.style.cssText = `padding:12px 20px;border-radius:12px;font-size:0.875rem;font-weight:600;color:#e6edf3;background:rgba(22,27,34,0.97);border:1px solid ${borderColor};backdrop-filter:blur(12px);box-shadow:0 8px 32px rgba(0,0,0,0.4);min-width:200px;transition:all 0.35s cubic-bezier(0.34,1.56,0.64,1);transform:translateX(0);opacity:1;`;
+    toast.textContent = message;
+    container.appendChild(toast);
+    setTimeout(() => {
+        toast.style.transform = 'translateX(120%)';
+        toast.style.opacity = '0';
+        setTimeout(() => toast.remove(), 380);
+    }, duration);
+}
+
 document.addEventListener('DOMContentLoaded', () => {
 
     // ── DOM refs ──
@@ -89,16 +110,20 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // ── Toggle Button ──
     btnToggle.addEventListener('click', () => {
+        btnToggle.disabled = true;
+        const prevLabel = toggleLabel.textContent;
+        toggleLabel.textContent = '처리 중...';
         fetch('/api/toggle', { method: 'POST' })
             .then(async r => {
                 if (!r.ok) {
                     const err = await r.json();
-                    alert(err.message || '봇 시작 실패');
+                    showToast(err.message || '봇 시작 실패', 'error');
                 }
                 return r.json();
             })
             .then(() => fetchStatus())
-            .catch(e => console.error('Toggle error', e));
+            .catch(e => { console.error('Toggle error', e); toggleLabel.textContent = prevLabel; })
+            .finally(() => { btnToggle.disabled = false; });
     });
 
     // ── Status Fetch ──
@@ -163,9 +188,10 @@ document.addEventListener('DOMContentLoaded', () => {
                         totalValEl.textContent = Math.round(totalAsset).toLocaleString() + '원';
                     }
 
-                    // 🚨 [실시간 동기화 보완] KIS 계좌에서 가져온 진짜 시세를 기준으로 실전/모의 상관없이 상단 카드를 완벽 동기화합니다.
-                    const totalPnl = totalAsset - USER_INVESTED_CAPITAL;
-                    const pnlRt = USER_INVESTED_CAPITAL > 0 ? (totalPnl / USER_INVESTED_CAPITAL * 100) : 0;
+                    // 수익률%는 실제 매입금액 기준으로 계산해야 개별 종목 수익률과 일치
+                    const totalPnl = (d.total_value || 0) - (d.total_purchase || 0);
+                    const costBasis = (d.total_purchase || 0) > 0 ? d.total_purchase : USER_INVESTED_CAPITAL;
+                    const pnlRt = costBasis > 0 ? (totalPnl / costBasis * 100) : 0;
 
                     const pnlEl = document.getElementById('total-pnl');
                     if (pnlEl) {
@@ -231,9 +257,9 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     function startKisBalancePolling() {
-        fetchKisBalance();
         if (kisBalanceInterval) return;
-        kisBalanceInterval = setInterval(fetchKisBalance, 10000);
+        fetchKisBalance();
+        kisBalanceInterval = setInterval(fetchKisBalance, 15000);
     }
 
     function stopKisBalancePolling() {
@@ -454,10 +480,16 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     }
 
+    // Expose to outer-scope window.* handlers (saveAccountSettings, saveCoreStocks, toggleMode)
+    window.fetchStatus = fetchStatus;
+    window.fetchKisBalance = fetchKisBalance;
+    window.fetchPnl = fetchPnl;
+    window.updateUI = updateUI;
+
     fetchStatus();
     fetchPnl();
-    setInterval(fetchStatus, 3000);
-    setInterval(fetchPnl, 10000);
+    setInterval(fetchStatus, 5000);
+    setInterval(fetchPnl, 15000);
 });
 
 window.adjustSat = function (delta) {
@@ -481,6 +513,7 @@ window.adjustSat = function (delta) {
 window.toggleMode = async function () {
     const cb = document.getElementById('modeSwitch');
     const isMock = cb.checked ? 1 : 0;
+    cb.disabled = true;
 
     const lblReal = document.getElementById('label-real');
     const lblMock = document.getElementById('label-mock');
@@ -500,17 +533,20 @@ window.toggleMode = async function () {
         });
         const result = await res.json();
         if (result.status === 'success') {
+            showToast(isMock ? '모의투자 모드로 전환됨', 'info');
             fetch('/api/status').then(r => r.json()).then(data => {
                 updateUI(data);
                 fetchPnl();
             });
         } else {
-            console.error('모드 변경 실패');
+            showToast('모드 변경 실패', 'error');
             cb.checked = !cb.checked;
         }
     } catch (e) {
-        console.error('서버 오류:', e);
+        showToast('서버 오류', 'error');
         cb.checked = !cb.checked;
+    } finally {
+        cb.disabled = false;
     }
 }
 
@@ -766,11 +802,12 @@ window.saveCoreStocks = async function () {
         });
         const result = await res.json();
         if (result.status === 'success') {
-            alert('코어 종목이 변경되었습니다. 시스템에 반영 중입니다.');
             closeCoreModal();
-            location.reload();
-        } else { alert('저장 실패: ' + (result.message || '오류')); }
-    } catch (e) { alert('서버 통신 오류'); }
+            showToast('코어 종목이 변경되었습니다. 시스템에 반영 중입니다.', 'success');
+            fetchStatus();
+            fetchKisBalance();
+        } else { showToast('저장 실패: ' + (result.message || '오류'), 'error'); }
+    } catch (e) { showToast('서버 통신 오류', 'error'); }
 }
 
 window.saveAccountSettings = async function () {
@@ -798,11 +835,12 @@ window.saveAccountSettings = async function () {
         });
         const result = await res.json();
         if (result.status === 'success') {
-            alert('계좌 설정이 저장되었습니다.');
             closeSettingsModal();
-            location.reload();
-        } else { alert('저장 실패'); }
-    } catch (e) { alert('서버 통신 오류'); }
+            showToast('계좌 설정이 저장되었습니다.', 'success');
+            fetchStatus();
+            fetchKisBalance();
+        } else { showToast('저장 실패', 'error'); }
+    } catch (e) { showToast('서버 통신 오류', 'error'); }
 }
 
 window.openReportModal = async function () {
