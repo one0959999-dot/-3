@@ -624,8 +624,7 @@ class BaseBot:
             time.sleep(0.2)
 
         with self.lock: trading_sat_items = list(self.satellite_positions.items())
-        shared_macro_context = self.kis.get_macro_context() if self.kis else "시황 정보 없음"
-        
+
         for ticker, pos in trading_sat_items:
             try:
                 with self.lock: st_nm = self.satellite_strategies.get(ticker, 'RSI'); p_sh = pos.shares; p_avg = pos.avg_price; p_max = pos.max_price; p_cash = pos.cash; p_nm = pos.name
@@ -853,13 +852,15 @@ class BaseBot:
 
     def _weekly_self_reflection(self):
         from database import get_db_connection
+        conn = None
         try:
             conn = get_db_connection()
             rows = conn.execute('SELECT date(created_at) as date, stock_name, action, price, ai_reason, profit FROM trade_journal WHERE user_id = ? ORDER BY created_at DESC LIMIT 30', (self.user_id,)).fetchall()
         except Exception as e:
             logger.warning(f"[{self.mode_name}] 주간 반성 데이터 조회 실패: {e}")
             rows = []
-        finally: conn.close()
+        finally:
+            if conn: conn.close()
         if not rows: return
 
         history_text = "\n".join([f"- {r['date']} | {r['stock_name']} | {r['action']} | {r['ai_reason']} | 손익:{r['profit']}" for r in rows])
