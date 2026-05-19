@@ -21,7 +21,7 @@ def _now_kst():
     return datetime.now(_KST).replace(tzinfo=None)
 
 from telegram_bot import TelegramNotifier
-from strategy import CorePosition, Position, get_rsi_signal, get_signal_by_strategy, REINVEST_RATIO
+from strategy import CorePosition, Position, get_rsi_signal, get_signal_by_strategy, REINVEST_RATIO, get_market_regime, get_bear_bounce_signal, INVERSE_ETF_TICKER, INVERSE_ETF_NAME, INVERSE_BUDGET_RATIO
 from stock_screener import select_satellites, generate_daily_market_report
 from database import update_bot_status, save_portfolio_state, load_portfolio_state, log_trade_journal, get_recent_trades, save_ai_rules, load_ai_rules, get_user_initial_cash, set_user_initial_cash, add_user_initial_cash
 
@@ -75,6 +75,11 @@ class BaseBot:
         self.hot_sectors = []
         self.daily_report = None
         self.fundamental_cache = {}
+
+        # 시장 국면 (BULL / BEAR / NEUTRAL)
+        self.market_regime = "NEUTRAL"
+        self.last_regime_check = 0.0
+        self._regime_check_interval = 3600  # 1시간마다 재판단
 
         self.kis = None
         self.telegram = None
@@ -412,6 +417,76 @@ class BaseBot:
             logger.error(f"[{self.mode_name}] 상태 복구 실패: {e}", exc_info=True)
             return False
 
+    def _update_market_regime(self) -> str:
+        """
+        시장 국면을 1시간 간격으로 갱신.
+        KOSPI200 ETF(069500) 이중 이동평균(20/60일) 배열로 판단.
+        국면 변경 시 텔레그램 알림 발송.
+        """
+        if not self.kis:
+            return self.market_regime
+        if time.time() - self.last_regime_check < self._regime_check_interval:
+            return self.market_regime
+        try:
+            prev = self.market_regime
+            self.market_regime = get_market_regime(self.kis)
+            self.last_regime_check = time.time()
+            if self.market_regime != prev:
+                icons = {"BULL": "🐂", "BEAR": "🐻", "NEUTRAL": "😐"}
+                msg = (f"{icons.get(self.market_regime,'📊')} [{self.mode_name}] "
+                       f"시장 국면 변경: {prev} → {self.market_regime}\n"
+                       f"{'📉 위성 신규 매수 중단, 인버스 ETF 진입' if self.market_regime == 'BEAR' else '📈 정상 매매 재개' if self.market_regime == 'BULL' else '📊 혼조 — 기존 전략 유지'}")
+                self.add_log(msg)
+                self._send_telegram(msg)
+        except Exception as e:
+            logger.error(f"[{self.mode_name}] 시장 국면 판단 오류: {e}", exc_info=True)
+        return self.market_regime
+
+    def _handle_inverse_etf(self, regime: str):
+        """
+        BEAR 국면: KODEX 인버스(114800) 총자산의 20% 자동 매수.
+        BULL/NEUTRAL 국면: 보유 중이면 전량 청산.
+        모의투자도 동일하게 동작.
+        """
+        if not self.kis:
+            return
+        try:
+            balance = self.kis.get_account_balance()
+            if not balance:
+                return
+
+            total_cash  = float(balance.get('total_cash', 0))
+            total_value = float(balance.get('total_value', 0))
+            total_assets = total_cash + total_value
+
+            stocks = balance.get('stocks', [])
+            inv_holding = next((s for s in stocks if s.get('ticker') == INVERSE_ETF_TICKER), None)
+            has_inverse  = inv_holding and int(inv_holding.get('shares', 0)) > 0
+            inv_shares   = int(inv_holding.get('shares', 0)) if inv_holding else 0
+
+            if regime == "BEAR" and not has_inverse:
+                budget = int(total_assets * INVERSE_BUDGET_RATIO)
+                price  = self.kis.get_current_price(INVERSE_ETF_TICKER)
+                if price and price > 0:
+                    qty = int(budget // price)
+                    if qty > 0 and total_cash >= qty * price * 1.002:
+                        self.kis.buy_market_order(INVERSE_ETF_TICKER, qty)
+                        msg = (f"🐻 [{self.mode_name}] 하락장 감지 → {INVERSE_ETF_NAME} {qty}주 매수\n"
+                               f"투입 금액: {qty * price:,.0f}원 (총자산 {INVERSE_BUDGET_RATIO*100:.0f}%)")
+                        self.add_log(msg)
+                        self._send_telegram(msg)
+
+            elif regime != "BEAR" and has_inverse and inv_shares > 0:
+                self.kis.sell_market_order(INVERSE_ETF_TICKER, inv_shares)
+                price = self.kis.get_current_price(INVERSE_ETF_TICKER) or 0
+                msg = (f"🐂 [{self.mode_name}] 시장 국면 전환({regime}) → "
+                       f"{INVERSE_ETF_NAME} {inv_shares}주 전량 청산")
+                self.add_log(msg)
+                self._send_telegram(msg)
+
+        except Exception as e:
+            logger.error(f"[{self.mode_name}] 인버스 ETF 처리 오류: {e}", exc_info=True)
+
     def _check_etf_market_positive(self) -> bool:
         """시장 대표 ETF(KOSPI200·KOSDAQ150) 전일 대비율이 모두 -1% 이상이면 매수 허용."""
         if not self.kis:
@@ -482,6 +557,11 @@ class BaseBot:
                                     self.is_crisis_mode = False; self.peak_total_asset = 0
                     return
 
+        # 시장 국면 갱신 (1시간 캐시) + 인버스 ETF 자동 관리
+        regime = self._update_market_regime()
+        if is_golden_hours:
+            self._handle_inverse_etf(regime)
+
         if self.kis:
             try:
                 real_balance = self.kis.get_account_balance()
@@ -550,16 +630,27 @@ class BaseBot:
 
                 cache_key = f"{ticker}_{_now_kst().strftime('%Y-%m-%d')}"
                 with self.lock: has_cache = cache_key in self.fundamental_cache
-                if has_cache: 
+                if has_cache:
                     with self.lock: fin_data = self.fundamental_cache[cache_key]
                 else: fin_data = "재무 조회 불가"
 
                 is_cd_passed = (time.time() - getattr(pos, 'last_order_time', 0) > 60)
 
+                # 국면별 ATR 배수 조정
+                # BEAR: 익절 빠르게(0.8x), 손절 빠르게(1.8x) → 손실 최소화
+                # BULL: 익절 여유롭게(1.2x), 손절 넉넉히(3.0x) → 수익 극대화
+                # NEUTRAL: 기본값(1.0x trailing, 2.5x hard)
+                if regime == "BEAR":
+                    trail_mult, trail_trigger, hard_mult = 1.2, 0.8, 1.8
+                elif regime == "BULL":
+                    trail_mult, trail_trigger, hard_mult = 1.5, 1.2, 3.0
+                else:
+                    trail_mult, trail_trigger, hard_mult = 1.5, 1.0, 2.5
+
                 if p_sh > 0 and price > 0 and is_cd_passed:
-                    if price > p_max: 
+                    if price > p_max:
                         with self.lock: pos.max_price = price; p_max = price
-                    if p_max >= p_avg + (1.0 * atr_14) and price <= p_max - (1.5 * atr_14):
+                    if p_max >= p_avg + (trail_trigger * atr_14) and price <= p_max - (trail_mult * atr_14):
                         if self.kis and self.kis.sell_market_order(ticker, p_sh):
                             with self.lock: pos.last_order_time = time.time(); pos.max_price = 0; pos.status = "체결 대기 ⏳"
                             profit = (price - p_avg) * p_sh
@@ -569,7 +660,7 @@ class BaseBot:
                         continue
 
                 if p_sh > 0 and p_avg > 0 and is_cd_passed:
-                    if price <= p_avg - (2.5 * atr_14):
+                    if price <= p_avg - (hard_mult * atr_14):
                         if self.kis and self.kis.sell_market_order(ticker, p_sh):
                             with self.lock: pos.last_order_time = time.time(); pos.status = "체결 대기 ⏳"
                             profit = (price - p_avg) * p_sh
@@ -579,6 +670,22 @@ class BaseBot:
                         continue
 
                 if sig == 'BUY' and p_sh == 0 and is_cd_passed and is_golden_hours:
+                    # ── BEAR 국면: 일반 매수 차단, 반등 신호만 예외 허용 ──
+                    if regime == "BEAR":
+                        is_bounce = get_bear_bounce_signal(ex_df)
+                        if not is_bounce:
+                            pos.status = "하락장 매수 보류 🐻"
+                            pos.status_msg = "BEAR 국면 — 반등 신호 없음, 매수 차단"
+                            continue
+                        # 반등 신호 확인 시 30% 규모로 소액 진입
+                        bounce_cash = p_cash * 0.30
+                        qty = int((bounce_cash * 0.98) // price)
+                        if qty > 0 and self.kis and self.kis.buy_market_order(ticker, qty):
+                            with self.lock: pos.last_order_time = time.time(); pos.status = "체결 대기 ⏳"
+                            log_trade_journal(self.user_id, ticker, p_nm, 'BUY', price, st_nm, "하락장 반등 포착 (소액)")
+                            self._send_telegram(f"🎣 [{p_nm}] 하락장 반등 매수 ({qty}주, 30% 규모)")
+                        continue
+
                     if not self._check_etf_market_positive():
                         pos.status = "시장 약세 ⏸"
                         pos.status_msg = "ETF 지수 -1% 이하, 매수 보류"
