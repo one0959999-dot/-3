@@ -176,7 +176,7 @@ class KisMockApi:
         acnt_no   = self.account_no[:8]
         acnt_prdt = self.account_no[8:] if len(self.account_no) > 8 else "01"
 
-        ord_dvsn = "00" if price > 0 else "03"
+        ord_dvsn = "00" if price > 0 else "01"
         
         if price > 0:
             p = int(price)

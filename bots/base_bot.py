@@ -403,21 +403,28 @@ class BaseBot:
         else:
             self.add_log(f"--- 🎯 {self.mode_name} 실시간 점검 ({current_time_str}) ---")
             with self.lock:
-                for core in self.core_positions: core.status = "감시 중 👀"; core.status_msg = "최적 타이밍 스캔 중"
-                for sat in self.satellite_positions.values(): sat.status = "감시 중 👀"; sat.status_msg = "최적 타이밍 스캔 중"
+                for core in self.core_positions:
+                    if "대기" not in core.status and "심사" not in core.status: # 대기/심사 중이 아닐 때만 텍스트 초기화
+                        core.status = "감시 중 👀"
+                        core.status_msg = "최적 타이밍 스캔 중"
+                        
+                for sat in self.satellite_positions.values():
+                    if "대기" not in sat.status and "심사" not in sat.status:
+                        sat.status = "감시 중 👀"
+                        sat.status_msg = "최적 타이밍 스캔 중"
 
-        if getattr(self, 'is_crisis_mode', False):
-            if self.kis:
-                main_idx_ticker = self.market_indices[0][0]
-                idx_cp = self.kis.get_current_price(main_idx_ticker)
-                if idx_cp:
-                    extended_df = self._get_extended_ohlcv(main_idx_ticker, idx_cp)
-                    if not extended_df.empty and len(extended_df) >= 5:
-                        if idx_cp > extended_df['close'].ewm(span=5, adjust=False).mean().iloc[-1]:
-                            msg = f"🚀 {self.mode_name} 저점 반등 확인! 관망 모드 해제."
-                            self.add_log(msg); self._send_telegram(msg)
-                            self.is_crisis_mode = False; self.peak_total_asset = 0
-            return
+                if getattr(self, 'is_crisis_mode', False):
+                    if self.kis:
+                        main_idx_ticker = self.market_indices[0][0]
+                        idx_cp = self.kis.get_current_price(main_idx_ticker)
+                        if idx_cp:
+                            extended_df = self._get_extended_ohlcv(main_idx_ticker, idx_cp)
+                            if not extended_df.empty and len(extended_df) >= 5:
+                                if idx_cp > extended_df['close'].ewm(span=5, adjust=False).mean().iloc[-1]:
+                                    msg = f"🚀 {self.mode_name} 저점 반등 확인! 관망 모드 해제."
+                                    self.add_log(msg); self._send_telegram(msg)
+                                    self.is_crisis_mode = False; self.peak_total_asset = 0
+                    return
 
         if self.kis:
             try:
@@ -451,12 +458,12 @@ class BaseBot:
 
                 if c_sig == 'BUY' and c_cash >= cp and (time.time() - getattr(core, 'last_order_time', 0) > 60):
                     qty = int((c_cash * 0.98) // cp)
-                    if qty > 0 and self.kis and self.kis.buy_market_order(c_tk, qty, price=int(cp)):
+                    if qty > 0 and self.kis and self.kis.buy_market_order(c_tk, qty):
                         with self.lock: core.last_order_time = time.time(); core.status = "체결 대기 ⏳"
                         self.add_log(f"💎 {c_nm} 매수 완료 | {qty}주 @ {cp:,}원"); self._send_telegram(f"💎 {c_nm} 매수")
                 elif c_sig == 'SELL' and c_sh > c_fl and (time.time() - getattr(core, 'last_order_time', 0) > 60):
                     sellable = c_sh - c_fl
-                    if sellable > 0 and self.kis and self.kis.sell_market_order(c_tk, sellable, price=int(cp)):
+                    if sellable > 0 and self.kis and self.kis.sell_market_order(c_tk, sellable):
                         with self.lock: core.last_order_time = time.time(); core.status = "체결 대기 ⏳"; self.pnl_this_turn += (cp - core.avg_price)*sellable
                         self.add_log(f"💎 {c_nm} 매도 완료 | {sellable}주 @ {cp:,}원"); self._send_telegram(f"💎 {c_nm} 매도")
             except Exception: pass
@@ -492,7 +499,7 @@ class BaseBot:
                     if price > p_max: 
                         with self.lock: pos.max_price = price; p_max = price
                     if p_max >= p_avg + (1.0 * atr_14) and price <= p_max - (1.5 * atr_14):
-                        if self.kis and self.kis.sell_market_order(ticker, p_sh, price=int(price)):
+                        if self.kis and self.kis.sell_market_order(ticker, p_sh):
                             with self.lock: pos.last_order_time = time.time(); pos.max_price = 0; pos.status = "체결 대기 ⏳"
                             profit = (price - p_avg) * p_sh
                             log_trade_journal(self.user_id, ticker, p_nm, 'SELL', price, st_nm, "ATR 트레일링 익절", profit=profit)
@@ -502,7 +509,7 @@ class BaseBot:
 
                 if p_sh > 0 and p_avg > 0 and is_cd_passed:
                     if price <= p_avg - (2.5 * atr_14):
-                        if self.kis and self.kis.sell_market_order(ticker, p_sh, price=int(price)):
+                        if self.kis and self.kis.sell_market_order(ticker, p_sh):
                             with self.lock: pos.last_order_time = time.time(); pos.status = "체결 대기 ⏳"
                             profit = (price - p_avg) * p_sh
                             log_trade_journal(self.user_id, ticker, p_nm, 'SELL', price, st_nm, "ATR 하드 손절", profit=profit)
@@ -525,7 +532,7 @@ class BaseBot:
                             self._send_telegram(f"🛑 [{p_nm}] 매수 거절\n👉 {ai_reason}")
                     else:
                         qty = int((p_cash * 0.98) // price)
-                        if qty > 0 and self.kis and self.kis.buy_market_order(ticker, qty, price=int(price)):
+                        if qty > 0 and self.kis and self.kis.buy_market_order(ticker, qty):
                             with self.lock: pos.last_order_time = time.time(); pos.status = "체결 대기 ⏳"
                             log_trade_journal(self.user_id, ticker, p_nm, 'BUY', price, st_nm, "알고리즘 직통")
                             self._send_telegram(f"📈 [{p_nm}] 알고리즘 매수")
@@ -535,7 +542,7 @@ class BaseBot:
                         pos.status = "AI 심사 중 🤖"
                         decision, ai_reason = self.gemini.ai_approve_trade(sig, p_nm, ticker, price, st_nm, ind_val, self.hot_sectors, get_recent_trades(self.user_id, ticker), load_ai_rules(self.user_id) + "\n" + getattr(self, 'current_ai_market_view', ''))
                         if decision:
-                            if self.kis and self.kis.sell_market_order(ticker, p_sh, price=int(price)):
+                            if self.kis and self.kis.sell_market_order(ticker, p_sh):
                                 with self.lock: pos.last_order_time = time.time(); pos.status = "체결 대기 ⏳"
                                 profit = (price - p_avg) * p_sh 
                                 log_trade_journal(self.user_id, ticker, p_nm, 'SELL', price, st_nm, f"AI 승인 ({ai_reason})", profit=profit)
@@ -548,7 +555,7 @@ class BaseBot:
                         else:
                             pos.status = "AI 거절(보유) 🛑"
                     else:
-                        if self.kis and self.kis.sell_market_order(ticker, p_sh, price=int(price)):
+                        if self.kis and self.kis.sell_market_order(ticker, p_sh):
                             with self.lock: pos.last_order_time = time.time(); pos.status = "체결 대기 ⏳"
                             profit = (price - p_avg) * p_sh 
                             log_trade_journal(self.user_id, ticker, p_nm, 'SELL', price, st_nm, "알고리즘 직통", profit=profit)
