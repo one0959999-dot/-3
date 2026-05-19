@@ -1,3 +1,8 @@
+"""
+train_lstm.py — 고도화 LSTM 주간 재훈련 스크립트
+입력 피처: OHLCV(5) + RSI/MACD/볼린저밴드/거래량비율/모멘텀(5) = 10개
+모델: 2-Layer Bidirectional LSTM + Dropout + BatchNorm
+"""
 import torch
 import torch.nn as nn
 import torch.optim as optim
@@ -11,14 +16,12 @@ import os
 import pickle
 import time
 
-# 이전 단계에서 만든 딥러닝 모델 구조 불러오기
-from dl_model import StockLSTM
+from dl_model import StockLSTM, _add_features, INPUT_SIZE, SEQ_LEN
 
-print("🧠 [딥러닝 엔진] AI 모델 양대 시장 상위 200대 주도주 결합 대형 학습을 시작합니다...")
+print("🧠 [딥러닝 엔진 v2] 10피처 Bidirectional LSTM 훈련을 시작합니다...")
 
-# 1. 동적 유니버스 생성: 실행일 기준 KOSPI + KOSDAQ 거래대금 대통합 상위 200개 추출
+# ── 1. 유니버스 생성: 당일 거래대금 상위 200개 ─────────────────────────────
 try:
-    # 최근 정상 영업일 날짜 확인용 (주말 및 휴일 장부 백업 방어코드)
     dt = datetime.today()
     today_str = dt.strftime("%Y%m%d")
     for _ in range(10):
@@ -28,97 +31,118 @@ try:
         dt -= timedelta(days=1)
         today_str = dt.strftime("%Y%m%d")
 
-    print(f"📅 데이터 스캔 타겟 기준 영업일: {today_str}")
-    df_kospi = stock.get_market_price_change_by_ticker(today_str, today_str, "KOSPI")
+    print(f"📅 기준 영업일: {today_str}")
+    df_kospi  = stock.get_market_price_change_by_ticker(today_str, today_str, "KOSPI")
     df_kosdaq = stock.get_market_price_change_by_ticker(today_str, today_str, "KOSDAQ")
-    df_all = pd.concat([df_kospi, df_kosdaq])
-    
-    # 거래대금 내림차순 정렬 후 최상위 200개 골라내기
-    top_200 = df_all.sort_values(by='거래대금', ascending=False).head(200)
+    df_all    = pd.concat([df_kospi, df_kosdaq])
+    top_200   = df_all.sort_values(by='거래대금', ascending=False).head(200)
     TRAIN_TICKERS = top_200.index.tolist()
-    print(f"🔥 시장 최고 주도주 200 종목 리스트 수집 성공! (당일 거래대금 대장주: {top_200['종목명'].iloc[0]})")
-except Exception as universe_err:
-    print(f"⚠️ 상위 200개 실시간 추출 실패로 우량주 기본 가이드셋으로 대체합니다: {universe_err}")
-    TRAIN_TICKERS = ["005930", "000660", "035420", "005380", "068270", "003850", "035720", "051910"]
+    print(f"🔥 상위 200 종목 수집 완료 (대장주: {top_200['종목명'].iloc[0]})")
+except Exception as e:
+    print(f"⚠️ 상위 200 추출 실패 → 기본 종목으로 대체: {e}")
+    TRAIN_TICKERS = ["005930", "000660", "035420", "005380", "068270",
+                     "003850", "035720", "051910", "207940", "006400"]
 
-SEQ_LENGTH = 20
 PREDICT_DAYS = 5
-EPOCHS = 40  # 200개 종목의 빅데이터이므로 과적합 방지 및 연산 가용 한도 조율차 40 에포크로 최적화
+EPOCHS       = 50   # 피처 증가에 따른 학습 에포크 증가
 
-# 2. 데이터 수집 및 전처리
+# ── 2. 데이터 수집 및 10피처 전처리 ──────────────────────────────────────────
 all_x, all_y = [], []
 scaler = MinMaxScaler(feature_range=(-1, 1))
 
-end_date = datetime.today()
-start_date = end_date - timedelta(days=1200) # t2.micro 사양 최적화를 위해 과거 1200일(약 3~4년) 패턴 추출
+end_date   = datetime.today()
+start_date = end_date - timedelta(days=1500)  # 약 4년치
 
-print("📊 200개 종목의 시계열 차트 빅데이터 병렬 스캔 및 정규화 진행 중...")
+FEATURE_COLS = ['open', 'high', 'low', 'close', 'volume',
+                'rsi', 'macd_hist', 'bb_pct', 'vol_ratio', 'momentum']
+
+print("📊 200개 종목 빅데이터 스캔 중...")
+raw_segments = []
+
 for idx, ticker in enumerate(TRAIN_TICKERS, 1):
     try:
-        df = stock.get_market_ohlcv_by_date(start_date.strftime("%Y%m%d"), end_date.strftime("%Y%m%d"), ticker)
-        if df.empty or len(df) < (SEQ_LENGTH + PREDICT_DAYS + 10): 
+        df = stock.get_market_ohlcv_by_date(
+            start_date.strftime("%Y%m%d"), end_date.strftime("%Y%m%d"), ticker
+        )
+        if df.empty or len(df) < (SEQ_LEN + PREDICT_DAYS + 30):
             continue
-        
-        df.rename(columns={'시가':'open','고가':'high','저가':'low','종가':'close','거래량':'volume'}, inplace=True)
-        data = df[['open', 'high', 'low', 'close', 'volume']].values
-        scaled_data = scaler.fit_transform(data)
-        
-        for i in range(len(scaled_data) - SEQ_LENGTH - PREDICT_DAYS):
-            seq = scaled_data[i : i + SEQ_LENGTH]
-            current_close = df['close'].iloc[i + SEQ_LENGTH - 1]
-            future_close = df['close'].iloc[i + SEQ_LENGTH + PREDICT_DAYS - 1]
-            
-            # 5일 뒤 종가가 현재 종가 대비 2% 넘게 상승하면 진짜 상승 패턴(1.0), 아니면 소외 패턴(0.0)
-            label = 1.0 if future_close > current_close * 1.02 else 0.0
-            all_x.append(seq)
-            all_y.append(label)
-            
+
+        df.rename(columns={'시가': 'open', '고가': 'high', '저가': 'low',
+                            '종가': 'close', '거래량': 'volume'}, inplace=True)
+
+        # 10피처 추가
+        df_feat = _add_features(df)
+        data = df_feat[FEATURE_COLS].values.astype(float)
+        raw_segments.append((data, df['close'].values))
+
         if idx % 20 == 0:
-            print(f"   [진행률: {idx}/200] 차트 조각 분석 완료 (추출된 누적 학습 데이터: {len(all_x)}개)")
-        
-        # 🚨 [매우 중요] 거래소 서버의 요청 제한(IP Block)을 차단하기 위한 0.15초 안전 지연 버퍼
+            print(f"   [진행률: {idx}/200] 누적 세그먼트: {len(raw_segments)}개")
         time.sleep(0.15)
     except Exception:
         continue
 
-if not all_x:
-    print("❌ 수집된 데이터셋 파편이 없어 인공지능 훈련을 중단합니다.")
+if not raw_segments:
+    print("❌ 수집된 데이터 없음. 훈련 중단.")
     exit()
+
+# 전체 데이터 합쳐서 스케일러 fit
+all_data = np.vstack([seg[0] for seg in raw_segments])
+scaler.fit(all_data)
+
+for data, closes in raw_segments:
+    scaled = scaler.transform(data)
+    for i in range(len(scaled) - SEQ_LEN - PREDICT_DAYS):
+        seq          = scaled[i: i + SEQ_LEN]
+        cur_close    = closes[i + SEQ_LEN - 1]
+        future_close = closes[i + SEQ_LEN + PREDICT_DAYS - 1]
+        label = 1.0 if future_close > cur_close * 1.02 else 0.0
+        all_x.append(seq)
+        all_y.append(label)
+
+print(f"✅ 총 {len(all_x)}개 시계열 샘플 구축 완료")
 
 X_tensor = torch.FloatTensor(np.array(all_x))
 y_tensor = torch.FloatTensor(np.array(all_y)).unsqueeze(1)
 
-dataset = TensorDataset(X_tensor, y_tensor)
-dataloader = DataLoader(dataset, batch_size=128, shuffle=True) # 속도 극대화를 위해 대형 배치 설정
+# 클래스 불균형 보정 (상승 샘플이 적을 수 있음)
+pos_weight = torch.tensor([(y_tensor == 0).sum() / (y_tensor == 1).sum() + 1e-9])
 
-# 3. 모델 초기화 및 순방향/역방향 오차 역전파 학습
-model = StockLSTM(input_size=5, hidden_layer_size=50, output_size=1)
-criterion = nn.BCELoss()
-optimizer = optim.Adam(model.parameters(), lr=0.001)
+dataset    = TensorDataset(X_tensor, y_tensor)
+dataloader = DataLoader(dataset, batch_size=256, shuffle=True)
 
-print(f"🚀 총 {len(all_x)}개의 시계열 매수 타점 데이터 장부 구축 완료! PyTorch 인공지능 훈련을 개시합니다.")
+# ── 3. 모델 훈련 ──────────────────────────────────────────────────────────────
+model     = StockLSTM(input_size=INPUT_SIZE)
+criterion = nn.BCEWithLogitsLoss(pos_weight=pos_weight)
+optimizer = optim.AdamW(model.parameters(), lr=0.001, weight_decay=1e-4)
+scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=EPOCHS)
+
+print(f"🚀 PyTorch 훈련 개시 (에포크: {EPOCHS}, 배치: 256, 피처: {INPUT_SIZE}개)")
 
 for epoch in range(EPOCHS):
     model.train()
-    epoch_loss = 0
+    epoch_loss = 0.0
     for batch_x, batch_y in dataloader:
         optimizer.zero_grad()
-        outputs = model(batch_x)
-        loss = criterion(outputs, batch_y)
+        outputs    = model(batch_x)
+        loss       = criterion(outputs, batch_y)
         loss.backward()
+        nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
         optimizer.step()
         epoch_loss += loss.item()
-    
-    if (epoch+1) % 5 == 0:
-        print(f" 🎯 AI 학습 주기 [{epoch+1}/{EPOCHS}] 종합 손실도(Loss): {epoch_loss/len(dataloader):.4f}")
+    scheduler.step()
 
-# 4. 모델 가중치 + 스케일러 저장 (예측 시 동일한 정규화 범위 사용하기 위해)
-base_dir = os.path.dirname(os.path.abspath(__file__))
-model_path = os.path.join(base_dir, "stock_lstm_model.pth")
+    if (epoch + 1) % 10 == 0:
+        print(f"   🎯 에포크 [{epoch+1}/{EPOCHS}] Loss: {epoch_loss/len(dataloader):.4f}")
+
+# ── 4. 모델 및 스케일러 저장 ──────────────────────────────────────────────────
+base_dir    = os.path.dirname(os.path.abspath(__file__))
+model_path  = os.path.join(base_dir, "stock_lstm_model.pth")
 scaler_path = os.path.join(base_dir, "stock_scaler.pkl")
 
 torch.save(model.state_dict(), model_path)
 with open(scaler_path, 'wb') as f:
     pickle.dump(scaler, f)
-print(f"🎉 [대성공] 모델 저장 완료! 경로: {model_path}")
-print(f"📦 스케일러 저장 완료! 경로: {scaler_path}")
+
+print(f"🎉 모델 저장 완료: {model_path}")
+print(f"📦 스케일러 저장 완료: {scaler_path}")
+print("✅ 고도화 LSTM v2 훈련 완료!")

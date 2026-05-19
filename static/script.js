@@ -793,7 +793,7 @@ window.saveCoreStocks = async function () {
 
         telegram_token: document.getElementById('teleToken').value,
         telegram_chat_id: document.getElementById('teleChatId').value,
-        gemini_api_key: document.getElementById('geminiApiKey').value,
+        claude_api_key: document.getElementById('claudeApiKey').value,
         core_stocks: coreJsonStr,
         is_mock: isMock,
         initial_cash: document.getElementById('initialCash').value
@@ -828,7 +828,7 @@ window.saveAccountSettings = async function () {
 
         telegram_token: document.getElementById('teleToken').value,
         telegram_chat_id: document.getElementById('teleChatId').value,
-        gemini_api_key: document.getElementById('geminiApiKey').value,
+        claude_api_key: document.getElementById('claudeApiKey').value,
         core_stocks: coreJsonStr,
         is_mock: isMock
     };
