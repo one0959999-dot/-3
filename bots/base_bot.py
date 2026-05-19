@@ -516,7 +516,7 @@ class BaseBot:
                         decision, ai_reason = self.gemini.ai_approve_trade(sig, p_nm, ticker, price, st_nm, ind_val, self.hot_sectors, get_recent_trades(self.user_id, ticker), load_ai_rules(self.user_id) + "\n" + getattr(self, 'current_ai_market_view', ''))
                         if decision:
                             qty = int((p_cash * 0.98) // price)
-                            if qty > 0 and self.kis and self.kis.buy_market_order(ticker, qty, price=int(price)):
+                            if qty > 0 and self.kis and self.kis.buy_market_order(ticker, qty):
                                 with self.lock: pos.last_order_time = time.time(); pos.status = "체결 대기 ⏳"
                                 log_trade_journal(self.user_id, ticker, p_nm, 'BUY', price, st_nm, f"AI 승인 ({ai_reason})")
                                 self._send_telegram(f"📈 [{p_nm}] AI 매수 완료\n👉 {ai_reason}")

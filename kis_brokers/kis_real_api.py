@@ -16,7 +16,6 @@ class KisRealApi:
         print(f"[KIS 실전] 실전투자 API 모드 연동 완료 (URL: {self.base_url})")
 
     def get_access_token(self):
-        """API 사용을 위한 토큰 발급"""
         print("[KIS 실전] 접속 토큰(Access Token) 발급을 요청합니다...")
         url = f"{self.base_url}/oauth2/tokenP"
         headers = {"content-type": "application/json"}
@@ -37,7 +36,6 @@ class KisRealApi:
             return None
 
     def get_approval_key(self):
-        """웹소켓 실시간 접속을 위한 웹소켓용 Approval Key 발급"""
         url = f"{self.base_url}/oauth2/Approval"
         
         headers = {"content-type": "application/json; charset=utf-8"}
@@ -60,13 +58,11 @@ class KisRealApi:
             return None        
 
     def _ensure_token(self):
-        """토큰이 없거나 만료되었으면 자동 발급"""
         if not self.access_token or not self.token_expiry or datetime.now() >= self.token_expiry:
             return self.get_access_token()
         return self.access_token
 
     def get_hashkey(self, data: dict):
-        """POST 요청(주문 등)에 필수적인 HASHKEY 발급"""
         url = f"{self.base_url}/uapi/hashkey"
         headers = {
             "content-type": "application/json; charset=utf-8",
@@ -84,7 +80,6 @@ class KisRealApi:
         return None
 
     def _order_headers(self, tr_id: str, hashkey: str) -> dict:
-        """주문 공통 헤더 생성"""
         return {
             "content-type": "application/json; charset=utf-8",
             "authorization": f"Bearer {self.access_token}",
@@ -96,7 +91,6 @@ class KisRealApi:
         }
         
     def get_current_price(self, stock_code: str):
-        """특정 종목의 현재가 조회"""
         if not self._ensure_token():
             print("[KIS 실전] 접속 토큰이 없어 현재가를 조회할 수 없습니다.")
             return None
@@ -111,8 +105,8 @@ class KisRealApi:
         }
         
         params = {
-            "fid_cond_mrkt_div_code": "J",
-            "fid_input_iscd": stock_code
+            "FID_COND_MRKT_DIV_CODE": "J",
+            "FID_INPUT_ISCD": stock_code
         }
             
         try:
@@ -133,7 +127,6 @@ class KisRealApi:
             return None
 
     def get_realtime_price_data(self, stock_code: str):
-        """특정 종목의 당일 시/고/저/종가 실시간 데이터 전체 조회"""
         if not self._ensure_token():
             return None
             
@@ -147,8 +140,8 @@ class KisRealApi:
         }
         
         params = {
-            "fid_cond_mrkt_div_code": "J",
-            "fid_input_iscd": stock_code
+            "FID_COND_MRKT_DIV_CODE": "J",
+            "FID_INPUT_ISCD": stock_code
         }
             
         try:
@@ -170,7 +163,6 @@ class KisRealApi:
             return None        
 
     def _place_order(self, stock_code: str, qty: int, side: str, price: int = 0):
-        """시장가/지정가 하이브리드 주문 로직 (실전)"""
         if not self._ensure_token():
             return None
 
@@ -249,19 +241,16 @@ class KisRealApi:
             return None
             
     def buy_market_order(self, stock_code: str, qty: int, price: int = 0):
-        """시장가/지정가 하이브리드 매수 주문"""
         if qty <= 0:
             return None
         return self._place_order(stock_code, qty, 'BUY', price)
         
     def sell_market_order(self, stock_code: str, qty: int, price: int = 0):
-        """시장가/지정가 하이브리드 매도 주문"""
         if qty <= 0:
             return None
         return self._place_order(stock_code, qty, 'SELL', price)
 
     def get_account_balance(self):
-        """계좌 잔고 및 종목 보유 내역 조회 (실전 계좌)"""
         if not self._ensure_token():
             return None
             
@@ -280,78 +269,80 @@ class KisRealApi:
         }
         
         params = {
-            "cano": acnt_no,
-            "acnt_prdt_cd": acnt_prdt,
-            "afhr_flpr_yn": "N",
-            "ofl_yn": "N",
-            "inqr_dvsn": "02",
-            "unpr_dvsn": "01",
-            "fund_sttl_icld_yn": "N",
-            "fncg_amt_auto_rdpt_yn": "N",
-            "prcs_dvsn": "00",
-            "ctx_area_fk100": "",
-            "ctx_area_nk100": ""
+            "CANO": acnt_no,
+            "ACNT_PRDT_CD": acnt_prdt,
+            "AFHR_FLPR_YN": "N",
+            "OFL_YN": "N",
+            "INQR_DVSN": "02",
+            "UNPR_DVSN": "01",
+            "FUND_STTL_ICLD_YN": "N",
+            "FNCG_AMT_AUTO_RDPT_YN": "N",
+            "PRCS_DVSN": "00",
+            "CTX_AREA_FK100": "",
+            "CTX_AREA_NK100": ""
         }
         
-        try:
-            res = requests.get(url, headers=headers, params=params, timeout=5)
-            
-            if res.status_code == 200:
-                data = res.json()
-                if data.get('rt_cd') == '0':
-                    stocks = data.get('output1', [])
-                    summary = data.get('output2', [{}])[0]
-                    
-                    parsed_stocks = []
-                    manual_total_purchase = 0.0
-                    for s in stocks:
-                        if int(s.get('hldg_qty', 0)) > 0:
-                            qty = int(s.get('hldg_qty', 0))
-                            pchs = float(s.get('pchs_avg_pric', 0))
-                            parsed_stocks.append({
-                                "name": s.get('prdt_name', ''),
-                                "ticker": s.get('pdno', ''),
-                                "shares": qty,
-                                "purchase_price": pchs,
-                                "current_price": float(s.get('prpr', 0)),
-                                "value": float(s.get('evlu_amt', 0)),
-                                "profit_rt": float(s.get('evlu_pfls_rt', 0))
-                            })
-                            manual_total_purchase += (qty * pchs)
-                    
-                    def _safe_parse(k1, k2):
-                        v1 = summary.get(k1)
-                        v2 = summary.get(k2)
-                        if v1 and v1 != "0" and v1 != "": return float(v1)
-                        if v2 and v2 != "0" and v2 != "": return float(v2)
-                        return 0.0
+        # 🚨 [실전투자 서버 지연 극복 엔진]
+        for retry in range(2):
+            try:
+                res = requests.get(url, headers=headers, params=params, timeout=3.5)
+                
+                if res.status_code == 200:
+                    data = res.json()
+                    if data.get('rt_cd') == '0':
+                        stocks = data.get('output1', [])
+                        summary = data.get('output2', [{}])[0]
+                        
+                        parsed_stocks = []
+                        manual_total_purchase = 0.0 
+                        for s in stocks:
+                            if int(s.get('hldg_qty', 0)) > 0:
+                                qty = int(s.get('hldg_qty', 0))
+                                pchs = float(s.get('pchs_avg_pric', 0))
+                                parsed_stocks.append({
+                                    "name": s.get('prdt_name', ''),
+                                    "ticker": s.get('pdno', ''),
+                                    "shares": qty,
+                                    "purchase_price": pchs,
+                                    "current_price": float(s.get('prpr', 0)),
+                                    "value": float(s.get('evlu_amt', 0)),
+                                    "profit_rt": float(s.get('evlu_pfls_rt', 0))
+                                })
+                                manual_total_purchase += (qty * pchs) 
+                        
+                        def _safe_parse(k1, k2):
+                            v1 = summary.get(k1)
+                            v2 = summary.get(k2)
+                            if v1 and v1 != "0" and v1 != "": return float(v1)
+                            if v2 and v2 != "0" and v2 != "": return float(v2)
+                            return 0.0
 
-                    api_purchase = _safe_parse('pchs_amt_smtl_amt', 'tot_pchs_amt')
-                    final_purchase = api_purchase if api_purchase > 0 else manual_total_purchase
+                        api_purchase = _safe_parse('pchs_amt_smtl_amt', 'tot_pchs_amt')
+                        final_purchase = api_purchase if api_purchase > 0 else manual_total_purchase
 
-                    return {
-                        "stocks": parsed_stocks,
-                        "total_cash": _safe_parse('prvs_rcdl_excc_amt', 'dnca_tot_amt'),
-                        "total_value": _safe_parse('scts_evlu_amt', 'evlu_amt_smtl_amt'),
-                        "total_purchase": final_purchase
-                    }
+                        return {
+                            "stocks": parsed_stocks,
+                            "total_cash": _safe_parse('prvs_rcdl_excc_amt', 'dnca_tot_amt'),
+                            "total_value": _safe_parse('scts_evlu_amt', 'evlu_amt_smtl_amt'),
+                            "total_purchase": final_purchase 
+                        }
+                    else:
+                        msg1 = data.get('msg1', '')
+                        rt_cd = data.get('rt_cd', '')
+                        print(f"[KIS 실전] 잔고 조회 실패: rt_cd={rt_cd}, msg={msg1}, data={data}")
+                        if msg1 in ('EGW00123', 'EGW00121'):
+                            self.access_token = None
+                            self._ensure_token()
+                            return self.get_account_balance()
                 else:
-                    msg1 = data.get('msg1', '')
-                    rt_cd = data.get('rt_cd', '')
-                    print(f"[KIS 실전] 잔고 조회 실패: rt_cd={rt_cd}, msg={msg1}, data={data}")
-                    if msg1 in ('EGW00123', 'EGW00121'):
-                        self.access_token = None
-                        self._ensure_token()
-                        return self.get_account_balance()
-            else:
-                print(f"[KIS 실전] 잔고 조회 통신 오류: status={res.status_code}, text={res.text}")
-            return None
-        except Exception as e:
-            print(f"[KIS 실전] 잔고 조회 통신 시간 초과/오류: {e}")
-            return None
+                    print(f"[KIS 실전] 잔고 조회 통신 오류: status={res.status_code}, text={res.text}")
+                return None
+            except (requests.exceptions.Timeout, requests.exceptions.ConnectionError) as e:
+                print(f"⚠️ [KIS 실전 잔고조회 타임아웃 방어] 빠른 실패 처리 중... ({e})")
+                return None
+        return None
 
     def search_stock_name(self, query: str):
-        """종목명 또는 코드로 KOSPI/KOSDAQ 종목 검색"""
         query = query.strip()
         if not query:
             return []
@@ -419,7 +410,6 @@ class KisRealApi:
         return []
 
     def get_volume_rank(self, market_div="J", limit=30):
-        """거래량 상위 종목 검색"""
         if not self._ensure_token():
             return []
             
@@ -463,7 +453,6 @@ class KisRealApi:
         return []
 
     def get_ohlcv(self, stock_code: str, period: str = "D"):
-        """국내주식 기간별 시세 조회 (과거 차트 데이터)"""
         if not self._ensure_token():
             return None
             
@@ -513,7 +502,6 @@ class KisRealApi:
             return pd.DataFrame()
 
     def get_macro_context(self):
-        """AI 판단용 실시간 거시경제 및 시장 지수 수집"""
         macro_info = []
         try:
             for code, name in [("069500", "KOSPI(KODEX 200)"), ("229200", "KOSDAQ(KODEX 코스닥150)")]:
@@ -527,3 +515,119 @@ class KisRealApi:
         except Exception:
             pass
         return " | ".join(macro_info) if macro_info else "시장 지수 실시간 조회 불가"
+
+    # =========================================================================
+    # 🚨 [여기서부터 신규 추가된 미체결 관리 및 자동 취소 방어 엔진입니다] 🚨
+    # =========================================================================
+
+    def get_unfilled_orders(self):
+        """[신규 추가] 미체결 주문 내역 조회 (실전투자)"""
+        if not self._ensure_token():
+            return []
+            
+        tr_id = "TTTC8436R"  # 실전투자 미체결내역조회 TR_ID
+        url = f"{self.base_url}/uapi/domestic-stock/v1/trading/inquire-psbl-rvsecncl"
+        
+        acnt_no = self.account_no[:8]
+        acnt_prdt = self.account_no[8:] if len(self.account_no) > 8 else "01"
+        
+        headers = {
+            "content-type": "application/json; charset=utf-8",
+            "authorization": f"Bearer {self.access_token}",
+            "appkey": self.app_key,
+            "appsecret": self.app_secret,
+            "tr_id": tr_id,
+        }
+        
+        params = {
+            "CANO": acnt_no,
+            "ACNT_PRDT_CD": acnt_prdt,
+            "CTX_AREA_FK100": "",
+            "CTX_AREA_NK100": "",
+            "INQR_DVSN_1": "0",  # 0:조회순서, 1:주문순
+            "INQR_DVSN_2": "0"   # 0:전체, 1:매도, 2:매수
+        }
+        
+        try:
+            res = requests.get(url, headers=headers, params=params, timeout=5)
+            if res.status_code == 200:
+                data = res.json()
+                if data.get("rt_cd") == "0":
+                    unfilled_list = data.get("output", [])
+                    results = []
+                    for item in unfilled_list:
+                        rem_qty = int(item.get("rmn_qty", 0)) if item.get("rmn_qty") else int(item.get("rmnd_qty", 0))
+                        if rem_qty > 0:
+                            results.append({
+                                "order_no": item.get("odno"),
+                                "ticker": item.get("pdno"),
+                                "name": item.get("prdt_name"),
+                                "order_qty": int(item.get("ord_qty", 0)),
+                                "rem_qty": rem_qty,
+                                "order_price": float(item.get("ord_unpr", 0)),
+                                "side": "SELL" if item.get("sll_buy_dvsn_cd") == "01" else "BUY"
+                            })
+                    return results
+            return []
+        except Exception as e:
+            print(f"[KIS 실전] 미체결 조회 오류: {e}")
+            return []
+
+    def cancel_order(self, org_order_no: str, stock_code: str, rem_qty: int):
+        """[신규 추가] 미체결 주문 취소 송신 (실전투자)"""
+        if not self._ensure_token():
+            return None
+
+        tr_id = "TTTC0803U"  # 실전투자 취소주문 TR_ID
+        url = f"{self.base_url}/uapi/domestic-stock/v1/trading/order-rvsecncl"
+        
+        acnt_no = self.account_no[:8]
+        acnt_prdt = self.account_no[8:] if len(self.account_no) > 8 else "01"
+        
+        body = {
+            "CANO": acnt_no,
+            "ACNT_PRDT_CD": acnt_prdt,
+            "KRX_FWDG_ORD_ORG_NO": "",
+            "ORGN_ORD_NO": org_order_no,
+            "ORD_DVSN": "00",
+            "RVSE_CNCL_DVSN_CD": "02", # 02: 취소
+            "ORD_QTY": str(rem_qty),
+            "ORD_UNPR": "0",
+            "QTY_ALL_ORD_YN": "Y"
+        }
+        
+        hashkey = self.get_hashkey(body)
+        if not hashkey:
+            return None
+
+        try:
+            res = requests.post(url, headers=self._order_headers(tr_id, hashkey), data=json.dumps(body), timeout=5)
+            if res.status_code == 200:
+                data = res.json()
+                if data.get('rt_cd') == '0':
+                    print(f"[KIS 실전] 주문취소 완료 | 원주문번호: {org_order_no}")
+                else:
+                    print(f"[KIS 실전] 주문취소 거부: {data.get('msg1')}")
+                return data
+            return None
+        except Exception as e:
+            print(f"[KIS 실전] 주문취소 통신 오류: {e}")
+            return None
+
+    def cancel_all_unfilled_orders(self):
+        """[신규 추가] 계좌 내 모든 미체결 주문 일괄 취소 (실전투자)"""
+        unfilled_orders = self.get_unfilled_orders()
+        if not unfilled_orders:
+            return True
+            
+        print(f"[KIS 실전] 총 {len(unfilled_orders)}건의 미체결 주문 취소를 시작합니다.")
+        success_count = 0
+        for order in unfilled_orders:
+            res = self.cancel_order(order['order_no'], order['ticker'], order['rem_qty'])
+            if res and res.get('rt_cd') == '0':
+                success_count += 1
+            import time
+            time.sleep(0.2) # API Rate Limit 방어를 위한 지연
+            
+        print(f"[KIS 실전] 미체결 일괄 취소 완료 ({success_count}/{len(unfilled_orders)}건)")
+        return success_count == len(unfilled_orders)

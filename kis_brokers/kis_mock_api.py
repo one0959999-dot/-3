@@ -519,3 +519,120 @@ class KisMockApi:
         except Exception:
             pass
         return " | ".join(macro_info) if macro_info else "시장 지수 실시간 조회 불가"
+
+    # =========================================================================
+    # 🚨 [여기서부터 신규 추가된 미체결 관리 및 자동 취소 방어 엔진입니다] 🚨
+    # =========================================================================
+
+    def get_unfilled_orders(self):
+        """[신규 추가] 미체결 주문 내역 조회 (모의투자)"""
+        if not self._ensure_token():
+            return []
+            
+        tr_id = "VTTC8436R"  # 모의투자 미체결내역조회 TR_ID
+        url = f"{self.base_url}/uapi/domestic-stock/v1/trading/inquire-psbl-rvsecncl"
+        
+        acnt_no = self.account_no[:8]
+        acnt_prdt = self.account_no[8:] if len(self.account_no) > 8 else "01"
+        
+        headers = {
+            "content-type": "application/json; charset=utf-8",
+            "authorization": f"Bearer {self.access_token}",
+            "appkey": self.app_key,
+            "appsecret": self.app_secret,
+            "tr_id": tr_id,
+        }
+        
+        params = {
+            "CANO": acnt_no,
+            "ACNT_PRDT_CD": acnt_prdt,
+            "CTX_AREA_FK100": "",
+            "CTX_AREA_NK100": "",
+            "INQR_DVSN_1": "0",  # 0:조회순서, 1:주문순
+            "INQR_DVSN_2": "0"   # 0:전체, 1:매도, 2:매수
+        }
+        
+        try:
+            res = requests.get(url, headers=headers, params=params, timeout=5)
+            if res.status_code == 200:
+                data = res.json()
+                if data.get("rt_cd") == "0":
+                    unfilled_list = data.get("output", [])
+                    results = []
+                    for item in unfilled_list:
+                        # rmn_qty 또는 rmnd_qty 필드 처리
+                        rem_qty = int(item.get("rmn_qty", 0)) if item.get("rmn_qty") else int(item.get("rmnd_qty", 0))
+                        if rem_qty > 0:
+                            results.append({
+                                "order_no": item.get("odno"),
+                                "ticker": item.get("pdno"),
+                                "name": item.get("prdt_name"),
+                                "order_qty": int(item.get("ord_qty", 0)),
+                                "rem_qty": rem_qty,
+                                "order_price": float(item.get("ord_unpr", 0)),
+                                "side": "SELL" if item.get("sll_buy_dvsn_cd") == "01" else "BUY"
+                            })
+                    return results
+            return []
+        except Exception as e:
+            print(f"[KIS 모의] 미체결 조회 오류: {e}")
+            return []
+
+    def cancel_order(self, org_order_no: str, stock_code: str, rem_qty: int):
+        """[신규 추가] 미체결 주문 취소 송신 (모의투자)"""
+        if not self._ensure_token():
+            return None
+
+        tr_id = "VTTC0803U"  # 모의투자 취소주문 TR_ID
+        url = f"{self.base_url}/uapi/domestic-stock/v1/trading/order-rvsecncl"
+        
+        acnt_no = self.account_no[:8]
+        acnt_prdt = self.account_no[8:] if len(self.account_no) > 8 else "01"
+        
+        body = {
+            "CANO": acnt_no,
+            "ACNT_PRDT_CD": acnt_prdt,
+            "KRX_FWDG_ORD_ORG_NO": "",
+            "ORGN_ORD_NO": org_order_no,
+            "ORD_DVSN": "00",
+            "RVSE_CNCL_DVSN_CD": "02", # 02: 취소
+            "ORD_QTY": str(rem_qty),
+            "ORD_UNPR": "0",
+            "QTY_ALL_ORD_YN": "Y"
+        }
+        
+        hashkey = self.get_hashkey(body)
+        if not hashkey:
+            return None
+
+        try:
+            res = requests.post(url, headers=self._order_headers(tr_id, hashkey), data=json.dumps(body), timeout=5)
+            if res.status_code == 200:
+                data = res.json()
+                if data.get('rt_cd') == '0':
+                    print(f"[KIS 모의] 주문취소 완료 | 원주문번호: {org_order_no}")
+                else:
+                    print(f"[KIS 모의] 주문취소 거부: {data.get('msg1')}")
+                return data
+            return None
+        except Exception as e:
+            print(f"[KIS 모의] 주문취소 통신 오류: {e}")
+            return None
+
+    def cancel_all_unfilled_orders(self):
+        """[신규 추가] 계좌 내 모든 미체결 주문 일괄 취소 (모의투자)"""
+        unfilled_orders = self.get_unfilled_orders()
+        if not unfilled_orders:
+            return True
+            
+        print(f"[KIS 모의] 총 {len(unfilled_orders)}건의 미체결 주문 취소를 시작합니다.")
+        success_count = 0
+        for order in unfilled_orders:
+            res = self.cancel_order(order['order_no'], order['ticker'], order['rem_qty'])
+            if res and res.get('rt_cd') == '0':
+                success_count += 1
+            import time
+            time.sleep(0.2) # API Rate Limit 방어를 위한 지연
+            
+        print(f"[KIS 모의] 미체결 일괄 취소 완료 ({success_count}/{len(unfilled_orders)}건)")
+        return success_count == len(unfilled_orders)
