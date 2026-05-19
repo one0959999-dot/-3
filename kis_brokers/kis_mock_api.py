@@ -2,7 +2,7 @@ import time
 import requests
 import json
 import pandas as pd
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 class KisMockApi:
     """한국투자증권 모의투자 전용 OpenAPI 연동 클래스"""
@@ -569,7 +569,8 @@ class KisMockApi:
                                 "order_qty": int(item.get("ord_qty", 0)),
                                 "rem_qty": rem_qty,
                                 "order_price": float(item.get("ord_unpr", 0)),
-                                "side": "SELL" if item.get("sll_buy_dvsn_cd") == "01" else "BUY"
+                                "side": "SELL" if item.get("sll_buy_dvsn_cd") == "01" else "BUY",
+                                "ord_gno_brno": item.get("ord_gno_brno", "")
                             })
                     return results
             return []
@@ -577,21 +578,21 @@ class KisMockApi:
             print(f"[KIS 모의] 미체결 조회 오류: {e}")
             return []
 
-    def cancel_order(self, org_order_no: str, stock_code: str, rem_qty: int):
+    def cancel_order(self, org_order_no: str, stock_code: str, rem_qty: int, krx_fwdg_ord_orgno: str = ""):
         """미체결 주문 취소 (모의투자)"""
         if not self._ensure_token():
             return None
 
-        tr_id = "VTTC0803U"  # 모의투자 취소주문 TR_ID
+        tr_id = "VTTC0013U"  # 모의투자 정정취소주문 TR_ID
         url = f"{self.base_url}/uapi/domestic-stock/v1/trading/order-rvsecncl"
-        
+
         acnt_no = self.account_no[:8]
         acnt_prdt = self.account_no[8:] if len(self.account_no) > 8 else "01"
-        
+
         body = {
             "CANO": acnt_no,
             "ACNT_PRDT_CD": acnt_prdt,
-            "KRX_FWDG_ORD_ORG_NO": "",
+            "KRX_FWDG_ORD_ORGNO": krx_fwdg_ord_orgno,
             "ORGN_ORD_NO": org_order_no,
             "ORD_DVSN": "00",
             "RVSE_CNCL_DVSN_CD": "02", # 02: 취소
@@ -627,10 +628,119 @@ class KisMockApi:
         print(f"[KIS 모의] 총 {len(unfilled_orders)}건의 미체결 주문 취소를 시작합니다.")
         success_count = 0
         for order in unfilled_orders:
-            res = self.cancel_order(order['order_no'], order['ticker'], order['rem_qty'])
+            res = self.cancel_order(order['order_no'], order['ticker'], order['rem_qty'], order.get('ord_gno_brno', ''))
             if res and res.get('rt_cd') == '0':
                 success_count += 1
             time.sleep(0.2)
-            
+
         print(f"[KIS 모의] 미체결 일괄 취소 완료 ({success_count}/{len(unfilled_orders)}건)")
         return success_count == len(unfilled_orders)
+
+    def get_order_fills(self, date_str: str = ""):
+        """주식일별주문체결조회 (모의투자) — date_str: YYYYMMDD, 미입력시 오늘"""
+        if not self._ensure_token():
+            return []
+
+        if not date_str:
+            kst = datetime.now(tz=timezone(timedelta(hours=9)))
+            date_str = kst.strftime("%Y%m%d")
+
+        tr_id = "VTTC0081R"
+        url = f"{self.base_url}/uapi/domestic-stock/v1/trading/inquire-daily-ccld"
+
+        acnt_no = self.account_no[:8]
+        acnt_prdt = self.account_no[8:] if len(self.account_no) > 8 else "01"
+
+        headers = {
+            "content-type": "application/json; charset=utf-8",
+            "authorization": f"Bearer {self.access_token}",
+            "appkey": self.app_key,
+            "appsecret": self.app_secret,
+            "tr_id": tr_id,
+        }
+
+        params = {
+            "CANO": acnt_no,
+            "ACNT_PRDT_CD": acnt_prdt,
+            "INQR_STRT_DT": date_str,
+            "INQR_END_DT": date_str,
+            "SLL_BUY_DVSN_CD": "00",
+            "INQR_DVSN": "00",
+            "PDNO": "",
+            "CCLD_DVSN": "00",
+            "ORD_GNO_BRNO": "",
+            "ODNO": "",
+            "INQR_DVSN_3": "00",
+            "INQR_DVSN_1": "",
+            "CTX_AREA_FK100": "",
+            "CTX_AREA_NK100": "",
+        }
+
+        try:
+            res = requests.get(url, headers=headers, params=params, timeout=5)
+            if res.status_code == 200:
+                data = res.json()
+                if data.get("rt_cd") == "0":
+                    output1 = data.get("output1", [])
+                    results = []
+                    for item in output1:
+                        results.append({
+                            "order_no": item.get("odno"),
+                            "ticker": item.get("pdno"),
+                            "name": item.get("prdt_name"),
+                            "side": "SELL" if item.get("sll_buy_dvsn_cd") == "01" else "BUY",
+                            "order_qty": int(item.get("ord_qty", 0)),
+                            "filled_qty": int(item.get("tot_ccld_qty", 0)),
+                            "rem_qty": int(item.get("rmn_qty", 0)),
+                            "avg_price": float(item.get("avg_prvs", 0)),
+                            "order_price": float(item.get("ord_unpr", 0)),
+                            "order_time": item.get("ord_tmd", ""),
+                        })
+                    return results
+            print(f"[KIS 모의] 주문체결조회 실패: {res.text}")
+            return []
+        except Exception as e:
+            print(f"[KIS 모의] 주문체결조회 오류: {e}")
+            return []
+
+    def get_buyable_cash(self, stock_code: str = "", price: int = 0):
+        """매수가능조회 (모의투자) — 매수 가능 금액(원) 반환"""
+        if not self._ensure_token():
+            return 0
+
+        tr_id = "VTTC8908R"
+        url = f"{self.base_url}/uapi/domestic-stock/v1/trading/inquire-psbl-order"
+
+        acnt_no = self.account_no[:8]
+        acnt_prdt = self.account_no[8:] if len(self.account_no) > 8 else "01"
+
+        headers = {
+            "content-type": "application/json; charset=utf-8",
+            "authorization": f"Bearer {self.access_token}",
+            "appkey": self.app_key,
+            "appsecret": self.app_secret,
+            "tr_id": tr_id,
+        }
+
+        params = {
+            "CANO": acnt_no,
+            "ACNT_PRDT_CD": acnt_prdt,
+            "PDNO": stock_code,
+            "ORD_UNPR": str(price) if price > 0 else "0",
+            "ORD_DVSN": "00" if price > 0 else "01",
+            "CMA_EVLU_AMT_ICLD_YN": "Y",
+            "OVRS_ICLD_YN": "N",
+        }
+
+        try:
+            res = requests.get(url, headers=headers, params=params, timeout=5)
+            if res.status_code == 200:
+                data = res.json()
+                if data.get("rt_cd") == "0":
+                    output = data.get("output", {})
+                    return int(output.get("nrcvb_buy_amt", 0))
+            print(f"[KIS 모의] 매수가능조회 실패: {res.text}")
+            return 0
+        except Exception as e:
+            print(f"[KIS 모의] 매수가능조회 오류: {e}")
+            return 0
