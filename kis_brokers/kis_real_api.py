@@ -432,49 +432,6 @@ class KisRealApi:
             print(f"[KIS 실전] 종목 검색 오류: {e}")
         return []
 
-    def get_volume_rank(self, market_div="J", limit=30):
-        if not self._ensure_token():
-            return []
-            
-        url = f"{self.base_url}/uapi/domestic-stock/v1/quotations/volume-rank"
-        headers = {
-            "content-type": "application/json; charset=utf-8",
-            "authorization": f"Bearer {self.access_token}",
-            "appkey": self.app_key,
-            "appsecret": self.app_secret,
-            "tr_id": "FHPST01710000",
-            "custtype": "P",
-        }
-        params = {
-            "FID_COND_MRKT_DIV_CODE": market_div,
-            "FID_COND_SCR_DIV_CODE": "20171",
-            "FID_INPUT_ISCD": "0000",
-            "FID_DIV_CLS_CODE": "0",
-            "FID_BLNG_CLS_CODE": "0",
-            "FID_TRGT_CLS_CODE": "111111111",
-            "FID_TRGT_EXLS_CLS_CODE": "111111",
-            "FID_INPUT_PRICE_1": "1000",
-            "FID_INPUT_PRICE_2": "1000000",
-            "FID_VOL_CNT": "100000",
-            "FID_INPUT_DATE_1": ""
-        }
-        
-        try:
-            res = requests.get(url, headers=headers, params=params, timeout=5)
-            if res.status_code == 200:
-                data = res.json()
-                if data.get('rt_cd') == '0':
-                    tickers = []
-                    for idx, item in enumerate(data.get('output', [])):
-                        if idx >= limit: break
-                        ticker = item.get('mksc_shrn_iscd')
-                        if ticker:
-                            tickers.append(ticker)
-                    return tickers
-        except Exception as e:
-            print(f"[KIS 실전] 거래량 상위 검색 오류: {e}")
-        return []
-
     def get_ohlcv(self, stock_code: str, period: str = "D"):
         if not self._ensure_token():
             return None

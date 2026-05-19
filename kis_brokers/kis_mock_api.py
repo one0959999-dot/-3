@@ -416,11 +416,11 @@ class KisMockApi:
             print(f"[KIS 모의] 종목 검색 오류: {e}")
         return []
 
-    def get_volume_rank(self, market_div="J", limit=30):
+    def get_volume_rank(self, market_div: str = "J", limit: int = 30):
         if not self._ensure_token():
             return []
-            
-        url = f"{self.base_url}/uapi/domestic-stock/v1/quotations/volume-rank"
+
+        blng = {"J": "1", "Q": "2"}.get(market_div, "0")
         headers = {
             "content-type": "application/json; charset=utf-8",
             "authorization": f"Bearer {self.access_token}",
@@ -430,34 +430,32 @@ class KisMockApi:
             "custtype": "P",
         }
         params = {
-            "FID_COND_MRKT_DIV_CODE": market_div,
+            "FID_COND_MRKT_DIV_CODE": "J",
             "FID_COND_SCR_DIV_CODE": "20171",
             "FID_INPUT_ISCD": "0000",
             "FID_DIV_CLS_CODE": "0",
-            "FID_BLNG_CLS_CODE": "0",
+            "FID_BLNG_CLS_CODE": blng,
             "FID_TRGT_CLS_CODE": "111111111",
-            "FID_TRGT_EXLS_CLS_CODE": "111111",
-            "FID_INPUT_PRICE_1": "1000",
-            "FID_INPUT_PRICE_2": "1000000",
-            "FID_VOL_CNT": "100000",
-            "FID_INPUT_DATE_1": ""
+            "FID_TRGT_EXLS_CLS_CODE": "000000",
+            "FID_INPUT_PRICE_1": "0",
+            "FID_INPUT_PRICE_2": "0",
+            "FID_VOL_CNT": "0",
+            "FID_INPUT_DATE_1": "0",
         }
-        
+
         try:
-            res = requests.get(url, headers=headers, params=params, timeout=5)
+            res = requests.get(
+                f"{self.base_url}/uapi/domestic-stock/v1/quotations/volume-rank",
+                headers=headers, params=params, timeout=5,
+            )
             if res.status_code == 200:
                 data = res.json()
-                if data.get('rt_cd') == '0':
-                    tickers = []
-                    for idx, item in enumerate(data.get('output', [])):
-                        if idx >= limit: break
-                        ticker = item.get('mksc_shrn_iscd')
-                        if ticker:
-                            tickers.append(ticker)
-                    return tickers
+                if data.get("rt_cd") == "0":
+                    return [item["mksc_shrn_iscd"] for item in data.get("output", [])[:limit] if item.get("mksc_shrn_iscd")]
+            return []
         except Exception as e:
-            print(f"[KIS 모의] 거래량 상위 검색 오류: {e}")
-        return []
+            print(f"[KIS 모의] 거래량순위 조회 오류: {e}")
+            return []
 
     def get_ohlcv(self, stock_code: str, period: str = "D"):
         if not self._ensure_token():
@@ -831,6 +829,14 @@ class KisMockApi:
         except Exception as e:
             print(f"[KIS 모의] 분봉조회 오류: {e}")
             return []
+
+    def get_price_change_rank(self, market_div: str = "J", limit: int = 30):
+        """모의투자 미지원 — 빈 리스트 반환"""
+        return []
+
+    def get_foreign_institution_rank(self, market_div: str = "J", limit: int = 30):
+        """모의투자 미지원 — 빈 리스트 반환"""
+        return []
 
     def get_etf_price(self, etf_code: str):
         """모의투자 미지원 — 항상 None 반환"""
