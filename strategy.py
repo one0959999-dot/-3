@@ -108,10 +108,10 @@ def get_recent_prices(ticker, kis_api=None, days=30):
         return pd.Series(dtype=float)
         
     df = kis_api.get_ohlcv(ticker, "D")
-    if df.empty or 'close' not in df.columns:
+    if df is None or df.empty or 'close' not in df.columns:
         import pandas as pd
         return pd.Series(dtype=float)
-        
+
     return df['close'].dropna().tail(days)
 
 
@@ -154,12 +154,14 @@ def get_signal_by_strategy(ticker, strategy_name, kis_api=None, df=None):
     # 주입된 캐시 장부가 없다면 백업용으로 KIS API 직접 호출
     if df is None or df.empty:
         df = kis_api.get_ohlcv(ticker, "D")
-    
+
+    if df is None or df.empty:
+        return 'HOLD', 0, 0
+
     # 외부 데이터 연동 시 대소문자 불일치(KeyError) 방지 방어 코드 추가
-    if df is not None and not df.empty:
-        df.columns = [str(c).lower() for c in df.columns]
-    
-    if df.empty or 'close' not in df.columns:
+    df.columns = [str(c).lower() for c in df.columns]
+
+    if 'close' not in df.columns:
         return 'HOLD', 0, 0
         
     df = df.dropna(subset=['close'])

@@ -473,9 +473,12 @@ def select_satellites(kis=None, n=NUM_SATELLITES, verbose=True, gemini_client=No
     if verbose:
         print(f"\n📋 후보 풀: 거래량 급등 {len(volume_surges)}개 + 강세 섹터 {len(sector_tickers)}개 + 외인기관 {len(frgn_inst_tickers)}개 → 합계 {len(candidate_pool)}개")
 
-    # 🤖 딥러닝 모델 로드 (없으면 기본값 0 처리됨)
+    # 🤖 딥러닝 모델 로드 (모듈 레벨 싱글턴 — 매 호출마다 디스크 I/O 방지)
     from dl_model import DeepLearningPredictor
-    dl_predictor = DeepLearningPredictor()
+    global _dl_predictor_instance
+    if '_dl_predictor_instance' not in globals() or _dl_predictor_instance is None:
+        _dl_predictor_instance = DeepLearningPredictor()
+    dl_predictor = _dl_predictor_instance
 
     # ── Step 4: 후보별 백테스트 + 종합 점수 ──
     results = []

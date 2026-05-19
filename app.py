@@ -424,9 +424,10 @@ def set_keys():
         'telegram_token': data.get('telegram_token'),
         'telegram_chat_id': data.get('telegram_chat_id'),
         'gemini_api_key': data.get('gemini_api_key'),
+        'claude_api_key': data.get('claude_api_key'),
         'core_stocks': data.get('core_stocks'),
-        'is_mock': int(data.get('is_mock', 1)), 
-        'initial_cash': float(data.get('initial_cash', 10000000)) 
+        'is_mock': int(data.get('is_mock', 1)),
+        'initial_cash': float(data.get('initial_cash', 10000000))
     }
 
     update_user_keys(current_user.id, update_data)
