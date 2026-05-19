@@ -62,9 +62,9 @@ def get_current_bot():
 @login_required
 def index():
     user_data = current_user.data
-    gemini_enabled = bool(user_data.get('gemini_api_key'))
+    ai_enabled = bool(user_data.get('claude_api_key'))
     manager.get_bot(current_user.id, user_data)
-    return render_template('index.html', user=current_user, gemini_enabled=gemini_enabled)
+    return render_template('index.html', user=current_user, gemini_enabled=ai_enabled)
 
 @app.route('/login', methods=['GET', 'POST'])
 def login():
@@ -423,7 +423,6 @@ def set_keys():
         'mock_account_no': data.get('mock_account_no'),
         'telegram_token': data.get('telegram_token'),
         'telegram_chat_id': data.get('telegram_chat_id'),
-        'gemini_api_key': data.get('gemini_api_key'),
         'claude_api_key': data.get('claude_api_key'),
         'core_stocks': data.get('core_stocks'),
         'is_mock': int(data.get('is_mock', 1)),
@@ -450,9 +449,7 @@ def set_keys():
                 "token": data.get('telegram_token'),
                 "chat_id": data.get('telegram_chat_id')
             },
-            gemini_config={
-                "api_key": data.get('gemini_api_key')
-            },
+            gemini_config={},
             core_stocks=data.get('core_stocks')
         )
 
@@ -470,9 +467,7 @@ def set_keys():
                 "token": data.get('telegram_token'),
                 "chat_id": data.get('telegram_chat_id')
             },
-            gemini_config={
-                "api_key": data.get('gemini_api_key')
-            },
+            gemini_config={},
             core_stocks=data.get('core_stocks')
         )
 
