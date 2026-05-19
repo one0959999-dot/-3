@@ -1,6 +1,8 @@
 flask
+flask-login
 pykrx
 requests
+beautifulsoup4
 pandas
 numpy
 schedule
@@ -8,7 +10,6 @@ pyyaml
 python-telegram-bot
 pandas_datareader
 matplotlib
-flask-login
 google-genai
 websocket-client
 yfinance

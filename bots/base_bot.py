@@ -129,11 +129,22 @@ class BaseBot:
         while True:
             try:
                 if self.kis:
-                    real_balance = self.kis.get_account_balance()
+                    # 잔고 조회를 별도 스레드에서 실행해 메인 sync 루프 블록 방지
+                    result_holder = [None]
+                    def _fetch():
+                        try:
+                            result_holder[0] = self.kis.get_account_balance()
+                        except Exception as fe:
+                            logger.warning(f"[{self.mode_name}] 잔고 조회 오류: {fe}")
+                    t = threading.Thread(target=_fetch, daemon=True)
+                    t.start()
+                    t.join(timeout=15)  # 최대 15초 대기 후 포기
+
+                    real_balance = result_holder[0]
                     if real_balance:
                         self.cached_balance = real_balance
                         self._sync_internal_balances(real_balance)
-                    
+
                     if self.ws_client:
                         with self.lock:
                             current_tickers = [c.ticker for c in self.core_positions] + list(self.satellite_positions.keys())
@@ -141,15 +152,15 @@ class BaseBot:
                                 if idx_ticker not in current_tickers:
                                     current_tickers.append(idx_ticker)
 
-                        for t in current_tickers:
-                            if t not in self.ws_client.subscribed_tickers:
-                                self.ws_client.subscribe(t)
-                        for t in list(self.ws_client.subscribed_tickers):
-                            if t not in current_tickers:
-                                self.ws_client.unsubscribe(t)
+                        for t2 in current_tickers:
+                            if t2 not in self.ws_client.subscribed_tickers:
+                                self.ws_client.subscribe(t2)
+                        for t2 in list(self.ws_client.subscribed_tickers):
+                            if t2 not in current_tickers:
+                                self.ws_client.unsubscribe(t2)
             except Exception as e:
-                print(f"[{self.mode_name} _perpetual_sync_loop 에러] {e}")
-            time.sleep(10)
+                logger.error(f"[{self.mode_name}] _perpetual_sync_loop 오류: {e}", exc_info=True)
+            time.sleep(30)
 
     def _sync_internal_balances(self, real_balance):
         with self.lock:

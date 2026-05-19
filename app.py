@@ -63,12 +63,7 @@ def get_current_bot():
 def index():
     user_data = current_user.data
     gemini_enabled = bool(user_data.get('gemini_api_key'))
-    
-    mock_data = {**dict(user_data), 'is_mock': 1}
-    real_data = {**dict(user_data), 'is_mock': 0}
-    manager.get_bot(current_user.id, mock_data)
-    manager.get_bot(current_user.id, real_data)
-    
+    manager.get_bot(current_user.id, user_data)
     return render_template('index.html', user=current_user, gemini_enabled=gemini_enabled)
 
 @app.route('/login', methods=['GET', 'POST'])
