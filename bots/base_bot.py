@@ -21,8 +21,9 @@ def _now_kst():
     return datetime.now(_KST).replace(tzinfo=None)
 
 from telegram_bot import TelegramNotifier
-from strategy import CorePosition, Position, get_rsi_signal, get_signal_by_strategy, REINVEST_RATIO, get_market_regime, get_bear_bounce_signal, INVERSE_ETF_TICKER, INVERSE_ETF_NAME, INVERSE_BUDGET_RATIO
+from strategy import CorePosition, Position, get_rsi_signal, get_signal_by_strategy, REINVEST_RATIO, get_market_regime, get_bear_bounce_signal, get_bear_bottom_score, get_bull_momentum_score, get_neutral_range_score, INVERSE_ETF_TICKER, INVERSE_ETF_NAME, INVERSE_BUDGET_RATIO, check_giveback_stop, check_early_drop_stop
 from stock_screener import select_satellites, generate_daily_market_report
+from hot_momentum_scanner import scan_hot_momentum, clear_expired_cache
 from database import update_bot_status, save_portfolio_state, load_portfolio_state, log_trade_journal, get_recent_trades, save_ai_rules, load_ai_rules, get_user_initial_cash, set_user_initial_cash, add_user_initial_cash
 
 _SELL_FEE = 0.00015   # 매도 수수료율 (0.015%)
@@ -91,6 +92,14 @@ class BaseBot:
         self.last_regime_check = 0.0
         self._regime_check_interval = 3600  # 1시간마다 재판단
         self._last_inverse_check = 0.0      # 인버스 ETF 체크 캐시 (5분)
+
+        # ── 🚀 테마·급등주 모멘텀 전용 슬롯 ──────────────────────────
+        # 위성 5개와 완전히 별개의 단일 포지션.
+        # 초고속 진입·이탈이 핵심이므로 AI 심사 없이 즉시 주문.
+        self.momentum_position = None        # 현재 보유 종목 dict | None
+        self.momentum_budget_ratio = 0.05    # 총자산의 5% 를 모멘텀 슬롯에 배정
+        self._last_momentum_scan = 0.0       # 마지막 스캔 타임스탬프
+        self._momentum_scan_interval = 60    # 1분마다 스캔
 
         self.kis = None
         self.telegram = None
@@ -327,8 +336,32 @@ class BaseBot:
 
     def _send_telegram(self, message):
         if not self.telegram: return
-        full_msg = f"{self.alert_icon}[{self.mode_name}] {message}"
-        threading.Thread(target=self.telegram.send_message, args=(full_msg,), daemon=True).start()
+        # 메시지에 이미 모드 정보가 포함되어 있으므로 그대로 전달
+        threading.Thread(target=self.telegram.send_message, args=(message,), daemon=True).start()
+
+    def _fmt_trade_msg(self, action_emoji, action_name, ticker, name, price, qty,
+                       profit=None, strategy=None, ai_reason=None, note=None):
+        """HTML 포맷 매매 체결 알림 메시지를 생성합니다."""
+        now_str = _now_kst().strftime('%H:%M KST')
+        invest = price * qty
+        lines = [
+            f"{action_emoji} <b>{action_name}</b>  ·  {self.alert_icon} {self.mode_name}",
+            "━━━━━━━━━━━━━━━━━━━━",
+            f"📌 <b>{name}</b>  <code>{ticker}</code>",
+            f"💰 <b>{price:,.0f}원</b> × <b>{qty}주</b>  =  <b>{invest:,.0f}원</b>",
+        ]
+        if profit is not None:
+            emoji = "📈" if profit >= 0 else "📉"
+            lines.append(f"{emoji} 손익  <b>{profit:+,.0f}원</b>")
+        if strategy:
+            lines.append(f"📊 {strategy}")
+        if ai_reason:
+            lines.append(f"🤖 {ai_reason}")
+        if note:
+            lines.append(f"📋 {note}")
+        lines.append("━━━━━━━━━━━━━━━━━━━━")
+        lines.append(f"⏰ {now_str}")
+        return "\n".join(lines)
 
     def reload_api_keys(self, kis_config, telegram_config, gemini_config, core_stocks):
         self.cached_balance = None
@@ -353,7 +386,14 @@ class BaseBot:
         self.satellite_strategies = {c['ticker']: c['strategy_name'] for c in self.satellite_info}
         log_lines = [f"  {i+1}. {c['name']} ({c['ticker']}) → [{c['strategy_name']}] {c['return_pct']:+.1f}%" for i, c in enumerate(self.satellite_info)]
         for line in log_lines: self.add_log(f"✅ {line.strip()}")
-        self._send_telegram(f"🔍 {self.mode_name} 위성 종목 선정!\n" + "\n".join(log_lines))
+        log_html = "\n".join([f"  · {c['name']} <code>{c['ticker']}</code>  [{c['strategy_name']}]" for c in self.satellite_info])
+        self._send_telegram(
+            f"🔍 <b>위성 종목 선정 완료</b>  ·  {self.alert_icon} {self.mode_name}\n"
+            f"━━━━━━━━━━━━━━━━━━━━\n"
+            f"{log_html}\n"
+            f"━━━━━━━━━━━━━━━━━━━━\n"
+            f"⏰ {_now_kst().strftime('%H:%M KST')}"
+        )
 
         core_budget = total_cash * self.core_ratio
         sat_budget  = total_cash * self.satellite_ratio
@@ -394,6 +434,7 @@ class BaseBot:
                 "satellite_info": self.satellite_info, "satellite_strategies": self.satellite_strategies, "hot_sectors": self.hot_sectors, "num_satellites": self.num_satellites,
                 "last_screen_month": getattr(self, 'last_screen_month', None), "last_screen_date": self.last_screen_date.strftime('%Y-%m-%d') if getattr(self, 'last_screen_date', None) else None,
                 "daily_pnl": self.daily_pnl, "daily_report": self.daily_report,
+                "momentum_position": self._serialize_momentum_position(),
             }
             save_portfolio_state(self.user_id, state, self._is_mock)
         except Exception as e: logger.error(f"[{self.mode_name}] 상태 저장 실패: {e}", exc_info=True)
@@ -423,6 +464,9 @@ class BaseBot:
             self.last_screen_date = datetime.strptime(lsd_str, '%Y-%m-%d').date() if lsd_str else None
             self.daily_pnl = state.get("daily_pnl", {})
             self.daily_report = state.get("daily_report", None)
+            self.momentum_position = self._deserialize_momentum_position(
+                state.get("momentum_position", None)
+            )
             return True
         except Exception as e:
             logger.error(f"[{self.mode_name}] 상태 복구 실패: {e}", exc_info=True)
@@ -444,11 +488,20 @@ class BaseBot:
             self.last_regime_check = time.time()
             if self.market_regime != prev:
                 icons = {"BULL": "🐂", "BEAR": "🐻", "NEUTRAL": "😐"}
+                regime_desc = {'BEAR': '📉 위성 신규 매수 중단, 인버스 ETF 진입', 'BULL': '📈 정상 매매 재개', 'NEUTRAL': '📊 혼조 — 기존 전략 유지'}
                 msg = (f"{icons.get(self.market_regime,'📊')} [{self.mode_name}] "
-                       f"시장 국면 변경: {prev} → {self.market_regime}\n"
-                       f"{'📉 위성 신규 매수 중단, 인버스 ETF 진입' if self.market_regime == 'BEAR' else '📈 정상 매매 재개' if self.market_regime == 'BULL' else '📊 혼조 — 기존 전략 유지'}")
+                       f"시장 국면 변경: {prev} → {self.market_regime}  {regime_desc.get(self.market_regime,'')}")
                 self.add_log(msg)
-                self._send_telegram(msg)
+                icons = {"BULL": "🐂", "BEAR": "🐻", "NEUTRAL": "😐"}
+                regime_desc = {'BEAR': '위성 신규 매수 중단\n인버스 ETF 자동 진입', 'BULL': '정상 매매 모드 재개', 'NEUTRAL': '혼조장 — 기존 전략 유지'}
+                self._send_telegram(
+                    f"{icons.get(self.market_regime,'📊')} <b>시장 국면 변경</b>  ·  {self.alert_icon} {self.mode_name}\n"
+                    f"━━━━━━━━━━━━━━━━━━━━\n"
+                    f"📊 <b>{prev}</b>  →  <b>{self.market_regime}</b>\n"
+                    f"📋 {regime_desc.get(self.market_regime,'')}\n"
+                    f"━━━━━━━━━━━━━━━━━━━━\n"
+                    f"⏰ {_now_kst().strftime('%H:%M KST')}"
+                )
         except Exception as e:
             logger.error(f"[{self.mode_name}] 시장 국면 판단 오류: {e}", exc_info=True)
         return self.market_regime
@@ -486,18 +539,30 @@ class BaseBot:
                     qty = int(budget // price)
                     if qty > 0 and total_cash >= qty * price * 1.002:
                         self.kis.buy_market_order(INVERSE_ETF_TICKER, qty)
-                        msg = (f"🐻 [{self.mode_name}] 하락장 감지 → {INVERSE_ETF_NAME} {qty}주 매수\n"
-                               f"투입 금액: {qty * price:,.0f}원 (총자산 {INVERSE_BUDGET_RATIO*100:.0f}%)")
-                        self.add_log(msg)
-                        self._send_telegram(msg)
+                        self.add_log(f"🐻 하락장 인버스 매수 | {INVERSE_ETF_NAME} {qty}주 @ {price:,.0f}원")
+                        self._send_telegram(
+                            f"🐻 <b>인버스 ETF 매수</b>  ·  {self.alert_icon} {self.mode_name}\n"
+                            f"━━━━━━━━━━━━━━━━━━━━\n"
+                            f"📌 <b>{INVERSE_ETF_NAME}</b>  <code>{INVERSE_ETF_TICKER}</code>\n"
+                            f"💰 <b>{price:,.0f}원</b> × <b>{qty}주</b>  =  <b>{qty*price:,.0f}원</b>\n"
+                            f"📋 BEAR 국면  ·  총자산 {INVERSE_BUDGET_RATIO*100:.0f}% 헤지\n"
+                            f"━━━━━━━━━━━━━━━━━━━━\n"
+                            f"⏰ {_now_kst().strftime('%H:%M KST')}"
+                        )
 
             elif regime != "BEAR" and has_inverse and inv_shares > 0:
                 self.kis.sell_market_order(INVERSE_ETF_TICKER, inv_shares)
                 price = self.kis.get_current_price(INVERSE_ETF_TICKER) or 0
-                msg = (f"🐂 [{self.mode_name}] 시장 국면 전환({regime}) → "
-                       f"{INVERSE_ETF_NAME} {inv_shares}주 전량 청산")
-                self.add_log(msg)
-                self._send_telegram(msg)
+                self.add_log(f"🐂 국면 전환({regime}) → {INVERSE_ETF_NAME} {inv_shares}주 전량 청산")
+                self._send_telegram(
+                    f"🐂 <b>인버스 ETF 청산</b>  ·  {self.alert_icon} {self.mode_name}\n"
+                    f"━━━━━━━━━━━━━━━━━━━━\n"
+                    f"📌 <b>{INVERSE_ETF_NAME}</b>  <code>{INVERSE_ETF_TICKER}</code>\n"
+                    f"💰 <b>{inv_shares}주</b> 전량 청산\n"
+                    f"📋 국면 전환: BEAR → <b>{regime}</b>  ·  헤지 해제\n"
+                    f"━━━━━━━━━━━━━━━━━━━━\n"
+                    f"⏰ {_now_kst().strftime('%H:%M KST')}"
+                )
 
         except Exception as e:
             logger.error(f"[{self.mode_name}] 인버스 ETF 처리 오류: {e}", exc_info=True)
@@ -518,6 +583,126 @@ class BaseBot:
             return True
         except Exception:
             return True  # 조회 실패 시 매수 차단하지 않음
+
+    def _build_trade_context(self, ticker: str, stock_name: str, price: float,
+                              ex_df: 'pd.DataFrame', strategy: str, regime: str) -> str:
+        """AI에게 전달할 종합 분석 컨텍스트를 빌드합니다 (뉴스·재무·기술적 지표·분봉)."""
+        lines = []
+
+        # ── 1. 뉴스 ──────────────────────────────────────────────
+        try:
+            news = fetch_recent_news(stock_name)
+        except Exception:
+            news = "뉴스 조회 실패"
+        lines.append(f"[최근 뉴스] {news}")
+
+        # ── 2. 재무제표 (캐시에 있으면 사용) ─────────────────────
+        today_str = _now_kst().strftime('%Y-%m-%d')
+        fundamental = self.fundamental_cache.get(f"{ticker}_{today_str}", "")
+        if fundamental:
+            lines.append(f"[재무지표] {fundamental}")
+
+        # ── 3. 기술적 지표 (ex_df 기반) ─────────────────────────
+        if ex_df is not None and not ex_df.empty and 'close' in ex_df.columns:
+            from strategy import calc_rsi
+            close = ex_df['close'].dropna()
+            vol   = ex_df['volume'].dropna() if 'volume' in ex_df.columns else pd.Series(dtype=float)
+
+            # RSI(14)
+            rsi_val = None
+            if len(close) >= 16:
+                try:
+                    rsi_val = round(float(calc_rsi(close, 14).iloc[-1]), 1)
+                except Exception:
+                    pass
+
+            # MACD (12/26/9)
+            macd_str = "N/A"
+            if len(close) >= 30:
+                try:
+                    ema12 = close.ewm(span=12, adjust=False).mean()
+                    ema26 = close.ewm(span=26, adjust=False).mean()
+                    macd_line = ema12 - ema26
+                    signal_line = macd_line.ewm(span=9, adjust=False).mean()
+                    macd_hist = macd_line.iloc[-1] - signal_line.iloc[-1]
+                    macd_str = f"MACD {macd_line.iloc[-1]:+.2f} / 시그널 {signal_line.iloc[-1]:+.2f} / 히스토그램 {macd_hist:+.2f} ({'골든크로스↑' if macd_hist > 0 else '데드크로스↓'})"
+                except Exception:
+                    pass
+
+            # 볼린저밴드 (20일, 2σ)
+            bb_str = "N/A"
+            if len(close) >= 22:
+                try:
+                    sma20 = close.rolling(20).mean().iloc[-1]
+                    std20 = close.rolling(20).std().iloc[-1]
+                    bb_upper = sma20 + 2 * std20
+                    bb_lower = sma20 - 2 * std20
+                    bb_pct = (price - bb_lower) / (bb_upper - bb_lower + 1e-9) * 100
+                    if bb_pct >= 95:
+                        bb_pos = f"상단 돌파 (과열 {bb_pct:.0f}%)"
+                    elif bb_pct <= 5:
+                        bb_pos = f"하단 터치 (과매도 {bb_pct:.0f}%)"
+                    else:
+                        bb_pos = f"밴드 내 {bb_pct:.0f}% 위치"
+                    bb_str = f"상단 {bb_upper:,.0f} / 중간 {sma20:,.0f} / 하단 {bb_lower:,.0f} → {bb_pos}"
+                except Exception:
+                    pass
+
+            # 거래량 비율 (오늘 vs 20일 평균)
+            vol_str = "N/A"
+            if len(vol) >= 2:
+                try:
+                    vol_avg20 = float(vol.iloc[:-1].rolling(20, min_periods=5).mean().iloc[-1])
+                    vol_today = float(vol.iloc[-1])
+                    vol_ratio = vol_today / (vol_avg20 + 1) * 100
+                    vol_str = f"평소 대비 {vol_ratio:.0f}% ({'급증↑↑' if vol_ratio > 200 else '증가↑' if vol_ratio > 130 else '보통' if vol_ratio > 70 else '감소↓'})"
+                except Exception:
+                    pass
+
+            # 최근 5일 종가 추이
+            price_hist = ""
+            if len(close) >= 5:
+                try:
+                    last5 = close.tail(5).tolist()
+                    price_hist = " → ".join(f"{int(p):,}" for p in last5) + "원"
+                except Exception:
+                    pass
+
+            # 120일선 위치
+            sma120_str = "N/A"
+            if len(close) >= 60:
+                try:
+                    sma120 = float(close.rolling(120, min_periods=60).mean().iloc[-1])
+                    rel = (price / sma120 - 1) * 100
+                    sma120_str = f"{sma120:,.0f}원 ({rel:+.1f}% {'위↑ 정배열' if rel >= 0 else '아래↓ 역배열'})"
+                except Exception:
+                    pass
+
+            lines.append(
+                f"[기술 지표] RSI(14): {rsi_val if rsi_val is not None else 'N/A'} | {macd_str} | "
+                f"볼린저밴드: {bb_str} | 거래량: {vol_str} | 120일선: {sma120_str}"
+            )
+            if price_hist:
+                lines.append(f"[최근 5일 종가] {price_hist}")
+
+        # ── 4. 분봉 추세 ─────────────────────────────────────────
+        try:
+            if self.kis:
+                candles = self.kis.get_minute_candles(ticker, count=5)
+                if candles and len(candles) >= 3:
+                    c_prices = [c["close"] for c in candles if c["close"] > 0]
+                    if c_prices:
+                        trend = "상승 추세 ↑" if c_prices[-1] > c_prices[0] else "하락 추세 ↓"
+                        lines.append(f"[분봉 추세] 최근 5분봉: {trend} (시작 {c_prices[0]:,} → 현재 {c_prices[-1]:,})")
+        except Exception:
+            pass
+
+        # ── 5. 시장 국면 & 전략 ──────────────────────────────────
+        lines.append(f"[시장 국면] {regime} | 적용 전략: {strategy}")
+        if self.hot_sectors:
+            lines.append(f"[강세 섹터] {', '.join(self.hot_sectors[:5])}")
+
+        return "\n".join(lines)
 
     def _check_minute_trend_up(self, ticker: str) -> bool:
         """최근 5개 분봉 종가 기울기가 양수(상승 추세)이면 True."""
@@ -610,15 +795,19 @@ class BaseBot:
 
                 if c_sig == 'BUY' and c_cash >= cp and (time.time() - getattr(core, 'last_order_time', 0) > 300):
                     qty = int((c_cash * 0.98) // cp)
-                    if qty > 0 and self.kis and self.kis.buy_market_order(c_tk, qty):
+                    if qty > 0 and self.kis:
+                        self.kis.buy_market_order(c_tk, qty)
                         with self.lock: core.last_order_time = time.time(); core.status = "체결 대기 ⏳"
-                        self.add_log(f"💎 {c_nm} 매수 완료 | {qty}주 @ {cp:,}원"); self._send_telegram(f"💎 {c_nm} 매수")
+                        self.add_log(f"💎 {c_nm} 매수 | {qty}주 @ {cp:,}원")
+                        self._send_telegram(self._fmt_trade_msg("💎", "코어 매수", c_tk, c_nm, cp, qty, strategy="RSI 코어 장기보유"))
                 elif c_sig == 'SELL' and c_sh > c_fl and (time.time() - getattr(core, 'last_order_time', 0) > 300):
                     sellable = c_sh - c_fl
-                    if sellable > 0 and self.kis and self.kis.sell_market_order(c_tk, sellable):
+                    if sellable > 0 and self.kis:
+                        self.kis.sell_market_order(c_tk, sellable)
                         core_profit = _net_profit(cp, core.avg_price, sellable)
                         with self.lock: core.last_order_time = time.time(); core.status = "체결 대기 ⏳"; self.pnl_this_turn += core_profit
-                        self.add_log(f"💎 {c_nm} 매도 완료 | {sellable}주 @ {cp:,}원 | 손익: {core_profit:+,.0f}원"); self._send_telegram(f"💎 {c_nm} 매도")
+                        self.add_log(f"💎 {c_nm} 매도 | {sellable}주 @ {cp:,}원 | 손익: {core_profit:+,.0f}원")
+                        self._send_telegram(self._fmt_trade_msg("💎", "코어 매도", c_tk, c_nm, cp, sellable, profit=core_profit, strategy="RSI 코어 장기보유"))
             except Exception as e:
                 logger.error(f"[{self.mode_name}] 코어 매매 오류 ({c_tk}): {e}", exc_info=True)
             time.sleep(0.2)
@@ -660,39 +849,119 @@ class BaseBot:
                     if price > p_max:
                         with self.lock: pos.max_price = price; p_max = price
                     if p_max >= p_avg + (trail_trigger * atr_14) and price <= p_max - (trail_mult * atr_14):
-                        if self.kis and self.kis.sell_market_order(ticker, p_sh):
+                        if self.kis:
+                            self.kis.sell_market_order(ticker, p_sh)
                             with self.lock: pos.last_order_time = time.time(); pos.max_price = 0; pos.status = "체결 대기 ⏳"
                             profit = _net_profit(price, p_avg, p_sh)
                             log_trade_journal(self.user_id, ticker, p_nm, 'SELL', price, st_nm, "ATR 트레일링 익절", profit=profit)
-                            self._send_telegram(f"🎯 [{p_nm}] ATR 익절 완료! 손익: {profit:+,.0f}원")
+                            self._send_telegram(self._fmt_trade_msg("🎯", "트레일링 익절", ticker, p_nm, price, p_sh, profit=profit, strategy=st_nm, note="ATR 트레일링 스탑 발동"))
                             with self.lock: self.pnl_this_turn += profit
                         continue
 
                 if p_sh > 0 and p_avg > 0 and is_cd_passed:
                     if price <= p_avg - (hard_mult * atr_14):
-                        if self.kis and self.kis.sell_market_order(ticker, p_sh):
-                            with self.lock: pos.last_order_time = time.time(); pos.status = "체결 대기 ⏳"
+                        if self.kis:
+                            self.kis.sell_market_order(ticker, p_sh)
+                            with self.lock:
+                                pos.last_order_time = time.time(); pos.status = "체결 대기 ⏳"
+                                pos.second_buy_done = True; pos.pyramid_done = True; pos.partial_sold = False
+                                pos.second_buy_price = 0; pos.second_buy_cash = 0
                             profit = _net_profit(price, p_avg, p_sh)
                             log_trade_journal(self.user_id, ticker, p_nm, 'SELL', price, st_nm, "ATR 하드 손절", profit=profit)
-                            self._send_telegram(f"💥 [{p_nm}] ATR 손절 완료! 손익: {profit:+,.0f}원")
+                            self._send_telegram(self._fmt_trade_msg("💥", "손절 체결", ticker, p_nm, price, p_sh, profit=profit, strategy=st_nm, note="ATR 하드 손절선 이탈"))
                             with self.lock: self.pnl_this_turn += profit
                         continue
 
+                # ── 분할 익절: +5% 도달 시 보유량 50% 선익절, 나머지는 ATR 트레일링 ──
+                if (p_sh > 0 and p_avg > 0 and is_cd_passed
+                        and not getattr(pos, 'partial_sold', False)
+                        and price >= p_avg * 1.05):
+                    sell_qty = max(1, p_sh // 2)
+                    if self.kis:
+                        self.kis.sell_market_order(ticker, sell_qty)
+                        with self.lock:
+                            pos.last_order_time = time.time(); pos.partial_sold = True; pos.status = "1차익절 ✅"
+                        profit = _net_profit(price, p_avg, sell_qty)
+                        log_trade_journal(self.user_id, ticker, p_nm, 'SELL', price, st_nm, f"1차 분할 익절 +5% ({sell_qty}주)", profit=profit)
+                        self._send_telegram(self._fmt_trade_msg("🎯", "1차 분할 익절", ticker, p_nm, price, sell_qty, profit=profit, strategy=st_nm, note=f"나머지 {p_sh - sell_qty}주는 ATR 트레일링 계속 보유"))
+                        with self.lock: self.pnl_this_turn += profit
+
+                # ── 피라미딩: +3% 수익 중 & 상승 추세 지속 → 추가 20% 매수 ──
+                if (p_sh > 0 and p_avg > 0 and is_cd_passed
+                        and not getattr(pos, 'pyramid_done', False)
+                        and price >= p_avg * 1.03
+                        and p_cash > price
+                        and sig != 'SELL'
+                        and regime != "BEAR"):
+                    pyramid_cash = p_cash * 0.20
+                    pyramid_qty = int((pyramid_cash * 0.98) // price)
+                    if pyramid_qty > 0 and self.kis:
+                        self.kis.buy_market_order(ticker, pyramid_qty)
+                        with self.lock:
+                            pos.last_order_time = time.time(); pos.pyramid_done = True; pos.status = "피라미딩 📈"
+                        log_trade_journal(self.user_id, ticker, p_nm, 'BUY', price, st_nm, f"피라미딩 +3% 추세 지속 ({pyramid_qty}주)")
+                        self._send_telegram(self._fmt_trade_msg("📈", "피라미딩 추가 매수", ticker, p_nm, price, pyramid_qty, strategy=st_nm, note="+3% 돌파 · 상승 추세 지속 확인"))
+
+                # ── 2차 분할 매수: 1차 매수가 대비 -2% 눌림목 ──
+                if (p_sh > 0 and is_cd_passed
+                        and not getattr(pos, 'second_buy_done', False)
+                        and getattr(pos, 'second_buy_price', 0) > 0
+                        and price <= pos.second_buy_price
+                        and getattr(pos, 'second_buy_cash', 0) > price
+                        and sig != 'SELL'):
+                    sq = int((pos.second_buy_cash * 0.98) // price)
+                    if sq > 0 and self.kis:
+                        self.kis.buy_market_order(ticker, sq)
+                        with self.lock:
+                            pos.last_order_time = time.time(); pos.second_buy_done = True
+                            pos.second_buy_cash = 0; pos.status = "2차매수 ✅"
+                        log_trade_journal(self.user_id, ticker, p_nm, 'BUY', price, st_nm, f"2차 분할 매수 눌림목 ({sq}주)")
+                        self._send_telegram(self._fmt_trade_msg("🛒", "2차 분할 매수", ticker, p_nm, price, sq, strategy=st_nm, note="-2% 눌림목 포착"))
+
                 if sig == 'BUY' and p_sh == 0 and is_cd_passed and is_golden_hours:
-                    # ── BEAR 국면: 일반 매수 차단, 반등 신호만 예외 허용 ──
+                    # ── BEAR 국면: 10개 저점 전략 스코어 기반 차등 진입 + AI 최종 심사 ──
                     if regime == "BEAR":
-                        is_bounce = get_bear_bounce_signal(ex_df)
-                        if not is_bounce:
+                        bear_score, bear_reasons = get_bear_bottom_score(ex_df)
+                        if bear_score == 0:
                             pos.status = "하락장 매수 보류 🐻"
-                            pos.status_msg = "BEAR 국면 — 반등 신호 없음, 매수 차단"
+                            pos.status_msg = "BEAR 국면 — 저점 신호 없음, 매수 차단"
                             continue
-                        # 반등 신호 확인 시 30% 규모로 소액 진입
-                        bounce_cash = p_cash * 0.30
+                        # 신호 강도에 따른 차등 포지션 사이징
+                        if bear_score >= 3:
+                            bear_ratio, bear_label = 0.40, f"저점 강신호({bear_score}개)"
+                        elif bear_score == 2:
+                            bear_ratio, bear_label = 0.30, f"저점 중신호({bear_score}개)"
+                        else:
+                            bear_ratio, bear_label = 0.20, f"저점 약신호({bear_score}개)"
+                        bear_reason_str = " | ".join(bear_reasons)
+                        bounce_cash = p_cash * bear_ratio
                         qty = int((bounce_cash * 0.98) // price)
-                        if qty > 0 and self.kis and self.kis.buy_market_order(ticker, qty):
-                            with self.lock: pos.last_order_time = time.time(); pos.status = "체결 대기 ⏳"
-                            log_trade_journal(self.user_id, ticker, p_nm, 'BUY', price, st_nm, "하락장 반등 포착 (소액)")
-                            self._send_telegram(f"🎣 [{p_nm}] 하락장 반등 매수 ({qty}주, 30% 규모)")
+                        if qty > 0:
+                            # 하락장은 더 신중해야 하므로 AI 심사 필수
+                            if self.gemini:
+                                pos.status = "AI 심사 중 🤖"
+                                trade_ctx = self._build_trade_context(ticker, p_nm, price, ex_df, st_nm, regime)
+                                decision, ai_reason = self.gemini.ai_approve_trade(sig, p_nm, ticker, price, st_nm, ind_val, self.hot_sectors, get_recent_trades(self.user_id, ticker), load_ai_rules(self.user_id) + "\n" + getattr(self, 'current_ai_market_view', ''), context=trade_ctx)
+                                if decision:
+                                    if self.kis:
+                                        self.kis.buy_market_order(ticker, qty)
+                                        with self.lock: pos.last_order_time = time.time(); pos.status = "체결 대기 ⏳"
+                                        log_trade_journal(self.user_id, ticker, p_nm, 'BUY', price, st_nm, f"하락장 저점포착 AI승인 [{bear_reason_str}]")
+                                        self._send_telegram(self._fmt_trade_msg("🎣", f"하락장 저점 매수 ({bear_label})", ticker, p_nm, price, qty, strategy=st_nm, ai_reason=ai_reason, note=bear_reason_str))
+                                else:
+                                    pos.status = "AI 거절(하락장) 🛑"
+                                    self._send_telegram(
+                                        f"🛑 <b>매수 거절</b>  ·  {self.alert_icon} {self.mode_name}\n"
+                                        f"━━━━━━━━━━━━━━━━━━━━\n"
+                                        f"📌 <b>{p_nm}</b>  <code>{ticker}</code>\n"
+                                        f"🤖 {ai_reason}\n"
+                                        f"📋 하락장 저점 — 근거 불충분"
+                                    )
+                            elif self.kis:
+                                self.kis.buy_market_order(ticker, qty)
+                                with self.lock: pos.last_order_time = time.time(); pos.status = "체결 대기 ⏳"
+                                log_trade_journal(self.user_id, ticker, p_nm, 'BUY', price, st_nm, f"하락장 저점포착 [{bear_reason_str}]")
+                                self._send_telegram(self._fmt_trade_msg("🎣", f"하락장 저점 매수 ({bear_label})", ticker, p_nm, price, qty, strategy=st_nm, note=bear_reason_str))
                         continue
 
                     if not self._check_etf_market_positive():
@@ -703,38 +972,90 @@ class BaseBot:
                         pos.status = "추세 하락 📉"
                         pos.status_msg = "최근 5분봉 하락 추세, 매수 보류"
                         continue
-                    # 매수 포지션 사이징: 60% 1차 진입, 40% 현금 유보 (리스크 분산)
-                    entry_cash = p_cash * 0.60
+
+                    # ── 국면별 포지션 사이징 ──────────────────────────────
+                    if regime == "BULL":
+                        bull_score, bull_reasons = get_bull_momentum_score(ex_df)
+                        if bull_score >= 3:
+                            entry_ratio, regime_label = 0.80, f"상승강신호({bull_score}개)"
+                        elif bull_score >= 1:
+                            entry_ratio, regime_label = 0.70, f"상승중신호({bull_score}개)"
+                        else:
+                            entry_ratio, regime_label = 0.60, "상승장기본진입"
+                        regime_reason_str = " | ".join(bull_reasons) if bull_reasons else "상승 추세 추종"
+                    else:  # NEUTRAL
+                        neutral_score, neutral_reasons = get_neutral_range_score(ex_df)
+                        if neutral_score == 0:
+                            pos.status = "횡보 관망 ⏸"
+                            pos.status_msg = "NEUTRAL 국면 — 레인지 신호 없음, 매수 차단"
+                            continue
+                        if neutral_score >= 3:
+                            entry_ratio, regime_label = 0.55, f"횡보강신호({neutral_score}개)"
+                        elif neutral_score == 2:
+                            entry_ratio, regime_label = 0.45, f"횡보중신호({neutral_score}개)"
+                        else:
+                            entry_ratio, regime_label = 0.30, f"횡보약신호({neutral_score}개)"
+                        regime_reason_str = " | ".join(neutral_reasons)
+
+                    # 1차 매수: entry_ratio 의 75%, 나머지 25%는 2차 분할 매수용 유보
+                    first_ratio  = entry_ratio * 0.75
+                    reserve_ratio = entry_ratio * 0.25
+                    entry_cash   = p_cash * first_ratio
+                    reserve_cash = p_cash * reserve_ratio
+
                     if self.gemini:
                         pos.status = "AI 심사 중 🤖"
-                        decision, ai_reason = self.gemini.ai_approve_trade(sig, p_nm, ticker, price, st_nm, ind_val, self.hot_sectors, get_recent_trades(self.user_id, ticker), load_ai_rules(self.user_id) + "\n" + getattr(self, 'current_ai_market_view', ''))
+                        trade_ctx = self._build_trade_context(ticker, p_nm, price, ex_df, st_nm, regime)
+                        decision, ai_reason = self.gemini.ai_approve_trade(sig, p_nm, ticker, price, st_nm, ind_val, self.hot_sectors, get_recent_trades(self.user_id, ticker), load_ai_rules(self.user_id) + "\n" + getattr(self, 'current_ai_market_view', ''), context=trade_ctx)
                         if decision:
                             qty = int((entry_cash * 0.98) // price)
-                            if qty > 0 and self.kis and self.kis.buy_market_order(ticker, qty):
-                                with self.lock: pos.last_order_time = time.time(); pos.status = "체결 대기 ⏳"
-                                log_trade_journal(self.user_id, ticker, p_nm, 'BUY', price, st_nm, f"AI 승인 ({ai_reason})")
-                                self._send_telegram(f"📈 [{p_nm}] AI 매수 완료 ({qty}주, 60% 진입)\n👉 {ai_reason}")
+                            if qty > 0 and self.kis:
+                                self.kis.buy_market_order(ticker, qty)
+                                with self.lock:
+                                    pos.last_order_time = time.time(); pos.status = "체결 대기 ⏳"
+                                    pos.second_buy_price = price * 0.98   # -2% 눌림목 발동가
+                                    pos.second_buy_cash  = reserve_cash
+                                    pos.second_buy_done  = False
+                                    pos.pyramid_done     = False
+                                    pos.partial_sold     = False
+                                log_trade_journal(self.user_id, ticker, p_nm, 'BUY', price, st_nm, f"AI 승인 [{regime_label}] 1차({int(first_ratio*100)}%) ({ai_reason})")
+                                self._send_telegram(self._fmt_trade_msg("📈", f"AI 매수 승인  ({int(first_ratio*100)}% 1차)", ticker, p_nm, price, qty, strategy=f"{st_nm}  ·  {regime_label}", ai_reason=ai_reason, note=regime_reason_str))
                         else:
                             pos.status = "AI 거절 🛑"
-                            self._send_telegram(f"🛑 [{p_nm}] 매수 거절 ➡️ 즉시 대체 종목 탐색\n👉 {ai_reason}")
+                            self._send_telegram(
+                                f"🛑 <b>매수 거절</b>  ·  {self.alert_icon} {self.mode_name}\n"
+                                f"━━━━━━━━━━━━━━━━━━━━\n"
+                                f"📌 <b>{p_nm}</b>  <code>{ticker}</code>\n"
+                                f"🤖 {ai_reason}\n"
+                                f"➡️ 즉시 대체 종목 탐색 중"
+                            )
                             threading.Thread(target=self._rescreen_satellites, daemon=True).start()
                     else:
                         qty = int((entry_cash * 0.98) // price)
-                        if qty > 0 and self.kis and self.kis.buy_market_order(ticker, qty):
-                            with self.lock: pos.last_order_time = time.time(); pos.status = "체결 대기 ⏳"
-                            log_trade_journal(self.user_id, ticker, p_nm, 'BUY', price, st_nm, "알고리즘 직통")
-                            self._send_telegram(f"📈 [{p_nm}] 알고리즘 매수 ({qty}주, 60% 진입)")
+                        if qty > 0 and self.kis:
+                            self.kis.buy_market_order(ticker, qty)
+                            with self.lock:
+                                pos.last_order_time = time.time(); pos.status = "체결 대기 ⏳"
+                                pos.second_buy_price = price * 0.98
+                                pos.second_buy_cash  = reserve_cash
+                                pos.second_buy_done  = False
+                                pos.pyramid_done     = False
+                                pos.partial_sold     = False
+                            log_trade_journal(self.user_id, ticker, p_nm, 'BUY', price, st_nm, f"알고리즘 [{regime_label}] 1차({int(first_ratio*100)}%): {regime_reason_str}")
+                            self._send_telegram(self._fmt_trade_msg("📈", f"알고리즘 매수  ({int(first_ratio*100)}% 1차)", ticker, p_nm, price, qty, strategy=f"{st_nm}  ·  {regime_label}", note=regime_reason_str))
 
                 elif sig == 'SELL' and p_sh > 0 and is_cd_passed:
                     if self.gemini:
                         pos.status = "AI 심사 중 🤖"
-                        decision, ai_reason = self.gemini.ai_approve_trade(sig, p_nm, ticker, price, st_nm, ind_val, self.hot_sectors, get_recent_trades(self.user_id, ticker), load_ai_rules(self.user_id) + "\n" + getattr(self, 'current_ai_market_view', ''))
+                        trade_ctx = self._build_trade_context(ticker, p_nm, price, ex_df, st_nm, regime)
+                        decision, ai_reason = self.gemini.ai_approve_trade(sig, p_nm, ticker, price, st_nm, ind_val, self.hot_sectors, get_recent_trades(self.user_id, ticker), load_ai_rules(self.user_id) + "\n" + getattr(self, 'current_ai_market_view', ''), context=trade_ctx)
                         if decision:
-                            if self.kis and self.kis.sell_market_order(ticker, p_sh):
+                            if self.kis:
+                                self.kis.sell_market_order(ticker, p_sh)
                                 with self.lock: pos.last_order_time = time.time(); pos.status = "체결 대기 ⏳"
                                 profit = _net_profit(price, p_avg, p_sh)
                                 log_trade_journal(self.user_id, ticker, p_nm, 'SELL', price, st_nm, f"AI 승인 ({ai_reason})", profit=profit)
-                                self._send_telegram(f"📉 [{p_nm}] AI 매도 완료 | 이익: {profit:+,.0f}원\n👉 {ai_reason}")
+                                self._send_telegram(self._fmt_trade_msg("📉", "AI 매도 승인", ticker, p_nm, price, p_sh, profit=profit, strategy=st_nm, ai_reason=ai_reason))
                                 with self.lock:
                                     self.pnl_this_turn += profit
                                     if profit > 0 and self.core_positions and pos.cash >= profit * REINVEST_RATIO:
@@ -743,16 +1064,235 @@ class BaseBot:
                         else:
                             pos.status = "AI 거절(보유) 🛑"
                     else:
-                        if self.kis and self.kis.sell_market_order(ticker, p_sh):
+                        if self.kis:
+                            self.kis.sell_market_order(ticker, p_sh)
                             with self.lock: pos.last_order_time = time.time(); pos.status = "체결 대기 ⏳"
                             profit = _net_profit(price, p_avg, p_sh)
                             log_trade_journal(self.user_id, ticker, p_nm, 'SELL', price, st_nm, "알고리즘 직통", profit=profit)
-                            self._send_telegram(f"📉 [{p_nm}] 알고리즘 매도 | 이익: {profit:+,.0f}원")
+                            self._send_telegram(self._fmt_trade_msg("📉", "알고리즘 매도", ticker, p_nm, price, p_sh, profit=profit, strategy=st_nm))
                             with self.lock: self.pnl_this_turn += profit
             except Exception as e:
                 logger.error(f"[{self.mode_name}] 위성 매매 오류 ({ticker}): {e}", exc_info=True)
             time.sleep(0.2)
+
+        # ── 🚀 테마·급등주 모멘텀 슬롯 매매 ─────────────────────────────
+        if is_golden_hours:
+            self._run_momentum_slot(regime)
+
         self._save_state()
+
+    def _serialize_momentum_position(self):
+        """momentum_position의 datetime → 문자열 변환 (JSON 직렬화용)."""
+        if self.momentum_position is None:
+            return None
+        mp = dict(self.momentum_position)
+        et = mp.get('enter_time')
+        if isinstance(et, datetime):
+            mp['enter_time'] = et.strftime('%Y-%m-%dT%H:%M:%S')
+        return mp
+
+    def _deserialize_momentum_position(self, mp):
+        """문자열 → datetime 복원 (JSON 역직렬화용)."""
+        if mp is None:
+            return None
+        mp = dict(mp)
+        et = mp.get('enter_time')
+        if isinstance(et, str):
+            try:
+                mp['enter_time'] = datetime.strptime(et, '%Y-%m-%dT%H:%M:%S')
+            except Exception:
+                mp['enter_time'] = None
+        return mp
+
+    def _run_momentum_slot(self, regime: str):
+        """
+        테마·급등주 초기 포착 전용 슬롯 매매.
+
+        진입 조건:
+          - 모멘텀 슬롯이 비어 있을 때만 스캔
+          - 거래량 3x+ & 가격 +3%+ & RSI 50~80 & 초기 발동 30분 이내
+          - BEAR 국면에서는 진입 차단 (급등주도 하락장에선 위험)
+
+        청산 조건 (우선순위 순):
+          ① 고점 대비 거래량 50% 이하로 페이드 → 즉시 전량 매도
+          ② +5% 수익 도달 → 즉시 전량 익절
+          ③ 타이트 손절: ATR × 1.0 이하 → 즉시 손절
+          ④ 최대 보유 시간 60분 초과 → 강제 청산
+        """
+        if not self.kis:
+            return
+
+        now = _now_kst()
+        mp = self.momentum_position  # 현재 모멘텀 포지션 dict | None
+
+        # ── A. 보유 중인 경우: 청산 조건 체크 ─────────────────────────
+        if mp is not None:
+            ticker  = mp['ticker']
+            name    = mp['name']
+            shares  = mp.get('shares', 0)
+            avg_p   = mp.get('avg_price', 0)
+            atr     = mp.get('atr', avg_p * 0.02)
+            enter_t = mp.get('enter_time')  # datetime
+
+            if shares <= 0:
+                self.momentum_position = None
+                return
+
+            price = self.live_prices.get(ticker) or self.kis.get_current_price(ticker)
+            if not price or price <= 0:
+                return
+
+            # 고점 갱신
+            if price > mp.get('peak_price', avg_p):
+                mp['peak_price'] = price
+
+            peak_p = mp.get('peak_price', avg_p)
+
+            # 현재 거래량 조회 (분봉 사용) + 5분봉 반납률 체크
+            vol_fade = False
+            giveback_signal = 'HOLD'
+            giveback_reason = ''
+            candles = []
+            try:
+                candles = self.kis.get_minute_candles(ticker, count=10)
+                if candles and len(candles) >= 3:
+                    peak_vol = mp.get('peak_volume', 0)
+                    recent_vol = float(candles[-1].get('volume', 0))
+                    if recent_vol > peak_vol:
+                        mp['peak_volume'] = recent_vol
+                        peak_vol = recent_vol
+                    if peak_vol > 0 and recent_vol < peak_vol * 0.5:
+                        vol_fade = True
+
+                    # 5분봉 반납률 신호 (실전 원칙 적용)
+                    is_ride = (peak_p / avg_p - 1) * 100 >= 10 if avg_p > 0 else False
+                    giveback_signal, _gpct, giveback_reason = check_giveback_stop(
+                        candles, avg_p, peak_p, is_momentum_ride=is_ride
+                    )
+            except Exception:
+                pass
+
+            # 최대 보유 시간 초과 (60분)
+            time_over = False
+            if enter_t:
+                elapsed = (now - enter_t).total_seconds() / 60
+                if elapsed > 60:
+                    time_over = True
+
+            # 청산 판단 (우선순위 순)
+            sell_reason = None
+            if vol_fade:
+                sell_reason = "거래량 페이드(고점 대비 50%↓)"
+            elif avg_p > 0 and price >= avg_p * 1.05:
+                sell_reason = f"+5% 목표 달성 (진입 {avg_p:,.0f}→현재 {price:,.0f})"
+            elif giveback_signal == 'FULL_EXIT':
+                sell_reason = f"5분봉 반납률 전량 이탈: {giveback_reason}"
+            elif avg_p > 0 and price <= avg_p - atr:
+                sell_reason = f"ATR 손절 (진입 {avg_p:,.0f}→현재 {price:,.0f})"
+            elif time_over:
+                sell_reason = "보유 60분 초과 강제 청산"
+
+            if sell_reason:
+                self.kis.sell_market_order(ticker, shares)
+                profit = _net_profit(price, avg_p, shares)
+                log_trade_journal(self.user_id, ticker, name, 'SELL', price,
+                                  "모멘텀슬롯", sell_reason, profit=profit)
+                self.add_log(f"🏁 모멘텀 슬롯 청산 | {name}({ticker}) {shares}주 @ {price:,.0f}원 | {sell_reason} | 손익: {profit:+,.0f}원")
+                self._send_telegram(self._fmt_trade_msg("🏁", "모멘텀 슬롯 청산", ticker, name, price, shares, profit=profit, strategy="모멘텀슬롯", note=sell_reason))
+                with self.lock:
+                    self.pnl_this_turn += profit
+                self.momentum_position = None
+            return  # 보유 중일 때는 진입 스캔 불필요
+
+        # ── B. 빈 슬롯: 진입 스캔 ──────────────────────────────────────
+        if regime == "BEAR":
+            return  # 하락장에서는 급등주도 진입 금지
+
+        # 스캔 쿨다운 (1분)
+        if time.time() - self._last_momentum_scan < self._momentum_scan_interval:
+            return
+        self._last_momentum_scan = time.time()
+
+        try:
+            clear_expired_cache()
+            hits = scan_hot_momentum(kis=self.kis, top_n=1, verbose=False)
+        except Exception as e:
+            logger.warning(f"[{self.mode_name}] 모멘텀 스캔 오류: {e}")
+            return
+
+        if not hits:
+            return
+
+        best = hits[0]
+        b_ticker = best['ticker']
+        b_name   = best['name']
+        b_price  = best['price']
+
+        # 중복 진입 방지: 위성에서 이미 보유 중이면 스킵
+        with self.lock:
+            if b_ticker in self.satellite_positions and self.satellite_positions[b_ticker].shares > 0:
+                return
+
+        # 모멘텀 슬롯 예산: 총자산의 5%
+        try:
+            balance = self.kis.get_account_balance()
+            if not balance:
+                return
+            total_assets = float(balance.get('total_cash', 0)) + float(balance.get('total_value', 0))
+            budget = total_assets * self.momentum_budget_ratio
+            available_cash = float(balance.get('total_cash', 0))
+        except Exception:
+            return
+
+        if available_cash < budget * 0.5:
+            return  # 현금 부족
+
+        qty = int((budget * 0.98) // b_price)
+        if qty <= 0:
+            return
+
+        # ATR 계산 (타이트 손절에 사용)
+        atr_val = b_price * 0.02  # 기본 2%
+        try:
+            df_m = self._get_cached_base_ohlcv(b_ticker)
+            if not df_m.empty and all(c in df_m.columns for c in ['high', 'low', 'close']):
+                tr = pd.concat([
+                    df_m['high'] - df_m['low'],
+                    (df_m['high'] - df_m['close'].shift(1)).abs(),
+                    (df_m['low']  - df_m['close'].shift(1)).abs(),
+                ], axis=1).max(axis=1)
+                atr_val = float(tr.rolling(14, min_periods=1).mean().iloc[-1])
+        except Exception:
+            pass
+
+        self.kis.buy_market_order(b_ticker, qty)
+        self.momentum_position = {
+            'ticker':      b_ticker,
+            'name':        b_name,
+            'shares':      qty,
+            'avg_price':   b_price,
+            'atr':         atr_val,
+            'peak_price':  b_price,
+            'peak_volume': 0,
+            'enter_time':  now,
+            'score':       best['momentum_score'],
+            'reason':      best['trigger_reason'],
+        }
+        log_trade_journal(self.user_id, b_ticker, b_name, 'BUY', b_price,
+                          "모멘텀슬롯",
+                          f"테마급등 초기포착 [{best['trigger_reason']}] 점수:{best['momentum_score']:.1f}")
+        self.add_log(f"🚀 모멘텀 슬롯 진입 | {b_name}({b_ticker}) {qty}주 @ {b_price:,.0f}원 | {best['trigger_reason']}")
+        self._send_telegram(
+            f"🚀 <b>모멘텀 슬롯 진입!</b>  ·  {self.alert_icon} {self.mode_name}\n"
+            f"━━━━━━━━━━━━━━━━━━━━\n"
+            f"📌 <b>{b_name}</b>  <code>{b_ticker}</code>\n"
+            f"💰 <b>{b_price:,.0f}원</b> × <b>{qty}주</b>  =  <b>{b_price*qty:,.0f}원</b>\n"
+            f"🔥 {best['trigger_reason']}\n"
+            f"📊 모멘텀 점수  <b>{best['momentum_score']:.1f}점</b>\n"
+            f"🛡️ 손절: ATR <b>{atr_val:,.0f}원</b>  ·  🎯 익절: <b>+5% 즉시 전량</b>\n"
+            f"━━━━━━━━━━━━━━━━━━━━\n"
+            f"⏰ {now.strftime('%H:%M KST')}"
+        )
 
     def _rescreen_satellites(self):
         try:
@@ -884,13 +1424,14 @@ class BaseBot:
 
         # schedule 라이브러리는 시스템 시계(UTC)를 사용하므로 모든 시간을 UTC로 지정
         # KST = UTC+9 → UTC = KST - 9h
-        self.scheduler.every(5).minutes.do(self.trading_job)
+        self.scheduler.every(1).minutes.do(self.trading_job)
         self.scheduler.every(30).minutes.do(lambda: self._run_threaded(self.analyze_continuous_market_flow))
         self.scheduler.every().day.at("02:00").do(lambda: self._run_threaded(lambda: self.generate_daily_report("11:00")))  # 11:00 KST
         self.scheduler.every().day.at("06:30").do(lambda: self._run_threaded(lambda: self.generate_daily_report("15:30")))  # 15:30 KST
         self.scheduler.every().day.at("11:00").do(lambda: self._run_threaded(lambda: self.generate_daily_report("20:00")))  # 20:00 KST
         self.scheduler.every().day.at("00:05").do(lambda: self._run_threaded(self._rescreen_satellites))                    # 09:05 KST
         self.scheduler.every(1).hours.do(lambda: self._run_threaded(self._rescreen_satellites))
+        self.scheduler.every(30).minutes.do(clear_expired_cache)  # 모멘텀 캐시 만료 항목 정리
         self.scheduler.every().friday.at("07:00").do(lambda: self._run_threaded(self._weekly_self_reflection))              # 금요일 16:00 KST
         self.scheduler.every().day.at("23:00").do(lambda: self._run_threaded(self.refresh_websocket))                       # 08:00 KST
         self.scheduler.every().friday.at("17:00").do(lambda: self._run_threaded(self.run_lstm_training))                    # 토요일 02:00 KST → 금요일 17:00 UTC
@@ -986,6 +1527,38 @@ class BaseBot:
             else:
                 mock_total_asset = 0.0; mock_pnl = 0.0; mock_pnl_rt = 0.0
 
-            return {"is_running": self.is_running, "is_mock": self._is_mock, "has_keys": self.kis is not None, "logs": self.logs[-30:], "hot_sectors": self.hot_sectors, "num_satellites": self.num_satellites, "cores": cores_data, "satellites": satellites, "mock_total_asset": mock_total_asset, "mock_pnl": mock_pnl, "mock_pnl_rt": mock_pnl_rt, "initial_cash": current_initial_cash}
+            # 모멘텀 슬롯 상태
+            mp = self.momentum_position
+            momentum_data = None
+            if mp:
+                mp_ticker = mp.get('ticker', '')
+                mp_price = (self.live_prices.get(mp_ticker)
+                            or self.kis.get_current_price(mp_ticker)
+                            if self.kis else 0) or mp.get('avg_price', 0)
+                mp_val = float(mp.get('shares', 0)) * float(mp_price or 0)
+                total_realtime_stock_val += mp_val
+                avg_p = mp.get('avg_price', 0)
+                pnl_pct = ((mp_price / avg_p) - 1) * 100 if avg_p > 0 and mp_price else 0
+                elapsed = ""
+                et = mp.get('enter_time')
+                if et:
+                    try:
+                        elapsed = f"{(datetime.now() - et).total_seconds() / 60:.0f}분 보유"
+                    except Exception:
+                        pass
+                momentum_data = {
+                    "ticker":  mp_ticker,
+                    "name":    mp.get('name', mp_ticker),
+                    "shares":  mp.get('shares', 0),
+                    "price":   mp_price,
+                    "value":   mp_val,
+                    "avg_price": avg_p,
+                    "pnl_pct": round(pnl_pct, 2),
+                    "reason":  mp.get('reason', ''),
+                    "elapsed": elapsed,
+                    "status":  "🚀 모멘텀 슬롯 보유 중",
+                }
+
+            return {"is_running": self.is_running, "is_mock": self._is_mock, "has_keys": self.kis is not None, "logs": self.logs[-30:], "hot_sectors": self.hot_sectors, "num_satellites": self.num_satellites, "cores": cores_data, "satellites": satellites, "momentum": momentum_data, "mock_total_asset": mock_total_asset, "mock_pnl": mock_pnl, "mock_pnl_rt": mock_pnl_rt, "initial_cash": current_initial_cash}
         except Exception as critical_e:
             return {"is_running": False, "is_mock": self._is_mock, "has_keys": False, "logs": [{"time": "Error", "message": f"오류: {str(critical_e)}"}], "hot_sectors": [], "num_satellites": 5, "cores": [], "satellites": [], "mock_total_asset": 0, "mock_pnl": 0, "mock_pnl_rt": 0, "initial_cash": 10000000}
