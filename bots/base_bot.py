@@ -702,21 +702,37 @@ class BaseBot:
 
     def _run_loop(self, total_cash):
         self.scheduler = schedule.Scheduler()
-        if not self._restore_state(): self.initialize_portfolio(total_cash)
+
+        # initialize_portfolio 실패 시 스레드가 죽지 않도록 보호
+        try:
+            if not self._restore_state():
+                self.initialize_portfolio(total_cash)
+        except Exception as e:
+            logger.error(f"[{self.mode_name}] 포트폴리오 초기화 실패 (기본 코어로 계속 진행): {e}", exc_info=True)
+
+        # schedule 라이브러리는 시스템 시계(UTC)를 사용하므로 모든 시간을 UTC로 지정
+        # KST = UTC+9 → UTC = KST - 9h
         self.scheduler.every(5).minutes.do(self.trading_job)
         self.scheduler.every(30).minutes.do(lambda: self._run_threaded(self.analyze_continuous_market_flow))
-        self.scheduler.every().day.at("11:00").do(lambda: self._run_threaded(lambda: self.generate_daily_report("11:00")))
-        self.scheduler.every().day.at("15:30").do(lambda: self._run_threaded(lambda: self.generate_daily_report("15:30")))
-        self.scheduler.every().day.at("20:00").do(lambda: self._run_threaded(lambda: self.generate_daily_report("20:00")))
-        self.scheduler.every().day.at("09:05").do(lambda: self._run_threaded(self._rescreen_satellites))
+        self.scheduler.every().day.at("02:00").do(lambda: self._run_threaded(lambda: self.generate_daily_report("11:00")))  # 11:00 KST
+        self.scheduler.every().day.at("06:30").do(lambda: self._run_threaded(lambda: self.generate_daily_report("15:30")))  # 15:30 KST
+        self.scheduler.every().day.at("11:00").do(lambda: self._run_threaded(lambda: self.generate_daily_report("20:00")))  # 20:00 KST
+        self.scheduler.every().day.at("00:05").do(lambda: self._run_threaded(self._rescreen_satellites))                    # 09:05 KST
         self.scheduler.every(1).hours.do(lambda: self._run_threaded(self._rescreen_satellites))
-        self.scheduler.every().friday.at("16:00").do(lambda: self._run_threaded(self._weekly_self_reflection))
-        self.scheduler.every().day.at("08:00").do(lambda: self._run_threaded(self.refresh_websocket))
-        self.scheduler.every().saturday.at("02:00").do(lambda: self._run_threaded(self.run_lstm_training))
-        self.trading_job()  
-        
+        self.scheduler.every().friday.at("07:00").do(lambda: self._run_threaded(self._weekly_self_reflection))              # 금요일 16:00 KST
+        self.scheduler.every().day.at("23:00").do(lambda: self._run_threaded(self.refresh_websocket))                       # 08:00 KST
+        self.scheduler.every().friday.at("17:00").do(lambda: self._run_threaded(self.run_lstm_training))                    # 토요일 02:00 KST → 금요일 17:00 UTC
+
+        try:
+            self.trading_job()
+        except Exception as e:
+            logger.error(f"[{self.mode_name}] 초기 trading_job 오류: {e}", exc_info=True)
+
         while self.is_running:
-            self.scheduler.run_pending()
+            try:
+                self.scheduler.run_pending()
+            except Exception as e:
+                logger.error(f"[{self.mode_name}] 스케줄러 오류: {e}", exc_info=True)
             time.sleep(1)
     
     def refresh_websocket(self):
