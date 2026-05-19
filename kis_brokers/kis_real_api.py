@@ -224,16 +224,13 @@ class KisRealApi:
             "ORD_UNPR":       ord_unpr,
         }
         if is_nxt:
-            body["EXCG_ID_DVSN_CD"] = "NX"
-            # NXT: hashkey API doesn't support EXCG_ID_DVSN_CD → send without hashkey
-            hashkey = None
+            body["EXCG_ID_DVSN_CD"] = "02"
+            hashkey = None  # hashkey API doesn't support EXCG_ID_DVSN_CD
         else:
             hashkey = self.get_hashkey(body)
             if not hashkey:
                 print("[KIS 실전] Hashkey 발급에 실패하여 주문을 취소합니다.")
                 return None
-
-        print(f"[KIS 실전 DEBUG] KST={kst_now.strftime('%H:%M')}, is_nxt={is_nxt}, tr_id={tr_id}, ord_dvsn={ord_dvsn}, body={body}, hashkey={'SKIP(NXT)' if is_nxt else 'OK'}")
 
         for attempt in range(3):
             try:
@@ -252,7 +249,10 @@ class KisRealApi:
                         return data
                     else:
                         msg_cd = data.get('msg_cd', '')
-                        print(f"[KIS 실전] 주문 실패: {data.get('msg1', res.text)} | rt_cd={data.get('rt_cd')} msg_cd={data.get('msg_cd')} full={data}")
+                        print(f"[KIS 실전] 주문 실패: {data.get('msg1', res.text)}")
+                        if msg_cd == 'APBK1537':
+                            print("[KIS 실전] NXT 주문 거절 (APBK1537): KIS OpenAPI에서 대체거래소(NXT) 서비스 미신청 상태일 수 있습니다. apiportal.koreainvestment.com → 내 앱 → 서비스 신청 확인 바람.")
+                            return None
                         if msg_cd == 'EGW00201':
                             time.sleep(1.2)
                             continue
