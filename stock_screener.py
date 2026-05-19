@@ -199,11 +199,13 @@ def get_candidate_tickers(kis=None, verbose=False):
     dynamic_count = 0
     if kis is not None:
         if verbose:
-            print("   🌐 KIS API 실시간 거래량 상위 종목 수집 중...")
+            print("   🌐 KIS API 실시간 거래량/등락률 상위 종목 수집 중...")
         try:
             top_kospi = kis.get_volume_rank(market_div="J", limit=30)
             top_kosdaq = kis.get_volume_rank(market_div="Q", limit=30)
-            dynamic_pool = top_kospi + top_kosdaq
+            top_rise_kospi = kis.get_price_change_rank(market_div="J", limit=20)
+            top_rise_kosdaq = kis.get_price_change_rank(market_div="Q", limit=20)
+            dynamic_pool = top_kospi + top_kosdaq + top_rise_kospi + top_rise_kosdaq
             for t in dynamic_pool:
                 if t not in seen and t not in EXCLUDE_TICKERS:
                     seen.add(t)
@@ -414,11 +416,25 @@ def select_satellites(kis=None, n=NUM_SATELLITES, verbose=True, gemini_client=No
         surge_ratio=1.5, min_cap_billion=300, max_tickers=150, verbose=verbose
     )
 
-    candidate_pool = set(volume_surges.keys()) | sector_tickers
+    # 외인/기관 순매수 팩터 수집
+    frgn_inst_tickers = set()
+    if kis is not None:
+        try:
+            fi_kospi = kis.get_foreign_institution_rank(market_div="J", limit=30)
+            fi_kosdaq = kis.get_foreign_institution_rank(market_div="Q", limit=30)
+            for item in fi_kospi + fi_kosdaq:
+                if (item.get("frgn_ntby_qty", 0) > 0 or item.get("orgn_ntby_qty", 0) > 0):
+                    frgn_inst_tickers.add(item["ticker"])
+            if verbose:
+                print(f"   💼 외인/기관 순매수 종목: {len(frgn_inst_tickers)}개")
+        except Exception:
+            pass
+
+    candidate_pool = set(volume_surges.keys()) | sector_tickers | frgn_inst_tickers
     candidate_pool -= EXCLUDE_TICKERS
 
     if verbose:
-        print(f"\n📋 후보 풀: 거래량 급등 {len(volume_surges)}개 + 강세 섹터 {len(sector_tickers)}개 → 합계 {len(candidate_pool)}개")
+        print(f"\n📋 후보 풀: 거래량 급등 {len(volume_surges)}개 + 강세 섹터 {len(sector_tickers)}개 + 외인기관 {len(frgn_inst_tickers)}개 → 합계 {len(candidate_pool)}개")
 
     # 🤖 딥러닝 모델 로드 (없으면 기본값 0 처리됨)
     from dl_model import DeepLearningPredictor
@@ -448,7 +464,8 @@ def select_satellites(kis=None, n=NUM_SATELLITES, verbose=True, gemini_client=No
 
             vol_score    = volume_surges.get(ticker, 1.0)
             sector_bonus = 10 if ticker in sector_tickers else 0
-            
+            frgn_inst_bonus = 8 if ticker in frgn_inst_tickers else 0
+
             overheated_penalty = 0
             if recent_ret > 15 and vol_score < 2.0:
                 overheated_penalty = (recent_ret - 15) * 1.5
@@ -461,11 +478,12 @@ def select_satellites(kis=None, n=NUM_SATELLITES, verbose=True, gemini_client=No
             ml_factor_score = (ai_up_prob - 50.0) * 0.2
 
             score = (best_ret
-                     + (vol_score - 1) * 6 
-                     + sector_bonus 
-                     + (bb_discount * 1.5) 
-                     - overheated_penalty 
-                     - stat_arb_penalty 
+                     + (vol_score - 1) * 6
+                     + sector_bonus
+                     + frgn_inst_bonus
+                     + (bb_discount * 1.5)
+                     - overheated_penalty
+                     - stat_arb_penalty
                      + ml_factor_score)
 
             results.append({
@@ -477,6 +495,7 @@ def select_satellites(kis=None, n=NUM_SATELLITES, verbose=True, gemini_client=No
                 'sector':        ticker_to_sector.get(ticker, '-'),
                 'momentum_20d':  float(round(recent_ret, 2)),
                 'dl_prob':       float(round(ai_up_prob, 1)),
+                'frgn_inst':     ticker in frgn_inst_tickers,
                 'score':         float(round(score, 2)),
             })
             processed += 1
@@ -510,12 +529,13 @@ def select_satellites(kis=None, n=NUM_SATELLITES, verbose=True, gemini_client=No
         for rank, c in enumerate(selected, 1):
             vol_tag = f"📈거래량{c.get('volume_surge', 1.0):.1f}x" if c.get('volume_surge', 1.0) > 1.5 else ""
             sec_tag = f"🔥{c.get('sector', '-')}" if c.get('sector', '-') != '-' else ""
+            fi_tag = "💼외인기관" if c.get('frgn_inst') else ""
             dl_tag = f" 🧠[상승확률: {c.get('dl_prob', 0):.1f}%]" if c.get('dl_prob', 0) > 0 else ""
             ai_tag = f" 🤖[AI 선정: {c.get('ai_reason', '')}]" if c.get('ai_selected') else ""
             
             print(f"\n  {rank}위. [{c['name']}] ({c['ticker']}){dl_tag}{ai_tag}")
             print(f"       전략: {c['strategy_name']}  /  6개월 수익: {c.get('return_pct', 0):+.1f}%")
-            print(f"       20일 모멘텀: {c.get('momentum_20d', 0):+.1f}%  {vol_tag}  {sec_tag}")
+            print(f"       20일 모멘텀: {c.get('momentum_20d', 0):+.1f}%  {vol_tag}  {sec_tag}  {fi_tag}")
             print(f"       종합점수: {c.get('score', 0):.1f}점")
         print(f"{'='*60}\n")
 

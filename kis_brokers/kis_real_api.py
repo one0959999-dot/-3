@@ -760,6 +760,147 @@ class KisRealApi:
             print(f"[KIS 실전] 매수가능조회 오류: {e}")
             return 0
 
+    def get_volume_rank(self, market_div: str = "J", limit: int = 30):
+        """거래량순위 조회 (실전 전용) — 종목코드 리스트 반환 (최대 30개)
+        market_div: 'J'=코스피, 'Q'=코스닥, '0'=전체
+        """
+        if not self._ensure_token():
+            return []
+
+        # J/Q → FID_BLNG_CLS_CODE 변환 (FID_COND_MRKT_DIV_CODE는 항상 J)
+        blng = {"J": "1", "Q": "2"}.get(market_div, "0")
+
+        headers = {
+            "content-type": "application/json; charset=utf-8",
+            "authorization": f"Bearer {self.access_token}",
+            "appkey": self.app_key,
+            "appsecret": self.app_secret,
+            "tr_id": "FHPST01710000",
+            "custtype": "P",
+        }
+        params = {
+            "FID_COND_MRKT_DIV_CODE": "J",
+            "FID_COND_SCR_DIV_CODE": "20171",
+            "FID_INPUT_ISCD": "0000",
+            "FID_DIV_CLS_CODE": "0",
+            "FID_BLNG_CLS_CODE": blng,
+            "FID_TRGT_CLS_CODE": "111111111",
+            "FID_TRGT_EXLS_CLS_CODE": "000000",
+            "FID_INPUT_PRICE_1": "0",
+            "FID_INPUT_PRICE_2": "0",
+            "FID_VOL_CNT": "0",
+            "FID_INPUT_DATE_1": "0",
+        }
+
+        try:
+            res = requests.get(
+                f"{self.base_url}/uapi/domestic-stock/v1/quotations/volume-rank",
+                headers=headers, params=params, timeout=5,
+            )
+            if res.status_code == 200:
+                data = res.json()
+                if data.get("rt_cd") == "0":
+                    return [item["mksc_shrn_iscd"] for item in data.get("output", [])[:limit] if item.get("mksc_shrn_iscd")]
+            return []
+        except Exception as e:
+            print(f"[KIS 실전] 거래량순위 조회 오류: {e}")
+            return []
+
+    def get_price_change_rank(self, market_div: str = "J", limit: int = 30):
+        """등락률 순위 조회 (실전 전용) — 상승 상위 종목코드 리스트 반환"""
+        if not self._ensure_token():
+            return []
+
+        headers = {
+            "content-type": "application/json; charset=utf-8",
+            "authorization": f"Bearer {self.access_token}",
+            "appkey": self.app_key,
+            "appsecret": self.app_secret,
+            "tr_id": "FHPST01700000",
+            "custtype": "P",
+        }
+        params = {
+            "fid_rsfl_rate2": "0",
+            "fid_cond_mrkt_div_code": market_div,
+            "fid_cond_scr_div_code": "20170",
+            "fid_input_iscd": "0000",
+            "fid_rank_sort_cls_code": "0",   # 0=상위(상승)
+            "fid_input_cnt_1": "0",
+            "fid_prc_cls_code": "1",
+            "fid_input_price_1": "0",
+            "fid_input_price_2": "0",
+            "fid_vol_cnt": "100000",
+            "fid_trgt_cls_code": "0",
+            "fid_trgt_exls_cls_code": "0",
+            "fid_div_cls_code": "0",
+            "fid_rsfl_rate1": "0",
+        }
+
+        try:
+            res = requests.get(
+                f"{self.base_url}/uapi/domestic-stock/v1/ranking/fluctuation",
+                headers=headers, params=params, timeout=5,
+            )
+            if res.status_code == 200:
+                data = res.json()
+                if data.get("rt_cd") == "0":
+                    return [item["stck_shrn_iscd"] for item in data.get("output", [])[:limit] if item.get("stck_shrn_iscd")]
+            return []
+        except Exception as e:
+            print(f"[KIS 실전] 등락률순위 조회 오류: {e}")
+            return []
+
+    def get_foreign_institution_rank(self, market_div: str = "J", limit: int = 30):
+        """국내기관_외국인 매매종목가집계 (실전 전용)
+        Returns: list of dict { ticker, name, frgn_ntby_qty, orgn_ntby_qty }
+        """
+        if not self._ensure_token():
+            return []
+
+        headers = {
+            "content-type": "application/json; charset=utf-8",
+            "authorization": f"Bearer {self.access_token}",
+            "appkey": self.app_key,
+            "appsecret": self.app_secret,
+            "tr_id": "FHPTJ04400000",
+            "custtype": "P",
+        }
+        params = {
+            "FID_COND_MRKT_DIV_CODE": market_div,
+            "FID_COND_SCR_DIV_CODE": "20044",
+            "FID_INPUT_ISCD": "0000",
+            "FID_DIV_CLS_CODE": "0",
+            "FID_RANK_SORT_CLS_CODE": "1",   # 1=외국인 순매수 기준
+            "FID_ETC_CLS_CODE": "0",
+        }
+
+        try:
+            res = requests.get(
+                f"{self.base_url}/uapi/domestic-stock/v1/quotations/foreign-institution-total",
+                headers=headers, params=params, timeout=5,
+            )
+            if res.status_code == 200:
+                data = res.json()
+                if data.get("rt_cd") == "0":
+                    results = []
+                    for item in data.get("output", [])[:limit]:
+                        ticker = item.get("mksc_shrn_iscd", "")
+                        if not ticker:
+                            continue
+                        results.append({
+                            "ticker": ticker,
+                            "name": item.get("hts_kor_isnm", ""),
+                            "frgn_ntby_qty": int(item.get("frgn_ntby_qty", 0) or 0),
+                            "orgn_ntby_qty": int(item.get("orgn_ntby_qty", 0) or 0),
+                            "price": int(item.get("stck_prpr", 0) or 0),
+                            "prdy_ctrt": float(item.get("prdy_ctrt", 0) or 0),
+                        })
+                    return results
+            return []
+        except Exception as e:
+            print(f"[KIS 실전] 기관외국인 조회 오류: {e}")
+            return []
+
     def get_orderbook(self, stock_code: str, market: str = "J"):
         """주식현재가 호가_예상체결 조회 — askp1(최우선 매도호가), bidp1(최우선 매수호가) 반환"""
         if not self._ensure_token():
