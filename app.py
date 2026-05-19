@@ -1,7 +1,7 @@
 from flask import Flask, render_template, jsonify, request, redirect, url_for, flash, session
 from flask_login import LoginManager, UserMixin, login_user, logout_user, login_required, current_user
 
-# 🚨 [리팩토링 핵심] 구형 bot_controller를 버리고, 새로 분리된 중앙 AI 관제탑을 다이렉트로 임포트합니다.
+# 새로 분리된 중앙 AI 관제탑을 다이렉트로 임포트합니다.
 from bots.bot_manager import manager 
 from database import get_db_connection, verify_user, add_user, init_db, update_user_keys
 import os
@@ -52,8 +52,7 @@ def index():
     user_data = current_user.data
     gemini_enabled = bool(user_data.get('gemini_api_key'))
     
-    # 💡 [프리워밍 개선] 사용자가 메인 화면에 진입하는 즉시 실전 봇과 모의 봇을 동시에 모두 선제적으로 가동합니다.
-    # 이로써 스위치를 토글하기 전이든 후든 두 환경 모두 백그라운드에서 24시간 완벽히 Working 상태를 유지하며 딜레이를 원천 차단합니다.
+    # [프리워밍 개선] 사용자가 메인 화면에 진입하는 즉시 실전 봇과 모의 봇을 동시에 모두 선제적으로 가동합니다.
     mock_data = {**dict(user_data), 'is_mock': 1}
     real_data = {**dict(user_data), 'is_mock': 0}
     manager.get_bot(current_user.id, mock_data)
@@ -124,11 +123,11 @@ def kis_balance():
                 shares = float(new_stock.get('shares', 0))
                 purchase_p = float(new_stock.get('purchase_price', 0))
                 
-                # 🚨 [핵심 동기화] 웹소켓 실시간 가격이 있으면 최우선 덮어쓰고, 없으면 증권사가 보낸 진짜 현재가 사용
+                # 웹소켓 실시간 가격이 있으면 최우선 덮어쓰고, 없으면 증권사가 보낸 진짜 현재가 사용
                 current_p = rt_prices.get(ticker, float(new_stock.get('current_price', 0)))
                 
                 new_stock['current_price'] = current_p
-                new_stock['value'] = shares * current_p  # 개별 종목 평가금액 재계산
+                new_stock['value'] = shares * current_p  
                 
                 if purchase_p > 0:
                     new_stock['profit_rt'] = ((current_p / purchase_p) - 1) * 100
@@ -144,11 +143,9 @@ def kis_balance():
             patched['total_purchase'] = recalc_total_purchase
             return patched
 
-        # 💎 백그라운드 캐시가 있다면 즉시 계산해서 반환
         if bot.cached_balance:
             return jsonify({"status": "success", "data": patch_balance(bot.cached_balance)})
         
-        # 🚨 캐시가 비어있으면 1회 즉시 호출 후 계산
         real_balance = bot.kis.get_account_balance()
         if real_balance:
             bot.cached_balance = real_balance
@@ -178,8 +175,6 @@ def toggle_bot():
         bot.stop()
         return jsonify({"status": "stopped"})
     else:
-        # DB에 저장된 사용자의 실제 투자 원금(initial_cash)을 안전하게 읽어와 봇을 시작하도록 변경합니다.
-        # 실전/모의 모드에 따라 올바른 원금 컬럼을 읽어오도록 수정
         is_mock = current_user.data.get('is_mock', 1)
         cash_key = 'mock_initial_cash' if is_mock else 'real_initial_cash'
         user_cash = current_user.data.get(cash_key, current_user.data.get('initial_cash', 10000000))
@@ -328,7 +323,7 @@ def ai_chat():
             stock_analysis_context += "이유를 설명할 때도 부드러운 경어체(~요, ~습니다)를 사용해 따뜻하게 다독여 주시기 바랍니다."
 
     except Exception as e:
-        print(f"⚠️ [AI 비서 데이터 바인딩 에러] : {e}")
+        print(f"⚠️ [종목 데이터 가공 오류] : {e}")
 
     try:
         current_status = bot.get_status()
@@ -337,9 +332,9 @@ def ai_chat():
             stock_analysis_context += "\n\n[📝 백엔드 자동 매매 시스템 최근 실행 로그 (필독)]\n"
             for log in bot_logs[-15:]:
                 stock_analysis_context += f"- [{log['time']}] {log['message']}\n"
-            stock_analysis_context += "위 로그를 바탕으로 현재 매매 봇이 백엔드에서 무엇을 하고 있는지(대기 중인지, 매수 보류 중인지 등)를 파악하여 답변에 자연스럽게 녹여주세요.\n"
+            stock_analysis_context += "위 로그를 바탕으로 현재 매매 봇이 백엔드에서 무엇을 하고 있는지 파악하여 답변에 자연스럽게 녹여주세요.\n"
     except Exception as log_e:
-        print(f"⚠️ [로그 바인딩 에러] : {log_e}")
+        print(f"⚠️ [로그 데이터 가공 오류] : {log_e}")
 
     reply = bot.gemini.chat(
         user_message, 
@@ -369,7 +364,7 @@ def set_mode():
 @app.route('/api/settings/satellites', methods=['POST'])
 @login_required
 def set_satellites_count():
-    """웹 대시보드에서 요청한 위성 종목 개수 변경 설정을 저장합니다."""
+    """위성 종목 개수 변경 설정을 저장합니다."""
     data = request.json
     count = int(data.get('count', 5))
     
@@ -460,7 +455,6 @@ def search_stock():
         if bot and bot.kis:
             results = bot.kis.search_stock_name(query)
         else:
-            # 🚨 [브릿지 제거 완벽 호환] 빈 임시 객체를 생성할 때 분리된 RealApi 모듈을 가져옵니다.
             from kis_brokers.kis_real_api import KisRealApi
             temp_kis = KisRealApi("", "", "") 
             results = temp_kis.search_stock_name(query)
@@ -474,4 +468,6 @@ def search_stock():
 
 if __name__ == '__main__':
     init_db()
-    app.run(host='0.0.0.0', port=5000, debug=False, use_reloader=False)
+    # 🚨 [연결성 버그 픽스] threaded=True 커스텀 속성을 부여하여 
+    # 백엔드 인증망 작업 시 서버 연동 프로세스가 마비되는 현상을 완벽 차단합니다!
+    app.run(host='0.0.0.0', port=5000, debug=False, use_reloader=False, threaded=True)

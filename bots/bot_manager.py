@@ -15,8 +15,13 @@ class BotManager:
         is_mock = bool(user_data.get('is_mock', 1))
         bot_key = (user_id, is_mock)
         
-        # 🧠 1. AI 두뇌 중앙 집중화 (실전/모의 상관없이 하나의 AI 객체만 유지 및 기억 공유)
-        api_key_clean = user_data.get('gemini_api_key', '').strip()
+        # 🚨 [버그 픽스] API 키가 DB에 없을 때(None) 서버가 뻗는 치명적 현상 완벽 방어!
+        raw_api_key = user_data.get('gemini_api_key', '')
+        if raw_api_key is None:
+            raw_api_key = ''
+        api_key_clean = raw_api_key.strip()
+        
+        # 🧠 1. AI 두뇌 중앙 집중화
         if api_key_clean and self.current_ai_key != api_key_clean:
             self.ai_client = GeminiApi(api_key=api_key_clean)
             self.current_ai_key = api_key_clean

@@ -11,7 +11,6 @@ from datetime import datetime
 from telegram_bot import TelegramNotifier
 from strategy import CorePosition, Position, get_rsi_signal, get_signal_by_strategy, REINVEST_RATIO
 from stock_screener import select_satellites, generate_daily_market_report
-# 🟢 [리팩토링] 하드코딩된 SQL 대신 database.py의 깔끔한 Repository 함수들을 가져옵니다.
 from database import update_bot_status, save_portfolio_state, load_portfolio_state, log_trade_journal, get_recent_trades, save_ai_rules, load_ai_rules, get_user_initial_cash, set_user_initial_cash, add_user_initial_cash
 
 def fetch_recent_news(stock_name):
@@ -39,11 +38,11 @@ class BaseBot:
         self.num_satellites = 5
         self._is_mock = is_mock
         
-        # 🟢 봇의 모드에 따라 로그와 알림에 붙을 뱃지를 동적으로 결정합니다.
+        # 봇의 모드에 따라 로그와 알림에 붙을 뱃지를 동적으로 결정합니다.
         self.mode_name = "모의" if is_mock else "실전"
         self.alert_icon = "🟢" if is_mock else "🔴"
         
-        # 🟢 [리팩토링] 밖에서 굴러다니던 매직 넘버(하드코딩된 값들)를 클래스 내부 설정 변수로 깔끔하게 흡수했습니다.
+        # 클래스 내부 설정 변수
         self.core_ticker = "003850"
         self.core_name = "보령"
         self.core_ratio = 0.30
@@ -71,7 +70,7 @@ class BaseBot:
         self.telegram = None
         self.gemini = None
 
-        # 🚨 무기는 자식 클래스(Real/Mock)에서 장착합니다.
+        # 무기는 자식 클래스(Real/Mock)에서 장착합니다.
         self._init_api(kis_config)
         
         if telegram_config and telegram_config.get('token'):
@@ -92,32 +91,33 @@ class BaseBot:
         self.live_prices = {}
         self.ws_client = None
 
-        if self.kis:
-            app_key = self.kis.get_approval_key()
-            if app_key:
-                def on_price_update(ticker, price):
-                    self.live_prices[ticker] = price
-                # 🚨 웹소켓 역시 자식 클래스에서 생성해줍니다.
-                self.ws_client = self._create_websocket(app_key, on_price_update)
-                if self.ws_client:
-                    self.ws_client.start()
+        # 🟢 [연결성 버그 픽스] KIS 인증키 발급 및 웹소켓 상주 로직 전체를 
+        # 비동기 백그라운드 스레드로 완전히 이관하여 Flask 초기 기동 마비를 원천 해결합니다!
+        def _async_network_connect():
+            if self.kis:
+                try:
+                    app_key_token = self.kis.get_approval_key()
+                    if app_key_token:
+                        def on_price_update(ticker, price):
+                            self.live_prices[ticker] = price
+                        self.ws_client = self._create_websocket(app_key_token, on_price_update)
+                        if self.ws_client:
+                            self.ws_client.start()
+                except Exception as net_err:
+                    print(f"⚠️ [비동기 KIS 인증망 가동 지연 알림] : {net_err}")
+
+        threading.Thread(target=_async_network_connect, daemon=True).start()
 
         self.perpetual_thread = threading.Thread(target=self._perpetual_sync_loop, daemon=True)
         self.perpetual_thread.start()
         self.add_log(f"User {user_id} {self.mode_name}투자 전용 Bot Controller 가동 완료.")
 
-    # ==========================================
-    # 🧩 자식 클래스가 반드시 오버라이드해야 하는 추상 메서드
-    # ==========================================
     def _init_api(self, kis_config):
         raise NotImplementedError("자식 클래스에서 KIS API 객체를 초기화해야 합니다.")
 
     def _create_websocket(self, app_key, callback):
         raise NotImplementedError("자식 클래스에서 웹소켓 객체를 반환해야 합니다.")
 
-    # ==========================================
-    # ⚙️ 공통 매매 및 동기화 로직 (이하 100% 동일)
-    # ==========================================
     def _perpetual_sync_loop(self):
         while True:
             try:
@@ -130,7 +130,6 @@ class BaseBot:
                     if self.ws_client:
                         with self.lock:
                             current_tickers = [c.ticker for c in self.core_positions] + list(self.satellite_positions.keys())
-                            # 🟢 유연한 시장 지수 추적
                             for idx_ticker, _ in self.market_indices:
                                 if idx_ticker not in current_tickers:
                                     current_tickers.append(idx_ticker)
@@ -156,7 +155,6 @@ class BaseBot:
                 
                 pure_principal = real_cash + real_purchase
 
-                # 🟢 [리팩토링] 하드코딩된 SQL 대신 간결한 함수 호출로 원금 추적 엔진 가동
                 if not getattr(self, 'initial_capital_captured', False):
                     import os
                     cash_col = "mock_initial_cash" if self._is_mock else "real_initial_cash"
@@ -183,7 +181,6 @@ class BaseBot:
                         self.pnl_this_turn = 0.0 
                         deposit_delta = current_asset_cost - expected_asset_cost
                         if deposit_delta > 10000 or deposit_delta < -10000: 
-                            # 🟢 [리팩토링] 입출금 발생 시에도 간결하게 함수 호출
                             add_user_initial_cash(self.user_id, deposit_delta, self._is_mock)
                             if deposit_delta > 0: self.add_log(f"💰 {self.mode_name} 계좌 외부 입금 포착: +{deposit_delta:,.0f}원")
                             else: self.add_log(f"💸 {self.mode_name} 계좌 외부 출금 포착: {deposit_delta:,.0f}원")
@@ -244,7 +241,6 @@ class BaseBot:
             for c in self.user_core_stocks:
                 self.core_positions.append(CorePosition(c['ticker'], c['name'], initial_cash=0))
         else:
-            # 🟢 [리팩토링] 하드코딩 제거 
             self.core_positions.append(CorePosition(self.core_ticker, self.core_name, initial_cash=0))
             self.core_positions.append(CorePosition("047040", "대우건설", initial_cash=0))
             
@@ -412,7 +408,6 @@ class BaseBot:
 
         if getattr(self, 'is_crisis_mode', False):
             if self.kis:
-                # 🟢 KOSPI 하드코딩 제거 (market_indices의 첫번째 종목으로 유연하게 확인)
                 main_idx_ticker = self.market_indices[0][0]
                 idx_cp = self.kis.get_current_price(main_idx_ticker)
                 if idx_cp:
@@ -623,13 +618,12 @@ class BaseBot:
 
             market_data = []
             if self.kis:
-                # 🟢 하드코딩 제거 (설정된 지수를 동적으로 순회하여 불러옵니다)
                 for ticker, name in self.market_indices:
                     df = self._get_cached_base_ohlcv(ticker)
                     cp = self.live_prices.get(ticker) or self.kis.get_current_price(ticker)
                     if not df.empty and cp: market_data.append(f"{name}: {cp:,}원 ({((cp/df['close'].iloc[-1])-1)*100:+.2f}%)")
             
-            prompt = f"시각 {now_time_str}. 지수: {' | '.join(market_data)}. 강세: {', '.join(self.hot_sectors)}. 장중 분위기 짧게 2줄 요약."
+            prompt = f"시각 {now_time_str}. 지수: {' | '.join(market_data)}.강세: {', '.join(self.hot_sectors)}. 장중 분위기 짧게 2줄 요약."
             if self.gemini:
                 analysis = self.gemini.chat(prompt, stock_analysis_context="마크다운 없이 평문 2줄로.")
                 self.current_ai_market_view = analysis
@@ -750,7 +744,6 @@ class BaseBot:
                 cp = float(getattr(core, '_last_price', 0) or self.live_prices.get(core.ticker, 0) or getattr(core, 'kis_current_price', 0) or core.avg_price or 0)
                 core_val = float(core.shares) * cp
                 total_realtime_stock_val += core_val
-                # 🟢 하드코딩 제거 (설정된 core_ticker로 비교하여 유연하게 동작합니다)
                 cores_data.append({"name": core.name, "ticker": core.ticker, "shares": core.shares, "floor": core.floor_shares, "price": cp, "value": core_val, "budget": getattr(core, 'initial_cash', 0), "strategy": "장기 우상향" if core.ticker != self.core_ticker else "RSI + floor 보호", "status": getattr(core, 'status', '감시 중 👀'), "status_msg": getattr(core, 'status_msg', '지표 점검 중...')})
 
             satellites = []
@@ -760,7 +753,6 @@ class BaseBot:
                 total_realtime_stock_val += sat_val
                 satellites.append({"name": pos.name, "ticker": ticker, "strategy": self.satellite_strategies.get(ticker, '-'), "shares": pos.shares, "price": sp, "value": sat_val, "budget": getattr(pos, 'initial_cash', getattr(pos, 'budget', 0)), "status": getattr(pos, 'status', '감시 중 👀'), "status_msg": getattr(pos, 'status_msg', '지표 점검 중...')})
 
-            # 🟢 [리팩토링] 하드코딩된 SQL을 깔끔한 함수 호출로 대체
             try:
                 current_initial_cash = get_user_initial_cash(self.user_id, self._is_mock)
             except Exception: current_initial_cash = 10000000.0
