@@ -187,20 +187,23 @@ def test_order():
     if not ticker or side not in ('BUY', 'SELL'):
         return jsonify({"status": "error", "message": "ticker와 side(BUY/SELL) 필요"}), 400
     try:
-        # 항상 모의 봇 사용 (실전 계좌 보호)
-        mock_bot = manager.bots.get((current_user.id, True))
-        if not mock_bot:
+        use_real = data.get('use_real', False)
+        is_mock = not use_real
+        mode_label = "실전" if use_real else "모의"
+
+        target_bot = manager.bots.get((current_user.id, is_mock))
+        if not target_bot:
             user_data = dict(current_user.data)
-            user_data['is_mock'] = 1
-            mock_bot = manager.get_bot(current_user.id, user_data)
-        if not mock_bot or not mock_bot.kis:
-            return jsonify({"status": "error", "message": "모의투자 KIS API 미설정 — 모의 API 키 확인"})
+            user_data['is_mock'] = 1 if is_mock else 0
+            target_bot = manager.get_bot(current_user.id, user_data)
+        if not target_bot or not target_bot.kis:
+            return jsonify({"status": "error", "message": f"{mode_label} KIS API 미설정 — API 키 확인"})
         if side == 'BUY':
-            ok = mock_bot.kis.buy_market_order(ticker, 1)
+            ok = target_bot.kis.buy_market_order(ticker, 1)
         else:
-            ok = mock_bot.kis.sell_market_order(ticker, 1)
+            ok = target_bot.kis.sell_market_order(ticker, 1)
         if ok:
-            return jsonify({"status": "success", "message": f"[모의] {ticker} 1주 {side} 주문 접수 완료"})
+            return jsonify({"status": "success", "message": f"[{mode_label}] {ticker} 1주 {side} 주문 접수 완료"})
         return jsonify({"status": "error", "message": "주문 접수 실패 — 서버 로그 확인"})
     except Exception as e:
         return jsonify({"status": "error", "message": str(e)})
