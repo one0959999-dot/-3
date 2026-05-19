@@ -188,10 +188,15 @@ document.addEventListener('DOMContentLoaded', () => {
                         totalValEl.textContent = Math.round(totalAsset).toLocaleString() + '원';
                     }
 
-                    // 수익률%는 실제 매입금액 기준으로 계산해야 개별 종목 수익률과 일치
-                    const totalPnl = (d.total_value || 0) - (d.total_purchase || 0);
-                    const costBasis = (d.total_purchase || 0) > 0 ? d.total_purchase : USER_INVESTED_CAPITAL;
-                    const pnlRt = costBasis > 0 ? (totalPnl / costBasis * 100) : 0;
+                    // 수익률%: 사용자 직접 투입한 원금(USER_INVESTED_CAPITAL) 대비
+                    // 총자산(예수금+주식평가) 기준 — 봇 수익금은 원금에 포함되지 않음
+                    const totalPnl = USER_INVESTED_CAPITAL > 0
+                        ? totalAsset - USER_INVESTED_CAPITAL
+                        : (d.total_value || 0) - (d.total_purchase || 0);
+                    const pnlBase = USER_INVESTED_CAPITAL > 0
+                        ? USER_INVESTED_CAPITAL
+                        : Math.max(d.total_purchase || 0, 1);
+                    const pnlRt = (pnlBase > 0) ? (totalPnl / pnlBase * 100) : 0;
 
                     const pnlEl = document.getElementById('total-pnl');
                     if (pnlEl) {
@@ -286,7 +291,6 @@ document.addEventListener('DOMContentLoaded', () => {
             }
         }
 
-        // 🚨 [완벽 동기화 패치] 3초 주기 상태 업데이트 시에도 요약 카드가 테이블 총액과 완벽히 일치하도록 갱신 구조 통일
         if (data.mock_total_asset !== undefined) {
             const totalValEl = document.getElementById('total-value');
             if (totalValEl) {
