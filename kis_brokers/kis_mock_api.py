@@ -216,32 +216,40 @@ class KisMockApi:
             print("[KIS 모의] Hashkey 발급에 실패하여 주문을 취소합니다.")
             return None
 
-        try:
-            res = requests.post(url, headers=self._order_headers(tr_id, hashkey), data=json.dumps(body), timeout=5)
+        for attempt in range(3):
+            try:
+                res = requests.post(url, headers=self._order_headers(tr_id, hashkey), data=json.dumps(body), timeout=5)
 
-            if res.status_code == 200:
-                data = res.json()
-                if data.get('rt_cd') == '0':
-                    odno = data['output'].get('ODNO', '-')
-                    label = '매수' if side == 'BUY' else '매도'
-                    order_type_str = '지정가(NXT)' if price > 0 else '최유리지정가(정규장)'
-                    print(f"[KIS 모의] {label} 주문 완료 [{order_type_str}] | {stock_code} {qty}주 | 주문번호: {odno}")
-                    return data
+                if res.status_code == 200:
+                    data = res.json()
+                    if data.get('rt_cd') == '0':
+                        odno = data['output'].get('ODNO', '-')
+                        label = '매수' if side == 'BUY' else '매도'
+                        order_type_str = '지정가(NXT)' if price > 0 else '최유리지정가(정규장)'
+                        print(f"[KIS 모의] {label} 주문 완료 [{order_type_str}] | {stock_code} {qty}주 | 주문번호: {odno}")
+                        return data
+                    else:
+                        msg_cd = data.get('msg_cd', '')
+                        print(f"[KIS 모의] 주문 실패: {data.get('msg1', res.text)}")
+                        if msg_cd == 'EGW00201':
+                            time.sleep(1.2)
+                            continue
+                        if msg_cd in ('EGW00123', 'EGW00121'):
+                            print("[KIS 모의] 토큰 만료 → 재발급 후 재시도")
+                            self.access_token = None
+                            self._ensure_token()
+                            continue
+                        return None
                 else:
-                    msg_cd = data.get('msg_cd', '')
-                    print(f"[KIS 모의] 주문 실패: {data.get('msg1', res.text)}")
-                    if msg_cd in ('EGW00123', 'EGW00121'):
-                        print("[KIS 모의] 토큰 만료 → 재발급 후 재시도")
-                        self.access_token = None
-                        self._ensure_token()
-                        return self._place_order(stock_code, qty, side, price)
+                    print(f"[KIS 모의] 주문 통신 오류: {res.status_code} {res.text}")
+                    if 'EGW00201' in res.text:
+                        time.sleep(1.2)
+                        continue
                     return None
-            else:
-                print(f"[KIS 모의] 주문 통신 오류: {res.status_code} {res.text}")
+            except Exception as e:
+                print(f"[KIS 모의] 주문 요청 통신 시간 초과/오류: {e}")
                 return None
-        except Exception as e:
-            print(f"[KIS 모의] 주문 요청 통신 시간 초과/오류: {e}")
-            return None
+        return None
             
     def buy_market_order(self, stock_code: str, qty: int, price: int = 0):
         if qty <= 0:
