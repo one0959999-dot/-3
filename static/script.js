@@ -163,7 +163,7 @@ document.addEventListener('DOMContentLoaded', () => {
                         totalValEl.textContent = Math.round(totalAsset).toLocaleString() + '원';
                     }
 
-                    // 🚨 [동기화 연동 패치] 총 자산에서 원금(장부 기준가)을 빼서 종합 수익금 및 수익률 정밀 롤업
+                    // 🚨 [실시간 동기화 보완] KIS 계좌에서 가져온 진짜 시세를 기준으로 실전/모의 상관없이 상단 카드를 완벽 동기화합니다.
                     const totalPnl = totalAsset - USER_INVESTED_CAPITAL;
                     const pnlRt = USER_INVESTED_CAPITAL > 0 ? (totalPnl / USER_INVESTED_CAPITAL * 100) : 0;
 
@@ -261,7 +261,7 @@ document.addEventListener('DOMContentLoaded', () => {
         }
 
         // 🚨 [완벽 동기화 패치] 3초 주기 상태 업데이트 시에도 요약 카드가 테이블 총액과 완벽히 일치하도록 갱신 구조 통일
-        if (data.mock_total_asset !== undefined && data.mock_total_asset > 0) {
+        if (data.mock_total_asset !== undefined) {
             const totalValEl = document.getElementById('total-value');
             if (totalValEl) {
                 totalValEl.textContent = Math.round(data.mock_total_asset).toLocaleString() + '원';
@@ -269,7 +269,7 @@ document.addEventListener('DOMContentLoaded', () => {
         }
         if (data.mock_pnl !== undefined && data.mock_pnl_rt !== undefined) {
             const pnlEl = document.getElementById('total-pnl');
-            if (pnlEl && data.mock_total_asset > 0) {
+            if (pnlEl) {
                 const sign = data.mock_pnl >= 0 ? '+' : '';
                 const color = data.mock_pnl > 0 ? '#f85149' : (data.mock_pnl < 0 ? '#58a6ff' : '#8b949e');
                 pnlEl.style.color = color;
