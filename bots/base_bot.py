@@ -2,11 +2,23 @@ import threading
 import time
 import schedule
 import json
+import logging
+import os
+import tempfile
 import pandas as pd
 import requests
 from bs4 import BeautifulSoup
 import urllib.parse
-from datetime import datetime
+from datetime import datetime, timezone, timedelta
+
+logger = logging.getLogger('lassi_bot')
+
+# EC2(UTC) 환경에서도 한국 장 시간을 정확히 계산하기 위해 KST(UTC+9) 고정
+_KST = timezone(timedelta(hours=9))
+
+def _now_kst():
+    """현재 시각을 한국 표준시(KST)로 반환합니다 (EC2 UTC 환경 대응)."""
+    return datetime.now(_KST).replace(tzinfo=None)
 
 from telegram_bot import TelegramNotifier
 from strategy import CorePosition, Position, get_rsi_signal, get_signal_by_strategy, REINVEST_RATIO
@@ -38,11 +50,9 @@ class BaseBot:
         self.num_satellites = 5
         self._is_mock = is_mock
         
-        # 봇의 모드에 따라 로그와 알림에 붙을 뱃지를 동적으로 결정합니다.
         self.mode_name = "모의" if is_mock else "실전"
         self.alert_icon = "🟢" if is_mock else "🔴"
-        
-        # 클래스 내부 설정 변수
+
         self.core_ticker = "003850"
         self.core_name = "보령"
         self.core_ratio = 0.30
@@ -52,7 +62,7 @@ class BaseBot:
 
         try:
             self.user_core_stocks = json.loads(core_stocks) if core_stocks else []
-        except:
+        except Exception:
             self.user_core_stocks = []
 
         self.core_positions = []
@@ -70,7 +80,6 @@ class BaseBot:
         self.telegram = None
         self.gemini = None
 
-        # 무기는 자식 클래스(Real/Mock)에서 장착합니다.
         self._init_api(kis_config)
         
         if telegram_config and telegram_config.get('token'):
@@ -80,7 +89,7 @@ class BaseBot:
             )
             
         self.cached_balance = None
-        self.ohlcv_cache = {}  
+        self.ohlcv_cache = {}
         self.lock = threading.RLock()
         self.last_asset_cost = None
         self.pnl_this_turn = 0.0
@@ -91,7 +100,6 @@ class BaseBot:
         self.live_prices = {}
         self.ws_client = None
 
-        # KIS 인증키 발급 및 웹소켓 상주 로직 전체를 비동기 백그라운드 스레드로 완전히 이관
         def _async_network_connect():
             if self.kis:
                 try:
@@ -103,7 +111,7 @@ class BaseBot:
                         if self.ws_client:
                             self.ws_client.start()
                 except Exception as net_err:
-                    print(f"⚠️ [비동기 KIS 인증망 가동 지연 알림] : {net_err}")
+                    logger.warning(f"[{self.mode_name}] WebSocket 초기 연결 실패: {net_err}")
 
         threading.Thread(target=_async_network_connect, daemon=True).start()
 
@@ -121,11 +129,22 @@ class BaseBot:
         while True:
             try:
                 if self.kis:
-                    real_balance = self.kis.get_account_balance()
+                    # 잔고 조회를 별도 스레드에서 실행해 메인 sync 루프 블록 방지
+                    result_holder = [None]
+                    def _fetch():
+                        try:
+                            result_holder[0] = self.kis.get_account_balance()
+                        except Exception as fe:
+                            logger.warning(f"[{self.mode_name}] 잔고 조회 오류: {fe}")
+                    t = threading.Thread(target=_fetch, daemon=True)
+                    t.start()
+                    t.join(timeout=15)  # 최대 15초 대기 후 포기
+
+                    real_balance = result_holder[0]
                     if real_balance:
                         self.cached_balance = real_balance
                         self._sync_internal_balances(real_balance)
-                    
+
                     if self.ws_client:
                         with self.lock:
                             current_tickers = [c.ticker for c in self.core_positions] + list(self.satellite_positions.keys())
@@ -133,15 +152,15 @@ class BaseBot:
                                 if idx_ticker not in current_tickers:
                                     current_tickers.append(idx_ticker)
 
-                        for t in current_tickers:
-                            if t not in self.ws_client.subscribed_tickers:
-                                self.ws_client.subscribe(t)
-                        for t in list(self.ws_client.subscribed_tickers):
-                            if t not in current_tickers:
-                                self.ws_client.unsubscribe(t)
+                        for t2 in current_tickers:
+                            if t2 not in self.ws_client.subscribed_tickers:
+                                self.ws_client.subscribe(t2)
+                        for t2 in list(self.ws_client.subscribed_tickers):
+                            if t2 not in current_tickers:
+                                self.ws_client.unsubscribe(t2)
             except Exception as e:
-                print(f"[{self.mode_name} _perpetual_sync_loop 에러] {e}")
-            time.sleep(10)
+                logger.error(f"[{self.mode_name}] _perpetual_sync_loop 오류: {e}", exc_info=True)
+            time.sleep(30)
 
     def _sync_internal_balances(self, real_balance):
         with self.lock:
@@ -155,10 +174,12 @@ class BaseBot:
                 pure_principal = real_cash + real_purchase
 
                 if not getattr(self, 'initial_capital_captured', False):
-                    import os
                     cash_col = "mock_initial_cash" if self._is_mock else "real_initial_cash"
-                    flag_file = f"{cash_col}_{self.user_id}_locked.flag"
-                    
+                    # EC2 읽기 전용 디렉토리 대응: /tmp 아래에 플래그 파일 생성
+                    _flag_dir = os.path.join(tempfile.gettempdir(), 'lassi_bot')
+                    os.makedirs(_flag_dir, exist_ok=True)
+                    flag_file = os.path.join(_flag_dir, f"{cash_col}_{self.user_id}_locked.flag")
+
                     if not os.path.exists(flag_file) and pure_principal > 0:
                         set_user_initial_cash(self.user_id, pure_principal, self._is_mock)
                         with open(flag_file, 'w') as f: f.write("Locked")
@@ -232,7 +253,7 @@ class BaseBot:
                             if not any(x['ticker'] == t for x in self.satellite_info):
                                 self.satellite_info.append({'ticker': t, 'name': stock_name, 'strategy_name': 'RSI(9) 30/70', 'return_pct': 0.0, 'sector': '-'})
             except Exception as e:
-                print(f"⚠️ {self.mode_name} 장부 동기화 중 오류 발생: {e}")
+                logger.error(f"[{self.mode_name}] 장부 동기화 중 오류: {e}", exc_info=True)
 
     def _init_dummy_cores(self):
         self.core_positions = []
@@ -253,11 +274,12 @@ class BaseBot:
                             for core in self.core_positions:
                                 if core.ticker == t:
                                     core.shares = q; core.avg_price = p; break
-                except Exception: pass
+                except Exception as e:
+                    logger.warning(f"[{self.mode_name}] 초기 잔고 조회 실패: {e}")
             threading.Thread(target=_async_init_balance, daemon=True).start()
 
     def _get_cached_base_ohlcv(self, ticker):
-        today_str = datetime.now().strftime('%Y-%m-%d')
+        today_str = _now_kst().strftime('%Y-%m-%d')
         with self.lock:
             if ticker in self.ohlcv_cache and self.ohlcv_cache[ticker]['date'] == today_str:
                 return self.ohlcv_cache[ticker]['df'].copy()
@@ -266,7 +288,7 @@ class BaseBot:
             if df is None or (not hasattr(df, 'columns')) or ('high' not in df.columns): return pd.DataFrame()
             if df is not None and not df.empty and 'date' in df.columns:
                 df['date'] = pd.to_datetime(df['date'])
-                df = df[df['date'].dt.date < datetime.now().date()].reset_index(drop=True)
+                df = df[df['date'].dt.date < _now_kst().date()].reset_index(drop=True)
                 with self.lock: self.ohlcv_cache[ticker] = {"date": today_str, "df": df}
                 return df.copy()
         return pd.DataFrame()
@@ -276,13 +298,13 @@ class BaseBot:
         if base_df.empty: return self.kis.get_ohlcv(ticker, "D") if self.kis else pd.DataFrame()
         realtime_data = self.kis.get_realtime_price_data(ticker) if self.kis else None
         if realtime_data:
-            today_row = pd.DataFrame([{'date': pd.to_datetime(datetime.now().date()), 'open': realtime_data['open'], 'high': realtime_data['high'], 'low': realtime_data['low'], 'close': realtime_data['close'], 'volume': realtime_data['volume']}])
+            today_row = pd.DataFrame([{'date': pd.to_datetime(_now_kst().date()), 'open': realtime_data['open'], 'high': realtime_data['high'], 'low': realtime_data['low'], 'close': realtime_data['close'], 'volume': realtime_data['volume']}])
         else:
-            today_row = pd.DataFrame([{'date': pd.to_datetime(datetime.now().date()), 'open': float(current_price), 'high': float(current_price), 'low': float(current_price), 'close': float(current_price), 'volume': 0.0}])
+            today_row = pd.DataFrame([{'date': pd.to_datetime(_now_kst().date()), 'open': float(current_price), 'high': float(current_price), 'low': float(current_price), 'close': float(current_price), 'volume': 0.0}])
         return pd.concat([base_df, today_row], ignore_index=True)
 
     def add_log(self, msg):
-        t = datetime.now().strftime("%H:%M:%S")
+        t = _now_kst().strftime("%H:%M:%S")
         self.logs.append({"time": t, "message": msg})
         print(f"[{t}] {msg}")
         if len(self.logs) > 100: self.logs.pop(0)
@@ -295,7 +317,7 @@ class BaseBot:
     def reload_api_keys(self, kis_config, telegram_config, gemini_config, core_stocks):
         self.cached_balance = None
         try: self.user_core_stocks = json.loads(core_stocks) if core_stocks else []
-        except: self.user_core_stocks = []
+        except Exception: self.user_core_stocks = []
         
         self._init_api(kis_config)
         
@@ -315,7 +337,6 @@ class BaseBot:
         self.satellite_strategies = {c['ticker']: c['strategy_name'] for c in self.satellite_info}
         log_lines = [f"  {i+1}. {c['name']} ({c['ticker']}) → [{c['strategy_name']}] {c['return_pct']:+.1f}%" for i, c in enumerate(self.satellite_info)]
         for line in log_lines: self.add_log(f"✅ {line.strip()}")
-        # 🟢 [문법 오류 수정 완료] 깨진 줄바꿈을 단일 라인 문자열 서식으로 안전하게 복구했습니다.
         self._send_telegram(f"🔍 {self.mode_name} 위성 종목 선정!\n" + "\n".join(log_lines))
 
         core_budget = total_cash * self.core_ratio
@@ -359,7 +380,7 @@ class BaseBot:
                 "daily_pnl": self.daily_pnl, "daily_report": self.daily_report,
             }
             save_portfolio_state(self.user_id, state, self._is_mock)
-        except Exception as e: print(f"⚠️ 상태 저장 실패: {e}")
+        except Exception as e: logger.error(f"[{self.mode_name}] 상태 저장 실패: {e}", exc_info=True)
 
     def _restore_state(self):
         try:
@@ -387,11 +408,13 @@ class BaseBot:
             self.daily_pnl = state.get("daily_pnl", {})
             self.daily_report = state.get("daily_report", None)
             return True
-        except Exception: return False
+        except Exception as e:
+            logger.error(f"[{self.mode_name}] 상태 복구 실패: {e}", exc_info=True)
+            return False
 
     def trading_job(self):
         if not self.core_positions: return
-        now = datetime.now()
+        now = _now_kst()  # EC2(UTC) 환경에서도 KST 기준으로 장 시간 판단
         if now.weekday() >= 5: return
         current_time_str = now.strftime('%H:%M')
         is_golden_hours = ("09:01" <= current_time_str <= "19:50")
@@ -444,7 +467,8 @@ class BaseBot:
                         for ticker, pos in safe_satellite_items:
                             if pos.shares > 0: self.kis.sell_market_order(ticker, pos.shares); self.add_log(f"🔥 {self.mode_name} 위성 {pos.name} 청산")
                         self.is_crisis_mode = True; return
-            except Exception: pass
+            except Exception as e:
+                logger.error(f"[{self.mode_name}] 서킷브레이커 잔고 조회 오류: {e}", exc_info=True)
 
         with self.lock: safe_core_positions = list(self.core_positions)
         for core in safe_core_positions:
@@ -466,7 +490,8 @@ class BaseBot:
                     if sellable > 0 and self.kis and self.kis.sell_market_order(c_tk, sellable):
                         with self.lock: core.last_order_time = time.time(); core.status = "체결 대기 ⏳"; self.pnl_this_turn += (cp - core.avg_price)*sellable
                         self.add_log(f"💎 {c_nm} 매도 완료 | {sellable}주 @ {cp:,}원"); self._send_telegram(f"💎 {c_nm} 매도")
-            except Exception: pass
+            except Exception as e:
+                logger.error(f"[{self.mode_name}] 코어 매매 오류 ({c_tk}): {e}", exc_info=True)
             time.sleep(0.2)
 
         with self.lock: trading_sat_items = list(self.satellite_positions.items())
@@ -484,10 +509,13 @@ class BaseBot:
                 sig, _, ind_val = get_signal_by_strategy(ticker, st_nm, kis_api=self.kis, df=ex_df)
                 if price <= 0: continue
 
-                tr = pd.concat([ex_df['high']-ex_df['low'], (ex_df['high']-ex_df['close'].shift(1)).abs(), (ex_df['low']-ex_df['close'].shift(1)).abs()], axis=1).max(axis=1)
-                atr_14 = tr.rolling(14, min_periods=1).mean().iloc[-1] if not tr.empty else p_avg*0.02
-                
-                cache_key = f"{ticker}_{datetime.now().strftime('%Y-%m-%d')}"
+                if ex_df.empty or not all(c in ex_df.columns for c in ['high', 'low', 'close']):
+                    atr_14 = p_avg * 0.02
+                else:
+                    tr = pd.concat([ex_df['high']-ex_df['low'], (ex_df['high']-ex_df['close'].shift(1)).abs(), (ex_df['low']-ex_df['close'].shift(1)).abs()], axis=1).max(axis=1)
+                    atr_14 = tr.rolling(14, min_periods=1).mean().iloc[-1] if not tr.empty else p_avg * 0.02
+
+                cache_key = f"{ticker}_{_now_kst().strftime('%Y-%m-%d')}"
                 with self.lock: has_cache = cache_key in self.fundamental_cache
                 if has_cache: 
                     with self.lock: fin_data = self.fundamental_cache[cache_key]
@@ -530,8 +558,6 @@ class BaseBot:
                         else:
                             pos.status = "AI 거절 🛑"
                             self._send_telegram(f"🛑 [{p_nm}] 매수 거절 ➡️ 즉시 대체 종목 탐색\n👉 {ai_reason}")
-                            
-                            # 🟢 [추가된 로직] AI가 거절하면 백그라운드에서 즉시 위성 리스크리닝(종목 교체) 가동
                             threading.Thread(target=self._rescreen_satellites, daemon=True).start()
                     else:
                         qty = int((p_cash * 0.98) // price)
@@ -564,14 +590,15 @@ class BaseBot:
                             log_trade_journal(self.user_id, ticker, p_nm, 'SELL', price, st_nm, "알고리즘 직통", profit=profit)
                             self._send_telegram(f"📉 [{p_nm}] 알고리즘 매도 | 이익: {profit:+,.0f}원")
                             with self.lock: self.pnl_this_turn += profit
-            except Exception: pass
+            except Exception as e:
+                logger.error(f"[{self.mode_name}] 위성 매매 오류 ({ticker}): {e}", exc_info=True)
             time.sleep(0.2)
         self._save_state()
 
     def _rescreen_satellites(self):
         try:
-            now = datetime.now()
-            if not ("09:00" <= now.strftime('%H:%M') <= "19:50") or now.weekday() >= 5: return 
+            now = _now_kst()
+            if not ("09:00" <= now.strftime('%H:%M') <= "19:50") or now.weekday() >= 5: return
             self.add_log(f"🦅 {self.mode_name} 위성 실시간 교체 탐색 중...")
             keep_tickers = set(); freed_cash = 0
             with self.lock: sat_items = list(self.satellite_positions.items())
@@ -615,16 +642,18 @@ class BaseBot:
 
             self.last_screen_date = now.date()
             self._save_state()
-        except Exception: pass
+        except Exception as e:
+            logger.error(f"[{self.mode_name}] 위성 재스크리닝 오류: {e}", exc_info=True)
 
     def analyze_continuous_market_flow(self):
         if not hasattr(self, 'market_flow_history'): self.market_flow_history = []
-        today = datetime.now().strftime('%Y-%m-%d')
+        today = _now_kst().strftime('%Y-%m-%d')
         if getattr(self, 'flow_history_date', '') != today: self.market_flow_history = []; self.flow_history_date = today
 
         try:
-            now_time_str = datetime.now().strftime('%H:%M')
-            if not ("09:00" <= now_time_str <= "15:30") or datetime.now().weekday() >= 5: return
+            _now = _now_kst()
+            now_time_str = _now.strftime('%H:%M')
+            if not ("09:00" <= now_time_str <= "15:30") or _now.weekday() >= 5: return
 
             market_data = []
             if self.kis:
@@ -638,7 +667,8 @@ class BaseBot:
                 analysis = self.gemini.chat(prompt, stock_analysis_context="마크다운 없이 평문 2줄로.")
                 self.current_ai_market_view = analysis
                 self.market_flow_history.append(f"[{now_time_str}] {analysis}")
-        except Exception: pass
+        except Exception as e:
+            logger.warning(f"[{self.mode_name}] 장중 시장 흐름 분석 오류: {e}")
 
     def generate_daily_report(self, time_slot="11:00"):
         try:
@@ -652,20 +682,23 @@ class BaseBot:
             
             report_data = generate_daily_market_report(gemini_client=self.gemini, verbose=False, news_context=combined_context)
             if report_data:
-                today_str = datetime.today().strftime('%Y-%m-%d')
+                today_str = _now_kst().strftime('%Y-%m-%d')
                 if not isinstance(self.daily_report, dict) or self.daily_report.get('date') != today_str: self.daily_report = {'date': today_str, '11:00': None, '15:30': None, '20:00': None}
                 content = report_data.get('report_markdown') if isinstance(report_data, dict) else str(report_data)
                 self.daily_report[time_slot] = content
                 self._save_state()
                 self._send_telegram(f"📝 [리포트 발간]\n\n{content[:4000]}")
-        except Exception: pass
+        except Exception as e:
+            logger.error(f"[{self.mode_name}] 일일 리포트 생성 오류: {e}", exc_info=True)
 
     def _weekly_self_reflection(self):
         from database import get_db_connection
         try:
             conn = get_db_connection()
             rows = conn.execute('SELECT date(created_at) as date, stock_name, action, price, ai_reason, profit FROM trade_journal WHERE user_id = ? ORDER BY created_at DESC LIMIT 30', (self.user_id,)).fetchall()
-        except Exception: rows = []
+        except Exception as e:
+            logger.warning(f"[{self.mode_name}] 주간 반성 데이터 조회 실패: {e}")
+            rows = []
         finally: conn.close()
         if not rows: return
 
@@ -680,21 +713,37 @@ class BaseBot:
 
     def _run_loop(self, total_cash):
         self.scheduler = schedule.Scheduler()
-        if not self._restore_state(): self.initialize_portfolio(total_cash)
+
+        # initialize_portfolio 실패 시 스레드가 죽지 않도록 보호
+        try:
+            if not self._restore_state():
+                self.initialize_portfolio(total_cash)
+        except Exception as e:
+            logger.error(f"[{self.mode_name}] 포트폴리오 초기화 실패 (기본 코어로 계속 진행): {e}", exc_info=True)
+
+        # schedule 라이브러리는 시스템 시계(UTC)를 사용하므로 모든 시간을 UTC로 지정
+        # KST = UTC+9 → UTC = KST - 9h
         self.scheduler.every(5).minutes.do(self.trading_job)
         self.scheduler.every(30).minutes.do(lambda: self._run_threaded(self.analyze_continuous_market_flow))
-        self.scheduler.every().day.at("11:00").do(lambda: self._run_threaded(lambda: self.generate_daily_report("11:00")))
-        self.scheduler.every().day.at("15:30").do(lambda: self._run_threaded(lambda: self.generate_daily_report("15:30")))
-        self.scheduler.every().day.at("20:00").do(lambda: self._run_threaded(lambda: self.generate_daily_report("20:00")))
-        self.scheduler.every().day.at("09:05").do(lambda: self._run_threaded(self._rescreen_satellites))
+        self.scheduler.every().day.at("02:00").do(lambda: self._run_threaded(lambda: self.generate_daily_report("11:00")))  # 11:00 KST
+        self.scheduler.every().day.at("06:30").do(lambda: self._run_threaded(lambda: self.generate_daily_report("15:30")))  # 15:30 KST
+        self.scheduler.every().day.at("11:00").do(lambda: self._run_threaded(lambda: self.generate_daily_report("20:00")))  # 20:00 KST
+        self.scheduler.every().day.at("00:05").do(lambda: self._run_threaded(self._rescreen_satellites))                    # 09:05 KST
         self.scheduler.every(1).hours.do(lambda: self._run_threaded(self._rescreen_satellites))
-        self.scheduler.every().friday.at("16:00").do(lambda: self._run_threaded(self._weekly_self_reflection))
-        self.scheduler.every().day.at("08:00").do(lambda: self._run_threaded(self.refresh_websocket))
-        self.scheduler.every().saturday.at("02:00").do(lambda: self._run_threaded(self.run_lstm_training))
-        self.trading_job()  
-        
+        self.scheduler.every().friday.at("07:00").do(lambda: self._run_threaded(self._weekly_self_reflection))              # 금요일 16:00 KST
+        self.scheduler.every().day.at("23:00").do(lambda: self._run_threaded(self.refresh_websocket))                       # 08:00 KST
+        self.scheduler.every().friday.at("17:00").do(lambda: self._run_threaded(self.run_lstm_training))                    # 토요일 02:00 KST → 금요일 17:00 UTC
+
+        try:
+            self.trading_job()
+        except Exception as e:
+            logger.error(f"[{self.mode_name}] 초기 trading_job 오류: {e}", exc_info=True)
+
         while self.is_running:
-            self.scheduler.run_pending()
+            try:
+                self.scheduler.run_pending()
+            except Exception as e:
+                logger.error(f"[{self.mode_name}] 스케줄러 오류: {e}", exc_info=True)
             time.sleep(1)
     
     def refresh_websocket(self):
@@ -702,7 +751,7 @@ class BaseBot:
             if self.kis:
                 if self.ws_client and self.ws_client.ws:
                     try: self.ws_client.ws.close()
-                    except: pass
+                    except Exception: pass
                 app_key = self.kis.get_approval_key()
                 if app_key:
                     old_subscribed = list(self.ws_client.subscribed_tickers) if self.ws_client else []
@@ -711,7 +760,8 @@ class BaseBot:
                         self.ws_client.start()
                         time.sleep(3.0)
                         for t in old_subscribed: self.ws_client.subscribe(t)
-        except Exception: pass
+        except Exception as e:
+            logger.error(f"[{self.mode_name}] WebSocket 재연결 오류: {e}", exc_info=True)
 
     def run_lstm_training(self):
         try:

@@ -1,3 +1,4 @@
+import time
 import requests
 import json
 import pandas as pd
@@ -282,7 +283,6 @@ class KisRealApi:
             "CTX_AREA_NK100": ""
         }
         
-        # 🚨 [실전투자 서버 지연 극복 엔진]
         for retry in range(2):
             try:
                 res = requests.get(url, headers=headers, params=params, timeout=3.5)
@@ -338,7 +338,7 @@ class KisRealApi:
                     print(f"[KIS 실전] 잔고 조회 통신 오류: status={res.status_code}, text={res.text}")
                 return None
             except (requests.exceptions.Timeout, requests.exceptions.ConnectionError) as e:
-                print(f"⚠️ [KIS 실전 잔고조회 타임아웃 방어] 빠른 실패 처리 중... ({e})")
+                print(f"[KIS 실전] 잔고조회 타임아웃: {e}")
                 return None
         return None
 
@@ -516,12 +516,8 @@ class KisRealApi:
             pass
         return " | ".join(macro_info) if macro_info else "시장 지수 실시간 조회 불가"
 
-    # =========================================================================
-    # 🚨 [여기서부터 신규 추가된 미체결 관리 및 자동 취소 방어 엔진입니다] 🚨
-    # =========================================================================
-
     def get_unfilled_orders(self):
-        """[신규 추가] 미체결 주문 내역 조회 (실전투자)"""
+        """미체결 주문 내역 조회 (실전투자)"""
         if not self._ensure_token():
             return []
             
@@ -574,7 +570,7 @@ class KisRealApi:
             return []
 
     def cancel_order(self, org_order_no: str, stock_code: str, rem_qty: int):
-        """[신규 추가] 미체결 주문 취소 송신 (실전투자)"""
+        """미체결 주문 취소 (실전투자)"""
         if not self._ensure_token():
             return None
 
@@ -615,7 +611,7 @@ class KisRealApi:
             return None
 
     def cancel_all_unfilled_orders(self):
-        """[신규 추가] 계좌 내 모든 미체결 주문 일괄 취소 (실전투자)"""
+        """계좌 내 모든 미체결 주문 일괄 취소 (실전투자)"""
         unfilled_orders = self.get_unfilled_orders()
         if not unfilled_orders:
             return True
@@ -626,8 +622,7 @@ class KisRealApi:
             res = self.cancel_order(order['order_no'], order['ticker'], order['rem_qty'])
             if res and res.get('rt_cd') == '0':
                 success_count += 1
-            import time
-            time.sleep(0.2) # API Rate Limit 방어를 위한 지연
+            time.sleep(0.2)
             
         print(f"[KIS 실전] 미체결 일괄 취소 완료 ({success_count}/{len(unfilled_orders)}건)")
         return success_count == len(unfilled_orders)

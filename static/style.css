@@ -1147,6 +1147,32 @@ header {
     }
 }
 
+/* ── 카드 값 업데이트 애니메이션 ── */
+#total-value, #total-pnl {
+    transition: opacity 0.2s ease;
+}
+
+/* ── 모드 전환 시 배경 부드럽게 ── */
+body {
+    transition: background-color 0.4s ease;
+}
+
+.glass-card, .info-card {
+    transition: background 0.4s ease, border-color 0.25s, box-shadow 0.4s ease;
+}
+
+/* ── 버튼 비활성화 시 시각적 피드백 ── */
+.btn-toggle:disabled {
+    opacity: 0.6;
+    cursor: wait;
+    transform: none !important;
+}
+
+.switch input:disabled + .slider {
+    opacity: 0.5;
+    cursor: wait;
+}
+
 /* ==========================================================================
    [테마 클래스] 모의투자 모드 격리 패치 (모든 배경 & 모든 글자 완전 개별 독립 적용)
    ========================================================================== */

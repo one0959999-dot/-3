@@ -1,13 +1,25 @@
+import logging
+import os
+import json
+import threading
+from datetime import datetime, timedelta
+
 from flask import Flask, render_template, jsonify, request, redirect, url_for, flash, session
 from flask_login import LoginManager, UserMixin, login_user, logout_user, login_required, current_user
 
-# 새로 분리된 중앙 AI 관제탑을 다이렉트로 임포트합니다.
-from bots.bot_manager import manager 
+from bots.bot_manager import manager
 from database import get_db_connection, verify_user, add_user, init_db, update_user_keys
-import os
-import json
-from datetime import datetime, timedelta
-import threading
+
+# ── 통합 로깅 설정 (파일 + 콘솔) ──
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s %(levelname)s %(name)s: %(message)s',
+    handlers=[
+        logging.FileHandler('lassi_bot.log', encoding='utf-8'),
+        logging.StreamHandler()
+    ]
+)
+logger = logging.getLogger('lassi_bot')
 
 app = Flask(__name__)
 
@@ -51,13 +63,7 @@ def get_current_bot():
 def index():
     user_data = current_user.data
     gemini_enabled = bool(user_data.get('gemini_api_key'))
-    
-    # [프리워밍 개선] 사용자가 메인 화면에 진입하는 즉시 실전 봇과 모의 봇을 동시에 모두 선제적으로 가동합니다.
-    mock_data = {**dict(user_data), 'is_mock': 1}
-    real_data = {**dict(user_data), 'is_mock': 0}
-    manager.get_bot(current_user.id, mock_data)
-    manager.get_bot(current_user.id, real_data)
-    
+    manager.get_bot(current_user.id, user_data)
     return render_template('index.html', user=current_user, gemini_enabled=gemini_enabled)
 
 @app.route('/login', methods=['GET', 'POST'])
@@ -146,7 +152,6 @@ def kis_balance():
         if bot.cached_balance:
             return jsonify({"status": "success", "data": patch_balance(bot.cached_balance)})
         else:
-            # ▼ KIS 직접 호출 코드를 제거하고, 즉시 빈 데이터 반환 (웹 서버 먹통 완벽 차단)
             return jsonify({
                 "status": "success", 
                 "data": {
@@ -371,7 +376,10 @@ def set_mode():
 def set_satellites_count():
     """위성 종목 개수 변경 설정을 저장합니다."""
     data = request.json
-    count = int(data.get('count', 5))
+    try:
+        count = int(data.get('count', 5))
+    except (TypeError, ValueError):
+        count = 5
     
     bot = get_current_bot()
     if bot:
@@ -473,6 +481,4 @@ def search_stock():
 
 if __name__ == '__main__':
     init_db()
-    # 🚨 [연결성 버그 픽스] threaded=True 커스텀 속성을 부여하여 
-    # 백엔드 인증망 작업 시 서버 연동 프로세스가 마비되는 현상을 완벽 차단합니다!
     app.run(host='0.0.0.0', port=5000, debug=False, use_reloader=False, threaded=True)
