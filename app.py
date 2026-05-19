@@ -461,22 +461,55 @@ def search_stock():
     query = request.args.get('q', '').strip()
     if not query:
         return jsonify({"results": []})
-        
+
+    # 1순위: 네이버 Finance 자동완성 (키 불필요, 빠름)
+    try:
+        import requests as _req
+        res = _req.get(
+            "https://ac.finance.naver.com/ac",
+            params={"q": query, "r_format": "json", "r_enc": "utf-8", "r_unicode": "1", "t_kwd": "expr"},
+            headers={"User-Agent": "Mozilla/5.0", "Referer": "https://finance.naver.com/"},
+            timeout=4
+        )
+        if res.status_code == 200:
+            data = res.json()
+            results = []
+            for group in data.get("items", []):
+                if not isinstance(group, list):
+                    continue
+                for item in group:
+                    if len(item) >= 2 and isinstance(item[1], str) and item[1].isdigit() and len(item[1]) == 6:
+                        results.append({"ticker": item[1], "name": item[0]})
+            if results:
+                return jsonify({"results": results[:15]})
+    except Exception as e:
+        logger.warning(f"네이버 종목검색 실패: {e}")
+
+    # 2순위: KIS 실전 API 검색 (실전 키가 있을 때)
     try:
         bot = get_current_bot()
-        
         if bot and bot.kis:
             results = bot.kis.search_stock_name(query)
-        else:
-            from kis_brokers.kis_real_api import KisRealApi
-            temp_kis = KisRealApi("", "", "") 
-            results = temp_kis.search_stock_name(query)
-            
-        return jsonify({"results": results})
-            
+            if results:
+                return jsonify({"results": results})
     except Exception as e:
-        print(f"⚠️ 코어 종목 실시간 검색 중 예외 발생: {e}")
-        
+        logger.warning(f"KIS 종목검색 실패: {e}")
+
+    # 3순위: pykrx로 섹터 종목 풀에서 이름 매칭
+    try:
+        from pykrx import stock as krx
+        from stock_screener import SECTOR_STOCKS
+        all_tickers = list(dict.fromkeys(t for tickers in SECTOR_STOCKS.values() for t in tickers))
+        results = []
+        for ticker in all_tickers:
+            name = krx.get_market_ticker_name(ticker)
+            if name and query in name:
+                results.append({"ticker": ticker, "name": name})
+        if results:
+            return jsonify({"results": results[:15]})
+    except Exception as e:
+        logger.warning(f"pykrx 종목검색 실패: {e}")
+
     return jsonify({"results": []})
 
 if __name__ == '__main__':
