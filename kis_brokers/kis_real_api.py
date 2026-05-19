@@ -217,7 +217,7 @@ class KisRealApi:
         # Hashkey must cover the exact body that will be POSTed
         hashkey = self.get_hashkey(body)
 
-        print(f"[KIS 실전 DEBUG] KST={kst_now.strftime('%H:%M')}, is_nxt={is_nxt}, tr_id={tr_id}, ord_dvsn={ord_dvsn}, body_keys={list(body.keys())}")
+        print(f"[KIS 실전 DEBUG] KST={kst_now.strftime('%H:%M')}, is_nxt={is_nxt}, tr_id={tr_id}, ord_dvsn={ord_dvsn}, body={body}, hashkey={'OK' if hashkey else 'NONE'}")
 
         if not hashkey:
             print("[KIS 실전] Hashkey 발급에 실패하여 주문을 취소합니다.")
@@ -240,7 +240,7 @@ class KisRealApi:
                         return data
                     else:
                         msg_cd = data.get('msg_cd', '')
-                        print(f"[KIS 실전] 주문 실패: {data.get('msg1', res.text)}")
+                        print(f"[KIS 실전] 주문 실패: {data.get('msg1', res.text)} | rt_cd={data.get('rt_cd')} msg_cd={data.get('msg_cd')} full={data}")
                         if msg_cd == 'EGW00201':
                             time.sleep(1.2)
                             continue
