@@ -176,8 +176,14 @@ class GeminiApi:
         except Exception as e:
             err_msg = str(e)
             if "API Key not found" in err_msg or "API_KEY_INVALID" in err_msg:
-                return "🔑 **라씨 AI 안내**:\n입력된 Gemini API 키가 올바르지 않거나 등록되지 않았습니다. 우측 상단 **[계좌 설정]**에서 `AIzaSy...`로 시작하는 올바른 구글 API 키를 입력 후 저장해 주세요."
-            return f"⚠️ 채팅 오류: {err_msg}"
+                return "🔑 Gemini API 키가 올바르지 않습니다. [계좌 설정]에서 키를 확인해 주세요."
+            if "503" in err_msg or "UNAVAILABLE" in err_msg or "high demand" in err_msg:
+                return "⏳ Gemini 서버가 일시적으로 과부하 상태입니다. 잠시 후 다시 질문해 주세요."
+            if "429" in err_msg or "quota" in err_msg.lower() or "RESOURCE_EXHAUSTED" in err_msg:
+                return "⏳ API 호출 한도에 도달했습니다. 잠시 후 다시 시도해 주세요."
+            if "400" in err_msg or "INVALID_ARGUMENT" in err_msg:
+                return "⚠️ 요청 형식 오류가 발생했습니다. 대화를 초기화 후 다시 시도해 주세요."
+            return "⚠️ AI 응답 중 오류가 발생했습니다. 잠시 후 다시 시도해 주세요."
 
     def analyze_market(self, market_data_text):
         """시장 데이터 분석 리포트 생성"""
