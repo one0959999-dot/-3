@@ -304,7 +304,8 @@ def calc_bb(s, p=20, k=2):
     mid = sma(s, p); sd = s.rolling(p).std()
     return mid + k*sd, mid, mid - k*sd
 
-def calc_stoch(h, l, c, kp=14, dp=3):
+def calc_stoch(h, l, c, kp=21, dp=5):
+    # %K 기간 14→21, %D 3→5: 신호 과다 발생(150일에 60회) 방지
     lo = l.rolling(kp).min(); hi = h.rolling(kp).max()
     k  = 100 * (c - lo) / (hi - lo + 1e-10)
     return k, k.rolling(dp).mean()
@@ -402,6 +403,9 @@ def find_best_strategy(df):
         try:
             full_sig = fn(df)           # 전체 기간으로 신호 생성 (워밍업 포함)
             oos_sig  = full_sig.iloc[split:]
+            # 과신호 전략 제외: OOS 기간(40일 내외)에 매수 신호 15개 초과 시 수수료 과다 예상
+            if (oos_sig == 1).sum() > 15:
+                continue
             ret = backtest(oos_df, oos_sig)
             if ret > best_ret:
                 best_ret, best_name = ret, name

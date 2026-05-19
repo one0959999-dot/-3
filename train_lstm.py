@@ -8,6 +8,7 @@ from sklearn.preprocessing import MinMaxScaler
 from pykrx import stock
 from datetime import datetime, timedelta
 import os
+import pickle
 import time
 
 # 이전 단계에서 만든 딥러닝 모델 구조 불러오기
@@ -111,7 +112,13 @@ for epoch in range(EPOCHS):
     if (epoch+1) % 5 == 0:
         print(f" 🎯 AI 학습 주기 [{epoch+1}/{EPOCHS}] 종합 손실도(Loss): {epoch_loss/len(dataloader):.4f}")
 
-# 4. 자율 진화된 최종 가중치 뇌 파일 저장
-model_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "stock_lstm_model.pth")
+# 4. 모델 가중치 + 스케일러 저장 (예측 시 동일한 정규화 범위 사용하기 위해)
+base_dir = os.path.dirname(os.path.abspath(__file__))
+model_path = os.path.join(base_dir, "stock_lstm_model.pth")
+scaler_path = os.path.join(base_dir, "stock_scaler.pkl")
+
 torch.save(model.state_dict(), model_path)
-print(f"🎉 [대성공] 시장 주도주 200개의 혼이 담긴 신규 .pth 모델 교체 완료! 경로: {model_path}")
+with open(scaler_path, 'wb') as f:
+    pickle.dump(scaler, f)
+print(f"🎉 [대성공] 모델 저장 완료! 경로: {model_path}")
+print(f"📦 스케일러 저장 완료! 경로: {scaler_path}")
