@@ -169,10 +169,7 @@ class KisMockApi:
         if not self._ensure_token():
             return None
 
-        if side == 'BUY':
-            tr_id = "VTTC0802U"
-        else:
-            tr_id = "VTTC0801U"
+        tr_id = "VTTC0012U" if side == 'BUY' else "VTTC0011U"
 
         acnt_no   = self.account_no[:8]
         acnt_prdt = self.account_no[8:] if len(self.account_no) > 8 else "01"

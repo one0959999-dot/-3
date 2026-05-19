@@ -174,23 +174,14 @@ class KisRealApi:
         # ATS/NXT session: 15:30–19:50 KST
         is_nxt = (15 * 60 + 30) <= kst_time < (19 * 60 + 50)
 
-        # NXT session still uses the same TR-IDs; EXCG_ID_DVSN_CD="02" routes to NXT exchange
-        tr_id = "TTTC0802U" if side == 'BUY' else "TTTC0801U"
+        # New TR-IDs per KIS docs (old 0802U/0801U may be blocked without notice)
+        tr_id = "TTTC0012U" if side == 'BUY' else "TTTC0011U"
 
         acnt_no   = self.account_no[:8]
         acnt_prdt = self.account_no[8:] if len(self.account_no) > 8 else "01"
 
-        if is_nxt and price == 0:
-            # NXT only supports limit orders (ORD_DVSN=00); fetch current price
-            fetched = self.get_current_price(stock_code)
-            if fetched:
-                price = fetched
-                print(f"[KIS 실전] NXT 지정가 주문용 현재가 조회: {price}원")
-            else:
-                print("[KIS 실전] NXT 현재가 조회 실패 — 주문 취소")
-                return None
-
-        ord_dvsn = "00" if price > 0 else "03"  # NXT always enters with price>0
+        # NXT supports ORD_DVSN=03 (최유리지정가) — no price fetch needed
+        ord_dvsn = "00" if price > 0 else "03"
 
         if price > 0:
             p = int(price)
@@ -224,7 +215,7 @@ class KisRealApi:
             "ORD_UNPR":       ord_unpr,
         }
         if is_nxt:
-            body["EXCG_ID_DVSN_CD"] = "02"
+            body["EXCG_ID_DVSN_CD"] = "NXT"
             hashkey = None  # hashkey API doesn't support EXCG_ID_DVSN_CD
         else:
             hashkey = self.get_hashkey(body)
