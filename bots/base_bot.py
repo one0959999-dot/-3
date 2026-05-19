@@ -412,6 +412,39 @@ class BaseBot:
             logger.error(f"[{self.mode_name}] 상태 복구 실패: {e}", exc_info=True)
             return False
 
+    def _check_etf_market_positive(self) -> bool:
+        """시장 대표 ETF(KOSPI200·KOSDAQ150) 전일 대비율이 모두 -1% 이상이면 매수 허용."""
+        if not self.kis:
+            return True
+        # 모의투자는 ETF API 미지원 → 항상 허용
+        if getattr(self, '_is_mock', False):
+            return True
+        try:
+            threshold = -1.0
+            for etf_code, _ in self.market_indices:
+                info = self.kis.get_etf_price(etf_code)
+                if info and info.get("prdy_ctrt", 0) < threshold:
+                    return False
+            return True
+        except Exception:
+            return True  # 조회 실패 시 매수 차단하지 않음
+
+    def _check_minute_trend_up(self, ticker: str) -> bool:
+        """최근 5개 분봉 종가 기울기가 양수(상승 추세)이면 True."""
+        if not self.kis:
+            return True
+        try:
+            candles = self.kis.get_minute_candles(ticker, count=5)
+            if len(candles) < 3:
+                return True  # 데이터 부족 시 차단하지 않음
+            closes = [c["close"] for c in candles if c["close"] > 0]
+            if len(closes) < 3:
+                return True
+            # 단순 선형 기울기: 마지막 값이 첫 값보다 높으면 상승
+            return closes[-1] >= closes[0]
+        except Exception:
+            return True
+
     def trading_job(self):
         if not self.core_positions: return
         now = _now_kst()  # EC2(UTC) 환경에서도 KST 기준으로 장 시간 판단
@@ -546,6 +579,14 @@ class BaseBot:
                         continue
 
                 if sig == 'BUY' and p_sh == 0 and is_cd_passed and is_golden_hours:
+                    if not self._check_etf_market_positive():
+                        pos.status = "시장 약세 ⏸"
+                        pos.status_msg = "ETF 지수 -1% 이하, 매수 보류"
+                        continue
+                    if not self._check_minute_trend_up(ticker):
+                        pos.status = "추세 하락 📉"
+                        pos.status_msg = "최근 5분봉 하락 추세, 매수 보류"
+                        continue
                     if self.gemini:
                         pos.status = "AI 심사 중 🤖"
                         decision, ai_reason = self.gemini.ai_approve_trade(sig, p_nm, ticker, price, st_nm, ind_val, self.hot_sectors, get_recent_trades(self.user_id, ticker), load_ai_rules(self.user_id) + "\n" + getattr(self, 'current_ai_market_view', ''))

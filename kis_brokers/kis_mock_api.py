@@ -744,3 +744,98 @@ class KisMockApi:
         except Exception as e:
             print(f"[KIS 모의] 매수가능조회 오류: {e}")
             return 0
+
+    def get_orderbook(self, stock_code: str, market: str = "J"):
+        """주식현재가 호가_예상체결 조회 — askp1(최우선 매도호가), bidp1(최우선 매수호가) 반환"""
+        if not self._ensure_token():
+            return None
+
+        headers = {
+            "content-type": "application/json; charset=utf-8",
+            "authorization": f"Bearer {self.access_token}",
+            "appkey": self.app_key,
+            "appsecret": self.app_secret,
+            "tr_id": "FHKST01010200",
+            "custtype": "P",
+        }
+        params = {
+            "FID_COND_MRKT_DIV_CODE": market,
+            "FID_INPUT_ISCD": stock_code,
+        }
+
+        try:
+            res = requests.get(
+                f"{self.base_url}/uapi/domestic-stock/v1/quotations/inquire-asking-price-exp-ccn",
+                headers=headers, params=params, timeout=5,
+            )
+            if res.status_code == 200:
+                data = res.json()
+                if data.get("rt_cd") == "0":
+                    o = data.get("output1", {})
+                    return {
+                        "askp1": int(o.get("askp1", 0) or 0),
+                        "bidp1": int(o.get("bidp1", 0) or 0),
+                        "askp_rsqn1": int(o.get("askp_rsqn1", 0) or 0),
+                        "bidp_rsqn1": int(o.get("bidp_rsqn1", 0) or 0),
+                    }
+            return None
+        except Exception as e:
+            print(f"[KIS 모의] 호가조회 오류: {e}")
+            return None
+
+    def get_minute_candles(self, stock_code: str, count: int = 10, market: str = "J"):
+        """주식당일분봉조회 — 최근 count개 분봉 반환 (당일만 제공, 1회 최대 30개)"""
+        if not self._ensure_token():
+            return []
+
+        kst = datetime.now(tz=timezone(timedelta(hours=9)))
+        hour_str = kst.strftime("%H%M%S")
+
+        headers = {
+            "content-type": "application/json; charset=utf-8",
+            "authorization": f"Bearer {self.access_token}",
+            "appkey": self.app_key,
+            "appsecret": self.app_secret,
+            "tr_id": "FHKST03010200",
+            "custtype": "P",
+        }
+        params = {
+            "FID_COND_MRKT_DIV_CODE": market,
+            "FID_INPUT_ISCD": stock_code,
+            "FID_INPUT_HOUR_1": hour_str,
+            "FID_PW_DATA_INCU_YN": "Y",
+            "FID_ETC_CLS_CODE": "",
+        }
+
+        try:
+            res = requests.get(
+                f"{self.base_url}/uapi/domestic-stock/v1/quotations/inquire-time-itemchartprice",
+                headers=headers, params=params, timeout=5,
+            )
+            if res.status_code == 200:
+                data = res.json()
+                if data.get("rt_cd") == "0":
+                    output2 = data.get("output2", [])
+                    results = []
+                    for item in output2[:count]:
+                        results.append({
+                            "time": item.get("stck_cntg_hour", ""),
+                            "open": int(item.get("stck_oprc", 0) or 0),
+                            "high": int(item.get("stck_hgpr", 0) or 0),
+                            "low": int(item.get("stck_lwpr", 0) or 0),
+                            "close": int(item.get("stck_prpr", 0) or 0),
+                            "volume": int(item.get("cntg_vol", 0) or 0),
+                        })
+                    return results
+            return []
+        except Exception as e:
+            print(f"[KIS 모의] 분봉조회 오류: {e}")
+            return []
+
+    def get_etf_price(self, etf_code: str):
+        """모의투자 미지원 — 항상 None 반환"""
+        return None
+
+    def get_sellable_qty(self, stock_code: str):
+        """모의투자 미지원 — 항상 0 반환"""
+        return 0
