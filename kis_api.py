@@ -76,7 +76,26 @@ class KisApi:
             return self.get_access_token()
         return self.access_token
 
-    def _order_headers(self, tr_id: str) -> dict:
+    def get_hashkey(self, data: dict):
+        """POST 요청(주문 등)에 필수적인 HASHKEY 발급"""
+        url = f"{self.base_url}/uapi/hashkey"
+        headers = {
+            "content-type": "application/json; charset=utf-8",
+            "appkey": self.app_key,
+            "appsecret": self.app_secret
+        }
+        try:
+            # 해시키 발급은 빠르게 이루어져야 하므로 timeout 3초 설정
+            res = requests.post(url, headers=headers, data=json.dumps(data), timeout=3)
+            if res.status_code == 200:
+                return res.json().get("HASH")
+            else:
+                print(f"[KIS] Hashkey 발급 응답 오류: {res.text}")
+        except Exception as e:
+            print(f"[KIS] Hashkey 발급 통신 에러: {e}")
+        return None
+
+    def _order_headers(self, tr_id: str, hashkey: str) -> dict:
         """주문 공통 헤더 생성"""
         return {
             "content-type": "application/json; charset=utf-8",
@@ -84,6 +103,8 @@ class KisApi:
             "appkey": self.app_key,
             "appsecret": self.app_secret,
             "tr_id": tr_id,
+            "custtype": "P",      # 개인고객 (법인일 경우 B)
+            "hashkey": hashkey    # 발급받은 해시키 필수 추가
         }
         
     def get_current_price(self, stock_code: str):
@@ -214,8 +235,15 @@ class KisApi:
             "ORD_UNPR":       ord_unpr,
         }
 
+        # 🚨 [필수 보안 패치] 데이터 조작 방지용 Hashkey 발급
+        hashkey = self.get_hashkey(body)
+        if not hashkey:
+            print("[KIS] Hashkey 발급에 실패하여 주문을 취소합니다.")
+            return None
+
         try:
-            res = requests.post(url, headers=self._order_headers(tr_id), data=json.dumps(body), timeout=5)
+            # 🚨 [필수 보안 패치] 헤더에 Hashkey 전달
+            res = requests.post(url, headers=self._order_headers(tr_id, hashkey), data=json.dumps(body), timeout=5)
 
             if res.status_code == 200:
                 data = res.json()
@@ -241,6 +269,7 @@ class KisApi:
         except Exception as e:
             print(f"[KIS] 주문 요청 통신 시간 초과/오류: {e}")
             return None
+
             
     def buy_market_order(self, stock_code: str, qty: int, price: int = 0):
         """시장가/지정가 하이브리드 매수 주문"""
