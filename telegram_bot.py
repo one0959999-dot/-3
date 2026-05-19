@@ -16,7 +16,8 @@ class TelegramNotifier:
         url = f"https://api.telegram.org/bot{self.token}/sendMessage"
         data = {
             "chat_id": self.chat_id,
-            "text": text
+            "text": text,
+            "parse_mode": "HTML"
         }
         try:
             # 🛠️ [버그 수정] timeout=3.0을 추가하여 텔레그램 API 서버 지연 시 매매 로직 전체가 마비되는 것을 막습니다.
