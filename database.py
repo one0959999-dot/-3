@@ -109,16 +109,22 @@ def verify_user(username, password):
 def update_user_keys(user_id, keys_dict):
     with db_lock:
         conn = get_db_connection()
-        conn.execute('''
+        
+        # 🚨 [장부 완벽 분리] 사용자가 화면에서 수정한 원금을 실전/모의 모드에 맞춰 각각 독립된 장부에 정확히 꽂아넣습니다.
+        is_mock = keys_dict.get('is_mock', 1)
+        initial_cash = keys_dict.get('initial_cash', 10000000)
+        cash_col = "mock_initial_cash" if is_mock else "real_initial_cash"
+        
+        conn.execute(f'''
             UPDATE users SET real_app_key = ?, real_app_secret = ?, real_account_no = ?,
                 mock_app_key = ?, mock_app_secret = ?, mock_account_no = ?,
                 telegram_token = ?, telegram_chat_id = ?, gemini_api_key = ?, 
-                core_stocks = ?, is_mock = ?, initial_cash = ? WHERE id = ?
+                core_stocks = ?, is_mock = ?, initial_cash = ?, {cash_col} = ? WHERE id = ?
         ''', (
             keys_dict.get('real_app_key'), keys_dict.get('real_app_secret'), keys_dict.get('real_account_no'),
             keys_dict.get('mock_app_key'), keys_dict.get('mock_app_secret'), keys_dict.get('mock_account_no'),
             keys_dict.get('telegram_token'), keys_dict.get('telegram_chat_id'), keys_dict.get('gemini_api_key'),
-            keys_dict.get('core_stocks'), keys_dict.get('is_mock', 1), keys_dict.get('initial_cash', 10000000), user_id
+            keys_dict.get('core_stocks'), is_mock, initial_cash, initial_cash, user_id
         ))
         conn.commit()
         conn.close()

@@ -348,7 +348,6 @@ class KisApi:
             }
         
         try:
-            # 💡 timeout=5 추가
             res = requests.get(url, headers=headers, params=params, timeout=5)
             
             if res.status_code == 200:
@@ -358,33 +357,39 @@ class KisApi:
                     summary = data.get('output2', [{}])[0]
                     
                     parsed_stocks = []
+                    manual_total_purchase = 0.0 # 🟢 수동 매입금액 합산용 변수
                     for s in stocks:
                         if int(s.get('hldg_qty', 0)) > 0:
+                            qty = int(s.get('hldg_qty', 0))
+                            pchs = float(s.get('pchs_avg_pric', 0))
                             parsed_stocks.append({
                                 "name": s.get('prdt_name', ''),
                                 "ticker": s.get('pdno', ''),
-                                "shares": int(s.get('hldg_qty', 0)),
-                                "purchase_price": float(s.get('pchs_avg_pric', 0)),
+                                "shares": qty,
+                                "purchase_price": pchs,
                                 "current_price": float(s.get('prpr', 0)),
                                 "value": float(s.get('evlu_amt', 0)),
                                 "profit_rt": float(s.get('evlu_pfls_rt', 0))
                             })
+                            manual_total_purchase += (qty * pchs) # 🟢 종목별 매입가 누적
                     
-                    # 🟢 [버그 해결] 파이썬 논리 연산자(or)의 맹점으로 인해 문자열 "0"이 채택되어 잔고가 0원으로 증발하는 현상 완벽 차단
                     def _safe_parse(k1, k2):
                         v1 = summary.get(k1)
                         v2 = summary.get(k2)
-                        # 값이 존재하고 "0"이나 빈 값이 아니면 해당 진짜 데이터를 우선 채택합니다.
                         if v1 and v1 != "0" and v1 != "": return float(v1)
                         if v2 and v2 != "0" and v2 != "": return float(v2)
                         return 0.0
 
+                    # 🚨 [모의투자 원금 추적 버그 픽스] 모의투자 API가 '총 매입금액'을 누락할 경우
+                    # 봇이 주식 매수를 '출금'으로 오해하고 원금을 깎아먹는 현상 완벽 방어!
+                    api_purchase = _safe_parse('pchs_amt_smtl_amt', 'tot_pchs_amt')
+                    final_purchase = api_purchase if api_purchase > 0 else manual_total_purchase
+
                     return {
                         "stocks": parsed_stocks,
                         "total_cash": _safe_parse('prvs_rcdl_excc_amt', 'dnca_tot_amt'), # D+2 예수금
-                        # 🚨 [버그 수정 완료] tot_evlu_amt(총자산)이 아니라, 유가증권(주식) 평가금액만 가져오도록 수정
                         "total_value": _safe_parse('scts_evlu_amt', 'evlu_amt_smtl_amt'), # 순수 주식 평가금액
-                        "total_purchase": _safe_parse('pchs_amt_smtl_amt', 'tot_pchs_amt') # 매입금액 합계
+                        "total_purchase": final_purchase # 매입금액 합계 (API 누락 시 수동 계산값 대체)
                     }
                 else:
                     msg1 = data.get('msg1', '')
