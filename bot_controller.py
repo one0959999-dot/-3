@@ -190,18 +190,25 @@ class BotController:
                 real_purchase = float(real_balance.get('total_purchase', 0))
                 total_equity = real_cash + real_stock_value
                 
-                # 🚨 [원금 자율 역추적 엔진 개조] 10000000원 기본값 검사를 완전 폐기합니다.
-                # 이제 봇을 켜는 순간(오늘 장 시작 시점) 계좌에 들어있는 총 평가자산을 오늘 하루의 "원금 기준점"으로 무조건 강제 고정합니다.
-                if not getattr(self, 'initial_capital_captured', False) and total_equity > 0:
+                # 🚨 [완벽한 원금 영구 보존 엔진]
+                # 매번 재부팅할 때마다 원금을 덮어씌우는 코드를 폐기하고,
+                # 오직 '최초 1회(DB가 초기값일 때)'만 현재 자산을 원금으로 셋업합니다.
+                if not getattr(self, 'initial_capital_captured', False):
                     from database import get_db_connection
                     conn = get_db_connection()
-                    # 🟢 각 봇의 신분에 맞는 전용 장부 칸을 찾아냅니다.
                     cash_col = "mock_initial_cash" if self._is_mock else "real_initial_cash"
-                    conn.execute(f'UPDATE users SET {cash_col} = ? WHERE id = ?', (total_equity, self.user_id))
-                    conn.commit()
+                    
+                    row = conn.execute(f'SELECT {cash_col} FROM users WHERE id = ?', (self.user_id,)).fetchone()
+                    db_cash = float(row[cash_col]) if row else 10000000.0
+                    
+                    # 💡 초기 상태(1000만 원 기본값)일 때 딱 한 번만 현재 계좌의 총 자산을 원금으로 영구 고정
+                    if db_cash == 10000000.0 and total_equity > 0:
+                        conn.execute(f'UPDATE users SET {cash_col} = ? WHERE id = ?', (total_equity, self.user_id))
+                        conn.commit()
+                        self.add_log(f"💰 [최초 원금 셋업 완료] 현재 총 자산 {total_equity:,.0f}원을 영구적인 투자 원금으로 고정했습니다.")
+                    
                     conn.close()
-                    self.initial_capital_captured = True  # 오늘 장 가동 중 중복 스냅샷 방지 플래그 선언
-                    self.add_log(f"💰 [원금 자율 역추적 성공] 구동 시점의 실시간 계좌 총자산 {total_equity:,.0f}원을 시스템 원금 기준선으로 자동 동기화했습니다.")
+                    self.initial_capital_captured = True
                 
                 # 🚨 [신규 추가] 외부 입금(월급 등) 자동 추적 및 원금 실시간 보정 알고리즘
                 current_asset_cost = real_cash + real_purchase # 주가 변동성이 제거된 순수 자산 원가
