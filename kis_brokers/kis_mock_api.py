@@ -284,10 +284,11 @@ class KisMockApi:
             "CTX_AREA_NK100": ""
         }
         
-        # 🚨 [모의투자 서버 지연 극복 엔진] 타임아웃을 12초로 확충하고, 실패 시 최대 2회 끊어지지 않고 재시도하도록 롤업 제어를 구축합니다.
+        # 🚨 [모의투자 서버 지연 극복 엔진]
+        # 타임아웃을 3.5초로 짧게 주어 앱 멈춤(Freeze)을 강력하게 방지합니다.
         for retry in range(2):
             try:
-                res = requests.get(url, headers=headers, params=params, timeout=12)
+                res = requests.get(url, headers=headers, params=params, timeout=3.5)
                 
                 if res.status_code == 200:
                     data = res.json()
@@ -340,9 +341,9 @@ class KisMockApi:
                     print(f"[KIS 모의] 잔고 조회 통신 오류: status={res.status_code}, text={res.text}")
                 return None
             except (requests.exceptions.Timeout, requests.exceptions.ConnectionError) as e:
-                print(f"⚠️ [KIS 모의 잔고조회 타임아웃 방어] {retry+1}회차 재시도 진행 중... ({e})")
-                import time
-                time.sleep(1.0)
+                print(f"⚠️ [KIS 모의 잔고조회 타임아웃 방어] 빠른 실패 처리 중... ({e})")
+                # 지연이 길어질 경우 time.sleep을 없애고 즉각적으로 빠져나와 봇이 멈추지 않게 합니다.
+                return None
         return None
 
     def search_stock_name(self, query: str):

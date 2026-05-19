@@ -145,12 +145,17 @@ def kis_balance():
 
         if bot.cached_balance:
             return jsonify({"status": "success", "data": patch_balance(bot.cached_balance)})
-        
-        real_balance = bot.kis.get_account_balance()
-        if real_balance:
-            bot.cached_balance = real_balance
-            bot._sync_internal_balances(real_balance)
-            return jsonify({"status": "success", "data": patch_balance(real_balance)})
+        else:
+            # ▼ KIS 직접 호출 코드를 제거하고, 즉시 빈 데이터 반환 (웹 서버 먹통 완벽 차단)
+            return jsonify({
+                "status": "success", 
+                "data": {
+                    "total_cash": 0, 
+                    "total_value": 0, 
+                    "total_purchase": 0, 
+                    "stocks": []
+                }
+            })
             
     except Exception as e:
         import traceback
