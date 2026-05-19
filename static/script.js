@@ -912,15 +912,20 @@ window.renderReportText = function (encodedText, btnEl) {
     }
 }
 
+window.updateTestModeLabel = function () {}
+
 window.runTestOrder = async function (side) {
     const ticker = document.getElementById('testOrderTicker').value.trim();
     const resultEl = document.getElementById('testOrderResult');
     if (!ticker) { resultEl.textContent = '⚠️ 종목코드를 입력하세요.'; resultEl.style.color = '#f59e0b'; return; }
+    const modeEl = document.querySelector('input[name="testMode"]:checked');
+    const useReal = modeEl && modeEl.value === 'real';
+    if (useReal && !confirm(`⚠️ 실전 계좌로 ${ticker} 1주 ${side === 'BUY' ? '매수' : '매도'} 주문을 접수합니다.\n계속하시겠습니까?`)) return;
     resultEl.textContent = '주문 전송 중...'; resultEl.style.color = '#94a3b8';
     try {
         const res = await fetch('/api/test_order', {
             method: 'POST', headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ ticker, side })
+            body: JSON.stringify({ ticker, side, use_real: useReal })
         });
         const data = await res.json();
         if (data.status === 'success') {
