@@ -178,12 +178,7 @@ class KisRealApi:
         acnt_no   = self.account_no[:8]
         acnt_prdt = self.account_no[8:] if len(self.account_no) > 8 else "01"
 
-        if price > 0:
-            ord_dvsn = "00"  # 지정가 (both sessions)
-        elif is_nxt:
-            ord_dvsn = "06"  # 최유리지정가 (NXT — 시장가 없음)
-        else:
-            ord_dvsn = "03"  # 시장가 (정규장)
+        ord_dvsn = "00" if price > 0 else "03"  # 00=지정가, 03=시장가/최유리
         
         if price > 0:
             p = int(price)
