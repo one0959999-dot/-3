@@ -190,23 +190,18 @@ class BotController:
                 real_purchase = float(real_balance.get('total_purchase', 0))
                 total_equity = real_cash + real_stock_value
                 
-                # 🚨 [완벽한 원금 영구 보존 엔진]
-                # 매번 재부팅할 때마다 원금을 덮어씌우는 코드를 폐기하고,
-                # 오직 '최초 1회(DB가 초기값일 때)'만 현재 자산을 원금으로 셋업합니다.
+                # 🚨 [원금 완벽 자동화] 회원이 직접 기입할 필요 없이, DB 원금이 1000만 원(초기 디폴트값)일 때만 현재 자산을 절대 원금으로 영구 세팅합니다.
                 if not getattr(self, 'initial_capital_captured', False):
                     from database import get_db_connection
                     conn = get_db_connection()
                     cash_col = "mock_initial_cash" if self._is_mock else "real_initial_cash"
-                    
                     row = conn.execute(f'SELECT {cash_col} FROM users WHERE id = ?', (self.user_id,)).fetchone()
                     db_cash = float(row[cash_col]) if row else 10000000.0
                     
-                    # 💡 초기 상태(1000만 원 기본값)일 때 딱 한 번만 현재 계좌의 총 자산을 원금으로 영구 고정
                     if db_cash == 10000000.0 and total_equity > 0:
                         conn.execute(f'UPDATE users SET {cash_col} = ? WHERE id = ?', (total_equity, self.user_id))
                         conn.commit()
-                        self.add_log(f"💰 [최초 원금 셋업 완료] 현재 총 자산 {total_equity:,.0f}원을 영구적인 투자 원금으로 고정했습니다.")
-                    
+                        self.add_log(f"💰 [최초 1회 원금 세팅] 현재 자산 {total_equity:,.0f}원을 절대 원금으로 자동 고정했습니다.")
                     conn.close()
                     self.initial_capital_captured = True
                 
