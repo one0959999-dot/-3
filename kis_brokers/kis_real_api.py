@@ -180,8 +180,12 @@ class KisRealApi:
         acnt_no   = self.account_no[:8]
         acnt_prdt = self.account_no[8:] if len(self.account_no) > 8 else "01"
 
-        # NXT uses limit order (00); regular session uses market-price order (03) when price=0
-        ord_dvsn = "00" if (price > 0 or is_nxt) else "03"
+        if price > 0:
+            ord_dvsn = "00"  # 지정가 (both sessions)
+        elif is_nxt:
+            ord_dvsn = "06"  # 최유리지정가 (NXT — 시장가 없음)
+        else:
+            ord_dvsn = "03"  # 시장가 (정규장)
         
         if price > 0:
             p = int(price)
