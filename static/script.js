@@ -296,27 +296,18 @@ document.addEventListener('DOMContentLoaded', () => {
             realSection.style.display = 'block'; // 실전/모의 상관없이 잔고 테이블 상시 노출
             mockSection.style.display = 'none';  // 단순 안내 문구는 숨김 처리
 
-            if (!isLive) {
-                // 모의투자 시 모의 자산 수치로 UI 강제 업데이트
-                const totalAsset = data.mock_total_asset || 0;
-                const totalValEl = document.getElementById('total-value');
-                if (totalValEl) {
-                    totalValEl.textContent = totalAsset.toLocaleString() + '원';
-                }
-
-                // 모의투자도 진정한 총 수익률 계산법으로 교체
-                const totalPnl = totalAsset - USER_INVESTED_CAPITAL;
-                const pnlRt = USER_INVESTED_CAPITAL > 0 ? (totalPnl / USER_INVESTED_CAPITAL * 100) : 0;
-
-                const pnlEl = document.getElementById('total-pnl');
-                if (pnlEl) {
-                    const sign = totalPnl >= 0 ? '+' : '';
-                    const color = totalPnl > 0 ? '#f85149' : (totalPnl < 0 ? '#58a6ff' : '#8b949e');
-                    pnlEl.style.color = color;
-                    pnlEl.style.fontWeight = '700';
-                    pnlEl.textContent = `수익: ${sign}${totalPnl.toLocaleString()}원 (${sign}${pnlRt.toFixed(2)}%)`;
+            // 🚨 [직관성 패치] 실전/모의투자 모드에 맞게 실시간 계좌 테이블 제목과 뱃지를 동적으로 교체하여 모의투자 연동을 명시합니다.
+            const titleSpan = realSection.querySelector('h2 span:first-child');
+            if (titleSpan) {
+                if (isLive) {
+                    titleSpan.innerHTML = `🏦 실제 한투증권 보유 현황 <span style="font-size:0.7rem; background:#ef4444; color:white; padding:2px 8px; border-radius:10px; margin-left:8px; font-weight:600;">LIVE</span>`;
+                } else {
+                    titleSpan.innerHTML = `🏦 한투증권 모의투자 보유 현황 <span style="font-size:0.7rem; background:#10b981; color:white; padding:2px 8px; border-radius:10px; margin-left:8px; font-weight:600;">MOCK</span>`;
                 }
             }
+
+            // 🚨 (모의투자일 때 중복으로 강제 덮어쓰던 구형 로직 삭제)
+            // 이제 fetchKisBalance() 함수가 10초마다 실전과 모의투자 구분 없이 완벽하게 백엔드 웹소켓 시세와 증권사 잔고를 버무려 업데이트합니다.
         }
 
         // 🔄 실전/모의 모드에 상관없이 실시간 폴링(10초 주기 계좌 동기화)을 상시 가동합니다.
