@@ -164,18 +164,9 @@ def kis_balance():
             
     except Exception as e:
         import traceback
-        print(f"🚨 kis_balance 동기화 에러 방어: {e}")
+        logger.error(f"kis_balance 동기화 에러: {e}")
         traceback.print_exc()
-        
-    return jsonify({
-        "status": "success", 
-        "data": {
-            "total_cash": 0, 
-            "total_value": 0, 
-            "total_purchase": 0, 
-            "stocks": []
-        }
-    })
+        return jsonify({"status": "error", "message": f"잔고 조회 중 오류: {str(e)}"})
 
 @app.route('/api/test_order', methods=['POST'])
 @login_required

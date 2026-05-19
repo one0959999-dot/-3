@@ -5,8 +5,6 @@ from gemini_api import GeminiApi
 class BotManager:
     def __init__(self):
         self.bots = {}
-        self.ai_client = None
-        self.current_ai_key = ""
 
     def get_bot(self, user_id, user_data=None):
         if not user_data:
@@ -17,10 +15,6 @@ class BotManager:
 
         raw_api_key = user_data.get('gemini_api_key', '') or ''
         api_key_clean = raw_api_key.strip()
-
-        if api_key_clean and self.current_ai_key != api_key_clean:
-            self.ai_client = GeminiApi(api_key=api_key_clean)
-            self.current_ai_key = api_key_clean
 
         if bot_key not in self.bots:
             prefix = 'mock_' if is_mock else 'real_'
@@ -38,10 +32,15 @@ class BotManager:
             else:
                 self.bots[bot_key] = RealBotController(user_id, kis_config, tele_config, core_stocks=user_data.get('core_stocks'))
 
-        if self.ai_client:
-            self.bots[bot_key].gemini = self.ai_client
+        bot = self.bots[bot_key]
 
-        return self.bots.get(bot_key)
+        # 각 봇은 자체 GeminiApi 인스턴스를 가짐 — 유저 간 채팅 히스토리 공유 방지
+        if api_key_clean:
+            if bot.gemini is None or getattr(bot.gemini, '_api_key', '') != api_key_clean:
+                bot.gemini = GeminiApi(api_key=api_key_clean)
+                bot.gemini._api_key = api_key_clean
+
+        return bot
 
     def stop_all(self):
         for bot in self.bots.values():
