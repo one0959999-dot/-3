@@ -325,8 +325,10 @@ class KisMockApi:
 
                         return {
                             "stocks": parsed_stocks,
-                            "total_cash": _safe_parse('prvs_rcdl_excc_amt', 'dnca_tot_amt'),
-                            "total_value": _safe_parse('scts_evlu_amt', 'evlu_amt_smtl_amt'),
+                            # 🟢 D+2 예수금을 강제로 가져와 실시간 현금 동기화
+                            "total_cash": float(summary.get('dnca_tot_amt', 0)),
+                            # 🟢 총 평가금액도 가장 정확한 우선순위로 변경
+                            "total_value": float(summary.get('tot_evlu_amt', summary.get('scts_evlu_amt', 0))),
                             "total_purchase": final_purchase 
                         }
                     else:

@@ -529,7 +529,10 @@ class BaseBot:
                                 self._send_telegram(f"📈 [{p_nm}] AI 매수 완료\n👉 {ai_reason}")
                         else:
                             pos.status = "AI 거절 🛑"
-                            self._send_telegram(f"🛑 [{p_nm}] 매수 거절\n👉 {ai_reason}")
+                            self._send_telegram(f"🛑 [{p_nm}] 매수 거절 ➡️ 즉시 대체 종목 탐색\n👉 {ai_reason}")
+                            
+                            # 🟢 [추가된 로직] AI가 거절하면 백그라운드에서 즉시 위성 리스크리닝(종목 교체) 가동
+                            threading.Thread(target=self._rescreen_satellites, daemon=True).start()
                     else:
                         qty = int((p_cash * 0.98) // price)
                         if qty > 0 and self.kis and self.kis.buy_market_order(ticker, qty):
