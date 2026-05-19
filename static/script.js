@@ -912,6 +912,25 @@ window.renderReportText = function (encodedText, btnEl) {
     }
 }
 
+window.runTestOrder = async function (side) {
+    const ticker = document.getElementById('testOrderTicker').value.trim();
+    const resultEl = document.getElementById('testOrderResult');
+    if (!ticker) { resultEl.textContent = '⚠️ 종목코드를 입력하세요.'; resultEl.style.color = '#f59e0b'; return; }
+    resultEl.textContent = '주문 전송 중...'; resultEl.style.color = '#94a3b8';
+    try {
+        const res = await fetch('/api/test_order', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ ticker, side })
+        });
+        const data = await res.json();
+        if (data.status === 'success') {
+            resultEl.textContent = '✅ ' + data.message; resultEl.style.color = '#3fb950';
+        } else {
+            resultEl.textContent = '❌ ' + data.message; resultEl.style.color = '#f85149';
+        }
+    } catch (e) { resultEl.textContent = '❌ 서버 통신 오류'; resultEl.style.color = '#f85149'; }
+}
+
 window.closeReportModal = function () { document.getElementById('reportModal').style.display = 'none'; }
 window.hideReportToday = function () {
     const today = new Date().toISOString().split('T')[0];

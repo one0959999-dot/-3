@@ -177,6 +177,29 @@ def kis_balance():
         }
     })
 
+@app.route('/api/test_order', methods=['POST'])
+@login_required
+def test_order():
+    """KIS 주문 API 연결 검증용 — 지정 종목 1주 시장가 매수/매도"""
+    data = request.get_json() or {}
+    ticker = data.get('ticker', '').strip()
+    side   = data.get('side', 'BUY').upper()
+    if not ticker or side not in ('BUY', 'SELL'):
+        return jsonify({"status": "error", "message": "ticker와 side(BUY/SELL) 필요"}), 400
+    try:
+        bot = get_current_bot()
+        if not bot or not bot.kis:
+            return jsonify({"status": "error", "message": "KIS API 미설정"})
+        if side == 'BUY':
+            ok = bot.kis.buy_market_order(ticker, 1)
+        else:
+            ok = bot.kis.sell_market_order(ticker, 1)
+        if ok:
+            return jsonify({"status": "success", "message": f"{ticker} 1주 {side} 주문 접수 완료"})
+        return jsonify({"status": "error", "message": "주문 접수 실패 — 서버 로그 확인"})
+    except Exception as e:
+        return jsonify({"status": "error", "message": str(e)})
+
 @app.route('/api/toggle', methods=['POST'])
 @login_required
 def toggle_bot():

@@ -529,6 +529,15 @@
                     placeholder="AI 분석용 (입력 시 AI 비서 활성화)">
             </div>
             <button class="btn-save-keys" onclick="saveAccountSettings()" style="background:#10b981;">API 설정 저장</button>
+            <div style="margin-top:1.2rem; padding:1rem; background:rgba(245,158,11,0.08); border:1px solid rgba(245,158,11,0.3); border-radius:10px;">
+                <div style="font-size:0.8rem; color:#f59e0b; font-weight:600; margin-bottom:0.6rem;">🧪 주문 API 연결 테스트 (1주)</div>
+                <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
+                    <input type="text" id="testOrderTicker" placeholder="종목코드 (예: 005930)" style="flex:1; min-width:140px; padding:6px 10px; border-radius:8px; border:1px solid rgba(255,255,255,0.15); background:rgba(255,255,255,0.05); color:white; font-size:0.85rem;">
+                    <button onclick="runTestOrder('BUY')" style="padding:6px 14px; background:rgba(248,81,73,0.2); border:1px solid rgba(248,81,73,0.5); color:#f85149; border-radius:8px; cursor:pointer; font-size:0.83rem; font-weight:600;">매수 1주</button>
+                    <button onclick="runTestOrder('SELL')" style="padding:6px 14px; background:rgba(88,166,255,0.2); border:1px solid rgba(88,166,255,0.5); color:#58a6ff; border-radius:8px; cursor:pointer; font-size:0.83rem; font-weight:600;">매도 1주</button>
+                </div>
+                <div id="testOrderResult" style="margin-top:6px; font-size:0.8rem; color:#94a3b8;"></div>
+            </div>
         </div>
     </div>
 
