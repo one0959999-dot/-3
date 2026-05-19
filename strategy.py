@@ -19,6 +19,80 @@ RSI_PERIOD         = 9
 RSI_OVERSOLD       = 30
 RSI_OVERBOUGHT     = 70
 
+# 인버스 ETF (BEAR 국면 자동 편입)
+INVERSE_ETF_TICKER = "114800"   # KODEX 인버스 (KOSPI200 1x)
+INVERSE_ETF_NAME   = "KODEX 인버스"
+INVERSE_BUDGET_RATIO = 0.20     # 총 자산의 20%를 인버스에 배분
+
+
+def get_market_regime(kis_api) -> str:
+    """
+    KOSPI200 ETF(069500) 일봉 기준 시장 국면 판단.
+    Returns: 'BULL' | 'BEAR' | 'NEUTRAL'
+
+    판단 기준 (이중 이동평균 배열):
+      BEAR  : 현재가 < 20일선 < 60일선  (하향 배열)
+      BULL  : 현재가 > 20일선 > 60일선  (상향 배열)
+      NEUTRAL: 그 외 (혼조)
+    """
+    try:
+        df = kis_api.get_ohlcv("069500", "D")
+        if df is None or df.empty or len(df) < 62:
+            return "NEUTRAL"
+        c = df['close'].dropna()
+        if len(c) < 62:
+            return "NEUTRAL"
+        ma20 = c.rolling(20).mean()
+        ma60 = c.rolling(60).mean()
+        price = float(c.iloc[-1])
+        m20   = float(ma20.iloc[-1])
+        m60   = float(ma60.iloc[-1])
+        if price < m20 and m20 < m60:
+            return "BEAR"
+        if price > m20 and m20 > m60:
+            return "BULL"
+        return "NEUTRAL"
+    except Exception:
+        return "NEUTRAL"
+
+
+def get_bear_bounce_signal(df) -> bool:
+    """
+    하락장 단기 반등 포착 신호.
+    조건 3개 동시 충족 시 True:
+      1) RSI(14) < 25 (극단적 과매도)
+      2) 현재가 <= 볼린저 하단 (20일, 2σ)
+      3) 전일 거래량 >= 20일 평균의 2배 (패닉셀 확인)
+    """
+    try:
+        if df is None or df.empty or len(df) < 21:
+            return False
+        c = df['close'].dropna()
+        v = df.get('volume', pd.Series(dtype=float)) if hasattr(df, 'get') else df['volume'] if 'volume' in df.columns else pd.Series(dtype=float)
+
+        # RSI(14)
+        d  = c.diff()
+        g  = d.clip(lower=0).rolling(14).mean()
+        lo = (-d.clip(upper=0)).rolling(14).mean()
+        rsi = (100 - 100 / (1 + g / (lo + 1e-10))).iloc[-1]
+        if rsi >= 25:
+            return False
+
+        # 볼린저 하단
+        mid   = c.rolling(20).mean()
+        lower = mid - 2 * c.rolling(20).std()
+        if float(c.iloc[-1]) > float(lower.iloc[-1]):
+            return False
+
+        # 거래량 급증
+        if len(v) >= 20 and float(v.iloc[-20:-1].mean()) > 0:
+            if float(v.iloc[-1]) < float(v.iloc[-20:-1].mean()) * 2:
+                return False
+
+        return True
+    except Exception:
+        return False
+
 
 def calc_rsi(series, period=RSI_PERIOD):
     delta = series.diff()
