@@ -1,3 +1,4 @@
+import time
 import requests
 import json
 import pandas as pd
@@ -284,8 +285,6 @@ class KisMockApi:
             "CTX_AREA_NK100": ""
         }
         
-        # 🚨 [모의투자 서버 지연 극복 엔진]
-        # 타임아웃을 3.5초로 짧게 주어 앱 멈춤(Freeze)을 강력하게 방지합니다.
         for retry in range(2):
             try:
                 res = requests.get(url, headers=headers, params=params, timeout=3.5)
@@ -325,11 +324,9 @@ class KisMockApi:
 
                         return {
                             "stocks": parsed_stocks,
-                            # 🟢 D+2 예수금을 강제로 가져와 실시간 현금 동기화
                             "total_cash": float(summary.get('dnca_tot_amt', 0)),
-                            # 🟢 총 평가금액도 가장 정확한 우선순위로 변경
                             "total_value": float(summary.get('tot_evlu_amt', summary.get('scts_evlu_amt', 0))),
-                            "total_purchase": final_purchase 
+                            "total_purchase": final_purchase
                         }
                     else:
                         msg1 = data.get('msg1', '')
@@ -343,8 +340,7 @@ class KisMockApi:
                     print(f"[KIS 모의] 잔고 조회 통신 오류: status={res.status_code}, text={res.text}")
                 return None
             except (requests.exceptions.Timeout, requests.exceptions.ConnectionError) as e:
-                print(f"⚠️ [KIS 모의 잔고조회 타임아웃 방어] 빠른 실패 처리 중... ({e})")
-                # 지연이 길어질 경우 time.sleep을 없애고 즉각적으로 빠져나와 봇이 멈추지 않게 합니다.
+                print(f"[KIS 모의] 잔고조회 타임아웃: {e}")
                 return None
         return None
 
@@ -522,12 +518,8 @@ class KisMockApi:
             pass
         return " | ".join(macro_info) if macro_info else "시장 지수 실시간 조회 불가"
 
-    # =========================================================================
-    # 🚨 [여기서부터 신규 추가된 미체결 관리 및 자동 취소 방어 엔진입니다] 🚨
-    # =========================================================================
-
     def get_unfilled_orders(self):
-        """[신규 추가] 미체결 주문 내역 조회 (모의투자)"""
+        """미체결 주문 내역 조회 (모의투자)"""
         if not self._ensure_token():
             return []
             
@@ -581,7 +573,7 @@ class KisMockApi:
             return []
 
     def cancel_order(self, org_order_no: str, stock_code: str, rem_qty: int):
-        """[신규 추가] 미체결 주문 취소 송신 (모의투자)"""
+        """미체결 주문 취소 (모의투자)"""
         if not self._ensure_token():
             return None
 
@@ -622,7 +614,7 @@ class KisMockApi:
             return None
 
     def cancel_all_unfilled_orders(self):
-        """[신규 추가] 계좌 내 모든 미체결 주문 일괄 취소 (모의투자)"""
+        """계좌 내 모든 미체결 주문 일괄 취소 (모의투자)"""
         unfilled_orders = self.get_unfilled_orders()
         if not unfilled_orders:
             return True
@@ -633,8 +625,7 @@ class KisMockApi:
             res = self.cancel_order(order['order_no'], order['ticker'], order['rem_qty'])
             if res and res.get('rt_cd') == '0':
                 success_count += 1
-            import time
-            time.sleep(0.2) # API Rate Limit 방어를 위한 지연
+            time.sleep(0.2)
             
         print(f"[KIS 모의] 미체결 일괄 취소 완료 ({success_count}/{len(unfilled_orders)}건)")
         return success_count == len(unfilled_orders)

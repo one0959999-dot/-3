@@ -64,7 +64,6 @@ def index():
     user_data = current_user.data
     gemini_enabled = bool(user_data.get('gemini_api_key'))
     
-    # [프리워밍 개선] 사용자가 메인 화면에 진입하는 즉시 실전 봇과 모의 봇을 동시에 모두 선제적으로 가동합니다.
     mock_data = {**dict(user_data), 'is_mock': 1}
     real_data = {**dict(user_data), 'is_mock': 0}
     manager.get_bot(current_user.id, mock_data)
@@ -158,7 +157,6 @@ def kis_balance():
         if bot.cached_balance:
             return jsonify({"status": "success", "data": patch_balance(bot.cached_balance)})
         else:
-            # ▼ KIS 직접 호출 코드를 제거하고, 즉시 빈 데이터 반환 (웹 서버 먹통 완벽 차단)
             return jsonify({
                 "status": "success", 
                 "data": {
@@ -488,6 +486,4 @@ def search_stock():
 
 if __name__ == '__main__':
     init_db()
-    # 🚨 [연결성 버그 픽스] threaded=True 커스텀 속성을 부여하여 
-    # 백엔드 인증망 작업 시 서버 연동 프로세스가 마비되는 현상을 완벽 차단합니다!
     app.run(host='0.0.0.0', port=5000, debug=False, use_reloader=False, threaded=True)

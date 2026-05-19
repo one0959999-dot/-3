@@ -50,11 +50,9 @@ class BaseBot:
         self.num_satellites = 5
         self._is_mock = is_mock
         
-        # 봇의 모드에 따라 로그와 알림에 붙을 뱃지를 동적으로 결정합니다.
         self.mode_name = "모의" if is_mock else "실전"
         self.alert_icon = "🟢" if is_mock else "🔴"
-        
-        # 클래스 내부 설정 변수
+
         self.core_ticker = "003850"
         self.core_name = "보령"
         self.core_ratio = 0.30
@@ -82,7 +80,6 @@ class BaseBot:
         self.telegram = None
         self.gemini = None
 
-        # 무기는 자식 클래스(Real/Mock)에서 장착합니다.
         self._init_api(kis_config)
         
         if telegram_config and telegram_config.get('token'):
@@ -92,7 +89,7 @@ class BaseBot:
             )
             
         self.cached_balance = None
-        self.ohlcv_cache = {}  
+        self.ohlcv_cache = {}
         self.lock = threading.RLock()
         self.last_asset_cost = None
         self.pnl_this_turn = 0.0
@@ -103,7 +100,6 @@ class BaseBot:
         self.live_prices = {}
         self.ws_client = None
 
-        # KIS 인증키 발급 및 웹소켓 상주 로직 전체를 비동기 백그라운드 스레드로 완전히 이관
         def _async_network_connect():
             if self.kis:
                 try:
@@ -115,7 +111,7 @@ class BaseBot:
                         if self.ws_client:
                             self.ws_client.start()
                 except Exception as net_err:
-                    print(f"⚠️ [비동기 KIS 인증망 가동 지연 알림] : {net_err}")
+                    logger.warning(f"[{self.mode_name}] WebSocket 초기 연결 실패: {net_err}")
 
         threading.Thread(target=_async_network_connect, daemon=True).start()
 
@@ -330,7 +326,6 @@ class BaseBot:
         self.satellite_strategies = {c['ticker']: c['strategy_name'] for c in self.satellite_info}
         log_lines = [f"  {i+1}. {c['name']} ({c['ticker']}) → [{c['strategy_name']}] {c['return_pct']:+.1f}%" for i, c in enumerate(self.satellite_info)]
         for line in log_lines: self.add_log(f"✅ {line.strip()}")
-        # 🟢 [문법 오류 수정 완료] 깨진 줄바꿈을 단일 라인 문자열 서식으로 안전하게 복구했습니다.
         self._send_telegram(f"🔍 {self.mode_name} 위성 종목 선정!\n" + "\n".join(log_lines))
 
         core_budget = total_cash * self.core_ratio
@@ -552,8 +547,6 @@ class BaseBot:
                         else:
                             pos.status = "AI 거절 🛑"
                             self._send_telegram(f"🛑 [{p_nm}] 매수 거절 ➡️ 즉시 대체 종목 탐색\n👉 {ai_reason}")
-                            
-                            # 🟢 [추가된 로직] AI가 거절하면 백그라운드에서 즉시 위성 리스크리닝(종목 교체) 가동
                             threading.Thread(target=self._rescreen_satellites, daemon=True).start()
                     else:
                         qty = int((p_cash * 0.98) // price)

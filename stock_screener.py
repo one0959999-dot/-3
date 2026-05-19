@@ -9,20 +9,21 @@ stock_screener.py
 ⑤ 종합 점수로 랭킹      : 섹터보너스 + 거래량 점수 + 백테스트 수익률
 """
 
+import time
+import threading
+import warnings
+
 from pykrx import stock
 from datetime import datetime, timedelta
 import pandas as pd
 import numpy as np
-import warnings
+
 warnings.filterwarnings('ignore')
 
-EXCLUDE_TICKERS = {"003850"}   # 보령은 코어이므로 제외
+EXCLUDE_TICKERS = {"003850"}
 NUM_SATELLITES  = 5
-BACKTEST_DAYS   = 130          # 약 6개월
+BACKTEST_DAYS   = 130
 
-# ──────────────────────────────────────────────
-# 1. 데이터 유틸
-# ──────────────────────────────────────────────
 def _last_biz_day(days_back=0):
     """최근 영업일 날짜 문자열 반환"""
     d = datetime.today() - timedelta(days=days_back)
@@ -37,17 +38,8 @@ def _last_biz_day(days_back=0):
         d -= timedelta(days=1)
     return d.strftime("%Y%m%d")
 
-import time
-from datetime import datetime, timedelta
-
-import threading
-
-# ──────────────────────────────────────────────
-# 날짜 기반 캐시 (매일 자정에 자동 갱신)
-# lru_cache 대신 TTL 방식으로 교체하여 항상 최신 주가 데이터 사용
-# ──────────────────────────────────────────────
 _ohlcv_cache = {}  # {(ticker, days): (date_str, DataFrame)}
-_cache_lock = threading.Lock() # 🚨 [버그 수정] 멀티유저/멀티스레드 충돌 방지용 락
+_cache_lock = threading.Lock()
 
 def fetch_ohlcv(ticker, days=200, kis=None):
     today_str = datetime.today().strftime('%Y%m%d')
@@ -59,10 +51,8 @@ def fetch_ohlcv(ticker, days=200, kis=None):
             return _ohlcv_cache[key][1]
 
     try:
-        # 🟢 [pykrx 최적화] KIS API 인스턴스가 주어지면 pykrx를 회피하고 KIS API로 즉시 조회
         if kis is not None:
-            # 🚨 [숨 고르기 패치] 모의투자 API 초당 4회 제한을 우회하기 위해 0.25초 쉬어갑니다!
-            time.sleep(0.25)
+            time.sleep(0.25)  # 모의투자 API 초당 4회 제한 대응
             df = kis.get_ohlcv(ticker, "D")
             if df is not None and not df.empty:
                 result = df.dropna(subset=['close']).tail(days)
@@ -70,7 +60,7 @@ def fetch_ohlcv(ticker, days=200, kis=None):
                     _ohlcv_cache[key] = (today_str, result)
                 return result
 
-        # KIS API가 없거나 통신 실패한 경우에만 백업으로 pykrx 사용
+        # KIS API 미설정 또는 실패 시 pykrx 백업
         end   = datetime.today()
         start = end - timedelta(days=days + 90)
         time.sleep(0.05)  # API Rate limit 방어
@@ -441,8 +431,7 @@ def select_satellites(kis=None, n=NUM_SATELLITES, verbose=True, gemini_client=No
     for ticker in candidate_pool:
         try:
             name = stock.get_market_ticker_name(ticker)
-            # 🟢 kis=kis 파라미터를 주입하여 pykrx 크롤링을 건너뛰고 한국투자증권 공식 API 인프라를 타도록 변경
-            df   = fetch_ohlcv(ticker, days=BACKTEST_DAYS, kis=kis) 
+            df   = fetch_ohlcv(ticker, days=BACKTEST_DAYS, kis=kis)
             if len(df) < 40 or 'close' not in df.columns:
                 continue
 
@@ -468,14 +457,10 @@ def select_satellites(kis=None, n=NUM_SATELLITES, verbose=True, gemini_client=No
             if recent_ret > 30:
                 stat_arb_penalty = (recent_ret - 30) * 0.8  
 
-            # 🧠 [PyTorch 딥러닝 팩터 적용] 과거 차트 배열을 넣고 상승 확률 계산
             ai_up_prob = dl_predictor.predict_up_probability(df)
-            
-            # 확률 50%를 기준으로 가점/감점 (최대 10점의 막대한 영향력 행사)
-            ml_factor_score = (ai_up_prob - 50.0) * 0.2  
+            ml_factor_score = (ai_up_prob - 50.0) * 0.2
 
-            # 최종 퀀트 점수 산출
-            score = (best_ret 
+            score = (best_ret
                      + (vol_score - 1) * 6 
                      + sector_bonus 
                      + (bb_discount * 1.5) 
@@ -491,7 +476,7 @@ def select_satellites(kis=None, n=NUM_SATELLITES, verbose=True, gemini_client=No
                 'volume_surge':  float(round(vol_score, 2)),
                 'sector':        ticker_to_sector.get(ticker, '-'),
                 'momentum_20d':  float(round(recent_ret, 2)),
-                'dl_prob':       float(round(ai_up_prob, 1)), # 딥러닝 확률 기록
+                'dl_prob':       float(round(ai_up_prob, 1)),
                 'score':         float(round(score, 2)),
             })
             processed += 1
