@@ -724,7 +724,7 @@ class BotController:
                     extended_df = self._get_extended_ohlcv(core_ticker, cp)
                     core_signal, _, core_rsi = get_rsi_signal(core_ticker, kis_api=self.kis, df=extended_df)
 
-                    if core_signal == 'BUY' and core_cash >= cp and (time.time() - getattr(core, 'last_order_time', 0) > 600):
+                    if core_signal == 'BUY' and core_cash >= cp and (time.time() - getattr(core, 'last_order_time', 0) > 60):
                         qty = int((core_cash * 0.98) // cp)
                         if qty > 0:
                             core.status = "주문 전송 🛒"
@@ -738,11 +738,11 @@ class BotController:
                                         core.status = "체결 대기 ⏳"
                                         core.status_msg = "매수 주문이 한국투자증권 인프라에 접수되었습니다. 체결 처리를 대기하고 있습니다."
                                         
-                                    msg = f"💎 {core_name} 매수 주문 전송 완료 (10분 쿨타임 가동) | {qty}주 @ {cp:,}원 (RSI:{core_rsi:.1f})"
+                                    msg = f"💎 {core_name} 매수 주문 전송 완료 (1분 쿨타임 가동) | {qty}주 @ {cp:,}원 (RSI:{core_rsi:.1f})"
                                     self.add_log(msg)
                                     self._send_telegram(msg)
 
-                    elif core_signal == 'SELL' and core_shares > core_floor_shares and (time.time() - getattr(core, 'last_order_time', 0) > 600):
+                    elif core_signal == 'SELL' and core_shares > core_floor_shares and (time.time() - getattr(core, 'last_order_time', 0) > 60):
                         sellable = core_shares - core_floor_shares
                         if sellable > 0:
                             core.status = "주문 전송 🛒"
@@ -834,12 +834,12 @@ class BotController:
                         pass
 
                 macro_context = shared_macro_context
-                is_cooldown_passed = (time.time() - getattr(pos, 'last_order_time', 0) > 600)
+                is_cooldown_passed = (time.time() - getattr(pos, 'last_order_time', 0) > 60)
                 
                 # 기본 홀드 뱃지 문구 할당
                 if signal == 'HOLD' or not is_cooldown_passed:
                     pos.status = "관망 (HOLD) ⏸️"
-                    pos.status_msg = f"지표 수치({ind_val:.1f})가 전략 기준선 바깥에 머무르고 있거나 현재 도배 방지 10분 쿨타임 구간에 잡혀있습니다."
+                    pos.status_msg = f"지표 수치({ind_val:.1f})가 전략 기준선 바깥에 머무르고 있거나 현재 도배 방지 1분 쿨타임 구간에 잡혀있습니다."
 
                 if pos_shares > 0 and price > 0 and is_cooldown_passed:
                     if price > pos_max_price:
@@ -867,7 +867,7 @@ class BotController:
                                     profit = (price - pos_avg_price) * pos_shares
                                     
                                     log_trade_journal(self.user_id, ticker, pos_name, 'SELL', price, strat_name, reason, profit=profit)
-                                    self._send_telegram(f"🎯 [{pos_name}] ATR 익절 전송 완료 (10분 쿨타임 가동)! 예상 손익: {profit:+,.0f}원")
+                                    self._send_telegram(f"🎯 [{pos_name}] ATR 익절 전송 완료 (1분 쿨타임 가동)! 예상 손익: {profit:+,.0f}원")
                                     
                                     with self.lock:
                                         self.pnl_this_turn += profit
@@ -894,7 +894,7 @@ class BotController:
                                 
                                 profit = (price - pos_avg_price) * pos_shares
                                 
-                                msg = f"💥 [{pos_name}] ATR 손절 전송 완료 (10분 쿨타임 가동) | 예상 손익: {profit:+,.0f}원"
+                                msg = f"💥 [{pos_name}] ATR 손절 전송 완료 (1분 쿨타임 가동) | 예상 손익: {profit:+,.0f}원"
                                 self.add_log(msg)
                                 log_trade_journal(self.user_id, ticker, pos_name, 'SELL', price, strat_name, reason, profit=profit)
                                 self._send_telegram(msg)
@@ -935,7 +935,7 @@ class BotController:
                                             pos.status = "체결 대기 ⏳"
                                             pos.status_msg = f"AI 매수 주문 집행 성공. 계좌 원장 원격 반영 대기 중. 사유: {ai_reason}"
                                         
-                                        msg = f"📈 [{pos_name}] AI 승인 매수 완료 (10분 쿨타임)\n👉 {ai_reason}"
+                                        msg = f"📈 [{pos_name}] AI 승인 매수 완료 (1분 쿨타임)\n👉 {ai_reason}"
                                         self.add_log(msg)
                                         log_trade_journal(self.user_id, ticker, pos_name, 'BUY', price, strat_name, reason)
                                         self._send_telegram(msg)
@@ -962,7 +962,7 @@ class BotController:
                                         pos.status = "체결 대기 ⏳"
                                         pos.status_msg = "매수 주문이 한국투자증권 인프라에 접수되었습니다. 체결 처리를 대기하고 있습니다."
                                     
-                                    msg = f"📈 [{pos_name}] 알고리즘 즉각 매수 전송 완료 (10분 쿨타임 가동)"
+                                    msg = f"📈 [{pos_name}] 알고리즘 즉각 매수 전송 완료 (1분 쿨타임 가동)"
                                     self.add_log(msg)
                                     log_trade_journal(self.user_id, ticker, pos_name, 'BUY', price, strat_name, reason)
                                     self._send_telegram(msg)

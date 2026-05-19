@@ -1457,3 +1457,61 @@ body.theme-warm-beige .chat-chip:hover {
     border-color: #4f46e5 !important;
     color: #4f46e5 !important;
 }
+
+/* ==========================================
+   [상태 팝업창 및 뱃지] 모의투자 라이트 테마 강제 보정
+   ========================================== */
+
+/* 1. 위성/코어 종목 상태 뱃지 테두리 가독성 확보 */
+body.theme-warm-beige .badge {
+    background: #f8fafc !important;
+    border: 1px solid #cbd5e1 !important;
+    color: #334155 !important;
+}
+
+/* 뱃지 상태별 고유 색상 살리기 (테두리 뚜렷하게) */
+body.theme-warm-beige .badge[style*="168,85,247"] {
+    /* AI 심사 중 (보라) */
+    background: #f3e8ff !important;
+    border-color: #d8b4fe !important;
+    color: #9333ea !important;
+}
+
+body.theme-warm-beige .badge[style*="245,158,11"] {
+    /* 체결 대기 (노랑) */
+    background: #fef3c7 !important;
+    border-color: #fcd34d !important;
+    color: #d97706 !important;
+}
+
+body.theme-warm-beige .badge[style*="239,68,68"] {
+    /* 긴급/거절 (빨강) */
+    background: #fee2e2 !important;
+    border-color: #fca5a5 !important;
+    color: #dc2626 !important;
+}
+
+/* 2. 뱃지 클릭 시 나오는 팝업(상태 점검 리포트) 하얀색 테마로 완벽 동기화 */
+body.theme-warm-beige #statusModal>div {
+    background: #ffffff !important;
+    border: 1px solid #cbd5e1 !important;
+    box-shadow: 0 10px 40px rgba(0, 0, 0, 0.1) !important;
+}
+
+body.theme-warm-beige #statusModal h3 {
+    color: #2563eb !important;
+    /* 파란색 제목 */
+}
+
+body.theme-warm-beige #modalTickerName {
+    color: #0f172a !important;
+    /* 종목명 검은색 */
+}
+
+body.theme-warm-beige #modalStatusMsg {
+    background: #f8fafc !important;
+    /* 설명칸 밝은 회색 */
+    border: 1px solid #e2e8f0 !important;
+    color: #334155 !important;
+    /* 설명글 뚜렷한 진회색 */
+}
