@@ -352,6 +352,9 @@ class BotController:
         
         if self.kis:
             df = self.kis.get_ohlcv(ticker, "D")
+            if df is None or (not hasattr(df, 'columns')) or ('high' not in df.columns):
+                self.add_log(f"⚠️ [{ticker}] 데이터 수신 지연. 다음 턴에 재시도합니다.")
+                return pd.DataFrame()
             if df is not None and not df.empty and 'date' in df.columns:
                 df['date'] = pd.to_datetime(df['date'])
                 df = df[df['date'].dt.date < datetime.now().date()].reset_index(drop=True)
