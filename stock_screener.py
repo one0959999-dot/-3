@@ -140,20 +140,23 @@ def get_sector_momentum(lookback=20, verbose=False):
 
 def get_sector_tickers(momentum, top_n_sectors=4):
     """
-    강세 섹터 상위 N개 → 해당 섹터 대표 종목 반환
+    강세 섹터 상위 N개 → 해당 섹터 대표 종목 반환.
+    같은 종목이 여러 섹터에 중복 등록된 경우 먼저 등장한 섹터에만 할당 (점수 중복 방지).
     Returns: set of tickers, dict of ticker→sector_name, list of hot sector names
     """
     hot_sectors = [k for k, v in momentum.items() if v > 0][:top_n_sectors]
 
     sector_tickers   = set()
     ticker_to_sector = {}
+    seen = set()  # 중복 종목 방지
 
     for sec_name in hot_sectors:
         tickers = SECTOR_STOCKS.get(sec_name, [])
         for t in tickers:
-            if t.isdigit() and len(t) == 6 and t not in EXCLUDE_TICKERS:
+            if t.isdigit() and len(t) == 6 and t not in EXCLUDE_TICKERS and t not in seen:
                 sector_tickers.add(t)
                 ticker_to_sector[t] = sec_name
+                seen.add(t)
 
     return sector_tickers, ticker_to_sector, hot_sectors
 
@@ -253,6 +256,11 @@ def get_volume_surge_tickers(kis=None,
                 continue
             if df['close'].iloc[-1] < 1000:
                 continue
+            # 일평균 거래대금 3억 미만 제외 — 유동성/시총 최소 기준 (min_cap_billion 프록시)
+            if 'volume' in df.columns:
+                avg_trading_value = (df['close'].iloc[-5:] * df['volume'].iloc[-5:]).mean()
+                if avg_trading_value < 300_000_000:
+                    continue
             vol_recent = df['volume'].iloc[-5:].mean()
             vol_base   = df['volume'].iloc[-75:-5].mean()
             if vol_base < 100:
@@ -377,22 +385,47 @@ def backtest(df, sig_series, initial=1_000_000):
     return (cash - initial) / initial * 100
 
 def find_best_strategy(df):
+    """
+    Walk-forward 검증으로 과적합 방지.
+    - 신호 생성: 전체 df (MA/RSI 이동평균 웜업을 위해 전체 필요)
+    - 성능 평가: 마지막 30% 구간(OOS)만 사용
+    - OOS 전 전략이 모두 손실이면 전체 기간 기준으로 폴백
+    """
+    if len(df) < 50:
+        return None, -9999
+
+    split = max(20, int(len(df) * 0.70))
+    oos_df = df.iloc[split:]
+
     best_name, best_ret = None, -9999
     for name, fn in STRATEGY_REGISTRY.items():
         try:
-            sig = fn(df)
-            ret = backtest(df, sig)
+            full_sig = fn(df)           # 전체 기간으로 신호 생성 (워밍업 포함)
+            oos_sig  = full_sig.iloc[split:]
+            ret = backtest(oos_df, oos_sig)
             if ret > best_ret:
                 best_ret, best_name = ret, name
         except Exception:
             continue
+
+    # OOS에서 모든 전략이 -30% 이하면 전체 기간 폴백 (데이터 부족 방어)
+    if best_ret < -30:
+        for name, fn in STRATEGY_REGISTRY.items():
+            try:
+                sig = fn(df)
+                ret = backtest(df, sig)
+                if ret > best_ret:
+                    best_ret, best_name = ret, name
+            except Exception:
+                continue
+
     return best_name, best_ret
 
 
 # ──────────────────────────────────────────────
 # 5. 메인 선정 함수
 # ──────────────────────────────────────────────
-def select_satellites(kis=None, n=NUM_SATELLITES, verbose=True, gemini_client=None):
+def select_satellites(kis=None, n=NUM_SATELLITES, verbose=True, gemini_client=None, bear_mode=False):
     """
     멀티팩터 위성 종목 선정 (딥러닝 PyTorch 확률 예측 엔진 연동 완료)
     """
@@ -452,8 +485,10 @@ def select_satellites(kis=None, n=NUM_SATELLITES, verbose=True, gemini_client=No
                 continue
 
             recent_ret = (df['close'].iloc[-1] / df['close'].iloc[-min(20, len(df)-1)] - 1) * 100
-            
-            if recent_ret < -15:
+
+            # BEAR 국면에서는 기준 완화 (-25%) — 하락장에서도 반등 후보 확보
+            drawdown_threshold = -25 if bear_mode else -15
+            if recent_ret < drawdown_threshold:
                 continue
 
             bb_upper, bb_mid, bb_lower = calc_bb(df['close'])
@@ -623,7 +658,7 @@ def select_ai_core_stock(verbose=False):
 # ──────────────────────────────────────────────
 # 7. 일일 시장 분석 리포트 자동 생성
 # ──────────────────────────────────────────────
-def generate_daily_market_report(gemini_client=None, verbose=False, news_context=None):
+def generate_daily_market_report(gemini_client=None, verbose=False, news_context=None, kis=None):
     """
     코스피/코스닥 대리 지수(ETF) 및 주도 섹터 데이터를 활용하여 텍스트 리포트를 생성합니다.
     gemini_client가 제공되면 AI 기반 분석을 수행합니다.
@@ -667,7 +702,7 @@ def generate_daily_market_report(gemini_client=None, verbose=False, news_context
         
     # 3. 거래량 급등 데이터
     try:
-        volume_surges = get_volume_surge_tickers(surge_ratio=2.0, verbose=False)
+        volume_surges = get_volume_surge_tickers(kis=kis, surge_ratio=2.0, verbose=False)
         raw_data_lines.append(f"\n[수급 특이사항]\n- 거래량 2배 급증 종목 수: {len(volume_surges)}개")
     except: pass
 
