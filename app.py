@@ -8,7 +8,7 @@ from flask import Flask, render_template, jsonify, request, redirect, url_for, f
 from flask_login import LoginManager, UserMixin, login_user, logout_user, login_required, current_user
 
 from bots.bot_manager import manager
-from database import get_db_connection, verify_user, add_user, init_db, update_user_keys
+from database import get_db_connection, verify_user, add_user, init_db, update_user_keys, init_default_ai_rules
 
 # ── 통합 로깅 설정 (파일 + 콘솔) ──
 logging.basicConfig(
@@ -76,6 +76,11 @@ def login():
             user = User(user_data['id'], user_data['username'], user_data)
             login_user(user, remember=True)
             session.permanent = True
+            # 최초 로그인 시 실전 검증 매매 원칙 자동 세팅
+            try:
+                init_default_ai_rules(user_data['id'])
+            except Exception:
+                pass
             return redirect(url_for('index'))
         flash('아이디 또는 비밀번호가 올바르지 않습니다.')
     return render_template('login.html')

@@ -524,9 +524,9 @@
                 <input type="text" id="teleChatId" value="{{ user.data.telegram_chat_id or '' }}">
             </div>
             <div class="settings-group">
-                <label>Google Gemini API Key</label>
-                <input type="password" id="geminiApiKey" value="{{ user.data.gemini_api_key or '' }}"
-                    placeholder="AI 분석용 (입력 시 AI 비서 활성화)">
+                <label>Claude API Key <span style="font-size:0.75rem; color:#94a3b8;">(console.anthropic.com에서 발급)</span></label>
+                <input type="password" id="claudeApiKey" value="{{ user.data.claude_api_key or '' }}"
+                    placeholder="sk-ant-... 입력 시 AI 비서 활성화">
             </div>
             <button class="btn-save-keys" onclick="saveAccountSettings()" style="background:#10b981;">API 설정 저장</button>
             <div style="margin-top:1.2rem; padding:1rem; background:rgba(245,158,11,0.08); border:1px solid rgba(245,158,11,0.3); border-radius:10px;">

@@ -57,41 +57,853 @@ def get_market_regime(kis_api) -> str:
 
 
 def get_bear_bounce_signal(df) -> bool:
+    """하위 호환용 — get_bear_bottom_score() 래퍼. 점수 1 이상이면 True."""
+    score, _ = get_bear_bottom_score(df)
+    return score >= 1
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 하락장 저점 포착 — 다중 전략 종합 스코어링 시스템
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _get_vol(df) -> pd.Series:
+    """volume 컬럼 추출 헬퍼."""
+    if 'volume' in df.columns:
+        return df['volume'].dropna()
+    return pd.Series(dtype=float)
+
+
+def _calc_rsi14(close: pd.Series) -> float:
+    """RSI(14) 최신값 반환."""
+    d  = close.diff()
+    g  = d.clip(lower=0).rolling(14).mean()
+    lo = (-d.clip(upper=0)).rolling(14).mean()
+    return float((100 - 100 / (1 + g / (lo + 1e-10))).iloc[-1])
+
+
+def _signal_panic_climax(df) -> tuple:
     """
-    하락장 단기 반등 포착 신호.
-    조건 3개 동시 충족 시 True:
-      1) RSI(14) < 25 (극단적 과매도)
-      2) 현재가 <= 볼린저 하단 (20일, 2σ)
-      3) 전일 거래량 >= 20일 평균의 2배 (패닉셀 확인)
+    [전략 1] 패닉 클라이막스 반등
+    - RSI(14) < 25 + 볼린저 하단 이탈 + 거래량 2배 이상
+    - 전통적인 '최후의 투매 후 반등' 패턴
     """
     try:
-        if df is None or df.empty or len(df) < 21:
-            return False
+        if df is None or df.empty or len(df) < 22:
+            return False, ""
         c = df['close'].dropna()
-        v = df.get('volume', pd.Series(dtype=float)) if hasattr(df, 'get') else df['volume'] if 'volume' in df.columns else pd.Series(dtype=float)
-
-        # RSI(14)
-        d  = c.diff()
-        g  = d.clip(lower=0).rolling(14).mean()
-        lo = (-d.clip(upper=0)).rolling(14).mean()
-        rsi = (100 - 100 / (1 + g / (lo + 1e-10))).iloc[-1]
+        v = _get_vol(df)
+        rsi = _calc_rsi14(c)
         if rsi >= 25:
-            return False
-
-        # 볼린저 하단
+            return False, ""
         mid   = c.rolling(20).mean()
         lower = mid - 2 * c.rolling(20).std()
         if float(c.iloc[-1]) > float(lower.iloc[-1]):
-            return False
-
-        # 거래량 급증
+            return False, ""
         if len(v) >= 20 and float(v.iloc[-20:-1].mean()) > 0:
             if float(v.iloc[-1]) < float(v.iloc[-20:-1].mean()) * 2:
-                return False
-
-        return True
+                return False, ""
+        return True, f"패닉클라이막스(RSI{rsi:.0f}+볼하단+거래량급증)"
     except Exception:
-        return False
+        return False, ""
+
+
+def _signal_hammer_candle(df) -> tuple:
+    """
+    [전략 2] 망치형·역망치형 캔들 패턴
+    - 망치형: 아래꼬리가 몸통의 2배 이상, 위꼬리 거의 없음 → 매도세 소진
+    - 역망치형: 위꼬리가 몸통의 2배 이상, 아래꼬리 거의 없음 → 매수 탐색 시작
+    """
+    try:
+        if df is None or df.empty or len(df) < 5:
+            return False, ""
+        o = float(df['open'].iloc[-1])
+        h = float(df['high'].iloc[-1])
+        l = float(df['low'].iloc[-1])
+        c = float(df['close'].iloc[-1])
+        body = abs(c - o)
+        if body < 1e-9:
+            return False, ""
+        lower_wick = min(o, c) - l
+        upper_wick = h - max(o, c)
+        # 망치형
+        if lower_wick >= body * 2 and upper_wick <= body * 0.5:
+            return True, "망치형캔들(아래꼬리≥2×몸통)"
+        # 역망치형
+        if upper_wick >= body * 2 and lower_wick <= body * 0.5:
+            return True, "역망치형캔들(위꼬리≥2×몸통)"
+        return False, ""
+    except Exception:
+        return False, ""
+
+
+def _signal_bullish_engulfing(df) -> tuple:
+    """
+    [전략 3] 상승 장악형 (Bullish Engulfing)
+    - 전일 음봉을 오늘 양봉이 완전히 감싸는 패턴
+    - 매도 세력이 매수 세력에 완전히 흡수되었음을 의미
+    """
+    try:
+        if df is None or df.empty or len(df) < 3:
+            return False, ""
+        prev_o = float(df['open'].iloc[-2])
+        prev_c = float(df['close'].iloc[-2])
+        curr_o = float(df['open'].iloc[-1])
+        curr_c = float(df['close'].iloc[-1])
+        prev_bearish = prev_c < prev_o
+        curr_bullish = curr_c > curr_o
+        engulfs = curr_o <= prev_c and curr_c >= prev_o
+        if prev_bearish and curr_bullish and engulfs:
+            return True, "상승장악형캔들(전일음봉완전포위)"
+        return False, ""
+    except Exception:
+        return False, ""
+
+
+def _signal_morning_star(df) -> tuple:
+    """
+    [전략 4] 모닝스타 (Morning Star) — 3캔들 반전 패턴
+    - 1일차: 큰 음봉 (하락 추세 확인)
+    - 2일차: 갭하락 후 작은 몸통 (도지/팽이) — 매도 소진
+    - 3일차: 큰 양봉이 1일차 몸통 중간 이상 회복
+    """
+    try:
+        if df is None or df.empty or len(df) < 4:
+            return False, ""
+        o1, c1 = float(df['open'].iloc[-3]), float(df['close'].iloc[-3])
+        o2, c2 = float(df['open'].iloc[-2]), float(df['close'].iloc[-2])
+        o3, c3 = float(df['open'].iloc[-1]), float(df['close'].iloc[-1])
+        first_bearish  = c1 < o1 and (o1 - c1) > abs(o1) * 0.01
+        second_small   = abs(c2 - o2) < abs(o1 - c1) * 0.5
+        third_bullish  = c3 > o3 and c3 > (o1 + c1) / 2
+        if first_bearish and second_small and third_bullish:
+            return True, "모닝스타(3캔들반전패턴)"
+        return False, ""
+    except Exception:
+        return False, ""
+
+
+def _signal_rsi_divergence(df) -> tuple:
+    """
+    [전략 5] RSI 강세 다이버전스 (Bullish Divergence)
+    - 가격: 최근 저점 < 이전 저점 (신저가 경신)
+    - RSI:  최근 저점 > 이전 저점 (RSI는 덜 떨어짐)
+    → 하락 모멘텀이 약해지고 있다는 신호
+    """
+    try:
+        if df is None or df.empty or len(df) < 30:
+            return False, ""
+        c = df['close'].dropna()
+        d  = c.diff()
+        g  = d.clip(lower=0).rolling(14).mean()
+        lo = (-d.clip(upper=0)).rolling(14).mean()
+        rsi_series = 100 - 100 / (1 + g / (lo + 1e-10))
+
+        # 최근 10~20봉 구간에서 가격 저점 vs RSI 저점 비교
+        window = min(20, len(c) - 5)
+        price_recent_low = float(c.iloc[-window:].min())
+        price_prev_low   = float(c.iloc[-window*2:-window].min())
+        rsi_recent_low   = float(rsi_series.iloc[-window:].min())
+        rsi_prev_low     = float(rsi_series.iloc[-window*2:-window].min())
+
+        # 가격은 신저점, RSI는 전 저점보다 높음
+        if price_recent_low < price_prev_low and rsi_recent_low > rsi_prev_low + 3:
+            return True, f"RSI강세다이버전스(가격신저점RSI반등{rsi_recent_low:.0f})"
+        return False, ""
+    except Exception:
+        return False, ""
+
+
+def _signal_ma_oversold_gap(df) -> tuple:
+    """
+    [전략 6] 이동평균 과이격 반등 (Mean Reversion)
+    - 현재가가 20일선 대비 -15% 이상 이탈 → 평균 회귀 반등 기대
+    - 단, RSI 35 미만이어야 함 (단순 하락이 아닌 과매도 확인)
+    """
+    try:
+        if df is None or df.empty or len(df) < 22:
+            return False, ""
+        c = df['close'].dropna()
+        rsi = _calc_rsi14(c)
+        if rsi >= 35:
+            return False, ""
+        ma20 = float(c.rolling(20).mean().iloc[-1])
+        price = float(c.iloc[-1])
+        gap_pct = (price / ma20 - 1) * 100
+        if gap_pct <= -15:
+            return True, f"20일선과이격반등({gap_pct:.1f}%,RSI{rsi:.0f})"
+        return False, ""
+    except Exception:
+        return False, ""
+
+
+def _signal_support_rebound(df) -> tuple:
+    """
+    [전략 7] 이전 저점 지지 반등
+    - 최근 60일 최저가 근처(±2%)에서 현재가 위치
+    - 당일 종가 > 당일 저가의 1.5% 이상 (저점 대비 반등 확인)
+    """
+    try:
+        if df is None or df.empty or len(df) < 20:
+            return False, ""
+        c = df['close'].dropna()
+        l = df['low'].dropna() if 'low' in df.columns else c
+        price = float(c.iloc[-1])
+        low_today = float(l.iloc[-1])
+        support = float(c.iloc[-60:].min()) if len(c) >= 60 else float(c.min())
+        near_support = abs(price / support - 1) <= 0.02
+        bounced_off  = price >= low_today * 1.015
+        if near_support and bounced_off:
+            return True, f"이전저점지지반등(지지{support:,.0f})"
+        return False, ""
+    except Exception:
+        return False, ""
+
+
+def _signal_consecutive_drop_reversal(df) -> tuple:
+    """
+    [전략 8] 연속 하락 후 첫 양봉
+    - 3일 이상 연속 음봉 후 오늘 양봉 + RSI 40 미만
+    - 단기 과매도 소진 후 매수세 유입 첫 신호
+    """
+    try:
+        if df is None or df.empty or len(df) < 20:  # RSI(14) 최소 데이터 보장
+            return False, ""
+        # open/close를 df에서 직접 사용 (동일 인덱스 보장)
+        o = df['open'].values
+        c = df['close'].values
+        # 직전 3일 연속 음봉 확인 (음봉 = 종가 < 시가)
+        consecutive_red = all(c[i] < o[i] for i in range(-4, -1))
+        today_green = c[-1] > o[-1]
+        if not (consecutive_red and today_green):
+            return False, ""
+        close_series = df['close'].dropna()
+        if len(close_series) < 16:
+            return False, ""
+        rsi = _calc_rsi14(close_series)
+        if pd.isna(rsi) or rsi >= 40:
+            return False, ""
+        return True, f"연속하락후첫양봉(RSI{rsi:.0f})"
+    except Exception:
+        return False, ""
+
+
+def _signal_volume_accumulation(df) -> tuple:
+    """
+    [전략 9] 저점 거래량 축적 (Accumulation)
+    - 가격은 하락하는데 OBV(On-Balance Volume)가 상승 → 세력 축적
+    - 최근 5일 OBV 추세가 양수이고, 가격은 전주 대비 하락 중
+    """
+    try:
+        if df is None or df.empty or len(df) < 10:
+            return False, ""
+        c = df['close'].dropna()
+        v = _get_vol(df)
+        if len(v) < 10:
+            return False, ""
+        # OBV 계산
+        obv = (np.sign(c.diff()) * v).cumsum()
+        obv_slope = float(obv.iloc[-1]) - float(obv.iloc[-5])
+        price_slope = float(c.iloc[-1]) - float(c.iloc[-5])
+        # 가격↓ + OBV↑ = 세력 축적
+        if price_slope < 0 and obv_slope > 0:
+            return True, f"OBV축적(가격↓{price_slope:+.0f}원,수급↑)"
+        return False, ""
+    except Exception:
+        return False, ""
+
+
+def _signal_stochastic_golden(df) -> tuple:
+    """
+    [전략 10] 스토캐스틱 과매도 골든크로스
+    - 스토캐스틱 K(5,3,3)이 20 아래에서 D선을 상향 돌파
+    - RSI보다 단기 반응이 빠른 지표 — 저점에서 선행 신호
+    """
+    try:
+        if df is None or df.empty or len(df) < 20:
+            return False, ""
+        c = df['close'].dropna()
+        h = df['high'].dropna() if 'high' in df.columns else c
+        l = df['low'].dropna()  if 'low'  in df.columns else c
+        period_k = 5
+        lowest_l  = l.rolling(period_k).min()
+        highest_h = h.rolling(period_k).max()
+        k = 100 * (c - lowest_l) / (highest_h - lowest_l + 1e-9)
+        d = k.rolling(3).mean()
+        # K가 20 아래에서 D를 상향 돌파
+        prev_below = float(k.iloc[-2]) < float(d.iloc[-2]) and float(k.iloc[-2]) < 20
+        curr_above = float(k.iloc[-1]) > float(d.iloc[-1])
+        if prev_below and curr_above:
+            return True, f"스토캐스틱골든크로스(K{k.iloc[-1]:.0f}<20)"
+        return False, ""
+    except Exception:
+        return False, ""
+
+
+def get_bear_bottom_score(df) -> tuple:
+    """
+    하락장 저점 포착 종합 스코어링.
+    10개 전략을 독립 실행 후 감지된 신호 수(score)와 사유 목록을 반환.
+
+    Returns:
+        (score: int, reasons: list[str])
+        score 0 = 신호 없음 (매수 차단)
+        score 1 = 약한 신호 (20% 소액)
+        score 2 = 중간 신호 (30% 진입)
+        score 3+= 강한 신호 (40% 진입)
+    """
+    checkers = [
+        _signal_panic_climax,
+        _signal_hammer_candle,
+        _signal_bullish_engulfing,
+        _signal_morning_star,
+        _signal_rsi_divergence,
+        _signal_ma_oversold_gap,
+        _signal_support_rebound,
+        _signal_consecutive_drop_reversal,
+        _signal_volume_accumulation,
+        _signal_stochastic_golden,
+    ]
+    score = 0
+    reasons = []
+    for fn in checkers:
+        try:
+            hit, reason = fn(df)
+            if hit:
+                score += 1
+                reasons.append(reason)
+        except Exception:
+            pass
+    return score, reasons
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 상승장 모멘텀 포착 — 10개 전략
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _bull_ma_golden_cross(df) -> tuple:
+    """
+    [상승 1] 20일선이 60일선을 상향 돌파 (골든크로스)
+    - 중기 추세 전환의 가장 고전적인 신호
+    - 직전 봉: 20일선 < 60일선 / 현재 봉: 20일선 > 60일선
+    """
+    try:
+        if df is None or df.empty or len(df) < 62:
+            return False, ""
+        c = df['close'].dropna()
+        ma20 = c.rolling(20).mean()
+        ma60 = c.rolling(60).mean()
+        if ma20.iloc[-2] < ma60.iloc[-2] and ma20.iloc[-1] > ma60.iloc[-1]:
+            return True, f"20/60일골든크로스(MA20:{ma20.iloc[-1]:,.0f})"
+        return False, ""
+    except Exception:
+        return False, ""
+
+
+def _bull_rsi_oversold_exit(df) -> tuple:
+    """
+    [상승 2] RSI(14) 40 이하에서 50 이상으로 상향 돌파
+    - 상승 추세 중 눌림목 조정이 끝나고 재가속하는 타이밍
+    - (BEAR 신호의 RSI < 25와 달리, 상승장에서는 40~50 구간이 매수 기회)
+    """
+    try:
+        if df is None or df.empty or len(df) < 17:
+            return False, ""
+        c = df['close'].dropna()
+        d  = c.diff()
+        g  = d.clip(lower=0).rolling(14).mean()
+        lo = (-d.clip(upper=0)).rolling(14).mean()
+        rsi = 100 - 100 / (1 + g / (lo + 1e-10))
+        if rsi.iloc[-2] < 45 and rsi.iloc[-1] >= 50:
+            return True, f"RSI눌림목회복({rsi.iloc[-2]:.0f}→{rsi.iloc[-1]:.0f})"
+        return False, ""
+    except Exception:
+        return False, ""
+
+
+def _bull_bb_midline_cross(df) -> tuple:
+    """
+    [상승 3] 볼린저밴드 중심선(20일 SMA) 상향 돌파
+    - 조정 후 중심선을 다시 회복 = 상승 추세 복귀 신호
+    """
+    try:
+        if df is None or df.empty or len(df) < 22:
+            return False, ""
+        c = df['close'].dropna()
+        mid = c.rolling(20).mean()
+        prev_below = float(c.iloc[-2]) < float(mid.iloc[-2])
+        curr_above = float(c.iloc[-1]) >= float(mid.iloc[-1])
+        if prev_below and curr_above:
+            return True, f"볼린저중심선돌파({mid.iloc[-1]:,.0f})"
+        return False, ""
+    except Exception:
+        return False, ""
+
+
+def _bull_volume_surge_green(df) -> tuple:
+    """
+    [상승 4] 거래량 폭발 + 양봉
+    - 오늘 거래량이 20일 평균의 1.5배 이상이고 양봉 마감
+    - 세력이 적극 참여 중임을 의미
+    """
+    try:
+        if df is None or df.empty or len(df) < 22:
+            return False, ""
+        c = df['close'].dropna()
+        o = df['open'].dropna()
+        v = _get_vol(df)
+        if len(v) < 22:
+            return False, ""
+        is_green = float(c.iloc[-1]) > float(o.iloc[-1])
+        vol_avg = float(v.iloc[-21:-1].mean())
+        vol_ratio = float(v.iloc[-1]) / (vol_avg + 1)
+        if is_green and vol_ratio >= 1.5:
+            return True, f"거래량폭발양봉({vol_ratio:.1f}배)"
+        return False, ""
+    except Exception:
+        return False, ""
+
+
+def _bull_macd_golden_zero(df) -> tuple:
+    """
+    [상승 5] MACD 골든크로스 (0선 위에서 발생)
+    - 0선 아래 골든크로스보다 신뢰도 높음 — 추세 지속 확인
+    """
+    try:
+        if df is None or df.empty or len(df) < 30:
+            return False, ""
+        c = df['close'].dropna()
+        ema12 = c.ewm(span=12, adjust=False).mean()
+        ema26 = c.ewm(span=26, adjust=False).mean()
+        macd  = ema12 - ema26
+        signal = macd.ewm(span=9, adjust=False).mean()
+        cross_up  = macd.iloc[-2] < signal.iloc[-2] and macd.iloc[-1] > signal.iloc[-1]
+        above_zero = float(macd.iloc[-1]) > 0
+        if cross_up and above_zero:
+            return True, f"MACD골든크로스(0선위,히스토:{macd.iloc[-1]-signal.iloc[-1]:+.2f})"
+        return False, ""
+    except Exception:
+        return False, ""
+
+
+def _bull_new_high_breakout(df) -> tuple:
+    """
+    [상승 6] 52주 신고가 돌파
+    - 저항선이 없는 구간 — 모멘텀 가속 가능성 높음
+    - 거래량 동반 필수
+    """
+    try:
+        if df is None or df.empty or len(df) < 60:
+            return False, ""
+        c  = df['close'].dropna()
+        v  = _get_vol(df)
+        high_252 = float(c.iloc[-252:].max()) if len(c) >= 252 else float(c.max())
+        prev_high = float(c.iloc[-2])
+        curr      = float(c.iloc[-1])
+        vol_avg   = float(v.iloc[-21:-1].mean()) if len(v) >= 22 else 1
+        vol_ok    = float(v.iloc[-1]) >= vol_avg * 1.2 if vol_avg > 0 else True
+        if curr > high_252 and prev_high <= high_252 and vol_ok:
+            return True, f"52주신고가돌파({curr:,.0f})"
+        return False, ""
+    except Exception:
+        return False, ""
+
+
+def _bull_pullback_ma20(df) -> tuple:
+    """
+    [상승 7] 상승 추세 중 20일선 눌림목 반등
+    - 현재가가 20일선에 근접(±2%)했다가 반등 마감
+    - 상승 추세 유지 확인(120일선 위)이 전제
+    """
+    try:
+        if df is None or df.empty or len(df) < 62:
+            return False, ""
+        c = df['close'].dropna()
+        ma20  = c.rolling(20).mean()
+        ma120 = c.rolling(120, min_periods=60).mean()
+        price  = float(c.iloc[-1])
+        low_td = float(df['low'].iloc[-1]) if 'low' in df.columns else price
+        above_120 = price > float(ma120.iloc[-1])
+        touched_20 = low_td <= float(ma20.iloc[-1]) * 1.01
+        bounced    = price   >= float(ma20.iloc[-1]) * 0.99
+        if above_120 and touched_20 and bounced:
+            return True, f"20일선눌림목반등(MA20:{ma20.iloc[-1]:,.0f})"
+        return False, ""
+    except Exception:
+        return False, ""
+
+
+def _bull_ema_short_cross(df) -> tuple:
+    """
+    [상승 8] EMA 5일이 EMA 20일을 상향 돌파 (단기 골든크로스)
+    - 빠른 반응 — 추세 초입 포착에 유리
+    """
+    try:
+        if df is None or df.empty or len(df) < 22:
+            return False, ""
+        c    = df['close'].dropna()
+        e5   = c.ewm(span=5,  adjust=False).mean()
+        e20  = c.ewm(span=20, adjust=False).mean()
+        if e5.iloc[-2] < e20.iloc[-2] and e5.iloc[-1] > e20.iloc[-1]:
+            return True, f"EMA5/20골든크로스({e5.iloc[-1]:,.0f})"
+        return False, ""
+    except Exception:
+        return False, ""
+
+
+def _bull_consecutive_green(df) -> tuple:
+    """
+    [상승 9] 3일 연속 양봉 + 거래량 증가 추세
+    - 단순하지만 강력한 모멘텀 연속성 확인
+    """
+    try:
+        if df is None or df.empty or len(df) < 6:
+            return False, ""
+        o = df['open']
+        c = df['close']
+        v = _get_vol(df)
+        three_green = all(float(c.iloc[i]) > float(o.iloc[i]) for i in range(-3, 0))
+        if not three_green:
+            return False, ""
+        vol_increasing = len(v) >= 3 and float(v.iloc[-1]) > float(v.iloc[-3])
+        if vol_increasing:
+            return True, "3연속양봉+거래량증가"
+        return False, ""
+    except Exception:
+        return False, ""
+
+
+def _bull_obv_new_high(df) -> tuple:
+    """
+    [상승 10] OBV 신고가 선행 돌파
+    - 가격 신고가보다 OBV가 먼저 신고가 — 수급이 가격을 선도
+    - 가장 신뢰할 수 있는 세력 참여 증거
+    """
+    try:
+        if df is None or df.empty or len(df) < 20:
+            return False, ""
+        c = df['close'].dropna()
+        v = _get_vol(df)
+        if len(v) < 20:
+            return False, ""
+        obv = (np.sign(c.diff()) * v).cumsum()
+        obv_curr_high = float(obv.iloc[-1]) >= float(obv.iloc[-20:].max())
+        price_not_yet = float(c.iloc[-1]) < float(c.iloc[-20:].max()) * 0.98
+        if obv_curr_high and price_not_yet:
+            return True, "OBV선행신고가(수급이가격선도)"
+        return False, ""
+    except Exception:
+        return False, ""
+
+
+def get_bull_momentum_score(df) -> tuple:
+    """
+    상승장 모멘텀 포착 종합 스코어링.
+    Returns: (score: int, reasons: list[str])
+      score 0   = 신호 없음 → 60% 기본 진입 (상승장이므로 차단 안 함)
+      score 1~2 = 보통 신호 → 70% 진입
+      score 3+  = 강한 신호 → 80% 풀 베팅
+    """
+    checkers = [
+        _bull_ma_golden_cross,
+        _bull_rsi_oversold_exit,
+        _bull_bb_midline_cross,
+        _bull_volume_surge_green,
+        _bull_macd_golden_zero,
+        _bull_new_high_breakout,
+        _bull_pullback_ma20,
+        _bull_ema_short_cross,
+        _bull_consecutive_green,
+        _bull_obv_new_high,
+    ]
+    score, reasons = 0, []
+    for fn in checkers:
+        try:
+            hit, reason = fn(df)
+            if hit:
+                score += 1
+                reasons.append(reason)
+        except Exception:
+            pass
+    return score, reasons
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 횡보장 레인지 트레이딩 — 10개 전략
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _neutral_bb_lower_bounce(df) -> tuple:
+    """
+    [횡보 1] 볼린저밴드 하단 반등
+    - 밴드 하단 터치(±1%) 후 종가가 하단 위로 마감
+    - 레인지 하단 = 매수 구간의 핵심
+    """
+    try:
+        if df is None or df.empty or len(df) < 22:
+            return False, ""
+        c = df['close'].dropna()
+        mid   = c.rolling(20).mean()
+        lower = mid - 2 * c.rolling(20).std()
+        low_td = float(df['low'].iloc[-1]) if 'low' in df.columns else float(c.iloc[-1])
+        touched = low_td <= float(lower.iloc[-1]) * 1.01
+        closed_above = float(c.iloc[-1]) > float(lower.iloc[-1])
+        if touched and closed_above:
+            return True, f"볼린저하단반등(하단:{lower.iloc[-1]:,.0f})"
+        return False, ""
+    except Exception:
+        return False, ""
+
+
+def _neutral_rsi_range_buy(df) -> tuple:
+    """
+    [횡보 2] RSI(14) 35~45 구간에서 상향 반전
+    - 횡보장 과매도 구간 — 지나치게 낮지 않고 회복 모멘텀 확인
+    """
+    try:
+        if df is None or df.empty or len(df) < 17:
+            return False, ""
+        c = df['close'].dropna()
+        rsi = _calc_rsi14(c)
+        d   = c.diff()
+        g   = d.clip(lower=0).rolling(14).mean()
+        lo  = (-d.clip(upper=0)).rolling(14).mean()
+        rsi_s = 100 - 100 / (1 + g / (lo + 1e-10))
+        prev, curr = float(rsi_s.iloc[-2]), float(rsi_s.iloc[-1])
+        if 30 <= prev <= 45 and curr > prev + 2:
+            return True, f"RSI횡보과매도반등({prev:.0f}→{curr:.0f})"
+        return False, ""
+    except Exception:
+        return False, ""
+
+
+def _neutral_macd_hist_turn(df) -> tuple:
+    """
+    [횡보 3] MACD 히스토그램 부(-)에서 정(+)으로 전환
+    - 0선 근처에서의 방향 전환 — 횡보 탈출 초기 모멘텀
+    """
+    try:
+        if df is None or df.empty or len(df) < 30:
+            return False, ""
+        c = df['close'].dropna()
+        macd   = c.ewm(span=12, adjust=False).mean() - c.ewm(span=26, adjust=False).mean()
+        signal = macd.ewm(span=9, adjust=False).mean()
+        hist   = macd - signal
+        if float(hist.iloc[-2]) < 0 and float(hist.iloc[-1]) >= 0:
+            return True, f"MACD히스토그램부→정전환({hist.iloc[-1]:+.2f})"
+        return False, ""
+    except Exception:
+        return False, ""
+
+
+def _neutral_narrow_band_break(df) -> tuple:
+    """
+    [횡보 4] 볼린저밴드 수렴 후 상향 이탈 (스퀴즈 돌파)
+    - 밴드폭이 최근 20일 중 최소 수준에서 상향 돌파
+    - 에너지가 응축되다 위로 터지는 패턴
+    """
+    try:
+        if df is None or df.empty or len(df) < 30:
+            return False, ""
+        c = df['close'].dropna()
+        mid   = c.rolling(20).mean()
+        std   = c.rolling(20).std()
+        upper = mid + 2 * std
+        lower = mid - 2 * std
+        bw    = (upper - lower) / (mid + 1e-9)  # 밴드폭 비율
+        bw_min_20 = float(bw.iloc[-20:].min())
+        curr_bw   = float(bw.iloc[-1])
+        price_break = float(c.iloc[-1]) > float(upper.iloc[-1]) * 0.99
+        if curr_bw <= bw_min_20 * 1.05 and price_break:
+            return True, f"볼린저스퀴즈상향이탈(밴드폭{curr_bw:.3f})"
+        return False, ""
+    except Exception:
+        return False, ""
+
+
+def _neutral_double_bottom(df) -> tuple:
+    """
+    [횡보 5] 이중 바닥 (W자 패턴)
+    - 최근 20~40봉에서 두 개의 유사한 저점 형성 후 현재가 반등
+    - 박스권 하단을 두 번 지지한 강력한 반전 신호
+    """
+    try:
+        if df is None or df.empty or len(df) < 40:
+            return False, ""
+        c = df['close'].dropna()
+        low_series = df['low'].dropna() if 'low' in df.columns else c
+        window = min(40, len(c) - 2)
+        seg1 = low_series.iloc[-window:-window//2]
+        seg2 = low_series.iloc[-window//2:-1]
+        low1 = float(seg1.min())
+        low2 = float(seg2.min())
+        similar = abs(low1 - low2) / (max(low1, low2) + 1e-9) <= 0.03
+        rebounding = float(c.iloc[-1]) > low2 * 1.02
+        if similar and rebounding:
+            return True, f"이중바닥W패턴(저점1:{low1:,.0f}≈저점2:{low2:,.0f})"
+        return False, ""
+    except Exception:
+        return False, ""
+
+
+def _neutral_vwap_support(df) -> tuple:
+    """
+    [횡보 6] VWAP(거래량 가중 평균가) 지지 반등
+    - 현재가가 VWAP 아래로 내려갔다가 회복 마감
+    - 기관/세력의 평균 매수 단가 = 강력한 지지선
+    """
+    try:
+        if df is None or df.empty or len(df) < 5:
+            return False, ""
+        c = df['close'].dropna()
+        v = _get_vol(df)
+        if len(v) < 5:
+            return False, ""
+        vwap = (c * v).rolling(20, min_periods=5).sum() / (v.rolling(20, min_periods=5).sum() + 1e-9)
+        low_td = float(df['low'].iloc[-1]) if 'low' in df.columns else float(c.iloc[-1])
+        touched_below = low_td < float(vwap.iloc[-1])
+        closed_above  = float(c.iloc[-1]) >= float(vwap.iloc[-1])
+        if touched_below and closed_above:
+            return True, f"VWAP지지반등(VWAP:{vwap.iloc[-1]:,.0f})"
+        return False, ""
+    except Exception:
+        return False, ""
+
+
+def _neutral_williams_r(df) -> tuple:
+    """
+    [횡보 7] Williams %R 과매도(-80 이하) 반등
+    - RSI보다 단기 반응 빠름 — 횡보 구간 저점 포착에 유리
+    """
+    try:
+        if df is None or df.empty or len(df) < 15:
+            return False, ""
+        c = df['close'].dropna()
+        h = df['high'].dropna() if 'high' in df.columns else c
+        l = df['low'].dropna()  if 'low'  in df.columns else c
+        highest_h = h.rolling(14).max()
+        lowest_l  = l.rolling(14).min()
+        wr = -100 * (highest_h - c) / (highest_h - lowest_l + 1e-9)
+        if float(wr.iloc[-2]) < -80 and float(wr.iloc[-1]) > -80:
+            return True, f"Williams%R과매도탈출({wr.iloc[-1]:.0f})"
+        return False, ""
+    except Exception:
+        return False, ""
+
+
+def _neutral_box_range_support(df) -> tuple:
+    """
+    [횡보 8] 박스권 하단 지지 확인
+    - 최근 20일 고가/저가로 박스권 정의 후 하단 ±2% 근처에서 반등
+    """
+    try:
+        if df is None or df.empty or len(df) < 22:
+            return False, ""
+        c = df['close'].dropna()
+        box_high = float(c.iloc[-20:].max())
+        box_low  = float(c.iloc[-20:].min())
+        box_range = box_high - box_low
+        if box_range / (box_low + 1e-9) < 0.03:
+            return False, ""
+        price = float(c.iloc[-1])
+        near_bottom = price <= box_low + box_range * 0.15
+        not_breakdown = price >= box_low * 0.98
+        if near_bottom and not_breakdown:
+            return True, f"박스권하단지지(박스:{box_low:,.0f}~{box_high:,.0f})"
+        return False, ""
+    except Exception:
+        return False, ""
+
+
+def _neutral_adx_low_reversal(df) -> tuple:
+    """
+    [횡보 9] ADX 낮음(< 20) + RSI 반등 — 추세 없는 구간 역추세 매매
+    - ADX < 20 = 추세 없는 횡보 확인
+    - 이 구간에서는 추세 추종이 아닌 평균 회귀가 유효
+    """
+    try:
+        if df is None or df.empty or len(df) < 30:
+            return False, ""
+        # dropna 대신 df 원본 사용 → 인덱스 정렬 보장
+        c = df['close']
+        h = df['high']  if 'high' in df.columns else df['close']
+        l = df['low']   if 'low'  in df.columns else df['close']
+        # ADX 계산 (같은 DataFrame 인덱스 기준)
+        plus_dm  = h.diff().clip(lower=0)
+        minus_dm = (-l.diff()).clip(lower=0)
+        tr = pd.concat([h - l,
+                        (h - c.shift(1)).abs(),
+                        (l - c.shift(1)).abs()], axis=1).max(axis=1)
+        atr14 = tr.rolling(14, min_periods=14).mean()
+        pdi = 100 * plus_dm.rolling(14, min_periods=14).mean()  / (atr14 + 1e-9)
+        mdi = 100 * minus_dm.rolling(14, min_periods=14).mean() / (atr14 + 1e-9)
+        dx  = 100 * (pdi - mdi).abs() / (pdi + mdi + 1e-9)
+        adx = dx.rolling(14, min_periods=14).mean()
+        adx_val = float(adx.iloc[-1])
+        if pd.isna(adx_val) or adx_val >= 20:
+            return False, ""
+        rsi = _calc_rsi14(c.dropna())
+        if pd.isna(rsi) or rsi >= 40:
+            return False, ""
+        return True, f"ADX횡보구간역추세(ADX{adx_val:.0f},RSI{rsi:.0f})"
+    except Exception:
+        return False, ""
+
+
+def _neutral_pivot_support(df) -> tuple:
+    """
+    [횡보 10] 피벗 포인트 지지 반등
+    - 전일 고/저/종가로 당일 피벗 계산, 현재가가 S1(지지1) 근처에서 반등
+    - 단기 트레이더들이 공통으로 보는 지지/저항선
+    """
+    try:
+        if df is None or df.empty or len(df) < 3:
+            return False, ""
+        prev_h = float(df['high'].iloc[-2])  if 'high'  in df.columns else float(df['close'].iloc[-2])
+        prev_l = float(df['low'].iloc[-2])   if 'low'   in df.columns else float(df['close'].iloc[-2])
+        prev_c = float(df['close'].iloc[-2])
+        pivot  = (prev_h + prev_l + prev_c) / 3
+        s1     = 2 * pivot - prev_h
+        price  = float(df['close'].iloc[-1])
+        low_td = float(df['low'].iloc[-1]) if 'low' in df.columns else price
+        near_s1   = low_td <= s1 * 1.01
+        closed_above = price >= s1
+        if near_s1 and closed_above:
+            return True, f"피벗S1지지반등(S1:{s1:,.0f})"
+        return False, ""
+    except Exception:
+        return False, ""
+
+
+def get_neutral_range_score(df) -> tuple:
+    """
+    횡보장 레인지 트레이딩 종합 스코어링.
+    Returns: (score: int, reasons: list[str])
+      score 0   = 신호 없음 → 매수 차단 (횡보장은 근거 없이 진입 금지)
+      score 1   = 약한 신호 → 30% 소액
+      score 2   = 중간 신호 → 45% 진입
+      score 3+  = 강한 신호 → 55% 진입
+    """
+    checkers = [
+        _neutral_bb_lower_bounce,
+        _neutral_rsi_range_buy,
+        _neutral_macd_hist_turn,
+        _neutral_narrow_band_break,
+        _neutral_double_bottom,
+        _neutral_vwap_support,
+        _neutral_williams_r,
+        _neutral_box_range_support,
+        _neutral_adx_low_reversal,
+        _neutral_pivot_support,
+    ]
+    score, reasons = 0, []
+    for fn in checkers:
+        try:
+            hit, reason = fn(df)
+            if hit:
+                score += 1
+                reasons.append(reason)
+        except Exception:
+            pass
+    return score, reasons
 
 
 def calc_rsi(series, period=RSI_PERIOD):
@@ -253,6 +1065,135 @@ def get_signal_by_strategy(ticker, strategy_name, kis_api=None, df=None):
         return 'HOLD', price, 0
 
 
+# ─────────────────────────────────────────────────────────────────────────────
+# 실전 원칙 기반 5분봉 반납률 이탈 신호
+# (출처: 실전 매매 원칙 — 02_intraday_operating_rules.md / 03_sell_and_reentry_rules.md)
+# ─────────────────────────────────────────────────────────────────────────────
+
+def check_giveback_stop(
+    candles: list,
+    entry_price: float,
+    peak_price: float,
+    is_momentum_ride: bool = False,
+) -> tuple:
+    """
+    5분봉 상승분 반납률 기반 이탈 신호 판단.
+
+    실전 원칙 요약:
+      일반주:
+        - MA5 이탈 + 다음 2봉 회복 실패 + 고점 미달 → 30% 축소
+        - 상승분 50~60% 반납 + MA5 이탈 → 1차 전량 익절
+        - 상승분 70% 이상 반납 + 회복 실패 → 강제 익절
+      급등주 (MA5 라이드형 / is_momentum_ride=True):
+        - 10% 이상 상승 후 첫 MA5 이탈 또는 첫 강한 음봉 → 30% 익절
+        - 상승분 30% 반납 → 추가 40% 익절
+        - 상승분 50% 반납 → 잔여 30% 익절
+
+    Parameters
+    ----------
+    candles        : list of dict {'open', 'high', 'low', 'close', 'volume', 'time'}
+                     5분봉 최소 5개 이상 (최신봉이 마지막)
+    entry_price    : 진입 평균 단가
+    peak_price     : 보유 중 최고점
+    is_momentum_ride : 급등주 MA5 라이드형 여부
+
+    Returns
+    -------
+    (signal, giveback_pct, reason)
+      signal: 'HOLD' | 'PARTIAL_EXIT_30' | 'PARTIAL_EXIT_70' | 'FULL_EXIT'
+      giveback_pct: 현재 반납률(%)
+      reason: 사유 문자열
+    """
+    if not candles or len(candles) < 3 or entry_price <= 0 or peak_price <= entry_price:
+        return 'HOLD', 0.0, '데이터 부족'
+
+    gain = peak_price - entry_price       # 총 상승폭
+    current_price = float(candles[-1]['close'])
+    giveback = peak_price - current_price  # 고점에서 현재까지 반납폭
+    giveback_pct = (giveback / gain * 100) if gain > 0 else 0.0
+
+    # 5분봉 MA5 계산
+    closes = [float(c['close']) for c in candles]
+    ma5_series = []
+    for i in range(len(closes)):
+        window = closes[max(0, i - 4): i + 1]
+        ma5_series.append(sum(window) / len(window))
+
+    latest_close = closes[-1]
+    latest_ma5   = ma5_series[-1]
+    prev_ma5     = ma5_series[-2] if len(ma5_series) >= 2 else latest_ma5
+
+    ma5_broken = latest_close < latest_ma5   # 종가 MA5 이탈 여부
+
+    # 고점 대비 MA5 이탈 후 반등 고점 확인 (최근 2봉)
+    recent_high_after_break = max(float(candles[-1]['high']), float(candles[-2]['high'])) \
+        if len(candles) >= 2 else float(candles[-1]['high'])
+    reference_high = max(float(c['high']) for c in candles[-5:]) if len(candles) >= 5 else peak_price
+    high_lower = recent_high_after_break < reference_high * 0.997  # 반등 고점 미달
+
+    # 거래량 기준 강한 음봉 여부
+    vols = [float(c.get('volume', 0)) for c in candles]
+    avg_vol_10 = sum(vols[-11:-1]) / 10 if len(vols) >= 11 else (sum(vols[:-1]) / max(1, len(vols) - 1))
+    latest_vol = vols[-1]
+    is_heavy_candle = (latest_vol > avg_vol_10 * 1.5) and (latest_close < float(candles[-1]['open']))
+
+    # ── 급등주 MA5 라이드형 ───────────────────────────────
+    if is_momentum_ride:
+        total_gain_pct = (peak_price / entry_price - 1) * 100
+        if total_gain_pct >= 10 and ma5_broken and (is_heavy_candle or high_lower):
+            return 'PARTIAL_EXIT_30', giveback_pct, f'급등주 MA5 첫 이탈 (고점+{total_gain_pct:.1f}%)'
+        if giveback_pct >= 30:
+            return 'PARTIAL_EXIT_70', giveback_pct, f'급등주 30% 반납 → 추가 40% 익절 구간'
+        if giveback_pct >= 50:
+            return 'FULL_EXIT', giveback_pct, f'급등주 50% 반납 → 잔여 전량 익절'
+        return 'HOLD', giveback_pct, 'MA5 라이드 추세 유지'
+
+    # ── 일반주 ────────────────────────────────────────────
+    if ma5_broken and high_lower:
+        if giveback_pct >= 70:
+            return 'FULL_EXIT', giveback_pct, f'70% 반납 + MA5 회복 실패 → 강제 익절'
+        if giveback_pct >= 50:
+            return 'PARTIAL_EXIT_70', giveback_pct, f'50~70% 반납 + MA5 이탈 → 1차 익절 구간'
+        if giveback_pct >= 30:
+            return 'PARTIAL_EXIT_30', giveback_pct, f'MA5 이탈+고점미달 → 30% 축소'
+
+    if giveback_pct >= 70:
+        return 'FULL_EXIT', giveback_pct, f'70% 반납 → 늦은 강제 손실 제한'
+
+    return 'HOLD', giveback_pct, f'반납률 {giveback_pct:.0f}% — 보유 유지'
+
+
+def check_early_drop_stop(current_price: float, entry_price: float) -> tuple:
+    """
+    장초 09:00~09:10 급락 분기 원칙 (02_intraday_operating_rules.md).
+
+    Parameters
+    ----------
+    current_price : 현재가
+    entry_price   : 진입가 (기준가)
+
+    Returns
+    -------
+    (stage, sell_pct, reason)
+      stage: 0=정상 | 1=-2% | 2=-3~4% | 3=-5%이상
+      sell_pct: 매도 비율 (0.0~1.0)
+      reason: 사유 문자열
+    """
+    if entry_price <= 0:
+        return 0, 0.0, '기준가 없음'
+
+    drop_pct = (current_price / entry_price - 1) * 100  # 음수 = 하락
+
+    if drop_pct <= -5.0:
+        return 3, 1.0, f'장초 -5% 이상 급락 → 강제 전량 손실 제한 ({drop_pct:.1f}%)'
+    elif drop_pct <= -3.0:
+        return 2, 1.0, f'장초 -3~4% 하락 → 잔여 전량 축소 우선 ({drop_pct:.1f}%)'
+    elif drop_pct <= -2.0:
+        return 1, 0.5, f'장초 -2% 도달 → 보유 50% 축소 (thesis 1차 훼손) ({drop_pct:.1f}%)'
+    else:
+        return 0, 0.0, f'정상 범위 ({drop_pct:.1f}%)'
+
+
 class Position:
     """개별 종목 포지션 상태 관리 (실전 거래세 및 매매 수수료 완벽 시뮬레이션 적용)"""
     def __init__(self, ticker, name, budget):
@@ -266,13 +1207,25 @@ class Position:
         self.trades    = []          # 거래 기록
         self.max_price = 0
         self.order_pending = False   # (기존 유지)
-        self.last_order_time = 0.0   # 🟢 [최종보완] 10분 절대 쿨타임 측정용 타임스탬프
-        
+        self.last_order_time = 0.0   # 쿨타임 측정용 타임스탬프
+
+        # ── 고성능 매매 전략 속성 ─────────────────────────────────
+        # 분할 매수: 1차 매수 후 눌림목에서 2차 추가 매수
+        self.second_buy_price = 0.0   # 2차 매수 발동 기준가 (1차 매수가 × 0.98)
+        self.second_buy_cash  = 0.0   # 2차 매수용 유보 현금
+        self.second_buy_done  = False # 2차 매수 완료 여부
+
+        # 피라미딩: 수익 중인 포지션에 추가 매수
+        self.pyramid_done     = False # 피라미딩 완료 여부
+
+        # 분할 익절: 1차 50% 선익절 후 나머지 ATR 트레일링
+        self.partial_sold     = False # 1차 익절 완료 여부
+
         # 한국 금융시장 표준 수수료 및 거래세율 정의
         self.fee_rate = 0.00015      # 실전 및 모의 온라인 매매 수수료 기본율 (0.015%)
         self.tax_rate = 0.0018       # 장내 매도 시 국가 증권거래세율 (0.18%)
-        
-        # 🟢 [신규 추가] 상태 뱃지 및 메시지 초기화
+
+        # 상태 뱃지 및 메시지 초기화
         self.status = "감시 중 👀"
         self.status_msg = "현재 지정된 전략에 따라 차트 및 지표를 실시간 감시하고 있습니다."
 
