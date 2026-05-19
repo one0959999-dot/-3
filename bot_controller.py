@@ -117,7 +117,7 @@ class BotController:
         self.ohlcv_cache = {}  
         
         # 🔒 [스레드 안전성] 딕셔너리 동시 접근으로 인한 런타임 에러 방지용 락
-        self.lock = threading.Lock()
+        self.lock = threading.RLock()
         
         # �� [신규 추가] 월급 및 외부 입금 자동 추적용 독립 장부 변수
         self.last_asset_cost = None
@@ -757,7 +757,10 @@ class BotController:
 
         with self.lock:
             trading_sat_items = list(self.satellite_positions.items())
-
+        
+        # 루프 진입 전에 딱 한 번만 조회 (여기에 추가!)
+        shared_macro_context = self.kis.get_macro_context() if self.kis else "시황 정보 없음"
+        
         for ticker, pos in trading_sat_items:
             try:
                 with self.lock:
@@ -810,7 +813,7 @@ class BotController:
                     except Exception:
                         pass
 
-                macro_context = self.kis.get_macro_context() if self.kis else "시황 정보 없음"
+                macro_context = shared_macro_context
                 is_cooldown_passed = (time.time() - getattr(pos, 'last_order_time', 0) > 600)
                 
                 # 기본 홀드 뱃지 문구 할당
