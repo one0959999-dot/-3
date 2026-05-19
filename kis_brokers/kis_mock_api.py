@@ -3,28 +3,20 @@ import json
 import pandas as pd
 from datetime import datetime, timedelta
 
-class KisApi:
-    """한국투자증권 OpenAPI 연동을 위한 클래스입니다."""
+class KisMockApi:
+    """한국투자증권 모의투자 전용 OpenAPI 연동 클래스"""
     
-    def __init__(self, app_key: str, app_secret: str, account_no: str, is_mock: bool = True):
+    def __init__(self, app_key: str, app_secret: str, account_no: str):
         self.app_key = app_key
         self.app_secret = app_secret
-        # 계좌번호 정규화: "44550923-01" → "4455092301" (하이픈 자동 제거)
         self.account_no = account_no.replace('-', '').strip() if account_no else ''
-        self.set_mode(is_mock) # 초기 모드 설정
-
-    def set_mode(self, is_mock: bool):
-        """실전/모의 모드를 변경하고 그에 맞는 URL과 토큰을 초기화합니다."""
-        self.is_mock = is_mock
-        # 모의투자 및 실전투자 URL 구분
-        self.base_url = "https://openapivts.koreainvestment.com:29443" if is_mock else "https://openapi.koreainvestment.com:9443"
-        self.access_token = None # 모드가 바뀌면 토큰은 반드시 새로 발급받아야 함
+        self.base_url = "https://openapivts.koreainvestment.com:29443"
+        self.access_token = None
         self.token_expiry = None
-        print(f"[KIS] 모드 변경: {'모의투자' if is_mock else '실전투자'} (URL: {self.base_url})")
+        print(f"[KIS 모의] 모의투자 API 모드 연동 완료 (URL: {self.base_url})")
 
     def get_access_token(self):
-        """API 사용을 위한 토큰 발급"""
-        print("[KIS] 접속 토큰(Access Token) 발급을 요청합니다...")
+        print("[KIS 모의] 접속 토큰(Access Token) 발급을 요청합니다...")
         url = f"{self.base_url}/oauth2/tokenP"
         headers = {"content-type": "application/json"}
         body = {
@@ -32,22 +24,19 @@ class KisApi:
             "appkey": self.app_key,
             "appsecret": self.app_secret
         }
-        # 💡 timeout=5 추가: 5초 이상 무응답 시 무한대기 방지
         res = requests.post(url, headers=headers, data=json.dumps(body), timeout=5)
         
         if res.status_code == 200:
             self.access_token = res.json().get('access_token')
-            # 24시간 유효하지만 안전하게 23시간 뒤 만료로 설정
             self.token_expiry = datetime.now() + timedelta(hours=23)
-            print("[KIS] 토큰 발급 완료! (유효기간 24시간)")
+            print("[KIS 모의] 토큰 발급 완료! (유효기간 24시간)")
             return self.access_token
         else:
-            print(f"[KIS] 토큰 발급 실패: {res.text}")
+            print(f"[KIS 모의] 토큰 발급 실패: {res.text}")
             return None
 
     def get_approval_key(self):
-        """웹소켓 실시간 접속을 위한 웹소켓용 Approval Key 발급"""
-        # 🚨 [치명적 버그 수정]: Approval Key 발급은 모의투자 모드일지라도 '무조건' 실전 도메인을 사용해야 합니다.
+        # 모의투자라도 웹소켓키 발급은 반드시 실전 도메인 사용
         real_url = "https://openapi.koreainvestment.com:9443"
         url = f"{real_url}/oauth2/Approval"
         
@@ -61,23 +50,21 @@ class KisApi:
             res = requests.post(url, headers=headers, data=json.dumps(body), timeout=5)
             if res.status_code == 200:
                 approval_key = res.json().get('approval_key')
-                print("[KIS] 웹소켓 실시간 인증키(Approval Key) 발급 성공!")
+                print("[KIS 모의] 웹소켓 실시간 인증키(Approval Key) 발급 성공!")
                 return approval_key
             else:
-                print(f"[KIS] 웹소켓 인증키 발급 실패: {res.text}")
+                print(f"[KIS 모의] 웹소켓 인증키 발급 실패: {res.text}")
                 return None
         except Exception as e:
-            print(f"[KIS] 웹소켓 인증키 발급 통신 에러: {e}")
+            print(f"[KIS 모의] 웹소켓 인증키 발급 통신 에러: {e}")
             return None        
 
     def _ensure_token(self):
-        """토큰이 없거나 만료되었으면 자동 발급"""
         if not self.access_token or not self.token_expiry or datetime.now() >= self.token_expiry:
             return self.get_access_token()
         return self.access_token
 
     def get_hashkey(self, data: dict):
-        """POST 요청(주문 등)에 필수적인 HASHKEY 발급"""
         url = f"{self.base_url}/uapi/hashkey"
         headers = {
             "content-type": "application/json; charset=utf-8",
@@ -85,32 +72,29 @@ class KisApi:
             "appsecret": self.app_secret
         }
         try:
-            # 해시키 발급은 빠르게 이루어져야 하므로 timeout 3초 설정
             res = requests.post(url, headers=headers, data=json.dumps(data), timeout=3)
             if res.status_code == 200:
                 return res.json().get("HASH")
             else:
-                print(f"[KIS] Hashkey 발급 응답 오류: {res.text}")
+                print(f"[KIS 모의] Hashkey 발급 응답 오류: {res.text}")
         except Exception as e:
-            print(f"[KIS] Hashkey 발급 통신 에러: {e}")
+            print(f"[KIS 모의] Hashkey 발급 통신 에러: {e}")
         return None
 
     def _order_headers(self, tr_id: str, hashkey: str) -> dict:
-        """주문 공통 헤더 생성"""
         return {
             "content-type": "application/json; charset=utf-8",
             "authorization": f"Bearer {self.access_token}",
             "appkey": self.app_key,
             "appsecret": self.app_secret,
             "tr_id": tr_id,
-            "custtype": "P",      # 개인고객 (법인일 경우 B)
-            "hashkey": hashkey    # 발급받은 해시키 필수 추가
+            "custtype": "P",
+            "hashkey": hashkey
         }
         
     def get_current_price(self, stock_code: str):
-        """특정 종목의 현재가 조회"""
         if not self._ensure_token():
-            print("[KIS] 접속 토큰이 없어 현재가를 조회할 수 없습니다. (APP_KEY 등을 확인해주세요)")
+            print("[KIS 모의] 접속 토큰이 없어 현재가를 조회할 수 없습니다.")
             return None
             
         url = f"{self.base_url}/uapi/domestic-stock/v1/quotations/inquire-price"
@@ -122,19 +106,12 @@ class KisApi:
             "tr_id": "FHKST01010100"
         }
         
-        if self.is_mock:
-            params = {
-                "FID_COND_MRKT_DIV_CODE": "J",
-                "FID_INPUT_ISCD": stock_code
-            }
-        else:
-            params = {
-                "fid_cond_mrkt_div_code": "J",
-                "fid_input_iscd": stock_code
-            }
+        params = {
+            "FID_COND_MRKT_DIV_CODE": "J",
+            "FID_INPUT_ISCD": stock_code
+        }
             
         try:
-            # 💡 timeout=3 추가: 현재가 조회는 즉각 응답해야 하므로 3초 대기
             res = requests.get(url, headers=headers, params=params, timeout=3)
             if res.status_code == 200:
                 data = res.json()
@@ -142,18 +119,16 @@ class KisApi:
                     price = int(data['output']['stck_prpr'])
                     return price
                 else:
-                    print(f"[KIS] 현재가 조회 오류: {data['msg1']}")
+                    print(f"[KIS 모의] 현재가 조회 오류: {data['msg1']}")
                     return None
             else:
-                print(f"[KIS] 현재가 조회 통신 실패: {res.text}")
+                print(f"[KIS 모의] 현재가 조회 통신 실패: {res.text}")
                 return None
         except Exception as e:
-            # 💡 통신 지연 에러 발생 시 프로그램이 터지지 않도록 예외 처리
-            print(f"[KIS] 현재가 조회 통신 시간 초과/오류: {e}")
+            print(f"[KIS 모의] 현재가 조회 통신 시간 초과/오류: {e}")
             return None
 
     def get_realtime_price_data(self, stock_code: str):
-        """특정 종목의 당일 시/고/저/종가 실시간 데이터 전체 조회 (보조지표 왜곡 방지용)"""
         if not self._ensure_token():
             return None
             
@@ -166,16 +141,10 @@ class KisApi:
             "tr_id": "FHKST01010100"
         }
         
-        if self.is_mock:
-            params = {
-                "FID_COND_MRKT_DIV_CODE": "J",
-                "FID_INPUT_ISCD": stock_code
-            }
-        else:
-            params = {
-                "fid_cond_mrkt_div_code": "J",
-                "fid_input_iscd": stock_code
-            }
+        params = {
+            "FID_COND_MRKT_DIV_CODE": "J",
+            "FID_INPUT_ISCD": stock_code
+        }
             
         try:
             res = requests.get(url, headers=headers, params=params, timeout=3)
@@ -196,28 +165,19 @@ class KisApi:
             return None        
 
     def _place_order(self, stock_code: str, qty: int, side: str, price: int = 0):
-        """
-        시장가/지정가 하이브리드 주문 로직 (NXT 대체거래소 지원)
-        price가 0이면 정규장용 최유리지정가(03), price가 주어지면 시간외 NXT용 지정가(00)로 자동 스위칭
-        """
         if not self._ensure_token():
             return None
 
-        # 실전: TTTC0802U(매수) / TTTC0801U(매도)
-        # 모의: VTTC0802U(매수) / VTTC0801U(매도)
         if side == 'BUY':
-            tr_id = "VTTC0802U" if self.is_mock else "TTTC0802U"
+            tr_id = "VTTC0802U"
         else:
-            tr_id = "VTTC0801U" if self.is_mock else "TTTC0801U"
+            tr_id = "VTTC0801U"
 
-        # 계좌번호 분리 (앞 8자리 + 뒤 2자리)
         acnt_no   = self.account_no[:8]
         acnt_prdt = self.account_no[8:] if len(self.account_no) > 8 else "01"
 
-        # 🟢 [NXT 하이브리드 라우팅] 실시간 가격이 들어오면 일반 지정가(00)로, 아니면 최유리지정가(03) 적용
         ord_dvsn = "00" if price > 0 else "03"
         
-        # 🚨 [호가 단위 자동 보정 알고리즘] 거래소 규정에 맞게 끝자리를 맞춰 주문 튕김을 원천 차단합니다.
         if price > 0:
             p = int(price)
             if p < 2000:
@@ -235,7 +195,6 @@ class KisApi:
             else:
                 tick = 1000
                 
-            # 호가 단위에 맞게 끝자리 보수적 절사 (예: 32,123원 -> 50원 단위이므로 32,100원으로 자동 조정)
             adjusted_price = (p // tick) * tick
             ord_unpr = str(adjusted_price)
         else:
@@ -251,14 +210,12 @@ class KisApi:
             "ORD_UNPR":       ord_unpr,
         }
 
-        # 🚨 [필수 보안 패치] 데이터 조작 방지용 Hashkey 발급
         hashkey = self.get_hashkey(body)
         if not hashkey:
-            print("[KIS] Hashkey 발급에 실패하여 주문을 취소합니다.")
+            print("[KIS 모의] Hashkey 발급에 실패하여 주문을 취소합니다.")
             return None
 
         try:
-            # 🚨 [필수 보안 패치] 헤더에 Hashkey 전달
             res = requests.post(url, headers=self._order_headers(tr_id, hashkey), data=json.dumps(body), timeout=5)
 
             if res.status_code == 200:
@@ -267,44 +224,39 @@ class KisApi:
                     odno = data['output'].get('ODNO', '-')
                     label = '매수' if side == 'BUY' else '매도'
                     order_type_str = '지정가(NXT)' if price > 0 else '최유리지정가(정규장)'
-                    print(f"[KIS] {label} 주문 완료 [{order_type_str}] | {stock_code} {qty}주 | 주문번호: {odno}")
+                    print(f"[KIS 모의] {label} 주문 완료 [{order_type_str}] | {stock_code} {qty}주 | 주문번호: {odno}")
                     return data
                 else:
                     msg_cd = data.get('msg_cd', '')
-                    print(f"[KIS] 주문 실패: {data.get('msg1', res.text)}")
-                    # 토큰 만료(EGW00123/EGW00121) → 재발급 후 1회 재시도
+                    print(f"[KIS 모의] 주문 실패: {data.get('msg1', res.text)}")
                     if msg_cd in ('EGW00123', 'EGW00121'):
-                        print("[KIS] 토큰 만료 → 재발급 후 재시도")
+                        print("[KIS 모의] 토큰 만료 → 재발급 후 재시도")
                         self.access_token = None
                         self._ensure_token()
                         return self._place_order(stock_code, qty, side, price)
                     return None
             else:
-                print(f"[KIS] 주문 통신 오류: {res.status_code} {res.text}")
+                print(f"[KIS 모의] 주문 통신 오류: {res.status_code} {res.text}")
                 return None
         except Exception as e:
-            print(f"[KIS] 주문 요청 통신 시간 초과/오류: {e}")
+            print(f"[KIS 모의] 주문 요청 통신 시간 초과/오류: {e}")
             return None
-
             
     def buy_market_order(self, stock_code: str, qty: int, price: int = 0):
-        """시장가/지정가 하이브리드 매수 주문"""
         if qty <= 0:
             return None
         return self._place_order(stock_code, qty, 'BUY', price)
         
     def sell_market_order(self, stock_code: str, qty: int, price: int = 0):
-        """시장가/지정가 하이브리드 매도 주문"""
         if qty <= 0:
             return None
         return self._place_order(stock_code, qty, 'SELL', price)
 
     def get_account_balance(self):
-        """계좌 잔고 및 종목 보유 내역 조회 (실제 계좌)"""
         if not self._ensure_token():
             return None
             
-        tr_id = "VTTC8434R" if self.is_mock else "TTTC8434R"
+        tr_id = "VTTC8434R"
         url = f"{self.base_url}/uapi/domestic-stock/v1/trading/inquire-balance"
         
         acnt_no = self.account_no[:8]
@@ -318,34 +270,19 @@ class KisApi:
             "tr_id": tr_id,
         }
         
-        if self.is_mock:
-            params = {
-                "CANO": acnt_no,
-                "ACNT_PRDT_CD": acnt_prdt,
-                "AFHR_FLPR_YN": "N",
-                "OFL_YN": "N",
-                "INQR_DVSN": "02",
-                "UNPR_DVSN": "01",
-                "FUND_STTL_ICLD_YN": "N",
-                "FNCG_AMT_AUTO_RDPT_YN": "N",
-                "PRCS_DVSN": "00",
-                "CTX_AREA_FK100": "",
-                "CTX_AREA_NK100": ""
-            }
-        else:
-            params = {
-                "cano": acnt_no,
-                "acnt_prdt_cd": acnt_prdt,
-                "afhr_flpr_yn": "N",
-                "ofl_yn": "N",
-                "inqr_dvsn": "02",
-                "unpr_dvsn": "01",
-                "fund_sttl_icld_yn": "N",
-                "fncg_amt_auto_rdpt_yn": "N",
-                "prcs_dvsn": "00",
-                "ctx_area_fk100": "",
-                "ctx_area_nk100": ""
-            }
+        params = {
+            "CANO": acnt_no,
+            "ACNT_PRDT_CD": acnt_prdt,
+            "AFHR_FLPR_YN": "N",
+            "OFL_YN": "N",
+            "INQR_DVSN": "02",
+            "UNPR_DVSN": "01",
+            "FUND_STTL_ICLD_YN": "N",
+            "FNCG_AMT_AUTO_RDPT_YN": "N",
+            "PRCS_DVSN": "00",
+            "CTX_AREA_FK100": "",
+            "CTX_AREA_NK100": ""
+        }
         
         try:
             res = requests.get(url, headers=headers, params=params, timeout=5)
@@ -357,7 +294,7 @@ class KisApi:
                     summary = data.get('output2', [{}])[0]
                     
                     parsed_stocks = []
-                    manual_total_purchase = 0.0 # 🟢 수동 매입금액 합산용 변수
+                    manual_total_purchase = 0.0 
                     for s in stocks:
                         if int(s.get('hldg_qty', 0)) > 0:
                             qty = int(s.get('hldg_qty', 0))
@@ -371,7 +308,7 @@ class KisApi:
                                 "value": float(s.get('evlu_amt', 0)),
                                 "profit_rt": float(s.get('evlu_pfls_rt', 0))
                             })
-                            manual_total_purchase += (qty * pchs) # 🟢 종목별 매입가 누적
+                            manual_total_purchase += (qty * pchs) 
                     
                     def _safe_parse(k1, k2):
                         v1 = summary.get(k1)
@@ -380,60 +317,45 @@ class KisApi:
                         if v2 and v2 != "0" and v2 != "": return float(v2)
                         return 0.0
 
-                    # 🚨 [모의투자 원금 추적 버그 픽스] 모의투자 API가 '총 매입금액'을 누락할 경우
-                    # 봇이 주식 매수를 '출금'으로 오해하고 원금을 깎아먹는 현상 완벽 방어!
                     api_purchase = _safe_parse('pchs_amt_smtl_amt', 'tot_pchs_amt')
                     final_purchase = api_purchase if api_purchase > 0 else manual_total_purchase
 
                     return {
                         "stocks": parsed_stocks,
-                        "total_cash": _safe_parse('prvs_rcdl_excc_amt', 'dnca_tot_amt'), # D+2 예수금
-                        "total_value": _safe_parse('scts_evlu_amt', 'evlu_amt_smtl_amt'), # 순수 주식 평가금액
-                        "total_purchase": final_purchase # 매입금액 합계 (API 누락 시 수동 계산값 대체)
+                        "total_cash": _safe_parse('prvs_rcdl_excc_amt', 'dnca_tot_amt'),
+                        "total_value": _safe_parse('scts_evlu_amt', 'evlu_amt_smtl_amt'),
+                        "total_purchase": final_purchase 
                     }
                 else:
                     msg1 = data.get('msg1', '')
                     rt_cd = data.get('rt_cd', '')
-                    print(f"[KIS] 잔고 조회 실패: rt_cd={rt_cd}, msg={msg1}, data={data}")
+                    print(f"[KIS 모의] 잔고 조회 실패: rt_cd={rt_cd}, msg={msg1}, data={data}")
                     if msg1 in ('EGW00123', 'EGW00121'):
                         self.access_token = None
                         self._ensure_token()
                         return self.get_account_balance()
             else:
-                print(f"[KIS] 잔고 조회 통신 오류: status={res.status_code}, text={res.text}")
+                print(f"[KIS 모의] 잔고 조회 통신 오류: status={res.status_code}, text={res.text}")
             return None
         except Exception as e:
-            print(f"[KIS] 잔고 조회 통신 시간 초과/오류: {e}")
+            print(f"[KIS 모의] 잔고 조회 통신 시간 초과/오류: {e}")
             return None
 
     def search_stock_name(self, query: str):
-        """종목명 또는 코드로 KOSPI/KOSDAQ 종목 검색 (네이버 금융 실시간 초정밀 무적 검색 이식)"""
         query = query.strip()
         if not query:
             return []
             
         try:
-            # 🟢 [버그 해결] 한국투자증권의 상품정보검색 API(CTPF1002R)는 실전/모의를 막론하고 
-            # 개인 App Key 계약 권한 제한으로 인해 결과 장부를 차단하여 백지 화면을 유발합니다.
-            # 계좌 권한 제약이 전혀 없는 네이버 금융 실시간 마스터 검색망을 연동하여 24시간 언제나 초성 검색까지 완벽 지원합니다.
             url = "https://ac.finance.naver.com/ac"
             params = {
-                "q": query,
-                "st": "111",
-                "r_format": "json",
-                "r_enc": "utf-8",
-                "r_unicode": "1",
-                "t_kwd": "expr",
-                "r_lt": "111"
+                "q": query, "st": "111", "r_format": "json", "r_enc": "utf-8",
+                "r_unicode": "1", "t_kwd": "expr", "r_lt": "111"
             }
-            
-            # 🟢 [보안 강화] User-Agent뿐만 아니라 Referer(방문 출처)까지 네이버 금융으로 완벽하게 위장합니다.
             headers = {
                 "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
                 "Referer": "https://finance.naver.com/"
             }
-            
-            # 🟢 [수정된 부분] 요청을 보낼 때 headers=headers 파라미터를 함께 넘겨줍니다.
             res = requests.get(url, params=params, headers=headers, timeout=3)
             if res.status_code == 200:
                 data = res.json()
@@ -441,11 +363,9 @@ class KisApi:
                     results = []
                     raw_items = data["items"][0]
                     for item in raw_items:
-                        # 네이버 자동완성 결과 구조: ["종목명", "종목코드", "동의어", "초성", "구분"]
                         if len(item) >= 2:
                             name = item[0]
                             ticker = item[1]
-                            # 국외 주식이나 인덱스 선물이 뒤섞이는 것을 막기 위해 순수 국내 6자리 숫자 종목코드만 필터링
                             if ticker.isdigit() and len(ticker) == 6:
                                 results.append({'ticker': ticker, 'name': name})
                     if results:
@@ -453,7 +373,6 @@ class KisApi:
         except Exception as naver_err:
             print(f"⚠️ [네이버 검색망 통신 우회 실패] : {naver_err}")
 
-        # --- 🟡 [최종 백업] 기존 한국투자증권 오리지널 API 라인 보존 ---
         if not self._ensure_token():
             return []
         
@@ -486,14 +405,10 @@ class KisApi:
                             results.append({'ticker': ticker, 'name': name})
                     return results
         except Exception as e:
-            print(f"[KIS] 종목 검색 오류: {e}")
+            print(f"[KIS 모의] 종목 검색 오류: {e}")
         return []
 
     def get_volume_rank(self, market_div="J", limit=30):
-        """
-        거래량 상위 종목 검색 (KIS API 사용)
-        market_div: 'J' (KOSPI) 또는 'Q' (KOSDAQ)
-        """
         if not self._ensure_token():
             return []
             
@@ -533,14 +448,10 @@ class KisApi:
                             tickers.append(ticker)
                     return tickers
         except Exception as e:
-            print(f"[KIS] 거래량 상위 검색 오류: {e}")
+            print(f"[KIS 모의] 거래량 상위 검색 오류: {e}")
         return []
 
     def get_ohlcv(self, stock_code: str, period: str = "D"):
-        """
-        국내주식 기간별 시세 조회 (FHKST03010100) - 과거 차트 데이터
-        period: "D"(일봉), "W"(주봉), "M"(월봉)
-        """
         if not self._ensure_token():
             return None
             
@@ -553,7 +464,6 @@ class KisApi:
             "tr_id": "FHKST03010100"
         }
         
-        # 오늘 날짜와 180일 전 날짜 계산 (120일 이동평균선 확보용)
         end_dt = datetime.now()
         start_dt = end_dt - timedelta(days=180)
         
@@ -563,7 +473,7 @@ class KisApi:
             "FID_INPUT_DATE_1": start_dt.strftime("%Y%m%d"),
             "FID_INPUT_DATE_2": end_dt.strftime("%Y%m%d"),
             "FID_PERIOD_DIV_CODE": period,
-            "FID_ORG_ADJ_PRC": "0" # 0: 수정주가, 1: 원주가
+            "FID_ORG_ADJ_PRC": "0"
         }
         
         try:
@@ -575,7 +485,6 @@ class KisApi:
                     if not output2:
                         return pd.DataFrame()
                         
-                    # DataFrame으로 변환 및 타입 캐스팅
                     df = pd.DataFrame(output2)
                     df = df[['stck_bsop_date', 'stck_oprc', 'stck_hgpr', 'stck_lwpr', 'stck_clpr', 'acml_vol']]
                     df.columns = ['date', 'open', 'high', 'low', 'close', 'volume']
@@ -583,34 +492,25 @@ class KisApi:
                     df['date'] = pd.to_datetime(df['date'])
                     df[['open', 'high', 'low', 'close', 'volume']] = df[['open', 'high', 'low', 'close', 'volume']].astype(float)
                     
-                    # 과거 날짜가 위로 오도록 오름차순 정렬
                     df = df.sort_values('date').reset_index(drop=True)
                     return df
-            print(f"[KIS] 기간별 시세 조회 실패: {res.text}")
+            print(f"[KIS 모의] 기간별 시세 조회 실패: {res.text}")
             return pd.DataFrame()
         except Exception as e:
-            print(f"[KIS] 기간별 시세 조회 오류: {e}")
+            print(f"[KIS 모의] 기간별 시세 조회 오류: {e}")
             return pd.DataFrame()
 
-# 🟢 [신규 추가 코드] AI 판단용 실시간 거시경제 및 시장 지수 수집 기능
     def get_macro_context(self):
-        """AI의 시황 인지를 위해 코스피, 코스닥 현재가 및 간단한 환율 동향을 문자열로 반환합니다."""
         macro_info = []
         try:
-            # 🟢 [에러 패치] 순수 지수 코드 호출을 ETF 대리 지표로 변경하여 주식 TR(J) 에러 원천 차단
             for code, name in [("069500", "KOSPI(KODEX 200)"), ("229200", "KOSDAQ(KODEX 코스닥150)")]:
                 price = self.get_current_price(code)
                 if price:
                     macro_info.append(f"{name} 대리 지표: {price:,}원")
             
-            # 환율 정보 우회 조회 시도 (환율 ETF 가격 추이 등으로 대체하거나 생략 가능)
-            usd_etf = self.get_current_price("261240") # KODEX 미국달러선물
+            usd_etf = self.get_current_price("261240")
             if usd_etf:
                 macro_info.append(f"원/달러 환율 연동 지표(ETF): {usd_etf:,}원")
         except Exception:
             pass
         return " | ".join(macro_info) if macro_info else "시장 지수 실시간 조회 불가"
-
-if __name__ == '__main__':
-    # 테스트 코드
-    pass

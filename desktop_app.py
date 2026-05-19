@@ -1,3 +1,4 @@
+# pyrefly: ignore [missing-import]
 import webview
 import threading
 from app import app

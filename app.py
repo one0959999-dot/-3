@@ -1,6 +1,8 @@
 from flask import Flask, render_template, jsonify, request, redirect, url_for, flash, session
 from flask_login import LoginManager, UserMixin, login_user, logout_user, login_required, current_user
-from bot_controller import manager
+
+# 🚨 [리팩토링 핵심] 구형 bot_controller를 버리고, 새로 분리된 중앙 AI 관제탑을 다이렉트로 임포트합니다.
+from bots.bot_manager import manager 
 from database import get_db_connection, verify_user, add_user, init_db, update_user_keys
 import os
 import json
@@ -107,7 +109,6 @@ def kis_balance():
         if not bot or not bot.kis:
             return jsonify({"status": "error", "message": "API 설정이 필요합니다."})
         
-        # 🟢 [수정됨] 봇의 get_status()를 거치지 않고, 실시간 웹소켓 메모리에 직접 접근하여 무한루프 및 둔갑 버그 차단
         rt_prices = bot.live_prices if hasattr(bot, 'live_prices') else {}
             
         def patch_balance(balance_data):
@@ -117,7 +118,6 @@ def kis_balance():
             recalc_total_value = 0.0
             recalc_total_purchase = 0.0
             
-            # 🟢 2. 실제 계좌 리스트에 있는 모든 종목을 순회하며 실시간 가격표를 강제로 주입합니다.
             for stock in patched.get('stocks', []):
                 new_stock = dict(stock)
                 ticker = new_stock.get('ticker')
@@ -135,12 +135,10 @@ def kis_balance():
                 else:
                     new_stock['profit_rt'] = 0.0
                 
-                # 재계산된 개별 종목 가치를 총합계에 누적
                 recalc_total_value += new_stock['value']
                 recalc_total_purchase += (shares * purchase_p)
                 patched_stocks.append(new_stock)
                 
-            # 🟢 3. 완벽하게 재계산된 리스트와 총합계를 덮어씌웁니다.
             patched['stocks'] = patched_stocks
             patched['total_value'] = recalc_total_value
             patched['total_purchase'] = recalc_total_purchase
@@ -181,7 +179,11 @@ def toggle_bot():
         return jsonify({"status": "stopped"})
     else:
         # DB에 저장된 사용자의 실제 투자 원금(initial_cash)을 안전하게 읽어와 봇을 시작하도록 변경합니다.
-        user_cash = current_user.data.get('initial_cash', 10000000)
+        # 실전/모의 모드에 따라 올바른 원금 컬럼을 읽어오도록 수정
+        is_mock = current_user.data.get('is_mock', 1)
+        cash_key = 'mock_initial_cash' if is_mock else 'real_initial_cash'
+        user_cash = current_user.data.get(cash_key, current_user.data.get('initial_cash', 10000000))
+        
         success = bot.start(total_cash=user_cash)
         if success:
             return jsonify({"status": "started"})
@@ -250,7 +252,6 @@ def ai_chat():
         from pykrx import stock as krx_stock
         from stock_screener import fetch_ohlcv, calc_rsi
         
-        # 🟢 [수정 포인트 1] 시장 전체(코스피/코스닥) ETF 대리 지표의 20일 이평선 데이터를 상시 수집하여 무조건 주입합니다.
         macro_lines = []
         for m_ticker, m_name in [("069500", "KOSPI 대용(KODEX 200)"), ("229200", "KOSDAQ 대용(KODEX 코스닥150)")]:
             m_df = fetch_ohlcv(m_ticker, days=40, kis=bot.kis)
@@ -266,45 +267,36 @@ def ai_chat():
         
         target_tickers = []
         
-        # 1. 회원님이 질문에 속삭여준 특정 종목명이 있는지 먼저 스캔해볼게요 🔍
         for core in bot.core_positions:
             if core.name in user_message: target_tickers.append((core.ticker, core.name))
         for ticker, pos in bot.satellite_positions.items():
             if pos.name in user_message: target_tickers.append((ticker, pos.name))
             
-        # 🟢 [족쇄 파괴] 사용자가 무슨 단어로 질문하든 상관없이, 특정 종목을 지정하지 않았다면 무조건 내 포트폴리오 차트를 몽땅 긁어서 AI에게 강제로 먹여줍니다!
         if not target_tickers:
             for core in bot.core_positions:
                 target_tickers.append((core.ticker, core.name))
             for ticker, pos in bot.satellite_positions.items():
                 target_tickers.append((ticker, pos.name))
 
-        # 데이터가 너무 많으면 AI 비서가 힘들어하니, 상위 5개까지만 쏙 추려서 집중 분석해 드릴게요 둥글게!
         target_tickers = list(dict.fromkeys(target_tickers))[:5]
 
         if target_tickers:
             context_lines = ["[📈 회원님이 궁금해하시는 종목의 실시간 데이터 분석 장부]"]
             for ticker, name in target_tickers:
                 try:
-                    # 🟢 [버그 해결 1] 150일을 알고리즘 본체와 똑같은 130일(BACKTEST_DAYS)로 맞춰서 API 호출 없이 0.1초 만에 메모리 캐시를 즉시 불러옵니다!
                     ohlcv_df = fetch_ohlcv(ticker, days=130, kis=bot.kis) 
-                    
-                    # 🟢 [버그 해결 2] KRX 서버 접속 차단(에러)을 유발하던 실시간 재무제표 조회 코드를 지우고, 봇이 안전하게 수집해둔 캐시를 가져옵니다.
                     today_str = datetime.now().strftime('%Y-%m-%d')
                     cache_key = f"{ticker}_{today_str}"
-                    financial_data = bot.fundamental_cache.get(cache_key, "PER: 10.0배, PBR: 1.0배 (실시간 추정치)")
+                    financial_data = getattr(bot, 'fundamental_cache', {}).get(cache_key, "PER: 10.0배, PBR: 1.0배 (실시간 추정치)")
                     
                     if not ohlcv_df.empty:
                         close_series = ohlcv_df['close']
                         vol_series = ohlcv_df['volume']
                         
                         rsi_14 = calc_rsi(close_series, 14).iloc[-1] if not close_series.empty else 50
-                        
                         sma_120 = close_series.rolling(window=120, min_periods=1).mean().iloc[-1]
                         
-                        # 💡 가장 최신 가격은 증권사 API보다 빠른 웹소켓 실시간 가격(live_prices)을 최우선으로 씁니다!
                         current_price = bot.live_prices.get(ticker) or close_series.iloc[-1]
-                            
                         status_120 = "120일선 위에 안착함 (상승 추세 진행중)" if current_price >= sma_120 else "120일선 아래에 위치함 (역배열 하락 추세)"
                         
                         vol_today = vol_series.iloc[-1] if not vol_series.empty else 0
@@ -316,7 +308,6 @@ def ai_chat():
                             f"실시간 RSI(14) 지표: {rsi_14:.1f} | 마감 거래량: 평소 대비 {vol_ratio:.0f}% 수준 | 가치 지표: {financial_data}"
                         )
                     else:
-                        # 🟢 [버그 해결 3] 만약 차트 로딩에 실패하더라도 AI가 핑계대지 않도록 최소한의 웹소켓 실시간 가격을 강제로 먹여줍니다!
                         current_price = bot.live_prices.get(ticker, 0)
                         context_lines.append(
                             f"- {name}({ticker}): 현재 주가 {int(current_price):,}원 | 세부 차트 조회 지연 중이나 강력한 주도주 모멘텀이 확인됨 | 가치 지표: {financial_data}"
@@ -325,10 +316,8 @@ def ai_chat():
                     print(f"⚠️ {name} 데이터 바인딩 중 소규모 에러: {ex}")
             
             if len(context_lines) > 1:
-                # 🟢 [수정 포인트 3] 위에서 수집해둔 시장 지수(macro_lines)가 덮어씌워져 날아가지 않도록 기존 할당(=)을 (+=)로 변경했습니다.
                 stock_analysis_context += "\n".join(context_lines)
         
-        # 🟢 [수정 포인트 4] 개별 종목 검색 여부와 상관없이 AI가 항상 다정한 성격과 매뉴얼을 잊지 않도록 위치를 밖으로 빼냈습니다.
         if stock_analysis_context:
             stock_analysis_context += "\n\n[🚨 다정한 AI 비서를 위한 특별 지침]\n"
             stock_analysis_context += "당신은 회원님의 소중한 자산을 지켜주는 다정다감하고 영리한 최고의 투자 파트너입니다. "
@@ -341,13 +330,11 @@ def ai_chat():
     except Exception as e:
         print(f"⚠️ [AI 비서 데이터 바인딩 에러] : {e}")
 
-    # 🟢 [신규 추가] 대화창 AI가 봇의 최근 행동(로그)을 파악할 수 있도록 컨텍스트에 강제 주입
     try:
         current_status = bot.get_status()
         bot_logs = current_status.get('logs', [])
         if bot_logs:
             stock_analysis_context += "\n\n[📝 백엔드 자동 매매 시스템 최근 실행 로그 (필독)]\n"
-            # 너무 길어지지 않게 최근 15개의 봇 상태 로그만 주입
             for log in bot_logs[-15:]:
                 stock_analysis_context += f"- [{log['time']}] {log['message']}\n"
             stock_analysis_context += "위 로그를 바탕으로 현재 매매 봇이 백엔드에서 무엇을 하고 있는지(대기 중인지, 매수 보류 중인지 등)를 파악하여 답변에 자연스럽게 녹여주세요.\n"
@@ -368,25 +355,17 @@ def set_mode():
     data = request.json
     is_mock = int(data.get('is_mock', 1))
     
-    # 1. DB 업데이트 및 최신 데이터 로드
-    from database import get_db_connection
     conn = get_db_connection()
     conn.execute('UPDATE users SET is_mock = ? WHERE id = ?', (is_mock, current_user.id))
     conn.commit()
     user_data = conn.execute('SELECT * FROM users WHERE id = ?', (current_user.id,)).fetchone()
     conn.close()
     
-    # 2. 로그인 세션 메모리에 변경된 DB 데이터를 통째로 덮어씌워 완벽 동기화합니다.
-    # 이 세션 데이터 변경만으로도 manager.get_bot() 호출 시 올바른 쌍둥이 봇이 반환됩니다.
     for k, v in dict(user_data).items():
         current_user.data[k] = v
-    
-    # 3. [삭제됨] 기존 봇의 상태를 덮어쓰거나 리셋하던 파괴적 로직 제거
-    # 이제 실전/모의 봇은 화면(UI) 전환과 무관하게 백그라운드에서 각자 독립적으로 24시간 가동됩니다.
         
     return jsonify({"status": "success", "is_mock": is_mock})
 
-# 🟢 [여기에 새로 추가된 부분] 🟢
 @app.route('/api/settings/satellites', methods=['POST'])
 @login_required
 def set_satellites_count():
@@ -397,7 +376,7 @@ def set_satellites_count():
     bot = get_current_bot()
     if bot:
         bot.num_satellites = count
-        bot._save_state()  # 💡 변경된 종목 개수 설정을 DB 장부에 즉시 반영합니다.
+        bot._save_state()
         return jsonify({"status": "success", "num_satellites": count})
     return jsonify({"status": "error", "message": "봇을 활성화할 수 없습니다."}), 400
 
@@ -416,30 +395,25 @@ def set_keys():
         'telegram_chat_id': data.get('telegram_chat_id'),
         'gemini_api_key': data.get('gemini_api_key'),
         'core_stocks': data.get('core_stocks'),
-        'is_mock': int(data.get('is_mock', 1)), # 명확한 정수형 보장
-        'initial_cash': float(data.get('initial_cash', 10000000)) # 누적 투자 원금 추가
+        'is_mock': int(data.get('is_mock', 1)), 
+        'initial_cash': float(data.get('initial_cash', 10000000)) 
     }
 
-    # 1. 데이터 저장
     update_user_keys(current_user.id, update_data)
 
-    # [핵심 수정] 사용자가 수정한 새로운 API 키셋 정보들을 로그인 세션 캐시 메모리에도 통틀어 동기화합니다.
     for k, v in update_data.items():
         current_user.data[k] = v
 
     is_mock = update_data['is_mock']
     prefix = 'mock_' if is_mock else 'real_'
     
-    # [쌍둥이 구조 최적화] 현재 가동 중인 메인 봇 뿐만 아니라, 반대편 방에 대기 중인 쌍둥이 봇도 구형 키를 들고 있지 않도록 정밀 갱신합니다.
-    # 1) 현재 활성화되어 화면에 노출 중인 봇 객체 동기화
     bot = get_current_bot()
     if bot:
         bot.reload_api_keys(
             kis_config={
                 "app_key": data.get(f'{prefix}app_key'),
                 "app_secret": data.get(f'{prefix}app_secret'),
-                "account_no": data.get(f'{prefix}account_no'),
-                "is_mock": bool(is_mock)
+                "account_no": data.get(f'{prefix}account_no')
             },
             telegram_config={
                 "token": data.get('telegram_token'),
@@ -451,7 +425,6 @@ def set_keys():
             core_stocks=data.get('core_stocks')
         )
 
-    # 2) 반대편 대기실에 존재하는 쌍둥이 봇 객체도 메모리에 있다면 구형 접속 정보가 남지 않도록 동시 갱신
     other_mock = not bool(is_mock)
     other_prefix = 'mock_' if other_mock else 'real_'
     other_bot = manager.bots.get((current_user.id, other_mock))
@@ -460,8 +433,7 @@ def set_keys():
             kis_config={
                 "app_key": data.get(f'{other_prefix}app_key'),
                 "app_secret": data.get(f'{other_prefix}app_secret'),
-                "account_no": data.get(f'{other_prefix}account_no'),
-                "is_mock": other_mock
+                "account_no": data.get(f'{other_prefix}account_no')
             },
             telegram_config={
                 "token": data.get('telegram_token'),
@@ -473,13 +445,11 @@ def set_keys():
             core_stocks=data.get('core_stocks')
         )
 
-    # 2. 브라우저에게 "성공했다"고 대답해줌
     return jsonify({"status": "success"})
 
 @app.route('/api/search/stock')
 @login_required
 def search_stock():
-    """웹 대시보드에서 코어 종목을 검색할 때 kis_api의 무적 네이버 우회망을 통해 실시간 초고속 검색합니다."""
     query = request.args.get('q', '').strip()
     if not query:
         return jsonify({"results": []})
@@ -487,13 +457,12 @@ def search_stock():
     try:
         bot = get_current_bot()
         
-        # 🟢 [버그 해결 핵심] 아직 사용자가 KIS API 키를 등록하지 않아서 bot.kis가 비어있더라도, 
-        # 네이버 금융 검색은 키 없이 작동하므로 임시 객체를 생성해서 무조건 검색을 수행하도록 빗장을 풉니다.
         if bot and bot.kis:
             results = bot.kis.search_stock_name(query)
         else:
-            from kis_api import KisApi
-            temp_kis = KisApi("", "", "") # 빈 키워드로 임시 우회 객체 생성
+            # 🚨 [브릿지 제거 완벽 호환] 빈 임시 객체를 생성할 때 분리된 RealApi 모듈을 가져옵니다.
+            from kis_brokers.kis_real_api import KisRealApi
+            temp_kis = KisRealApi("", "", "") 
             results = temp_kis.search_stock_name(query)
             
         return jsonify({"results": results})
@@ -505,5 +474,4 @@ def search_stock():
 
 if __name__ == '__main__':
     init_db()
-    # debug=False 및 use_reloader=False로 설정하여 프로세스 이중 실행과 의도치 않은 자동 시작을 원천 차단합니다.
     app.run(host='0.0.0.0', port=5000, debug=False, use_reloader=False)
