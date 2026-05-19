@@ -178,8 +178,18 @@ class KisRealApi:
         acnt_no   = self.account_no[:8]
         acnt_prdt = self.account_no[8:] if len(self.account_no) > 8 else "01"
 
-        ord_dvsn = "00" if price > 0 else "03"  # 00=지정가, 03=시장가/최유리
-        
+        if is_nxt and price == 0:
+            # NXT only supports limit orders (ORD_DVSN=00); fetch current price
+            fetched = self.get_current_price(stock_code)
+            if fetched:
+                price = fetched
+                print(f"[KIS 실전] NXT 지정가 주문용 현재가 조회: {price}원")
+            else:
+                print("[KIS 실전] NXT 현재가 조회 실패 — 주문 취소")
+                return None
+
+        ord_dvsn = "00" if price > 0 else "03"  # NXT always enters with price>0
+
         if price > 0:
             p = int(price)
             if p < 2000:
