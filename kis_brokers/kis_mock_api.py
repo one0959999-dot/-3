@@ -526,7 +526,7 @@ class KisMockApi:
         if not self._ensure_token():
             return []
             
-        tr_id = "VTTC8436R"  # 모의투자 미체결내역조회 TR_ID
+        tr_id = "VTTC0084R"  # 모의투자 정정취소가능주문조회 TR_ID
         url = f"{self.base_url}/uapi/domestic-stock/v1/trading/inquire-psbl-rvsecncl"
         
         acnt_no = self.account_no[:8]
