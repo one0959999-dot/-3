@@ -1,13 +1,25 @@
+import logging
+import os
+import json
+import threading
+from datetime import datetime, timedelta
+
 from flask import Flask, render_template, jsonify, request, redirect, url_for, flash, session
 from flask_login import LoginManager, UserMixin, login_user, logout_user, login_required, current_user
 
-# 새로 분리된 중앙 AI 관제탑을 다이렉트로 임포트합니다.
-from bots.bot_manager import manager 
+from bots.bot_manager import manager
 from database import get_db_connection, verify_user, add_user, init_db, update_user_keys
-import os
-import json
-from datetime import datetime, timedelta
-import threading
+
+# ── 통합 로깅 설정 (파일 + 콘솔) ──
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s %(levelname)s %(name)s: %(message)s',
+    handlers=[
+        logging.FileHandler('lassi_bot.log', encoding='utf-8'),
+        logging.StreamHandler()
+    ]
+)
+logger = logging.getLogger('lassi_bot')
 
 app = Flask(__name__)
 
@@ -371,7 +383,10 @@ def set_mode():
 def set_satellites_count():
     """위성 종목 개수 변경 설정을 저장합니다."""
     data = request.json
-    count = int(data.get('count', 5))
+    try:
+        count = int(data.get('count', 5))
+    except (TypeError, ValueError):
+        count = 5
     
     bot = get_current_bot()
     if bot:
