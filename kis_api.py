@@ -179,7 +179,30 @@ class KisApi:
 
         # 🟢 [NXT 하이브리드 라우팅] 실시간 가격이 들어오면 일반 지정가(00)로, 아니면 최유리지정가(03) 적용
         ord_dvsn = "00" if price > 0 else "03"
-        ord_unpr = str(int(price)) if price > 0 else "0"
+        
+        # 🚨 [호가 단위 자동 보정 알고리즘] 거래소 규정에 맞게 끝자리를 맞춰 주문 튕김을 원천 차단합니다.
+        if price > 0:
+            p = int(price)
+            if p < 2000:
+                tick = 1
+            elif p < 5000:
+                tick = 5
+            elif p < 20000:
+                tick = 10
+            elif p < 50000:
+                tick = 50
+            elif p < 200000:
+                tick = 100
+            elif p < 500000:
+                tick = 500
+            else:
+                tick = 1000
+                
+            # 호가 단위에 맞게 끝자리 보수적 절사 (예: 32,123원 -> 50원 단위이므로 32,100원으로 자동 조정)
+            adjusted_price = (p // tick) * tick
+            ord_unpr = str(adjusted_price)
+        else:
+            ord_unpr = "0"
 
         url  = f"{self.base_url}/uapi/domestic-stock/v1/trading/order-cash"
         body = {
