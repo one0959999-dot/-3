@@ -918,6 +918,12 @@ class BotController:
                         self.add_log(f"🤔 [{pos_name}] 매수 신호 포착! AI의 판단을 요청합니다...")
                         recent_trades = get_recent_trades(self.user_id, ticker)
                         custom_rules = load_ai_rules(self.user_id)
+                        
+                        # 🚨 [AI 실시간 장세 뷰 주입] 30분 단위 흐름을 매매 결정 규칙에 강제로 추가합니다.
+                        current_view = getattr(self, 'current_ai_market_view', '')
+                        if current_view:
+                            custom_rules = f"{custom_rules}\n\n[🔥 필독: 현재 시장 전체 흐름에 대한 당신의 실시간 분석 뷰]\n{current_view}\n이 장중 분위기(폭락 등)를 반드시 최우선으로 반영하여 개별 종목 매매 승인 여부를 결정하세요."
+                            
                         decision, ai_reason = self.gemini.ai_approve_trade(
                             signal, pos_name, ticker, price, strat_name, ind_val, self.hot_sectors, recent_trades, custom_rules
                         )
@@ -1266,11 +1272,51 @@ class BotController:
         except Exception as e:
             self.add_log(f"🚨 위성 리밸런싱 중 오류 발생: {e}")
 
-    def generate_daily_report(self):
+    def analyze_continuous_market_flow(self):
+        """매 30분마다 AI가 시장 전체를 스캔하여 흐름(Flow)을 파악하고 머릿속에 기억합니다."""
+        if not hasattr(self, 'market_flow_history'):
+            self.market_flow_history = []
+        today = datetime.now().strftime('%Y-%m-%d')
+        if getattr(self, 'flow_history_date', '') != today:
+            self.market_flow_history = []
+            self.flow_history_date = today
+
         try:
-            self.add_log("📝 11시 시장 분석 리포트 생성을 시작합니다...")
+            now_time_str = datetime.now().strftime('%H:%M')
+            # 장중(09:00~15:30)에만 흐름을 분석합니다.
+            if not ("09:00" <= now_time_str <= "15:30") or datetime.now().weekday() >= 5:
+                return
+
+            self.add_log(f"🧠 [AI 실시간 흐름 스캔] {now_time_str} 시장 지수를 바탕으로 전체 자금 흐름을 분석합니다...")
             
-            # 🚨 [신규 추가] 현재 관리 중인 코어 및 위성 전 종목의 실시간 뉴스 헤드라인 병렬 스캔 추출
+            market_data = []
+            if self.kis:
+                for ticker, name in [("069500", "KOSPI(KODEX 200)"), ("229200", "KOSDAQ(KODEX 코스닥150)")]:
+                    df = self._get_cached_base_ohlcv(ticker)
+                    cp = self.live_prices.get(ticker) or self.kis.get_current_price(ticker)
+                    if not df.empty and cp:
+                        yesterday_close = df['close'].iloc[-1]
+                        change_rate = ((cp / yesterday_close) - 1) * 100
+                        market_data.append(f"{name}: {cp:,}원 ({change_rate:+.2f}%)")
+            
+            market_status = " | ".join(market_data) if market_data else "지수 데이터 수집 지연"
+            sectors_str = ", ".join(self.hot_sectors) if self.hot_sectors else "특징 섹터 없음"
+            
+            prompt = f"현재 시각은 {now_time_str}입니다. 실시간 시장 지수는 [{market_status}] 입니다. 오늘 강세 섹터는 [{sectors_str}] 입니다. 이 데이터를 바탕으로 현재 시장의 장중 분위기, 자금 흐름, 폭락/급등 여부를 2~3문장으로 날카롭게 요약해주세요."
+            
+            if self.gemini:
+                analysis = self.gemini.chat(prompt, stock_analysis_context="마크다운 없이 평문 2~3줄로 짧고 명확하게 시장 전체 흐름만 답변할 것.")
+                self.current_ai_market_view = analysis
+                self.market_flow_history.append(f"[{now_time_str}] 지수: {market_status}\n👉 AI 장중 판단: {analysis}")
+                self.add_log(f"💡 [AI 흐름 파악 완료] {analysis}")
+        except Exception as e:
+            self.add_log(f"⚠️ AI 실시간 흐름 분석 중 오류: {e}")
+
+    def generate_daily_report(self, time_slot="11:00"):
+        try:
+            self.add_log(f"📝 {time_slot} 시장 분석 리포트 생성을 시작합니다...")
+            
+            # 🚨 현재 관리 중인 코어 및 위성 전 종목의 실시간 뉴스 헤드라인 병렬 스캔 추출
             news_lines = []
             with self.lock:
                 target_stocks = [(c.name, c.ticker) for c in self.core_positions] + [(pos.name, t) for t, pos in self.satellite_positions.items()]
@@ -1281,23 +1327,43 @@ class BotController:
             for name, ticker in target_stocks:
                 news_headline = fetch_recent_news(name)
                 news_lines.append(f"- {name}({ticker}): {news_headline}")
-                time.sleep(0.1) # 네이버 디도스 차단 방어선 우회 미세 버퍼
+                time.sleep(0.1)
             
             news_context = "\n".join(news_lines) if news_lines else "스캔된 주요 포트폴리오 뉴스 없음"
             
+            # 🚨 [AI 기억 연동] 오늘 하루 동안 누적된 실시간 흐름을 리포트 컨텍스트에 통째로 주입합니다.
+            if not hasattr(self, 'market_flow_history'): self.market_flow_history = []
+            flow_context = "\n\n".join(self.market_flow_history) if self.market_flow_history else "오늘 누적된 실시간 흐름 분석 기록이 없습니다."
+            combined_context = f"[실시간 포트폴리오 뉴스]\n{news_context}\n\n[🔥 오늘 하루 AI의 시간대별 시장 흐름 추적 기록 (전체 장세 파악용)]\n{flow_context}"
+            
             # 취합된 뉴스 컨텍스트를 장중 보고서 양식으로 주입
-            report_data = generate_daily_market_report(gemini_client=self.gemini, verbose=False, news_context=news_context)
+            report_data = generate_daily_market_report(gemini_client=self.gemini, verbose=False, news_context=combined_context)
             if report_data:
-                self.daily_report = report_data
-                self.add_log("✅ 일일 시장 분석 및 실시간 NLP 뉴스 통합 리포트 생성 완료")
-                self._save_state()
-                msg = "📝 [🎯 11시 장중 시장 분석 리포트 알림]\n\n"
+                today_str = datetime.today().strftime('%Y-%m-%d')
+                
+                # 구버전(단일 리포트) 포맷을 멀티 시간대 포맷으로 교체
+                if not isinstance(self.daily_report, dict) or '11:00' not in self.daily_report:
+                    self.daily_report = {'date': today_str, '11:00': None, '15:30': None, '20:00': None}
+                elif self.daily_report.get('date') != today_str:
+                    self.daily_report = {'date': today_str, '11:00': None, '15:30': None, '20:00': None}
+                
+                content = ""
                 if isinstance(report_data, dict):
-                    msg += report_data.get('summary', report_data.get('content', '11시 시장 분석이 완료되었습니다. 자세한 정보는 대시보드 팝업창을 확인하세요!'))
-                else: msg += str(report_data)
+                    content = report_data.get('report_markdown') or report_data.get('content') or report_data.get('summary') or "리포트 내용이 비어있습니다."
+                else:
+                    content = str(report_data)
+                    
+                self.daily_report[time_slot] = content
+                self.add_log(f"✅ {time_slot} 일일 시장 분석 및 뉴스 통합 리포트 생성 완료")
+                self._save_state()
+                
+                # 텔레그램으로 완료 메세지 대신 '리포트 전문' 발송
+                msg = f"📝 [🎯 {time_slot} 시장 분석 리포트]\n\n{content}"
+                if len(msg) > 4000:
+                    msg = msg[:4000] + "\n\n... (이하 중략, 글자 수 초과로 대시보드에서 확인하세요)"
                 self._send_telegram(msg)
         except Exception as e:
-            self.add_log(f"⚠️ 일일 리포트 생성 중 오류: {e}")
+            self.add_log(f"⚠️ {time_slot} 리포트 생성 중 오류: {e}")
 
     def _weekly_self_reflection(self):
         self.add_log("🧠 [AI 자아성찰] 한 주간의 매매 결과를 분석하여 새로운 투자 원칙을 수립합니다...")
@@ -1341,35 +1407,33 @@ class BotController:
         else: self.add_log("📊 기존 포트폴리오로 매매를 재개합니다.")
 
         self.scheduler.every(5).minutes.do(self.trading_job)
-        self.scheduler.every().day.at("11:00").do(lambda: self._run_threaded(self.generate_daily_report))
+        
+        # 🚨 [신규 추가] 매 30분마다 실시간 시장 흐름을 머릿속에 기억합니다.
+        self.scheduler.every(30).minutes.do(lambda: self._run_threaded(self.analyze_continuous_market_flow))
+        
+        self.scheduler.every().day.at("11:00").do(lambda: self._run_threaded(lambda: self.generate_daily_report("11:00")))
+        
+        # 🚨 하루 3번 멀티 시간대 리포트 스케줄링 완벽 세팅
+        self.scheduler.every().day.at("11:00").do(lambda: self._run_threaded(lambda: self.generate_daily_report("11:00")))
+        self.scheduler.every().day.at("15:30").do(lambda: self._run_threaded(lambda: self.generate_daily_report("15:30")))
+        self.scheduler.every().day.at("20:00").do(lambda: self._run_threaded(lambda: self.generate_daily_report("20:00")))
+        
         self.scheduler.every().day.at("09:05").do(lambda: self._run_threaded(self._rescreen_satellites))
-        
-        # 🟢 [수정 포인트 2] 매 1시간마다 수시로 포트폴리오를 스캔해서 성과가 꺾였거나 빈자리가 난 곳을 가차 없이 갈아치웁니다.
         self.scheduler.every(1).hours.do(lambda: self._run_threaded(self._rescreen_satellites))
-        
         self.scheduler.every().friday.at("16:00").do(lambda: self._run_threaded(self._weekly_self_reflection))
-        
-        # 🟢 [개선 1 반영] 매일 오전 08:00 정각에 24시간 만료되는 웹소켓 접속키를 연장하고 소켓을 재부팅합니다.
         self.scheduler.every().day.at("08:00").do(lambda: self._run_threaded(self.refresh_websocket))
-        
-        # 🟢 [개선 2 반영] 매주 토요일 새벽 02:00 정각에 200대 주도주 기반 딥러닝 훈련을 자율 실행하고 모델을 교체합니다.
         self.scheduler.every().saturday.at("02:00").do(lambda: self._run_threaded(self.run_lstm_training))
 
         self.trading_job()  
         
-        # 🟢 [족쇄 파괴 2] 오늘 이미 스캔을 했더라도, 봇을 켰을 때 현금이 놀고 있는 빈자리가 있다면 즉시 스캔해서 채워 넣습니다!
         needs_rescreen = len(self.satellite_positions) < self.num_satellites or any(p.shares == 0 for p in self.satellite_positions.values())
         if getattr(self, 'last_screen_date', None) != datetime.now().date() or needs_rescreen:
             now_time_str = datetime.now().strftime('%H:%M')
-            # 🚨 [시간 연장 수정 완료] 봇 재구동 시 빈자리 채우기 동작도 19:50까지 완벽하게 작동하도록 수정
             if "09:00" <= now_time_str <= "19:50": self._rescreen_satellites()
 
         today = datetime.today().strftime('%Y-%m-%d')
         if not self.daily_report or self.daily_report.get('date') != today:
-            now = datetime.now()
-            if now.weekday() < 5 and now.strftime('%H:%M') >= "11:00":
-                self.daily_report = None
-                self.generate_daily_report()
+            self.daily_report = {'date': today, '11:00': None, '15:30': None, '20:00': None}
 
         while self.is_running:
             self.scheduler.run_pending()

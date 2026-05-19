@@ -839,20 +839,70 @@ window.saveAccountSettings = async function () {
 window.openReportModal = async function () {
     document.getElementById('reportModal').style.display = 'block';
     document.getElementById('report-content').innerHTML = '리포트 데이터를 불러오는 중...';
+    document.getElementById('report-time-tabs').innerHTML = '';
     try {
         const res = await fetch('/api/daily_report');
         const json = await res.json();
         if (json.status === 'success' && json.data) {
-            let htmlText = json.data.report_markdown
-                .replace(/### (.*)/g, '<h3>$1</h3>')
-                .replace(/#### (.*)/g, '<h4 style="color:var(--accent-blue); margin-top:20px; border-bottom:1px solid #334155; padding-bottom:5px;">$1</h4>')
-                .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
-                .replace(/> (.*)/g, '<div style="background:rgba(59,130,246,0.1); padding:10px; border-left:4px solid var(--accent-blue); margin:10px 0; border-radius:4px;">$1</div>')
-                .replace(/- (.*)/g, '<li style="margin-bottom:8px;">$1</li>')
-                .replace(/\n/g, '<br>');
-            document.getElementById('report-content').innerHTML = htmlText;
-        } else { document.getElementById('report-content').innerHTML = json.message || '리포트가 아직 생성되지 않았습니다.'; }
+            const data = json.data;
+            const times = ['11:00', '15:30', '20:00'];
+            let tabsHtml = '';
+            let latestTime = null;
+            let latestContent = '해당 날짜에 생성된 리포트가 없습니다.';
+
+            // 구버전 단일 리포트 대응
+            if (data.report_markdown) {
+                latestContent = data.report_markdown;
+            } else {
+                // 11시, 15시반, 20시 버튼 생성 및 비활성화 처리
+                times.forEach(t => {
+                    const content = data[t];
+                    const btnStyle = content ? 'background:rgba(59,130,246,0.2); color:#60a5fa; border:1px solid #3b82f6; cursor:pointer;' : 'background:rgba(255,255,255,0.05); color:#64748b; border:1px solid rgba(255,255,255,0.1); cursor:not-allowed;';
+                    tabsHtml += `<button style="padding:6px 12px; border-radius:6px; font-size:0.85rem; font-weight:bold; ${btnStyle}" ${content ? `onclick="renderReportText('${encodeURIComponent(content)}', this)"` : 'disabled'}>${t}</button>`;
+                    if (content) {
+                        latestTime = t;
+                        latestContent = content;
+                    }
+                });
+            }
+
+            document.getElementById('report-time-tabs').innerHTML = tabsHtml;
+
+            // 가장 최신 시간에 자동으로 불 들어오기
+            if (latestTime) {
+                setTimeout(() => {
+                    const btns = document.getElementById('report-time-tabs').querySelectorAll('button');
+                    btns.forEach(b => { if (b.textContent === latestTime) { b.style.background = '#3b82f6'; b.style.color = '#fff'; } });
+                }, 50);
+            }
+
+            renderReportText(encodeURIComponent(latestContent), null);
+        } else {
+            document.getElementById('report-content').innerHTML = json.message || '리포트가 아직 생성되지 않았습니다.';
+        }
     } catch (e) { document.getElementById('report-content').innerHTML = '오류: 리포트를 불러올 수 없습니다.'; }
+}
+
+window.renderReportText = function (encodedText, btnEl) {
+    const text = decodeURIComponent(encodedText);
+    let htmlText = text
+        .replace(/### (.*)/g, '<h3>$1</h3>')
+        .replace(/#### (.*)/g, '<h4 style="color:var(--accent-blue); margin-top:20px; border-bottom:1px solid #334155; padding-bottom:5px;">$1</h4>')
+        .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
+        .replace(/> (.*)/g, '<div style="background:rgba(59,130,246,0.1); padding:10px; border-left:4px solid var(--accent-blue); margin:10px 0; border-radius:4px;">$1</div>')
+        .replace(/- (.*)/g, '<li style="margin-bottom:8px;">$1</li>')
+        .replace(/\n/g, '<br>');
+    document.getElementById('report-content').innerHTML = htmlText;
+
+    // 버튼 누를 때마다 색깔 스위칭
+    if (btnEl) {
+        const btns = document.getElementById('report-time-tabs').querySelectorAll('button');
+        btns.forEach(b => {
+            if (!b.disabled) { b.style.background = 'rgba(59,130,246,0.2)'; b.style.color = '#60a5fa'; }
+        });
+        btnEl.style.background = '#3b82f6';
+        btnEl.style.color = '#fff';
+    }
 }
 
 window.closeReportModal = function () { document.getElementById('reportModal').style.display = 'none'; }

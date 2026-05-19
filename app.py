@@ -203,39 +203,17 @@ def get_daily_report():
     today_str = datetime.today().strftime('%Y-%m-%d')
     weekday = datetime.today().weekday()
     
-    # 1. 오늘 날짜로 생성된 리포트가 존재하면 가공 후 즉시 반환
     if bot.daily_report and bot.daily_report.get('date') == today_str:
-        report_data = bot.daily_report
-        if isinstance(report_data, dict):
-            content = report_data.get('report_markdown') or report_data.get('content') or report_data.get('summary') or "리포트 내용 텍스트가 비어있습니다."
-            date_str = report_data.get('date', today_str)
-        else:
-            content = str(report_data)
-            date_str = today_str
         return jsonify({
             "status": "success",
-            "data": {
-                "date": date_str,
-                "report_markdown": content
-            }
+            "data": bot.daily_report
         })
     
-    # 2. 토요일(5) 또는 일요일(6) 등 주말/휴일장인 경우의 예외 처리
     if weekday >= 5:
         if bot.daily_report:
-            report_data = bot.daily_report
-            if isinstance(report_data, dict):
-                content = report_data.get('report_markdown') or report_data.get('content') or report_data.get('summary') or "리포트 내용 텍스트가 비어있습니다."
-                date_str = report_data.get('date', today_str)
-            else:
-                content = str(report_data)
-                date_str = today_str
             return jsonify({
                 "status": "success",
-                "data": {
-                    "date": date_str,
-                    "report_markdown": content
-                }
+                "data": bot.daily_report
             })
         else:
             return jsonify({
@@ -246,9 +224,16 @@ def get_daily_report():
                 }
             })
             
-    # 3. 평일인데 아직 오늘 자 리포트가 생성되지 않은 경우 비동기 생성 시작
-    threading.Thread(target=bot.generate_daily_report, daemon=True).start()
-    return jsonify({"status": "waiting", "message": "리포트 생성 중..."})
+    return jsonify({
+        "status": "success", 
+        "data": {
+            "date": today_str, 
+            "11:00": None, 
+            "15:30": None, 
+            "20:00": None, 
+            "report_markdown": "아직 지정된 시간(11:00, 15:30, 20:00)의 리포트가 생성되지 않았습니다. 시간이 되면 자동으로 발간됩니다."
+        }
+    })
 
 @app.route('/api/ai_chat', methods=['POST'])
 @login_required
