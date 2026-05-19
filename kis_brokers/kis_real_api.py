@@ -80,8 +80,8 @@ class KisRealApi:
             print(f"[KIS 실전] Hashkey 발급 통신 에러: {e}")
         return None
 
-    def _order_headers(self, tr_id: str, hashkey: str) -> dict:
-        return {
+    def _order_headers(self, tr_id: str, hashkey: str, excg_id_dvsn_cd: str = None) -> dict:
+        h = {
             "content-type": "application/json; charset=utf-8",
             "authorization": f"Bearer {self.access_token}",
             "appkey": self.app_key,
@@ -90,6 +90,9 @@ class KisRealApi:
             "custtype": "P",
             "hashkey": hashkey
         }
+        if excg_id_dvsn_cd:
+            h["excg_id_dvsn_cd"] = excg_id_dvsn_cd
+        return h
         
     def get_current_price(self, stock_code: str):
         if not self._ensure_token():
@@ -221,10 +224,7 @@ class KisRealApi:
             "ORD_QTY":        str(qty),
             "ORD_UNPR":       ord_unpr,
         }
-        if is_nxt:
-            body["EXCG_ID_DVSN_CD"] = "02"
-
-        # Hashkey must cover the exact body that will be POSTed
+        # Hashkey covers only the order body (without exchange header)
         hashkey = self.get_hashkey(body)
 
         print(f"[KIS 실전 DEBUG] KST={kst_now.strftime('%H:%M')}, is_nxt={is_nxt}, tr_id={tr_id}, ord_dvsn={ord_dvsn}, body={body}, hashkey={'OK' if hashkey else 'NONE'}")
@@ -233,9 +233,11 @@ class KisRealApi:
             print("[KIS 실전] Hashkey 발급에 실패하여 주문을 취소합니다.")
             return None
 
+        excg_hdr = "02" if is_nxt else None
+
         for attempt in range(3):
             try:
-                res = requests.post(url, headers=self._order_headers(tr_id, hashkey), data=json.dumps(body), timeout=5)
+                res = requests.post(url, headers=self._order_headers(tr_id, hashkey, excg_hdr), data=json.dumps(body), timeout=5)
 
                 if res.status_code == 200:
                     data = res.json()
