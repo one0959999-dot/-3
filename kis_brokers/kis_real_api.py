@@ -225,6 +225,9 @@ class KisRealApi:
 
         if is_nxt:
             body["EXCG_ID_DVSN_CD"] = "02"
+
+        print(f"[KIS 실전 DEBUG] KST={kst_now.strftime('%H:%M')}, is_nxt={is_nxt}, tr_id={tr_id}, ord_dvsn={ord_dvsn}, body_keys={list(body.keys())}")
+
         if not hashkey:
             print("[KIS 실전] Hashkey 발급에 실패하여 주문을 취소합니다.")
             return None
