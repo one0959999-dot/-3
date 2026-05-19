@@ -218,10 +218,13 @@ class KisRealApi:
             "ORD_QTY":        str(qty),
             "ORD_UNPR":       ord_unpr,
         }
+
+        # Hashkey must be computed from standard fields only;
+        # EXCG_ID_DVSN_CD is added afterward so KIS hashkey API doesn't reject it
+        hashkey = self.get_hashkey(body)
+
         if is_nxt:
             body["EXCG_ID_DVSN_CD"] = "02"
-
-        hashkey = self.get_hashkey(body)
         if not hashkey:
             print("[KIS 실전] Hashkey 발급에 실패하여 주문을 취소합니다.")
             return None
