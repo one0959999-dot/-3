@@ -224,7 +224,7 @@ class KisRealApi:
             "ORD_UNPR":       ord_unpr,
         }
         if is_nxt:
-            body["EXCG_ID_DVSN_CD"] = "02"
+            body["EXCG_ID_DVSN_CD"] = "NX"
             # NXT: hashkey API doesn't support EXCG_ID_DVSN_CD → send without hashkey
             hashkey = None
         else:
