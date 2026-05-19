@@ -1,7 +1,9 @@
 import time
 import schedule
 import yaml
-from kis_api import KisApi
+# 🟢 [리팩토링] 회원님 말씀대로 애초에 새로운 kis_brokers 폴더로 직접 찾아가도록 경로를 수정했습니다!
+from kis_brokers.kis_real_api import KisRealApi
+from kis_brokers.kis_mock_api import KisMockApi
 from telegram_bot import TelegramNotifier
 
 kis_instance = None
@@ -44,13 +46,20 @@ def main():
     if not config:
         return
 
-    # API 연동 객체 생성
-    kis_instance = KisApi(
-        app_key=config['KIS'].get('APP_KEY', ''),
-        app_secret=config['KIS'].get('APP_SECRET', ''),
-        account_no=config['KIS'].get('ACCOUNT_NO', ''),
-        is_mock=config['KIS'].get('IS_MOCK', True)
-    )
+    # 🟢 [리팩토링] 설정값(is_mock)에 따라 모의투자 API와 실전투자 API를 똑똑하게 갈아 끼웁니다.
+    is_mock = config['KIS'].get('IS_MOCK', True)
+    if is_mock:
+        kis_instance = KisMockApi(
+            app_key=config['KIS'].get('APP_KEY', ''),
+            app_secret=config['KIS'].get('APP_SECRET', ''),
+            account_no=config['KIS'].get('ACCOUNT_NO', '')
+        )
+    else:
+        kis_instance = KisRealApi(
+            app_key=config['KIS'].get('APP_KEY', ''),
+            app_secret=config['KIS'].get('APP_SECRET', ''),
+            account_no=config['KIS'].get('ACCOUNT_NO', '')
+        )
     
     # KIS API 토큰 발급 테스트
     kis_instance.get_access_token()

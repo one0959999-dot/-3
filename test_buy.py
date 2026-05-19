@@ -1,6 +1,8 @@
 import sqlite3
 import os
-from kis_api import KisApi
+# 🟢 [리팩토링] 회원님 말씀대로 애초에 새로운 kis_brokers 폴더로 직접 찾아가도록 경로를 수정했습니다!
+from kis_brokers.kis_real_api import KisRealApi
+from kis_brokers.kis_mock_api import KisMockApi
 
 print("🚀 [독립 테스트] KIS API 1주 강제 매수 스크립트 시작 (DB 연동)...")
 
@@ -34,8 +36,12 @@ except Exception as e:
 mode_str = "모의투자" if is_mock else "실전투자"
 print(f"🔑 [{mode_str}] 계좌 정보 로드 완료.")
 
-# 2. KIS API 연결
-kis = KisApi(app_key=app_key, app_secret=app_secret, account_no=account_no, is_mock=is_mock)
+# 2. KIS API 연결 (DB 설정에 맞춰 동적으로 실전/모의 객체 생성)
+if is_mock:
+    kis = KisMockApi(app_key=app_key, app_secret=app_secret, account_no=account_no)
+else:
+    kis = KisRealApi(app_key=app_key, app_secret=app_secret, account_no=account_no)
+
 token = kis.get_access_token()
 
 if not token:
