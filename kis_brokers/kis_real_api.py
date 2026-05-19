@@ -2,7 +2,7 @@ import time
 import requests
 import json
 import pandas as pd
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 class KisRealApi:
     """한국투자증권 실전투자 전용 OpenAPI 연동 클래스"""
@@ -167,15 +167,21 @@ class KisRealApi:
         if not self._ensure_token():
             return None
 
-        if side == 'BUY':
-            tr_id = "TTTC0802U"
+        kst_now = datetime.now(tz=timezone(timedelta(hours=9)))
+        kst_time = kst_now.hour * 60 + kst_now.minute
+        # ATS/NXT session: 15:30–19:50 KST
+        is_nxt = (15 * 60 + 30) <= kst_time < (19 * 60 + 50)
+
+        if is_nxt:
+            tr_id = "TTTC0012U" if side == 'BUY' else "TTTC0011U"
         else:
-            tr_id = "TTTC0801U"
+            tr_id = "TTTC0802U" if side == 'BUY' else "TTTC0801U"
 
         acnt_no   = self.account_no[:8]
         acnt_prdt = self.account_no[8:] if len(self.account_no) > 8 else "01"
 
-        ord_dvsn = "00" if price > 0 else "03"
+        # NXT uses limit order (00); regular session uses market-price order (03) when price=0
+        ord_dvsn = "00" if (price > 0 or is_nxt) else "03"
         
         if price > 0:
             p = int(price)
@@ -204,10 +210,12 @@ class KisRealApi:
             "CANO":           acnt_no,
             "ACNT_PRDT_CD":   acnt_prdt,
             "PDNO":           stock_code,
-            "ORD_DVSN":       ord_dvsn,   
+            "ORD_DVSN":       ord_dvsn,
             "ORD_QTY":        str(qty),
             "ORD_UNPR":       ord_unpr,
         }
+        if is_nxt:
+            body["EXCG_ID_DVSN_CD"] = "02"
 
         hashkey = self.get_hashkey(body)
         if not hashkey:
@@ -223,7 +231,10 @@ class KisRealApi:
                     if data.get('rt_cd') == '0':
                         odno = data['output'].get('ODNO', '-')
                         label = '매수' if side == 'BUY' else '매도'
-                        order_type_str = '지정가(NXT)' if price > 0 else '최유리지정가(정규장)'
+                        if is_nxt:
+                            order_type_str = f"NXT{'지정가' if price > 0 else '최유리'}"
+                        else:
+                            order_type_str = '지정가' if price > 0 else '최유리지정가(정규장)'
                         print(f"[KIS 실전] {label} 주문 완료 [{order_type_str}] | {stock_code} {qty}주 | 주문번호: {odno}")
                         return data
                     else:
