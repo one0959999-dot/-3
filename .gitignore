@@ -16,3 +16,5 @@ config.yaml
 error.log
 server_log.txt
 lassi.db
+*.flag
+

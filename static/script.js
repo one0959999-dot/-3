@@ -160,23 +160,21 @@ document.addEventListener('DOMContentLoaded', () => {
                     const totalAsset = (d.total_cash || 0) + (d.total_value || 0);
                     const totalValEl = document.getElementById('total-value');
                     if (totalValEl) {
-                        totalValEl.textContent = totalAsset.toLocaleString() + '원';
+                        totalValEl.textContent = Math.round(totalAsset).toLocaleString() + '원';
                     }
 
-                    // 🚨 [자동화 정산 완료] 총 자산에서 자동 추적된 원가(DB 초기 설정값)를 빼서 누적 종합 수익금 및 수익률(%) 계산
+                    // 🚨 [동기화 연동 패치] 총 자산에서 원금(장부 기준가)을 빼서 종합 수익금 및 수익률 정밀 롤업
                     const totalPnl = totalAsset - USER_INVESTED_CAPITAL;
                     const pnlRt = USER_INVESTED_CAPITAL > 0 ? (totalPnl / USER_INVESTED_CAPITAL * 100) : 0;
 
                     const pnlEl = document.getElementById('total-pnl');
                     if (pnlEl) {
-                        // 🚨 [버그 수정 완료] totalPurchase 조건문을 지우고 USER_INVESTED_CAPITAL(원금) 기반으로 마이너스, 플러스 제한 없이 상시 출력되도록 전환
                         if (USER_INVESTED_CAPITAL > 0) {
                             const sign = totalPnl >= 0 ? '+' : '';
-                            // 한국 증권 컨벤션: 이익 빨간색, 손실 파란색
                             const color = totalPnl > 0 ? '#f85149' : (totalPnl < 0 ? '#58a6ff' : '#8b949e');
                             pnlEl.style.color = color;
                             pnlEl.style.fontWeight = '700';
-                            pnlEl.textContent = `수익: ${sign}${totalPnl.toLocaleString()}원 (${sign}${pnlRt.toFixed(2)}%)`;
+                            pnlEl.textContent = `수익: ${sign}${Math.round(totalPnl).toLocaleString()}원 (${sign}${pnlRt.toFixed(2)}%)`;
                         } else {
                             pnlEl.style.color = '#8b949e';
                             pnlEl.textContent = '수익: 원금 계산 대기 중';
@@ -187,7 +185,6 @@ document.addEventListener('DOMContentLoaded', () => {
                     const realStocks = (d.stocks || []).filter(s => s.shares > 0);
                     if (kisTbody) {
                         if (realStocks.length > 0) {
-                            // 반복문 내부에서 직접 DOM을 건드리지 않고, 임시 문자열에 차곡차곡 모읍니다.
                             let htmlBuffer = '';
                             realStocks.forEach(s => {
                                 const profitColor = s.profit_rt > 0 ? '#f85149' : (s.profit_rt < 0 ? '#58a6ff' : '#8b949e');
@@ -202,7 +199,6 @@ document.addEventListener('DOMContentLoaded', () => {
                                         <td style="color: ${profitColor}; font-weight: 600;">${profitSign}${s.profit_rt.toFixed(2)}%</td>
                                     </tr>`;
                             });
-                            // 조립이 완전히 끝난 무결점 상태의 HTML을 한방에 꽂아넣어 깜빡임을 원천 차단합니다.
                             kisTbody.innerHTML = htmlBuffer;
                         } else {
                             kisTbody.innerHTML = '<tr><td colspan="6" class="muted-center">보유 중인 주식이 없습니다.</td></tr>';
@@ -235,8 +231,8 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     function startKisBalancePolling() {
-        fetchKisBalance(); // 항상 즉시 1회 호출
-        if (kisBalanceInterval) return; // 이미 인터벌 실행 중이면 중복 등록 방지
+        fetchKisBalance();
+        if (kisBalanceInterval) return;
         kisBalanceInterval = setInterval(fetchKisBalance, 10000);
     }
 
@@ -247,9 +243,7 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     }
 
-    // (이 윗부분의 initChart 등은 그대로 둡니다)
-
-    // 🟢 [신규 추가] 팝업창(모달)을 띄우는 함수
+    // 🟢 팝업창(모달)을 띄우는 함수
     window.showStatusModal = function (name, message) {
         document.getElementById('modalTickerName').innerText = `[${name}] 진행 상황`;
         document.getElementById('modalStatusMsg').innerText = message;
@@ -258,22 +252,36 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // ── Main UI Update ──
     function updateUI(data) {
-        // 🚨 [UI 덮어쓰기 방지] 백엔드에서 갱신한 최신 원금을 실시간으로 자바스크립트 변수와 설정창 입력칸에 동기화
         if (data.initial_cash !== undefined) {
             USER_INVESTED_CAPITAL = data.initial_cash;
             const inputEl = document.getElementById('initialCash');
-            // 사용자가 직접 타이핑 중이 아닐 때만 숫자를 자동으로 바꿔줍니다.
             if (inputEl && document.activeElement !== inputEl) {
                 inputEl.value = data.initial_cash;
             }
         }
 
-        // ══ 실전/모의 모드 구분 ══
+        // 🚨 [완벽 동기화 패치] 3초 주기 상태 업데이트 시에도 요약 카드가 테이블 총액과 완벽히 일치하도록 갱신 구조 통일
+        if (data.mock_total_asset !== undefined && data.mock_total_asset > 0) {
+            const totalValEl = document.getElementById('total-value');
+            if (totalValEl) {
+                totalValEl.textContent = Math.round(data.mock_total_asset).toLocaleString() + '원';
+            }
+        }
+        if (data.mock_pnl !== undefined && data.mock_pnl_rt !== undefined) {
+            const pnlEl = document.getElementById('total-pnl');
+            if (pnlEl && data.mock_total_asset > 0) {
+                const sign = data.mock_pnl >= 0 ? '+' : '';
+                const color = data.mock_pnl > 0 ? '#f85149' : (data.mock_pnl < 0 ? '#58a6ff' : '#8b949e');
+                pnlEl.style.color = color;
+                pnlEl.style.fontWeight = '700';
+                pnlEl.textContent = `수익: ${sign}${Math.round(data.mock_pnl).toLocaleString()}원 (${sign}${data.mock_pnl_rt.toFixed(2)}%)`;
+            }
+        }
+
         const isLive = (data.is_mock === false || data.is_mock === 0);
         const realSection = document.getElementById('real-account-section');
         const mockSection = document.getElementById('mock-notice-section');
 
-        // 다른 기기에서 바꾼 스위치 버튼과 글씨 하이라이트 불빛 물리적 연동
         const cb = document.getElementById('modeSwitch');
         const lblReal = document.getElementById('label-real');
         const lblMock = document.getElementById('label-mock');
@@ -291,12 +299,10 @@ document.addEventListener('DOMContentLoaded', () => {
             }
         }
 
-        // 🎨 [기능 개방 및 디자인 변경] 모의투자도 실전처럼 실시간 계좌 잔고를 완벽히 출력 및 동기화합니다.
         if (realSection && mockSection) {
-            realSection.style.display = 'block'; // 실전/모의 상관없이 잔고 테이블 상시 노출
-            mockSection.style.display = 'none';  // 단순 안내 문구는 숨김 처리
+            realSection.style.display = 'block';
+            mockSection.style.display = 'none';
 
-            // 🚨 [직관성 패치] 실전/모의투자 모드에 맞게 실시간 계좌 테이블 제목과 뱃지를 동적으로 교체하여 모의투자 연동을 명시합니다.
             const titleSpan = realSection.querySelector('h2 span:first-child');
             if (titleSpan) {
                 if (isLive) {
@@ -305,28 +311,21 @@ document.addEventListener('DOMContentLoaded', () => {
                     titleSpan.innerHTML = `🏦 한투증권 모의투자 보유 현황 <span style="font-size:0.7rem; background:#10b981; color:white; padding:2px 8px; border-radius:10px; margin-left:8px; font-weight:600;">MOCK</span>`;
                 }
             }
-
-            // 🚨 (모의투자일 때 중복으로 강제 덮어쓰던 구형 로직 삭제)
-            // 이제 fetchKisBalance() 함수가 10초마다 실전과 모의투자 구분 없이 완벽하게 백엔드 웹소켓 시세와 증권사 잔고를 버무려 업데이트합니다.
         }
 
-        // 🔄 실전/모의 모드에 상관없이 실시간 폴링(10초 주기 계좌 동기화)을 상시 가동합니다.
         startKisBalancePolling();
 
-        // 🎨 [가독성 개선 및 테마 스위칭] CSS 클래스로 전체 UI 테마를 제어합니다 (오인 매매 방지)
         if (isLive) {
             document.body.classList.remove('theme-warm-beige');
         } else {
             document.body.classList.add('theme-warm-beige');
         }
 
-        // Mode Label Update
         const pnlTitle = document.getElementById('pnl-title');
         if (pnlTitle && data.is_mock !== undefined) {
             pnlTitle.textContent = data.is_mock ? '모의투자 수익률' : '실전투자 수익률';
         }
 
-        // Toggle button state
         const running = data.is_running;
         if (running) {
             btnToggle.className = 'btn-toggle btn-running';
@@ -336,7 +335,6 @@ document.addEventListener('DOMContentLoaded', () => {
             toggleLabel.textContent = 'Stopped';
         }
 
-        // ── API Key Warning ──
         if (!data.has_keys) {
             if (!document.getElementById('key-warning')) {
                 const warn = document.createElement('div');
@@ -350,7 +348,6 @@ document.addEventListener('DOMContentLoaded', () => {
             if (warn) warn.remove();
         }
 
-        // Hot Sectors Badge
         const hotSectorsEl = document.getElementById('hot-sectors');
         if (data.hot_sectors && data.hot_sectors.length > 0) {
             hotSectorsEl.textContent = '🔥 현재 강세 섹터: ' + data.hot_sectors.join(', ');
@@ -358,7 +355,6 @@ document.addEventListener('DOMContentLoaded', () => {
             hotSectorsEl.textContent = '🔥 분석 중이거나 강세 섹터가 없습니다.';
         }
 
-        // ── Portfolio Cards ──
         const cores = data.cores || [];
         const sats = data.satellites || [];
 
@@ -366,12 +362,10 @@ document.addEventListener('DOMContentLoaded', () => {
             document.getElementById('sat-num-display').textContent = data.num_satellites;
         }
 
-        // 봇 상태를 받아올 때 현재 DB에 보관 중인 코어 종목 명단을 실시간으로 전역 변수에 복사해 둡니다.
         if (data.cores) {
             window.cachedCoreStocks = data.cores.map(c => ({ ticker: c.ticker, name: c.name }));
         }
 
-        // 코어 카드가 그려질 때 중간 탈착 과정이 화면에 노출되지 않도록 가상 임시 저장소(Fragment)를 씁니다.
         const topCardsContainer = document.getElementById('top-cards-container');
         const satCard = topCardsContainer.lastElementChild;
         document.querySelectorAll('.core-card').forEach(e => e.remove());
@@ -382,7 +376,6 @@ document.addEventListener('DOMContentLoaded', () => {
         cores.forEach((core) => {
             totalCoreValue += (core.value || 0);
 
-            // 🟢 코어 종목 뱃지 스타일 동적 생성
             const sText = core.status || "감시 중 👀";
             const sMsg = core.status_msg || "지표 점검 중...";
             let badgeStyle = "background:rgba(255,255,255,0.1); color:#94a3b8; border:1px solid rgba(255,255,255,0.2);";
@@ -409,15 +402,13 @@ document.addEventListener('DOMContentLoaded', () => {
             `;
             fragment.appendChild(div);
         });
-        topCardsContainer.insertBefore(fragment, satCard); // 단 한번만 물리 결합하여 카드 출렁임 완벽 방어
+        topCardsContainer.insertBefore(fragment, satCard);
 
-        // ── Satellite Table ──
         if (sats.length > 0) {
             let satHtmlBuffer = '';
             sats.forEach(s => {
                 const isHolding = s.shares > 0;
 
-                // 🟢 위성 종목 상태 뱃지 동적 생성
                 const sText = s.status || "감시 중 👀";
                 const sMsg = s.status_msg || "지표 점검 중...";
                 let badgeStyle = "background:rgba(255,255,255,0.1); color:#94a3b8; border:1px solid rgba(255,255,255,0.2);";
@@ -433,7 +424,6 @@ document.addEventListener('DOMContentLoaded', () => {
                 const sharesCell = isHolding ? `${s.shares.toLocaleString()}주` : `<span style="color:#64748b">-</span>`;
                 const valueCell = isHolding ? `${(s.value || 0).toLocaleString()}원` : `<span style="color:#64748b">-</span>`;
 
-                // 백엔드에서 전달받은 최고가(max_price) 포맷팅
                 const maxPriceStr = (s.max_price && s.max_price > 0) ? `${s.max_price.toLocaleString()}원` : '갱신 대기';
 
                 satHtmlBuffer += `
@@ -450,10 +440,9 @@ document.addEventListener('DOMContentLoaded', () => {
                         <td>${statusBadge}</td>
                     </tr>`;
             });
-            satTbody.innerHTML = satHtmlBuffer; // 원자적 단발성 주입
+            satTbody.innerHTML = satHtmlBuffer;
         }
 
-        // ── Mini Log (Header) ──
         if (data.logs && data.logs.length > 0) {
             const recent = data.logs.slice(-6);
             let logHtmlBuffer = '';
@@ -465,14 +454,12 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     }
 
-    // ── Polling ──
     fetchStatus();
     fetchPnl();
     setInterval(fetchStatus, 3000);
     setInterval(fetchPnl, 10000);
 });
 
-// Global func for adjusting sat count
 window.adjustSat = function (delta) {
     const el = document.getElementById('sat-num-display');
     let val = parseInt(el.textContent) + delta;
@@ -491,7 +478,6 @@ window.adjustSat = function (delta) {
     });
 }
 
-// ─── 모드 토글 스위치 (실전/모의) ───
 window.toggleMode = async function () {
     const cb = document.getElementById('modeSwitch');
     const isMock = cb.checked ? 1 : 0;
@@ -514,11 +500,9 @@ window.toggleMode = async function () {
         });
         const result = await res.json();
         if (result.status === 'success') {
-            // 🛠️ [딜레이 해결 핵심] 상태를 다시 가져온 직후, 
-            // 3초 타이머를 기다리지 않고 전체 화면(버튼, 테이블, 테마)을 즉시 다시 그립니다.
             fetch('/api/status').then(r => r.json()).then(data => {
-                updateUI(data);  // 봇 Running/Stopped 버튼 상태 및 테이블 즉시 갱신
-                fetchPnl();      // 차트 및 수익률 데이터 즉시 갱신
+                updateUI(data);
+                fetchPnl();
             });
         } else {
             console.error('모드 변경 실패');
@@ -530,7 +514,6 @@ window.toggleMode = async function () {
     }
 }
 
-// ─── 계좌 설정 모달 ───
 window.openSettingsModal = function () {
     document.getElementById('settingsModal').style.display = 'block';
 }
@@ -538,13 +521,9 @@ window.closeSettingsModal = function () {
     document.getElementById('settingsModal').style.display = 'none';
 }
 
-// ─── 코어 종목 모달 ───
 window.openCoreModal = function () {
     document.getElementById('coreModal').style.display = 'block';
-
-    // 창을 열 때, 아까 백업해둔 기존 코어 종목 리스트를 화면(모달)으로 불러옵니다.
     _coreStockList = [...(window.cachedCoreStocks || [])];
-
     renderCoreTags();
     document.getElementById('coreSearchResults').innerHTML = '';
     document.getElementById('coreSearchInput').value = '';
@@ -559,7 +538,6 @@ window.onclick = function (event) {
     if (event.target == document.getElementById('strategyModal')) closeStrategyModal();
 }
 
-// ─── 전략 애니메이션 로직 ───
 let strategyAnimReq = null;
 
 function animateStrategy(strategyName) {
@@ -778,7 +756,7 @@ window.saveCoreStocks = async function () {
         gemini_api_key: document.getElementById('geminiApiKey').value,
         core_stocks: coreJsonStr,
         is_mock: isMock,
-        initial_cash: document.getElementById('initialCash').value // 누적 원금 저장 데이터 전송
+        initial_cash: document.getElementById('initialCash').value
     };
     try {
         const res = await fetch('/api/settings/keys', {
@@ -841,11 +819,9 @@ window.openReportModal = async function () {
             let latestTime = null;
             let latestContent = '해당 날짜에 생성된 리포트가 없습니다.';
 
-            // 구버전 단일 리포트 대응
             if (data.report_markdown) {
                 latestContent = data.report_markdown;
             } else {
-                // 11시, 15시반, 20시 버튼 생성 및 비활성화 처리
                 times.forEach(t => {
                     const content = data[t];
                     const btnStyle = content ? 'background:rgba(59,130,246,0.2); color:#60a5fa; border:1px solid #3b82f6; cursor:pointer;' : 'background:rgba(255,255,255,0.05); color:#64748b; border:1px solid rgba(255,255,255,0.1); cursor:not-allowed;';
@@ -859,7 +835,6 @@ window.openReportModal = async function () {
 
             document.getElementById('report-time-tabs').innerHTML = tabsHtml;
 
-            // 가장 최신 시간에 자동으로 불 들어오기
             if (latestTime) {
                 setTimeout(() => {
                     const btns = document.getElementById('report-time-tabs').querySelectorAll('button');
@@ -885,7 +860,6 @@ window.renderReportText = function (encodedText, btnEl) {
         .replace(/\n/g, '<br>');
     document.getElementById('report-content').innerHTML = htmlText;
 
-    // 버튼 누를 때마다 색깔 스위칭
     if (btnEl) {
         const btns = document.getElementById('report-time-tabs').querySelectorAll('button');
         btns.forEach(b => {
@@ -975,3 +949,4 @@ window.resetAiChat = async function () {
     const messages = document.getElementById('chat-messages');
     messages.innerHTML = `<div class="chat-msg ai"><div class="chat-bubble">대화 기록이 초기화되었습니다.</div><span class="chat-msg-time">라씨 AI · ${new Date().toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit' })}</span></div>`;
 }
+})
