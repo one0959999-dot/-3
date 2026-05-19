@@ -840,9 +840,9 @@ window.saveAccountSettings = async function () {
         const result = await res.json();
         if (result.status === 'success') {
             closeSettingsModal();
-            showToast('계좌 설정이 저장되었습니다.', 'success');
-            fetchStatus();
-            fetchKisBalance();
+            showToast('계좌 설정이 저장되었습니다. 페이지를 새로고침합니다...', 'success');
+            // 저장 후 페이지 새로고침: Claude API 키 등 서버 렌더링 요소 반영
+            setTimeout(() => window.location.reload(), 1200);
         } else { showToast('저장 실패', 'error'); }
     } catch (e) { showToast('서버 통신 오류', 'error'); }
 }
