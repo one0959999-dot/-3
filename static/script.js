@@ -949,4 +949,4 @@ window.resetAiChat = async function () {
     const messages = document.getElementById('chat-messages');
     messages.innerHTML = `<div class="chat-msg ai"><div class="chat-bubble">대화 기록이 초기화되었습니다.</div><span class="chat-msg-time">라씨 AI · ${new Date().toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit' })}</span></div>`;
 }
-})
+});
