@@ -553,7 +553,7 @@ def select_satellites(kis=None, n=NUM_SATELLITES, verbose=True, gemini_client=No
     selected = None
     if gemini_client:
         if verbose:
-            print("\n🤖 [AI 자율 매매] Gemini AI가 최종 위성 종목과 전략을 선정 중입니다...")
+            print("\n🤖 [AI 자율 매매] Claude AI가 최종 위성 종목과 전략을 선정 중입니다...")
         ai_result = gemini_client.ai_select_satellites(results, hot_sectors, n)
         if ai_result:
             selected = ai_result
@@ -729,7 +729,7 @@ def generate_daily_market_report(gemini_client=None, verbose=False, news_context
         report_lines = [f"### 📊 Lassi Bot 시장 분석 리포트 ({today_str})"]
         report_lines.append("\n#### 📈 주요 지수 동향")
         report_lines.append(market_data_text.replace("[", "#### ").replace("-", "*"))
-        report_lines.append("\n> AI 분석 기능이 비활성화되어 있습니다. Gemini API 키를 등록하면 더 정교한 분석을 받을 수 있습니다.")
+        report_lines.append("\n> AI 분석 기능이 비활성화되어 있습니다. Claude API 키를 등록하면 더 정교한 분석을 받을 수 있습니다.")
         report_text = "\n".join(report_lines)
 
     if verbose:

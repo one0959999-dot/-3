@@ -119,13 +119,13 @@ def update_user_keys(user_id, keys_dict):
             UPDATE users SET real_app_key = ?, real_app_secret = ?, real_account_no = ?,
                 mock_app_key = ?, mock_app_secret = ?, mock_account_no = ?,
                 telegram_token = ?, telegram_chat_id = ?,
-                gemini_api_key = ?, claude_api_key = ?,
+                claude_api_key = ?,
                 core_stocks = ?, is_mock = ?, initial_cash = ?, {cash_col} = ? WHERE id = ?
         ''', (
             keys_dict.get('real_app_key'), keys_dict.get('real_app_secret'), keys_dict.get('real_account_no'),
             keys_dict.get('mock_app_key'), keys_dict.get('mock_app_secret'), keys_dict.get('mock_account_no'),
             keys_dict.get('telegram_token'), keys_dict.get('telegram_chat_id'),
-            keys_dict.get('gemini_api_key'), keys_dict.get('claude_api_key'),
+            keys_dict.get('claude_api_key'),
             keys_dict.get('core_stocks'), is_mock, initial_cash, initial_cash, user_id
         ))
         conn.commit()
