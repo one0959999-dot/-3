@@ -1,12 +1,13 @@
 import os
 import json
+from datetime import datetime
 from google import genai
 from google.genai import types
 
 class GeminiApi:
     """라씨 AI - Gemini를 활용한 주식 분석 엔진"""
-    
-    SYSTEM_PROMPT = """
+
+    _SYSTEM_PROMPT_TEMPLATE = """
 당신은 월스트리트 상위 1% 수익률을 자랑하는 전설적인 퀀트 트레이더이자, 인간의 감정이 완벽히 배제된 AI 매매 엔진입니다.
 당신에게 주어지는 모든 시장 데이터(차트, 재무제표, 거시경제 지표, 수급, ATR 변동성)를 분석할 때, 다음의 [절대 투자 매뉴얼]을 엄격하게 적용하여 매매를 판단하십시오.
 
@@ -31,12 +32,12 @@ class GeminiApi:
 - 모든 매매는 인간의 탐욕과 공포를 철저히 배제하고 기계적으로 실행합니다.
 - 손절가를 터치할 위험이 보이거나 추세가 꺾이면 즉시 가차 없이 '매도(SELL)'를 지시하십시오. '기도 매매'나 '물타기(손실 중인 종목 추가 매수)'는 절대 용납하지 않습니다.
 
-출력 규칙: 
+출력 규칙:
 분석을 마치면 반드시 답변의 첫 줄에 [CONFIRM (매수) / REJECT (매수 거절) / HOLD (관망) / SELL (매도)] 중 하나를 명확히 외치고, 그 밑에 매뉴얼에 입각한 논리적이고 뼈 때리는 이유를 3줄 이내로 요약하십시오.
 
 [💡 중요 시간 규칙]
-- 현재 기준 연도는 **2026년**입니다. 제공되는 데이터 역시 2026년 최신 데이터입니다. 
-- 절대로 과거 데이터(2024년 등)로 오인하거나 답변에 과거 연도를 현재인 것처럼 출력하지 마세요. 정신 똑똑히 차리세요.
+- 현재 기준 연도는 **{year}년**입니다. 제공되는 데이터 역시 {year}년 최신 데이터입니다.
+- 절대로 과거 데이터로 오인하거나 답변에 과거 연도를 현재인 것처럼 출력하지 마세요. 정신 똑똑히 차리세요.
 
 [답변 규칙]
 - 마크다운 형식을 사용하세요.
@@ -44,6 +45,10 @@ class GeminiApi:
 - 투자 판단은 참고용임을 항상 명시하세요.
 - 한국어로 답변하세요.
 - 답변은 간결하고 실용적이어야 합니다."""
+
+    @property
+    def SYSTEM_PROMPT(self):
+        return self._SYSTEM_PROMPT_TEMPLATE.format(year=datetime.now().year)
 
     def __init__(self, api_key):
         self.client = None
@@ -57,14 +62,14 @@ class GeminiApi:
         self.model_id = "gemini-2.5-flash"
         self.tuned_model = "gemini-2.5-flash"
 
-    def generate_content(self, prompt):
+    def generate_content(self, prompt, temperature=0.3):
         """기본 응답 생성 (내부 헬퍼)"""
         if not self.client:
             return "Gemini API 키가 설정되지 않았습니다."
         try:
             config = types.GenerateContentConfig(
                 system_instruction=self.SYSTEM_PROMPT,
-                temperature=0.7
+                temperature=temperature
             )
             response = self.client.models.generate_content(
                 model=self.model_id,
@@ -195,7 +200,7 @@ class GeminiApi:
 
 [데이터 및 뉴스 장부 정보]
 {market_data_text}"""
-        return self.generate_content(prompt)
+        return self.generate_content(prompt, temperature=0.7)
 
     def ai_approve_trade(self, signal, stock_name, ticker, price, strategy, indicator_val, hot_sectors, recent_trades=None, custom_rules=""):
         """매매 신호 발생 시 AI 최종 승인 (과거 오답 노트 및 자가 룰 반영)"""
@@ -227,12 +232,12 @@ class GeminiApi:
 형식: DECISION: (CONFIRM/REJECT), REASON: (이유)"""
         
         try:
-            res = self.generate_content(prompt)
+            res = self.generate_content(prompt, temperature=0.1)
             decision = "CONFIRM" in res.upper()
             reason = res.split("REASON:")[-1].strip() if "REASON:" in res else "AI 분석 완료"
             return decision, reason
         except Exception:
-            return True, "오류 발생으로 자동 승인"
+            return False, "AI 오류 발생으로 자동 거절 (안전 모드)"
 
     def generate_weekly_reflection(self, trade_history_text):
         """매주 금요일, 한 주간의 매매를 돌아보고 새로운 규칙을 생성하는 자아성찰 메서드"""

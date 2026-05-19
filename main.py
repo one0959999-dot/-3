@@ -1,7 +1,8 @@
+# ⚠️ 이 파일은 Flask 웹앱(app.py) 도입 이전의 구버전 단독 실행기입니다.
+# 실서비스는 app.py를 통해 구동됩니다. 이 파일을 직접 실행하면 Flask 봇과 충돌합니다.
 import time
 import schedule
 import yaml
-# 🟢 [리팩토링] 회원님 말씀대로 애초에 새로운 kis_brokers 폴더로 직접 찾아가도록 경로를 수정했습니다!
 from kis_brokers.kis_real_api import KisRealApi
 from kis_brokers.kis_mock_api import KisMockApi
 from telegram_bot import TelegramNotifier
