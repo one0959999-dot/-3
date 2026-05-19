@@ -284,62 +284,66 @@ class KisMockApi:
             "CTX_AREA_NK100": ""
         }
         
-        try:
-            res = requests.get(url, headers=headers, params=params, timeout=5)
-            
-            if res.status_code == 200:
-                data = res.json()
-                if data.get('rt_cd') == '0':
-                    stocks = data.get('output1', [])
-                    summary = data.get('output2', [{}])[0]
-                    
-                    parsed_stocks = []
-                    manual_total_purchase = 0.0 
-                    for s in stocks:
-                        if int(s.get('hldg_qty', 0)) > 0:
-                            qty = int(s.get('hldg_qty', 0))
-                            pchs = float(s.get('pchs_avg_pric', 0))
-                            parsed_stocks.append({
-                                "name": s.get('prdt_name', ''),
-                                "ticker": s.get('pdno', ''),
-                                "shares": qty,
-                                "purchase_price": pchs,
-                                "current_price": float(s.get('prpr', 0)),
-                                "value": float(s.get('evlu_amt', 0)),
-                                "profit_rt": float(s.get('evlu_pfls_rt', 0))
-                            })
-                            manual_total_purchase += (qty * pchs) 
-                    
-                    def _safe_parse(k1, k2):
-                        v1 = summary.get(k1)
-                        v2 = summary.get(k2)
-                        if v1 and v1 != "0" and v1 != "": return float(v1)
-                        if v2 and v2 != "0" and v2 != "": return float(v2)
-                        return 0.0
+        # 🚨 [모의투자 서버 지연 극복 엔진] 타임아웃을 12초로 확충하고, 실패 시 최대 2회 끊어지지 않고 재시도하도록 롤업 제어를 구축합니다.
+        for retry in range(2):
+            try:
+                res = requests.get(url, headers=headers, params=params, timeout=12)
+                
+                if res.status_code == 200:
+                    data = res.json()
+                    if data.get('rt_cd') == '0':
+                        stocks = data.get('output1', [])
+                        summary = data.get('output2', [{}])[0]
+                        
+                        parsed_stocks = []
+                        manual_total_purchase = 0.0 
+                        for s in stocks:
+                            if int(s.get('hldg_qty', 0)) > 0:
+                                qty = int(s.get('hldg_qty', 0))
+                                pchs = float(s.get('pchs_avg_pric', 0))
+                                parsed_stocks.append({
+                                    "name": s.get('prdt_name', ''),
+                                    "ticker": s.get('pdno', ''),
+                                    "shares": qty,
+                                    "purchase_price": pchs,
+                                    "current_price": float(s.get('prpr', 0)),
+                                    "value": float(s.get('evlu_amt', 0)),
+                                    "profit_rt": float(s.get('evlu_pfls_rt', 0))
+                                })
+                                manual_total_purchase += (qty * pchs) 
+                        
+                        def _safe_parse(k1, k2):
+                            v1 = summary.get(k1)
+                            v2 = summary.get(k2)
+                            if v1 and v1 != "0" and v1 != "": return float(v1)
+                            if v2 and v2 != "0" and v2 != "": return float(v2)
+                            return 0.0
 
-                    api_purchase = _safe_parse('pchs_amt_smtl_amt', 'tot_pchs_amt')
-                    final_purchase = api_purchase if api_purchase > 0 else manual_total_purchase
+                        api_purchase = _safe_parse('pchs_amt_smtl_amt', 'tot_pchs_amt')
+                        final_purchase = api_purchase if api_purchase > 0 else manual_total_purchase
 
-                    return {
-                        "stocks": parsed_stocks,
-                        "total_cash": _safe_parse('prvs_rcdl_excc_amt', 'dnca_tot_amt'),
-                        "total_value": _safe_parse('scts_evlu_amt', 'evlu_amt_smtl_amt'),
-                        "total_purchase": final_purchase 
-                    }
+                        return {
+                            "stocks": parsed_stocks,
+                            "total_cash": _safe_parse('prvs_rcdl_excc_amt', 'dnca_tot_amt'),
+                            "total_value": _safe_parse('scts_evlu_amt', 'evlu_amt_smtl_amt'),
+                            "total_purchase": final_purchase 
+                        }
+                    else:
+                        msg1 = data.get('msg1', '')
+                        rt_cd = data.get('rt_cd', '')
+                        print(f"[KIS 모의] 잔고 조회 실패: rt_cd={rt_cd}, msg={msg1}, data={data}")
+                        if msg1 in ('EGW00123', 'EGW00121'):
+                            self.access_token = None
+                            self._ensure_token()
+                            return self.get_account_balance()
                 else:
-                    msg1 = data.get('msg1', '')
-                    rt_cd = data.get('rt_cd', '')
-                    print(f"[KIS 모의] 잔고 조회 실패: rt_cd={rt_cd}, msg={msg1}, data={data}")
-                    if msg1 in ('EGW00123', 'EGW00121'):
-                        self.access_token = None
-                        self._ensure_token()
-                        return self.get_account_balance()
-            else:
-                print(f"[KIS 모의] 잔고 조회 통신 오류: status={res.status_code}, text={res.text}")
-            return None
-        except Exception as e:
-            print(f"[KIS 모의] 잔고 조회 통신 시간 초과/오류: {e}")
-            return None
+                    print(f"[KIS 모의] 잔고 조회 통신 오류: status={res.status_code}, text={res.text}")
+                return None
+            except (requests.exceptions.Timeout, requests.exceptions.ConnectionError) as e:
+                print(f"⚠️ [KIS 모의 잔고조회 타임아웃 방어] {retry+1}회차 재시도 진행 중... ({e})")
+                import time
+                time.sleep(1.0)
+        return None
 
     def search_stock_name(self, query: str):
         query = query.strip()
