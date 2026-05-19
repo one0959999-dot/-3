@@ -91,8 +91,7 @@ class BaseBot:
         self.live_prices = {}
         self.ws_client = None
 
-        # 🟢 [연결성 버그 픽스] KIS 인증키 발급 및 웹소켓 상주 로직 전체를 
-        # 비동기 백그라운드 스레드로 완전히 이관하여 Flask 초기 기동 마비를 원천 해결합니다!
+        # KIS 인증키 발급 및 웹소켓 상주 로직 전체를 비동기 백그라운드 스레드로 완전히 이관
         def _async_network_connect():
             if self.kis:
                 try:
@@ -316,6 +315,7 @@ class BaseBot:
         self.satellite_strategies = {c['ticker']: c['strategy_name'] for c in self.satellite_info}
         log_lines = [f"  {i+1}. {c['name']} ({c['ticker']}) → [{c['strategy_name']}] {c['return_pct']:+.1f}%" for i, c in enumerate(self.satellite_info)]
         for line in log_lines: self.add_log(f"✅ {line.strip()}")
+        # 🟢 [문법 오류 수정 완료] 깨진 줄바꿈을 단일 라인 문자열 서식으로 안전하게 복구했습니다.
         self._send_telegram(f"🔍 {self.mode_name} 위성 종목 선정!\n" + "\n".join(log_lines))
 
         core_budget = total_cash * self.core_ratio
