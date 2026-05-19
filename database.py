@@ -192,6 +192,33 @@ def load_ai_rules(user_id):
     conn.close()
     return row['rule_text'] if row else ""
 
+# 🟢 [리팩토링] BaseBot에서 SQL을 직접 다루지 않도록 Repository 함수들을 신규 추가합니다.
+def get_user_initial_cash(user_id, is_mock):
+    """현재 모드(실전/모의)에 맞는 원금 장부를 조회합니다."""
+    conn = get_db_connection()
+    cash_col = "mock_initial_cash" if is_mock else "real_initial_cash"
+    row = conn.execute(f'SELECT {cash_col} FROM users WHERE id = ?', (user_id,)).fetchone()
+    conn.close()
+    return float(row[cash_col]) if row and row[cash_col] is not None else 10000000.0
+
+def set_user_initial_cash(user_id, pure_principal, is_mock):
+    """최초 투자 원금을 세팅하여 장부를 잠급니다."""
+    with db_lock:
+        conn = get_db_connection()
+        cash_col = "mock_initial_cash" if is_mock else "real_initial_cash"
+        conn.execute(f'UPDATE users SET {cash_col} = ? WHERE id = ?', (pure_principal, user_id))
+        conn.commit()
+        conn.close()
+
+def add_user_initial_cash(user_id, deposit_delta, is_mock):
+    """외부 입출금 발생 시 해당 모드의 장부 원금을 깔끔하게 증감시킵니다."""
+    with db_lock:
+        conn = get_db_connection()
+        cash_col = "mock_initial_cash" if is_mock else "real_initial_cash"
+        conn.execute(f'UPDATE users SET {cash_col} = {cash_col} + ? WHERE id = ?', (deposit_delta, user_id))
+        conn.commit()
+        conn.close()
+
 if __name__ == '__main__':
     init_db()
     print("Database initialized with WAL mode and Thread Locks.")

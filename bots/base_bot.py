@@ -11,13 +11,8 @@ from datetime import datetime
 from telegram_bot import TelegramNotifier
 from strategy import CorePosition, Position, get_rsi_signal, get_signal_by_strategy, REINVEST_RATIO
 from stock_screener import select_satellites, generate_daily_market_report
-from database import update_bot_status, save_portfolio_state, load_portfolio_state, log_trade_journal, get_recent_trades, save_ai_rules, load_ai_rules
-
-CORE_TICKER    = "003850"
-CORE_NAME      = "보령"
-CORE_RATIO     = 0.30
-SATELLITE_RATIO = 0.70
-CORE_MIN_FLOOR_RATIO = 0.5
+# 🟢 [리팩토링] 하드코딩된 SQL 대신 database.py의 깔끔한 Repository 함수들을 가져옵니다.
+from database import update_bot_status, save_portfolio_state, load_portfolio_state, log_trade_journal, get_recent_trades, save_ai_rules, load_ai_rules, get_user_initial_cash, set_user_initial_cash, add_user_initial_cash
 
 def fetch_recent_news(stock_name):
     try:
@@ -48,8 +43,13 @@ class BaseBot:
         self.mode_name = "모의" if is_mock else "실전"
         self.alert_icon = "🟢" if is_mock else "🔴"
         
-        self.core_ratio = CORE_RATIO
-        self.satellite_ratio = SATELLITE_RATIO
+        # 🟢 [리팩토링] 밖에서 굴러다니던 매직 넘버(하드코딩된 값들)를 클래스 내부 설정 변수로 깔끔하게 흡수했습니다.
+        self.core_ticker = "003850"
+        self.core_name = "보령"
+        self.core_ratio = 0.30
+        self.satellite_ratio = 0.70
+        self.core_min_floor_ratio = 0.5
+        self.market_indices = [("069500", "KOSPI"), ("229200", "KOSDAQ")]
 
         try:
             self.user_core_stocks = json.loads(core_stocks) if core_stocks else []
@@ -130,8 +130,10 @@ class BaseBot:
                     if self.ws_client:
                         with self.lock:
                             current_tickers = [c.ticker for c in self.core_positions] + list(self.satellite_positions.keys())
-                            if "069500" not in current_tickers:
-                                current_tickers.append("069500")
+                            # 🟢 유연한 시장 지수 추적
+                            for idx_ticker, _ in self.market_indices:
+                                if idx_ticker not in current_tickers:
+                                    current_tickers.append(idx_ticker)
 
                         for t in current_tickers:
                             if t not in self.ws_client.subscribed_tickers:
@@ -154,27 +156,22 @@ class BaseBot:
                 
                 pure_principal = real_cash + real_purchase
 
+                # 🟢 [리팩토링] 하드코딩된 SQL 대신 간결한 함수 호출로 원금 추적 엔진 가동
                 if not getattr(self, 'initial_capital_captured', False):
                     import os
-                    from database import get_db_connection
-                    conn = get_db_connection()
                     cash_col = "mock_initial_cash" if self._is_mock else "real_initial_cash"
                     flag_file = f"{cash_col}_{self.user_id}_locked.flag"
                     
                     if not os.path.exists(flag_file) and pure_principal > 0:
-                        conn.execute(f'UPDATE users SET {cash_col} = ? WHERE id = ?', (pure_principal, self.user_id))
-                        conn.commit()
+                        set_user_initial_cash(self.user_id, pure_principal, self._is_mock)
                         with open(flag_file, 'w') as f: f.write("Locked")
                         self.add_log(f"💰 [{self.mode_name} 원금 셋업] 실시간 계좌 진짜 원금 {pure_principal:,.0f}원으로 영구 고정 완료.")
                     else:
-                        row = conn.execute(f'SELECT {cash_col} FROM users WHERE id = ?', (self.user_id,)).fetchone()
-                        db_cash = float(row[cash_col]) if row else 10000000.0
+                        db_cash = get_user_initial_cash(self.user_id, self._is_mock)
                         if db_cash == 10000000.0 and pure_principal > 0:
-                            conn.execute(f'UPDATE users SET {cash_col} = ? WHERE id = ?', (pure_principal, self.user_id))
-                            conn.commit()
+                            set_user_initial_cash(self.user_id, pure_principal, self._is_mock)
                             self.add_log(f"💰 [{self.mode_name} 최초 원금 계산] 투자 원금 {pure_principal:,.0f}원 셋업 완료.")
                             with open(flag_file, 'w') as f: f.write("Locked")
-                    conn.close()
                     self.initial_capital_captured = True
                 
                 current_asset_cost = real_cash + real_purchase 
@@ -186,12 +183,8 @@ class BaseBot:
                         self.pnl_this_turn = 0.0 
                         deposit_delta = current_asset_cost - expected_asset_cost
                         if deposit_delta > 10000 or deposit_delta < -10000: 
-                            from database import get_db_connection
-                            conn = get_db_connection()
-                            cash_col = "mock_initial_cash" if self._is_mock else "real_initial_cash"
-                            conn.execute(f'UPDATE users SET {cash_col} = {cash_col} + ? WHERE id = ?', (deposit_delta, self.user_id))
-                            conn.commit()
-                            conn.close()
+                            # 🟢 [리팩토링] 입출금 발생 시에도 간결하게 함수 호출
+                            add_user_initial_cash(self.user_id, deposit_delta, self._is_mock)
                             if deposit_delta > 0: self.add_log(f"💰 {self.mode_name} 계좌 외부 입금 포착: +{deposit_delta:,.0f}원")
                             else: self.add_log(f"💸 {self.mode_name} 계좌 외부 출금 포착: {deposit_delta:,.0f}원")
                         self.last_asset_cost = current_asset_cost
@@ -227,7 +220,7 @@ class BaseBot:
                     for core in self.core_positions:
                         if core.ticker == t:
                             core.shares = q; core.avg_price = p; core.kis_current_price = c_p
-                            if core.floor_shares == 0 and q > 0: core.floor_shares = max(1, int(q * CORE_MIN_FLOOR_RATIO))
+                            if core.floor_shares == 0 and q > 0: core.floor_shares = max(1, int(q * self.core_min_floor_ratio))
                             is_core = True; break
 
                     if not is_core:
@@ -251,7 +244,8 @@ class BaseBot:
             for c in self.user_core_stocks:
                 self.core_positions.append(CorePosition(c['ticker'], c['name'], initial_cash=0))
         else:
-            self.core_positions.append(CorePosition(CORE_TICKER, CORE_NAME, initial_cash=0))
+            # 🟢 [리팩토링] 하드코딩 제거 
+            self.core_positions.append(CorePosition(self.core_ticker, self.core_name, initial_cash=0))
             self.core_positions.append(CorePosition("047040", "대우건설", initial_cash=0))
             
         if self.kis:
@@ -300,7 +294,6 @@ class BaseBot:
 
     def _send_telegram(self, message):
         if not self.telegram: return
-        # 🟢🔴 동적 아이콘 및 모드 이름 적용
         full_msg = f"{self.alert_icon}[{self.mode_name}] {message}"
         threading.Thread(target=self.telegram.send_message, args=(full_msg,), daemon=True).start()
 
@@ -339,7 +332,7 @@ class BaseBot:
             for c in self.user_core_stocks: self.core_positions.append(CorePosition(c['ticker'], c['name'], initial_cash=per_core_budget))
         else:
             half_core_budget = core_budget / 2
-            self.core_positions.append(CorePosition(CORE_TICKER, CORE_NAME, initial_cash=half_core_budget))
+            self.core_positions.append(CorePosition(self.core_ticker, self.core_name, initial_cash=half_core_budget))
             ai_core_info = select_ai_core_stock(verbose=False)
             if ai_core_info: self.core_positions.append(CorePosition(ai_core_info['ticker'], ai_core_info['name'], initial_cash=half_core_budget))
 
@@ -352,7 +345,7 @@ class BaseBot:
                     t = real_stock['ticker']; q = int(real_stock['shares']); p = float(real_stock['purchase_price'])
                     for core in self.core_positions:
                         if core.ticker == t:
-                            core.shares = q; core.avg_price = p; core.floor_shares = max(1, int(q * CORE_MIN_FLOOR_RATIO)) if q > 0 else 0
+                            core.shares = q; core.avg_price = p; core.floor_shares = max(1, int(q * self.core_min_floor_ratio)) if q > 0 else 0
                             break
                     if t in self.satellite_positions:
                         self.satellite_positions[t].shares = q; self.satellite_positions[t].avg_price = p
@@ -419,11 +412,13 @@ class BaseBot:
 
         if getattr(self, 'is_crisis_mode', False):
             if self.kis:
-                kospi_cp = self.kis.get_current_price("069500")
-                if kospi_cp:
-                    extended_df = self._get_extended_ohlcv("069500", kospi_cp)
+                # 🟢 KOSPI 하드코딩 제거 (market_indices의 첫번째 종목으로 유연하게 확인)
+                main_idx_ticker = self.market_indices[0][0]
+                idx_cp = self.kis.get_current_price(main_idx_ticker)
+                if idx_cp:
+                    extended_df = self._get_extended_ohlcv(main_idx_ticker, idx_cp)
                     if not extended_df.empty and len(extended_df) >= 5:
-                        if kospi_cp > extended_df['close'].ewm(span=5, adjust=False).mean().iloc[-1]:
+                        if idx_cp > extended_df['close'].ewm(span=5, adjust=False).mean().iloc[-1]:
                             msg = f"🚀 {self.mode_name} 저점 반등 확인! 관망 모드 해제."
                             self.add_log(msg); self._send_telegram(msg)
                             self.is_crisis_mode = False; self.peak_total_asset = 0
@@ -628,7 +623,8 @@ class BaseBot:
 
             market_data = []
             if self.kis:
-                for ticker, name in [("069500", "KOSPI"), ("229200", "KOSDAQ")]:
+                # 🟢 하드코딩 제거 (설정된 지수를 동적으로 순회하여 불러옵니다)
+                for ticker, name in self.market_indices:
                     df = self._get_cached_base_ohlcv(ticker)
                     cp = self.live_prices.get(ticker) or self.kis.get_current_price(ticker)
                     if not df.empty and cp: market_data.append(f"{name}: {cp:,}원 ({((cp/df['close'].iloc[-1])-1)*100:+.2f}%)")
@@ -754,7 +750,8 @@ class BaseBot:
                 cp = float(getattr(core, '_last_price', 0) or self.live_prices.get(core.ticker, 0) or getattr(core, 'kis_current_price', 0) or core.avg_price or 0)
                 core_val = float(core.shares) * cp
                 total_realtime_stock_val += core_val
-                cores_data.append({"name": core.name, "ticker": core.ticker, "shares": core.shares, "floor": core.floor_shares, "price": cp, "value": core_val, "budget": getattr(core, 'initial_cash', 0), "strategy": "장기 우상향" if core.ticker != CORE_TICKER else "RSI + floor 보호", "status": getattr(core, 'status', '감시 중 👀'), "status_msg": getattr(core, 'status_msg', '지표 점검 중...')})
+                # 🟢 하드코딩 제거 (설정된 core_ticker로 비교하여 유연하게 동작합니다)
+                cores_data.append({"name": core.name, "ticker": core.ticker, "shares": core.shares, "floor": core.floor_shares, "price": cp, "value": core_val, "budget": getattr(core, 'initial_cash', 0), "strategy": "장기 우상향" if core.ticker != self.core_ticker else "RSI + floor 보호", "status": getattr(core, 'status', '감시 중 👀'), "status_msg": getattr(core, 'status_msg', '지표 점검 중...')})
 
             satellites = []
             for ticker, pos in safe_satellite_items:
@@ -763,13 +760,9 @@ class BaseBot:
                 total_realtime_stock_val += sat_val
                 satellites.append({"name": pos.name, "ticker": ticker, "strategy": self.satellite_strategies.get(ticker, '-'), "shares": pos.shares, "price": sp, "value": sat_val, "budget": getattr(pos, 'initial_cash', getattr(pos, 'budget', 0)), "status": getattr(pos, 'status', '감시 중 👀'), "status_msg": getattr(pos, 'status_msg', '지표 점검 중...')})
 
+            # 🟢 [리팩토링] 하드코딩된 SQL을 깔끔한 함수 호출로 대체
             try:
-                from database import get_db_connection
-                conn = get_db_connection()
-                cash_col = "mock_initial_cash" if self._is_mock else "real_initial_cash"
-                row = conn.execute(f'SELECT {cash_col} FROM users WHERE id = ?', (self.user_id,)).fetchone()
-                conn.close()
-                current_initial_cash = float(row[cash_col]) if row and row[cash_col] is not None else 10000000.0
+                current_initial_cash = get_user_initial_cash(self.user_id, self._is_mock)
             except Exception: current_initial_cash = 10000000.0
 
             if self.cached_balance:
