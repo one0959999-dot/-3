@@ -1221,7 +1221,6 @@ body.theme-warm-beige .card-value.highlight {
 /* 5. 🛠️ [글자 독립] 대시보드 내 "모든 텍스트" 색상 검은색 강제 전환 (스위치 배경 보호) */
 body.theme-warm-beige h1,
 body.theme-warm-beige h2,
-body.theme-warm-beige h3,
 body.theme-warm-beige h4,
 body.theme-warm-beige p,
 body.theme-warm-beige th,
@@ -1243,6 +1242,7 @@ body.theme-warm-beige .muted-center {
 /* 7. 부차적인 세부 설명 및 시간표시 글자색 회색조 개별 격리 */
 body.theme-warm-beige p,
 body.theme-warm-beige small,
+body.theme-warm-beige label,
 body.theme-warm-beige .card-subvalue,
 body.theme-warm-beige .mini-log-entry .log-time,
 body.theme-warm-beige .chat-msg-time,
