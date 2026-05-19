@@ -172,10 +172,8 @@ class KisRealApi:
         # ATS/NXT session: 15:30–19:50 KST
         is_nxt = (15 * 60 + 30) <= kst_time < (19 * 60 + 50)
 
-        if is_nxt:
-            tr_id = "TTTC0012U" if side == 'BUY' else "TTTC0011U"
-        else:
-            tr_id = "TTTC0802U" if side == 'BUY' else "TTTC0801U"
+        # NXT session still uses the same TR-IDs; EXCG_ID_DVSN_CD="02" routes to NXT exchange
+        tr_id = "TTTC0802U" if side == 'BUY' else "TTTC0801U"
 
         acnt_no   = self.account_no[:8]
         acnt_prdt = self.account_no[8:] if len(self.account_no) > 8 else "01"
