@@ -533,7 +533,7 @@ window.toggleMode = async function () {
         });
         const result = await res.json();
         if (result.status === 'success') {
-            showToast(isMock ? '모의투자 모드로 전환됨', 'info');
+            showToast(isMock ? '모의투자 모드로 전환됨' : '실전투자 모드로 전환됨', 'info');
             fetch('/api/status').then(r => r.json()).then(data => {
                 updateUI(data);
                 fetchPnl();
