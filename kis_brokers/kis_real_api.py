@@ -218,13 +218,11 @@ class KisRealApi:
             "ORD_QTY":        str(qty),
             "ORD_UNPR":       ord_unpr,
         }
-
-        # Hashkey must be computed from standard fields only;
-        # EXCG_ID_DVSN_CD is added afterward so KIS hashkey API doesn't reject it
-        hashkey = self.get_hashkey(body)
-
         if is_nxt:
             body["EXCG_ID_DVSN_CD"] = "02"
+
+        # Hashkey must cover the exact body that will be POSTed
+        hashkey = self.get_hashkey(body)
 
         print(f"[KIS 실전 DEBUG] KST={kst_now.strftime('%H:%M')}, is_nxt={is_nxt}, tr_id={tr_id}, ord_dvsn={ord_dvsn}, body_keys={list(body.keys())}")
 
