@@ -172,18 +172,30 @@ class KisRealApi:
 
         kst_now = datetime.now(tz=timezone(timedelta(hours=9)))
         kst_time = kst_now.hour * 60 + kst_now.minute
-        # ATS/NXT session: 15:30–19:50 KST
-        is_nxt = (15 * 60 + 30) <= kst_time < (19 * 60 + 50)
 
-        # 09:00~15:30 정규장, 15:30~19:50 NXT(대체거래소)
-        print(f"[KIS 실전] 주문 시도 | {side} {stock_code} {qty}주 | 시간:{kst_now.strftime('%H:%M')} NXT:{is_nxt}")
+        # ── NXT(넥스트레이드) 시간대 세분화 ─────────────────────────────────
+        # 프리마켓      08:00~08:50 : 지정가(00), 최유리(03), 최우선(04)
+        # 메인마켓      09:00~15:30 : 정규장과 동일 (NXT EXCG_ID 불필요)
+        # 애프터 단일가 15:30~15:40 : 지정가(00) 만 허용 — 최유리(03) 불가
+        # 애프터 일반   15:40~20:00 : 지정가(00), 최유리(03), 최우선(04)
+        is_nxt_single = (15 * 60 + 30) <= kst_time < (15 * 60 + 40)   # 시가단일가
+        is_nxt_after  = (15 * 60 + 40) <= kst_time < (20 * 60)         # 일반 애프터
+        is_nxt = is_nxt_single or is_nxt_after                          # 정규장 이후 NXT
+
+        # 시가단일가(15:30~15:40) 구간에서는 최유리지정가(03) 불가 → 시장가 주문 차단
+        if is_nxt_single and price == 0:
+            print(f"[KIS 실전] NXT 시가단일가(15:30~15:40) 구간 — 최유리 주문 불가, 주문 취소 ({side} {stock_code})")
+            return None
+
+        print(f"[KIS 실전] 주문 시도 | {side} {stock_code} {qty}주 | 시간:{kst_now.strftime('%H:%M')} NXT:{is_nxt}{'(단일가)' if is_nxt_single else ''}")
         # New TR-IDs per KIS docs (old 0802U/0801U may be blocked without notice)
         tr_id = "TTTC0012U" if side == 'BUY' else "TTTC0011U"
 
         acnt_no   = self.account_no[:8]
         acnt_prdt = self.account_no[8:] if len(self.account_no) > 8 else "01"
 
-        # NXT supports ORD_DVSN=03 (최유리지정가) — no price fetch needed
+        # 주문유형: 지정가(00) or 최유리지정가(03)
+        # 단일가 구간은 위에서 price=0 시 이미 차단됐으므로 여기선 항상 price>0
         ord_dvsn = "00" if price > 0 else "03"
 
         if price > 0:
