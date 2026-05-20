@@ -535,12 +535,20 @@ def select_satellites(kis=None, n=NUM_SATELLITES, verbose=True, gemini_client=No
                      - stat_arb_penalty
                      + ml_factor_score)
 
+            # RSI(14) 현재값 계산 — AI 전략 검수 프롬프트에 활용
+            try:
+                rsi_val = round(float(calc_rsi(df['close'], 14).iloc[-1]), 1)
+            except Exception:
+                rsi_val = None
+
             results.append({
                 'ticker':        ticker,
                 'name':          name,
                 'strategy_name': best_strat,
                 'return_pct':    float(round(best_ret, 2)),
                 'volume_surge':  float(round(vol_score, 2)),
+                'vol_ratio':     float(round(vol_score, 2)),   # review_satellite_candidates 프롬프트용 별칭
+                'rsi':           rsi_val,                      # review_satellite_candidates 프롬프트용
                 'sector':        ticker_to_sector.get(ticker, '-'),
                 'momentum_20d':  float(round(recent_ret, 2)),
                 'dl_prob':       float(round(ai_up_prob, 1)),

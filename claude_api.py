@@ -375,6 +375,15 @@ REASON: (핵심 근거 2~3줄, 구체적 수치 포함)"""
         except Exception:
             return False, "AI 오류 발생으로 자동 거절 (안전 모드)"
 
+    # 시스템이 실제로 지원하는 전략 목록 (get_signal_by_strategy 매칭 기준)
+    VALID_STRATEGIES = [
+        "RSI(9) 30/70", "RSI(14) 30/70", "RSI(14) 40/60",
+        "EMA 5/20 크로스", "EMA 3/10 크로스",
+        "SMA 5/20 크로스", "SMA 3/10 크로스", "SMA 3/20 크로스",
+        "MACD 크로스", "볼린저밴드 반전", "Stochastic 크로스",
+        "CCI ±100", "Williams %R",
+    ]
+
     def review_satellite_candidates(self, candidates: list, hot_sectors: list) -> list:
         """위성 종목·전략 AI 검토 — 부적합 종목 즉시 퇴출, 대체 전략 제안.
 
@@ -385,8 +394,13 @@ REASON: (핵심 근거 2~3줄, 구체적 수치 포함)"""
             return [dict(c, approved=True, ai_reason="AI 비활성화 — 자동 승인") for c in candidates]
 
         hot_str = ", ".join(hot_sectors) if hot_sectors else "없음"
+        strategy_list_str = "\n".join(f"  - {s}" for s in self.VALID_STRATEGIES)
+
+        # 종목별 기술 지표 포함 (알고리즘이 이미 계산한 값 활용)
         cand_lines = "\n".join(
-            f"{i+1}. {c['name']}({c['ticker']}) 전략=[{c.get('strategy_name','?')}] 예상수익={c.get('return_pct',0):+.1f}%"
+            f"{i+1}. {c['name']}({c['ticker']}) | 현재전략=[{c.get('strategy_name','?')}] | "
+            f"6개월수익={c.get('return_pct',0):+.1f}% | 섹터={c.get('sector','-')} | "
+            f"RSI={c.get('rsi', '?')} | 거래량비율={c.get('vol_ratio', '?')}"
             for i, c in enumerate(candidates)
         )
 
@@ -394,45 +408,57 @@ REASON: (핵심 근거 2~3줄, 구체적 수치 포함)"""
 
 현재 강세 섹터: {hot_str}
 
-다음은 알고리즘이 선정한 위성 종목 후보입니다:
+[시스템이 지원하는 전략 목록 — 반드시 아래 중 하나만 선택]
+{strategy_list_str}
+
+[알고리즘 선정 위성 후보 (종목별 지표 포함)]
 {cand_lines}
 
-각 종목에 대해 다음을 평가하세요:
+각 종목에 대해 다음을 평가하라:
 1. 현재 강세 섹터와 부합하는가?
-2. 배정된 전략이 해당 종목의 특성(변동성·유동성·차트 패턴)에 적합한가?
-3. 더 적합한 전략이 있다면 제안하라.
-4. 퇴출해야 할 종목이 있다면 명시하라.
+2. 배정된 전략이 해당 종목의 RSI·거래량비율·섹터 특성에 적합한가?
+3. 더 적합한 전략이 위 목록에 있다면 교체하라 (반드시 목록 내 정확한 이름 사용).
+4. 퇴출해야 할 종목(섹터 불일치·유동성 부족·과열 등)은 approved=false로 표시하라.
 
 반드시 아래 JSON 배열 형식으로만 답하라 (마크다운 코드블록 없이):
 [
-  {{"ticker": "종목코드", "approved": true/false, "strategy": "채택할전략명", "reason": "한줄이유"}},
+  {{"ticker": "종목코드", "approved": true/false, "strategy": "전략명(목록 중 하나)", "reason": "한줄이유"}},
   ...
 ]"""
 
+        import re as _re
         try:
             raw = self.generate_content(prompt, temperature=0.2)
-            # JSON 파싱
-            import re
-            json_match = re.search(r'\[[\s\S]*\]', raw)
+            json_match = _re.search(r'\[[\s\S]*?\]', raw)
             if not json_match:
-                raise ValueError("JSON 파싱 실패")
+                raise ValueError("JSON 배열 없음")
             results = json.loads(json_match.group())
-            # 원본 candidates에 AI 결과 병합
             result_map = {r['ticker']: r for r in results if 'ticker' in r}
+
             approved_list = []
             for c in candidates:
                 ai = result_map.get(c['ticker'], {})
+                # AI가 제안한 전략이 유효한 목록에 있는지 검증 — 없으면 원본 전략 유지
+                ai_strategy = ai.get('strategy', '')
+                if ai_strategy and ai_strategy in self.VALID_STRATEGIES:
+                    final_strategy = ai_strategy
+                else:
+                    final_strategy = c.get('strategy_name', 'RSI(9) 30/70')
+
                 approved_list.append({
                     **c,
                     'approved':      bool(ai.get('approved', True)),
-                    'strategy_name': ai.get('strategy', c.get('strategy_name', 'RSI')),
-                    'ai_reason':     ai.get('reason', '검토 없음'),
+                    'strategy_name': final_strategy,
+                    'ai_reason':     ai.get('reason', '검토 완료'),
                 })
             return approved_list
+
         except Exception as e:
             import logging
-            logging.getLogger('lassi_bot').warning(f"review_satellite_candidates 파싱 오류: {e}")
-            return [dict(c, approved=True, ai_reason="AI 파싱 오류 — 자동 승인") for c in candidates]
+            logging.getLogger('lassi_bot').warning(
+                f"review_satellite_candidates 오류 (원본 후보 유지): {e}")
+            # 파싱 실패 시 → 안전 정책: 원본 candidates 그대로 반환 (자동 승인 X, 알고리즘 선정값 유지)
+            return [dict(c, approved=True, ai_reason="AI 파싱 오류 — 알고리즘 원본 유지") for c in candidates]
 
     def generate_weekly_reflection(self, trade_history_text: str) -> str:
         """매주 금요일, 한 주간의 매매를 돌아보고 새로운 규칙을 생성 — GeminiApi 호환"""
