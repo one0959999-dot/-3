@@ -20,9 +20,10 @@ logger = logging.getLogger('lassi_bot')  # [BUG-FIX] NameError 방지
 _dl_predictor_lock = threading.Lock()
 _dl_predictor_instance = None
 
-# 전체 상장 종목 일별 캐시 (pykrx 전종목 조회 — 하루 1회만 호출)
-_full_ticker_cache: dict = {'date': None, 'tickers': []}
+# 당일 전종목 OHLCV 캐시 (pykrx 일괄 조회 — 30분마다 갱신)
+_full_ticker_cache: dict = {'ts': 0.0, 'tickers': []}
 _full_ticker_lock  = threading.Lock()
+_FULL_TICKER_TTL   = 1800   # 30분 (장중 급등주 포착 주기)
 
 from pykrx import stock
 from datetime import datetime, timedelta
@@ -176,26 +177,58 @@ def get_sector_tickers(momentum, top_n_sectors=4):
 # 3. 거래량 급등 감지
 # ──────────────────────────────────────────────
 def _get_all_listed_tickers() -> list:
-    """KOSPI+KOSDAQ 전체 상장 종목 코드 조회 — 일 1회 캐싱, 매번 랜덤 셔플.
-    pykrx 호출 실패 시 빈 리스트 반환(폴백).
+    """KOSPI+KOSDAQ 당일 전종목 OHLCV 일괄 조회 — 30분 캐싱.
+
+    pykrx get_market_ohlcv_by_ticker()로 전체 시장 데이터를 한 번에 받아
+    오늘 등락률 높은 순 → 거래대금 높은 순으로 정렬해 반환.
+    → 랜덤 샘플 방식과 달리 당일 급등주를 누락 없이 포착.
+    pykrx 실패 시 종목 코드 목록만 반환(폴백).
     """
-    import random
-    today = datetime.today().strftime('%Y%m%d')
+    now = time.time()
     with _full_ticker_lock:
-        if _full_ticker_cache['date'] == today and _full_ticker_cache['tickers']:
+        if now - _full_ticker_cache['ts'] < _FULL_TICKER_TTL and _full_ticker_cache['tickers']:
             return list(_full_ticker_cache['tickers'])
-        try:
+
+    try:
+        today = datetime.today().strftime('%Y%m%d')
+        frames = []
+        for market in ('KOSPI', 'KOSDAQ'):
+            try:
+                df = stock.get_market_ohlcv_by_ticker(today, market=market)
+                if df is not None and not df.empty:
+                    frames.append(df)
+            except Exception:
+                pass
+
+        if frames:
+            all_df = pd.concat(frames)
+            # 등락률 컬럼 확인 (pykrx 버전마다 다를 수 있음)
+            chg_col = next((c for c in ['등락률', '수익률', 'change'] if c in all_df.columns), None)
+            val_col = next((c for c in ['거래대금', 'value'] if c in all_df.columns), None)
+
+            if chg_col and val_col:
+                # 오늘 오른 종목 우선, 그 다음 거래대금 순
+                all_df = all_df.sort_values([chg_col, val_col], ascending=[False, False])
+            elif val_col:
+                all_df = all_df.sort_values(val_col, ascending=False)
+
+            tickers = [t for t in all_df.index if isinstance(t, str) and t.isdigit() and len(t) == 6]
+            logger.info(f"[스크리너] pykrx 당일 전종목 갱신: {len(tickers)}개 (등락률 정렬)")
+        else:
+            # 장 시작 전 / pykrx 당일 데이터 없음 → 종목 목록만 폴백
             kospi  = list(stock.get_market_ticker_list(today, market='KOSPI'))
             kosdaq = list(stock.get_market_ticker_list(today, market='KOSDAQ'))
-            all_t  = [t for t in kospi + kosdaq if isinstance(t, str) and t.isdigit() and len(t) == 6]
-            random.shuffle(all_t)   # 매 캐시 갱신마다 랜덤 순서 → 커버리지 분산
-            _full_ticker_cache['date']    = today
-            _full_ticker_cache['tickers'] = all_t
-            logger.info(f"[스크리너] pykrx 전종목 캐시 갱신: KOSPI {len(kospi)}개 + KOSDAQ {len(kosdaq)}개")
-            return list(all_t)
-        except Exception as e:
-            logger.warning(f"[스크리너] pykrx 전종목 조회 실패 (폴백 유지): {e}")
-            return []
+            tickers = [t for t in kospi + kosdaq if isinstance(t, str) and t.isdigit() and len(t) == 6]
+            logger.info(f"[스크리너] pykrx 종목 목록 폴백: {len(tickers)}개")
+
+    except Exception as e:
+        logger.warning(f"[스크리너] pykrx 전종목 조회 실패: {e}")
+        tickers = []
+
+    with _full_ticker_lock:
+        _full_ticker_cache['ts']      = time.time()
+        _full_ticker_cache['tickers'] = tickers
+    return list(tickers)
 
 
 def get_candidate_tickers(kis=None, verbose=False):
@@ -261,19 +294,19 @@ def get_candidate_tickers(kis=None, verbose=False):
             seen.add(t)
             unique.append(t)
 
-    # 3. pykrx 전체 상장 종목 보완 (최대 200개 랜덤 샘플 — 반복 실행 시 전체 시장 커버)
+    # 3. pykrx 당일 전종목 보완 — 등락률 높은 순 정렬이므로 오늘 급등주 누락 없음
     try:
-        all_listed = _get_all_listed_tickers()
+        all_listed = _get_all_listed_tickers()  # 등락률 내림차순 정렬된 전종목
         added = 0
         for t in all_listed:
-            if added >= 200:
+            if added >= 300:   # 상위 300개 (등락률순이므로 오늘 오른 종목이 앞에 옴)
                 break
             if t not in seen and t not in EXCLUDE_TICKERS:
                 seen.add(t)
                 unique.append(t)
                 added += 1
         if verbose and added:
-            print(f"   🗂️  pykrx 전체 시장 보완: {added}개 추가 → 총 후보 {len(unique)}개")
+            print(f"   🗂️  pykrx 당일 전종목 보완: {added}개 추가 → 총 후보 {len(unique)}개")
     except Exception as e:
         logger.warning(f"[스크리너] pykrx 보완 종목 추가 실패: {e}")
 
