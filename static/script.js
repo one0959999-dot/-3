@@ -186,6 +186,7 @@ document.addEventListener('DOMContentLoaded', () => {
                     const totalValEl = document.getElementById('total-value');
                     if (totalValEl) {
                         totalValEl.textContent = Math.round(totalAsset).toLocaleString() + '원';
+                        // 색상은 /api/status의 mock_pnl 기준으로 이미 적용되므로 여기서는 건드리지 않음
                     }
 
                     // 수익률%: 사용자 직접 투입한 원금(USER_INVESTED_CAPITAL) 대비
@@ -295,6 +296,10 @@ document.addEventListener('DOMContentLoaded', () => {
             const totalValEl = document.getElementById('total-value');
             if (totalValEl) {
                 totalValEl.textContent = Math.round(data.mock_total_asset).toLocaleString() + '원';
+                // 수익 여부에 따라 색상: 이익 → 빨강, 손실 → 파랑, 중립 → 기본
+                if (data.mock_pnl !== undefined) {
+                    totalValEl.style.color = data.mock_pnl > 0 ? '#f85149' : (data.mock_pnl < 0 ? '#58a6ff' : '');
+                }
             }
         }
         if (data.mock_pnl !== undefined && data.mock_pnl_rt !== undefined) {

@@ -85,6 +85,11 @@ class BaseBot:
         self.last_screen_date = None
         self.hot_sectors = []
         self.daily_report = None
+
+        # 예수금 즉시 반영용 내부 현금 추적기
+        # KIS 모의 API는 체결 후 1~3분 지연이 있어 캐시 API 값 대신 내부 추적값 사용
+        self.internal_cash = None          # 최초 KIS API 값으로 초기화 후 매수/매도마다 즉각 갱신
+        self._last_trade_ts = 0.0          # 마지막 체결 타임스탬프 (KIS API 재동기화 시점 판단)
         self.fundamental_cache = {}
 
         # ── 당일 블랙리스트 (날짜가 바뀌면 자동 초기화) ──────────────────
@@ -205,7 +210,13 @@ class BaseBot:
                 real_stock_value = float(real_balance.get('total_value', 0))
                 real_purchase = float(real_balance.get('total_purchase', 0))
                 total_equity = real_cash + real_stock_value
-                
+
+                # 내부 현금 동기화:
+                # - 첫 조회 시 KIS 값으로 초기화
+                # - 마지막 체결로부터 2분 이상 경과 시 KIS 값으로 재동기화 (드리프트 보정)
+                if self.internal_cash is None or (time.time() - self._last_trade_ts >= 120):
+                    self.internal_cash = real_cash
+
                 pure_principal = real_cash + real_purchase
 
                 if not getattr(self, 'initial_capital_captured', False):
@@ -358,6 +369,13 @@ class BaseBot:
             return False
         result = self.kis.buy_market_order(ticker, qty)
         if result:
+            # 내부 현금 즉시 차감 — KIS 모의 API 반영 지연 보정
+            est_price = self.live_prices.get(ticker, 0) or getattr(pos, 'avg_price', 0) or 0
+            if est_price > 0:
+                with self.lock:
+                    if self.internal_cash is not None:
+                        self.internal_cash = max(0.0, self.internal_cash - est_price * qty * 1.00015)
+                    self._last_trade_ts = time.time()
             return True
         err = f"⚠️ [{self.mode_name}] {name}({ticker}) {qty}주 매수 주문 실패 — KIS API 오류"
         self.add_log(err)
@@ -373,6 +391,13 @@ class BaseBot:
             return False
         result = self.kis.sell_market_order(ticker, qty, price=price)
         if result:
+            # 내부 현금 즉시 증가 — KIS 모의 API 반영 지연 보정
+            est_price = price or self.live_prices.get(ticker, 0) or getattr(pos, 'avg_price', 0) or 0
+            if est_price > 0:
+                with self.lock:
+                    if self.internal_cash is not None:
+                        self.internal_cash += est_price * qty * (1 - 0.00015)
+                    self._last_trade_ts = time.time()
             return True
         err = f"⚠️ [{self.mode_name}] {name}({ticker}) {qty}주 매도 주문 실패 — KIS API 오류"
         self.add_log(err)
@@ -1699,8 +1724,12 @@ class BaseBot:
                 current_initial_cash = get_user_initial_cash(self.user_id, self._is_mock)
             except Exception: current_initial_cash = 10000000.0
 
-            if self.cached_balance:
-                api_cash = float(self.cached_balance.get('total_cash', 0))
+            if self.cached_balance or self.internal_cash is not None:
+                # internal_cash 우선 사용 — KIS 모의 API 1~3분 반영 지연 보정
+                if self.internal_cash is not None:
+                    api_cash = self.internal_cash
+                else:
+                    api_cash = float(self.cached_balance.get('total_cash', 0))
                 mock_total_asset = api_cash + total_realtime_stock_val
                 mock_pnl = mock_total_asset - current_initial_cash
                 mock_pnl_rt = (mock_pnl / current_initial_cash * 100) if current_initial_cash > 0 else 0
