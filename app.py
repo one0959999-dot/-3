@@ -274,8 +274,12 @@ def get_daily_report():
     if not bot or not bot.gemini:
         return jsonify({"status": "error", "message": "AI 설정이 필요합니다."})
         
-    today_str = datetime.today().strftime('%Y-%m-%d')
-    weekday = datetime.today().weekday()
+    # [BUG-FIX] datetime.today()는 시스템 로컬 시간 기준 → EC2(UTC) 서버에서 KST 날짜와 불일치.
+    # bot.daily_report['date']는 _now_kst() 기준(KST)으로 저장되므로 비교도 KST 기준으로 통일.
+    from datetime import timezone, timedelta as _td
+    _kst = timezone(_td(hours=9))
+    today_str = datetime.now(_kst).strftime('%Y-%m-%d')
+    weekday = datetime.now(_kst).weekday()
     
     if bot.daily_report and bot.daily_report.get('date') == today_str:
         return jsonify({

@@ -1780,10 +1780,38 @@ class BaseBot:
         self.scheduler.every(30).minutes.do(lambda: self._run_threaded(self.analyze_continuous_market_flow))
         self.scheduler.every(1).hours.do(lambda: self._run_threaded(self._rescreen_satellites))
         self.scheduler.every(30).minutes.do(clear_expired_cache)
-        self.scheduler.every().day.at("00:05").do(lambda: self._run_threaded(self._rescreen_satellites))        # 00:05 KST (midnight rescreen)
-        self.scheduler.every().friday.at("16:00").do(lambda: self._run_threaded(self._weekly_self_reflection))  # 금요일 16:00 KST
-        self.scheduler.every().day.at("08:00").do(lambda: self._run_threaded(self.refresh_websocket))           # 08:00 KST
-        self.scheduler.every().friday.at("02:00").do(lambda: self._run_threaded(self.run_lstm_training))        # 금요일 02:00 KST
+
+        # ⚠️ [BUG-FIX] schedule.at()은 시스템 로컬 시간 기준으로 발동 (UTC EC2 서버 대응).
+        # datetime.now()가 아닌 _now_kst()로 KST 시각을 직접 확인하는 래퍼를 사용.
+        # UTC 서버에서 ".at('00:05')"는 09:05 KST에 발동해 버려 의도와 9시간 오차가 생기므로,
+        # 매분 실행되는 1분 스케줄러 안에서 KST 목표 시각과 일치할 때만 실행하는 방식으로 대체.
+        def _kst_midnight_rescreen():
+            """KST 00:05 자정에만 위성 재스크리닝 (UTC 서버 대응)."""
+            kst_hm = _now_kst().strftime('%H:%M')
+            if kst_hm == "00:05":
+                self._run_threaded(self._rescreen_satellites)
+
+        def _kst_friday_reflection():
+            """KST 금요일 16:00에만 주간 반성 (UTC 서버 대응)."""
+            now_kst = _now_kst()
+            if now_kst.weekday() == 4 and now_kst.strftime('%H:%M') == "16:00":
+                self._run_threaded(self._weekly_self_reflection)
+
+        def _kst_morning_websocket():
+            """KST 08:00에만 웹소켓 재연결 (UTC 서버 대응)."""
+            if _now_kst().strftime('%H:%M') == "08:00":
+                self._run_threaded(self.refresh_websocket)
+
+        def _kst_friday_lstm():
+            """KST 금요일 02:00에만 LSTM 훈련 (UTC 서버 대응)."""
+            now_kst = _now_kst()
+            if now_kst.weekday() == 4 and now_kst.strftime('%H:%M') == "02:00":
+                self._run_threaded(self.run_lstm_training)
+
+        self.scheduler.every(1).minutes.do(_kst_midnight_rescreen)
+        self.scheduler.every(1).minutes.do(_kst_friday_reflection)
+        self.scheduler.every(1).minutes.do(_kst_morning_websocket)
+        self.scheduler.every(1).minutes.do(_kst_friday_lstm)
 
         try:
             self.trading_job()
