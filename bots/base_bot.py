@@ -227,11 +227,11 @@ class BaseBot:
                     expected_asset_cost = self.last_asset_cost + self.pnl_this_turn
                     self.pnl_this_turn = 0.0
                     deposit_delta = current_asset_cost - expected_asset_cost
-                        if deposit_delta > 10000 or deposit_delta < -10000: 
-                            add_user_initial_cash(self.user_id, deposit_delta, self._is_mock)
-                            if deposit_delta > 0: self.add_log(f"💰 {self.mode_name} 계좌 외부 입금 포착: +{deposit_delta:,.0f}원")
-                            else: self.add_log(f"💸 {self.mode_name} 계좌 외부 출금 포착: {deposit_delta:,.0f}원")
-                        self.last_asset_cost = current_asset_cost
+                    if deposit_delta > 10000 or deposit_delta < -10000:
+                        add_user_initial_cash(self.user_id, deposit_delta, self._is_mock)
+                        if deposit_delta > 0: self.add_log(f"💰 {self.mode_name} 계좌 외부 입금 포착: +{deposit_delta:,.0f}원")
+                        else: self.add_log(f"💸 {self.mode_name} 계좌 외부 출금 포착: {deposit_delta:,.0f}원")
+                    self.last_asset_cost = current_asset_cost
                 else:
                     self.last_asset_cost = current_asset_cost
                 
