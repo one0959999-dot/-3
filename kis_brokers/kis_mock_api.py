@@ -329,9 +329,14 @@ class KisMockApi:
                         api_purchase = _safe_parse('pchs_amt_smtl_amt', 'tot_pchs_amt')
                         final_purchase = api_purchase if api_purchase > 0 else manual_total_purchase
 
+                        # ord_psbl_cash(주문가능현금): 매수 주문 즉시 차감되는 실시간 현금
+                        # dnca_tot_amt(예탁금총액): T+2 결제 기준 → 당일 매수 후에도 안 줄어드는 문제
+                        cash = (float(summary.get('ord_psbl_cash', 0) or 0)
+                                or float(summary.get('nxdy_excc_amt', 0) or 0)
+                                or float(summary.get('dnca_tot_amt', 0) or 0))
                         return {
                             "stocks": parsed_stocks,
-                            "total_cash": float(summary.get('dnca_tot_amt', 0)),
+                            "total_cash": cash,
                             "total_value": float(summary.get('tot_evlu_amt', summary.get('scts_evlu_amt', 0))),
                             "total_purchase": final_purchase
                         }

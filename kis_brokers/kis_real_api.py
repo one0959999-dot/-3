@@ -360,11 +360,14 @@ class KisRealApi:
                         api_purchase = _safe_parse('pchs_amt_smtl_amt', 'tot_pchs_amt')
                         final_purchase = api_purchase if api_purchase > 0 else manual_total_purchase
 
+                        # ord_psbl_cash(주문가능현금): 매수 주문 즉시 차감
+                        # prvs_rcdl_excc_amt(전일주문가능금액) / dnca_tot_amt(예탁금총액): 실시간 미반영
                         return {
                             "stocks": parsed_stocks,
-                            "total_cash": _safe_parse('prvs_rcdl_excc_amt', 'dnca_tot_amt'),
+                            "total_cash": (_safe_parse('ord_psbl_cash', 'prvs_rcdl_excc_amt')
+                                           or _safe_parse('dnca_tot_amt', 'dnca_tot_amt')),
                             "total_value": _safe_parse('scts_evlu_amt', 'evlu_amt_smtl_amt'),
-                            "total_purchase": final_purchase 
+                            "total_purchase": final_purchase
                         }
                     else:
                         msg1 = data.get('msg1', '')
