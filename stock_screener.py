@@ -12,6 +12,9 @@ stock_screener.py
 import time
 import threading
 import warnings
+import logging
+
+logger = logging.getLogger('lassi_bot')  # [BUG-FIX] NameError 방지
 
 # W-05: 싱글턴 레이스컨디션 방지용 전역 락
 _dl_predictor_lock = threading.Lock()

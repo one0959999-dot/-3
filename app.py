@@ -468,9 +468,10 @@ def set_satellites_count():
     data = request.json or {}
     try:
         count = int(data.get('count', 5))
+        count = max(1, min(10, count))  # [BUG-M6] 1~10 범위 강제 — 0 이하 입력 시 ZeroDivisionError 방지
     except (TypeError, ValueError):
         count = 5
-    
+
     bot = get_current_bot()
     if bot:
         bot.num_satellites = count

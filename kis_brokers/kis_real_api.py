@@ -253,7 +253,9 @@ class KisRealApi:
                         if msg_cd in ('EGW00123', 'EGW00121'):
                             print("[KIS 실전] 토큰 만료 → 재발급 후 재시도")
                             self.access_token = None
-                            self._ensure_token()
+                            if not self._ensure_token():  # [BUG-M1] 재발급 실패 시 즉시 중단
+                                print("[KIS 실전] 토큰 재발급 실패 → 주문 취소")
+                                return None
                             continue
                         return None
                 else:

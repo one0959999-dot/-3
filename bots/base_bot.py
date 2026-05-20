@@ -1087,6 +1087,8 @@ class BaseBot:
                         if self._sell_order(ticker, stop_qty, pos, p_nm):
                             with self.lock:
                                 pos.last_order_time = time.time(); pos.status = "장초 급락 손절 🚨"
+                                # [BUG-M5 동일 패턴] 매도 후 잔여주수 반영 — stage2/3 전량, stage1 50%
+                                pos.shares = max(0, pos.shares - stop_qty)
                             profit = _net_profit(price, p_avg, stop_qty)
                             self._log_trade(ticker, p_nm, 'SELL', price, st_nm, f"장초 급락 손절 {_es_pct*100:.0f}% [{_es_reason}]", profit=profit)
                             self._send_trade_telegram(self._fmt_trade_msg("🚨", "장초 급락 손절", ticker, p_nm, price, stop_qty, profit=profit, strategy=st_nm, note=_es_reason))
@@ -1101,6 +1103,7 @@ class BaseBot:
                                 pos.last_order_time = time.time(); pos.status = "체결 대기 ⏳"
                                 pos.second_buy_done = True; pos.pyramid_done = True; pos.partial_sold = False
                                 pos.second_buy_price = 0; pos.second_buy_cash = 0
+                                pos.shares = 0  # [BUG-M5] 하드 손절 전량 매도 후 잔여주수 초기화
                             profit = _net_profit(price, p_avg, p_sh)
                             self._log_trade(ticker, p_nm, 'SELL', price, st_nm, "ATR 하드 손절", profit=profit)
                             self._send_trade_telegram(self._fmt_trade_msg("💥", "손절 체결", ticker, p_nm, price, p_sh, profit=profit, strategy=st_nm, note="ATR 하드 손절선 이탈"))
@@ -1116,6 +1119,7 @@ class BaseBot:
                     if self._sell_order(ticker, sell_qty, pos, p_nm):
                         with self.lock:
                             pos.last_order_time = time.time(); pos.partial_sold = True; pos.status = "1차익절 ✅"
+                            pos.shares = max(0, pos.shares - sell_qty)  # [BUG-M2] 분할 익절 후 잔여주수 반영
                         profit = _net_profit(price, p_avg, sell_qty)
                         self._log_trade(ticker, p_nm, 'SELL', price, st_nm, f"1차 분할 익절 +5% ({sell_qty}주)", profit=profit)
                         self._send_trade_telegram(self._fmt_trade_msg("🎯", "1차 분할 익절", ticker, p_nm, price, sell_qty, profit=profit, strategy=st_nm, note=f"나머지 {p_sh - sell_qty}주는 ATR 트레일링 계속 보유"))
@@ -1408,7 +1412,7 @@ class BaseBot:
                         self.internal_cash += price * partial_qty * (1 - _SELL_FEE - _SELL_TAX)
                     self._last_trade_ts = time.time()
                     self.pnl_this_turn += partial_profit
-                mp['shares'] = shares - partial_qty   # 남은 70% 계속 보유
+                    mp['shares'] = shares - partial_qty   # [BUG-C2] 락 내부로 이동 — 레이스 컨디션 방지
                 self._log_trade(ticker, name, 'SELL', price, "모멘텀슬롯",
                                   f"giveback MA5 이탈 → 30% 축소 ({giveback_reason})", profit=partial_profit)
                 self.add_log(f"✂️ 모멘텀#{slot_idx+1} 부분청산 30% | {name} {partial_qty}주 @ {price:,.0f}원 | {giveback_reason} | 손익: {partial_profit:+,.0f}원")
@@ -1428,7 +1432,7 @@ class BaseBot:
                         self.internal_cash += price * partial_qty * (1 - _SELL_FEE - _SELL_TAX)
                     self._last_trade_ts = time.time()
                     self.pnl_this_turn += partial_profit
-                mp['shares'] = shares - partial_qty   # 남은 30% 계속 보유
+                    mp['shares'] = shares - partial_qty   # [BUG-C2] 락 내부로 이동 — 레이스 컨디션 방지
                 self._log_trade(ticker, name, 'SELL', price, "모멘텀슬롯",
                                   f"giveback 30% 반납 → 70% 선익절 ({giveback_reason})", profit=partial_profit)
                 self.add_log(f"✂️ 모멘텀#{slot_idx+1} 부분청산 70% | {name} {partial_qty}주 @ {price:,.0f}원 | {giveback_reason} | 손익: {partial_profit:+,.0f}원")
