@@ -313,7 +313,7 @@ def get_daily_report():
 @login_required
 def ai_chat():
     bot = get_current_bot()
-    data = request.json
+    data = request.json or {}
     user_message = data.get('message', '').strip()
     if not bot or not bot.gemini:
         return jsonify({"status": "error", "reply": "AI API 키를 등록해주세요."})
@@ -429,7 +429,7 @@ def ai_chat():
 @login_required
 def set_mode():
     """실전/모의 투자 모드 전환 API — 화면만 전환, 각 봇의 실행 상태는 독립 유지"""
-    data = request.json
+    data = request.json or {}
     is_mock = int(data.get('is_mock', 1))
 
     # DB 업데이트 (화면 전환만, 봇 실행 상태 건드리지 않음)
@@ -461,7 +461,7 @@ def set_mode():
 @login_required
 def set_satellites_count():
     """위성 종목 개수 변경 설정을 저장합니다."""
-    data = request.json
+    data = request.json or {}
     try:
         count = int(data.get('count', 5))
     except (TypeError, ValueError):
@@ -477,7 +477,7 @@ def set_satellites_count():
 @app.route('/api/settings/keys', methods=['POST'])
 @login_required
 def set_keys():
-    data = request.json
+    data = request.json or {}
     update_data = {
         'real_app_key': data.get('real_app_key'),
         'real_app_secret': data.get('real_app_secret'),

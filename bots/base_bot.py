@@ -1362,6 +1362,26 @@ class BaseBot:
 
         time_over = enter_t and (now - enter_t).total_seconds() / 60 > 60
 
+        # ── PARTIAL_EXIT_30: MA5 이탈+고점미달 → 보유량 30% 축소 (슬롯 유지) ─────
+        if giveback_signal == 'PARTIAL_EXIT_30' and shares > 1:
+            partial_qty = max(1, int(shares * 0.30))
+            if self.kis.sell_market_order(ticker, partial_qty):
+                partial_profit = _net_profit(price, avg_p, partial_qty)
+                with self.lock:
+                    if self.internal_cash is not None:
+                        self.internal_cash += price * partial_qty * (1 - _SELL_FEE - _SELL_TAX)
+                    self._last_trade_ts = time.time()
+                    self.pnl_this_turn += partial_profit
+                mp['shares'] = shares - partial_qty   # 남은 70% 계속 보유
+                log_trade_journal(self.user_id, ticker, name, 'SELL', price, "모멘텀슬롯",
+                                  f"giveback MA5 이탈 → 30% 축소 ({giveback_reason})", profit=partial_profit)
+                self.add_log(f"✂️ 모멘텀#{slot_idx+1} 부분청산 30% | {name} {partial_qty}주 @ {price:,.0f}원 | {giveback_reason} | 손익: {partial_profit:+,.0f}원")
+                self._send_telegram(self._fmt_trade_msg("✂️", f"모멘텀#{slot_idx+1} 30% 축소",
+                    ticker, name, price, partial_qty, profit=partial_profit,
+                    strategy="모멘텀슬롯", note=f"MA5 이탈 30% 축소 — 잔여 {mp['shares']}주 홀딩"))
+                self._record_daily_pnl(partial_profit)
+            return False  # 슬롯 유지 (잔여 70% 포지션 계속 관리)
+
         # ── PARTIAL_EXIT_70: 30% 반납 신호 → 보유량 70% 선익절 (슬롯은 유지) ──────
         if giveback_signal == 'PARTIAL_EXIT_70' and shares > 1:
             partial_qty = max(1, int(shares * 0.70))
