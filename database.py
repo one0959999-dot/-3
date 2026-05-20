@@ -100,8 +100,10 @@ def add_user(username, password):
 
 def verify_user(username, password):
     conn = get_db_connection()
-    user = conn.execute('SELECT * FROM users WHERE username = ?', (username,)).fetchone()
-    conn.close()
+    try:
+        user = conn.execute('SELECT * FROM users WHERE username = ?', (username,)).fetchone()
+    finally:
+        conn.close()
     if user and check_password_hash(user['password_hash'], password):
         return dict(user)
     return None
@@ -110,11 +112,11 @@ def update_user_keys(user_id, keys_dict):
     with db_lock:
         conn = get_db_connection()
         
-        # 🚨 [장부 완벽 분리] 사용자가 화면에서 수정한 원금을 실전/모의 모드에 맞춰 각각 독립된 장부에 정확히 꽂아넣습니다.
+        # [C-04 수정] 실전/모의 원금을 현재 모드에 해당하는 컬럼에만 업데이트 (반대 모드 원금은 건드리지 않음)
         is_mock = keys_dict.get('is_mock', 1)
         initial_cash = keys_dict.get('initial_cash', 10000000)
         cash_col = "mock_initial_cash" if is_mock else "real_initial_cash"
-        
+
         conn.execute(f'''
             UPDATE users SET real_app_key = ?, real_app_secret = ?, real_account_no = ?,
                 mock_app_key = ?, mock_app_secret = ?, mock_account_no = ?,
@@ -126,7 +128,10 @@ def update_user_keys(user_id, keys_dict):
             keys_dict.get('mock_app_key'), keys_dict.get('mock_app_secret'), keys_dict.get('mock_account_no'),
             keys_dict.get('telegram_token'), keys_dict.get('telegram_chat_id'),
             keys_dict.get('claude_api_key'),
-            keys_dict.get('core_stocks'), is_mock, initial_cash, initial_cash, user_id
+            keys_dict.get('core_stocks'), is_mock,
+            initial_cash,   # initial_cash (공통 legacy 컬럼)
+            initial_cash,   # cash_col (실전 또는 모의 전용 컬럼만 업데이트)
+            user_id
         ))
         conn.commit()
         conn.close()
@@ -152,8 +157,10 @@ def save_portfolio_state(user_id, state, is_mock):
 def load_portfolio_state(user_id, is_mock):
     mode = 1 if is_mock else 0
     conn = get_db_connection()
-    row = conn.execute('SELECT state_json FROM bot_states WHERE user_id = ? AND is_mock = ?', (user_id, mode)).fetchone()
-    conn.close()
+    try:
+        row = conn.execute('SELECT state_json FROM bot_states WHERE user_id = ? AND is_mock = ?', (user_id, mode)).fetchone()
+    finally:
+        conn.close()
     if row and row['state_json']:
         return json.loads(row['state_json'])
     return None
@@ -170,12 +177,14 @@ def log_trade_journal(user_id, ticker, stock_name, action, price, strategy, ai_r
 
 def get_recent_trades(user_id, ticker, limit=5):
     conn = get_db_connection()
-    rows = conn.execute('''
-        SELECT action, price, ai_reason, profit, date(created_at) as date
-        FROM trade_journal WHERE user_id = ? AND ticker = ? 
-        ORDER BY created_at DESC LIMIT ?
-    ''', (user_id, ticker, limit)).fetchall()
-    conn.close()
+    try:
+        rows = conn.execute('''
+            SELECT action, price, ai_reason, profit, date(created_at) as date
+            FROM trade_journal WHERE user_id = ? AND ticker = ?
+            ORDER BY created_at DESC LIMIT ?
+        ''', (user_id, ticker, limit)).fetchall()
+    finally:
+        conn.close()
     return [dict(r) for r in rows]
 
 def save_ai_rules(user_id, rule_text):
@@ -190,8 +199,10 @@ def save_ai_rules(user_id, rule_text):
 
 def load_ai_rules(user_id):
     conn = get_db_connection()
-    row = conn.execute('SELECT rule_text FROM ai_rules WHERE user_id = ?', (user_id,)).fetchone()
-    conn.close()
+    try:
+        row = conn.execute('SELECT rule_text FROM ai_rules WHERE user_id = ?', (user_id,)).fetchone()
+    finally:
+        conn.close()
     return row['rule_text'] if row else ""
 
 # 🟢 [리팩토링] BaseBot에서 SQL을 직접 다루지 않도록 Repository 함수들을 신규 추가합니다.
@@ -199,8 +210,10 @@ def get_user_initial_cash(user_id, is_mock):
     """현재 모드(실전/모의)에 맞는 원금 장부를 조회합니다."""
     conn = get_db_connection()
     cash_col = "mock_initial_cash" if is_mock else "real_initial_cash"
-    row = conn.execute(f'SELECT {cash_col} FROM users WHERE id = ?', (user_id,)).fetchone()
-    conn.close()
+    try:
+        row = conn.execute(f'SELECT {cash_col} FROM users WHERE id = ?', (user_id,)).fetchone()
+    finally:
+        conn.close()
     return float(row[cash_col]) if row and row[cash_col] is not None else 10000000.0
 
 def set_user_initial_cash(user_id, pure_principal, is_mock):
