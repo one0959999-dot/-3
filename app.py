@@ -61,11 +61,16 @@ class User(UserMixin):
 
 @login_manager.user_loader
 def load_user(user_id):
-    conn = get_db_connection()
-    user_data = conn.execute('SELECT * FROM users WHERE id = ?', (user_id,)).fetchone()
-    conn.close()
-    if user_data:
-        return User(user_data['id'], user_data['username'], dict(user_data))
+    try:
+        conn = get_db_connection()
+        try:
+            user_data = conn.execute('SELECT * FROM users WHERE id = ?', (user_id,)).fetchone()
+        finally:
+            conn.close()
+        if user_data:
+            return User(user_data['id'], user_data['username'], dict(user_data))
+    except Exception as e:
+        logger.error(f"load_user 오류 (user_id={user_id}): {e}", exc_info=True)
     return None
 
 def get_current_bot():
