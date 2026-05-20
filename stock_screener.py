@@ -13,6 +13,10 @@ import time
 import threading
 import warnings
 
+# W-05: 싱글턴 레이스컨디션 방지용 전역 락
+_dl_predictor_lock = threading.Lock()
+_dl_predictor_instance = None
+
 from pykrx import stock
 from datetime import datetime, timedelta
 import pandas as pd
@@ -474,10 +478,13 @@ def select_satellites(kis=None, n=NUM_SATELLITES, verbose=True, gemini_client=No
         print(f"\n📋 후보 풀: 거래량 급등 {len(volume_surges)}개 + 강세 섹터 {len(sector_tickers)}개 + 외인기관 {len(frgn_inst_tickers)}개 → 합계 {len(candidate_pool)}개")
 
     # 🤖 딥러닝 모델 로드 (모듈 레벨 싱글턴 — 매 호출마다 디스크 I/O 방지)
+    # W-05: 락으로 멀티스레드 환경에서 중복 생성(레이스컨디션) 방지
     from dl_model import DeepLearningPredictor
     global _dl_predictor_instance
-    if '_dl_predictor_instance' not in globals() or _dl_predictor_instance is None:
-        _dl_predictor_instance = DeepLearningPredictor()
+    if _dl_predictor_instance is None:
+        with _dl_predictor_lock:
+            if _dl_predictor_instance is None:  # double-checked locking
+                _dl_predictor_instance = DeepLearningPredictor()
     dl_predictor = _dl_predictor_instance
 
     # ── Step 4: 후보별 백테스트 + 종합 점수 ──

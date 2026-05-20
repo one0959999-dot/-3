@@ -982,8 +982,9 @@ def get_signal_by_strategy(ticker, strategy_name, kis_api=None, df=None):
         return 'HOLD', 0, 0
 
     c = df['close']
-    h = df['high']
-    l = df['low']
+    # W-12: high/low 컬럼이 없을 때 KeyError 방어 — close로 대체해 전략 중단 방지
+    h = df['high'] if 'high' in df.columns else c
+    l = df['low'] if 'low' in df.columns else c
     price = int(c.iloc[-1])
 
     # 🟢 강제 매수 코드가 삭제되고, 원래의 지표 계산식으로 정상 연결됩니다.

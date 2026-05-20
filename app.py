@@ -373,9 +373,14 @@ def ai_chat():
     except Exception as log_e:
         print(f"⚠️ [로그 데이터 가공 오류] : {log_e}")
 
-    reply = bot.gemini.chat(
-        user_message, 
-        portfolio_context=bot.get_status(), 
+    # C-02: bot.gemini를 지역 변수로 캡처하여 스레드 교체 타이밍 race condition 방지
+    gemini_client = bot.gemini
+    if not gemini_client:
+        return jsonify({"status": "error", "reply": "⚠️ Claude API 키가 설정되지 않았습니다."})
+
+    reply = gemini_client.chat(
+        user_message,
+        portfolio_context=bot.get_status(),
         stock_analysis_context=stock_analysis_context
     )
     return jsonify({"status": "success", "reply": reply})
