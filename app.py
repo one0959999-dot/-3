@@ -23,6 +23,19 @@ logger = logging.getLogger('lassi_bot')
 
 app = Flask(__name__)
 
+@app.errorhandler(500)
+def internal_error(error):
+    import traceback
+    tb = traceback.format_exc()
+    logger.error(f"500 Internal Server Error:\n{tb}")
+    return f"""<pre style='font-family:monospace;padding:20px;background:#1e1e1e;color:#f88;'>
+⚠️ 500 Internal Server Error
+
+{tb}
+
+— lassi_bot.log 파일에도 기록되었습니다 —
+</pre>""", 500
+
 # 보안 키 설정
 _key_file = os.path.join(os.path.dirname(__file__), '.secret_key')
 if os.path.exists(_key_file):
