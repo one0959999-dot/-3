@@ -230,17 +230,22 @@ class BaseBot:
                         self.add_log(f"💰 [{self.mode_name} 원금 셋업] 투자 원금 {pure_principal:,.0f}원 확정 (첫 실행 감지).")
                     self.initial_capital_captured = True
                 
-                current_asset_cost = real_cash + real_purchase 
+                current_asset_cost = real_cash + real_purchase
                 if self.last_asset_cost is not None:
                     # W-10: pnl_this_turn != 0이어도 항상 처리해야 누적 방지
                     # (이전의 `pass` 분기는 pnl_this_turn을 0으로 리셋하지 않아 누산 버그 유발)
                     expected_asset_cost = self.last_asset_cost + self.pnl_this_turn
                     self.pnl_this_turn = 0.0
                     deposit_delta = current_asset_cost - expected_asset_cost
-                    if deposit_delta > 10000 or deposit_delta < -10000:
-                        add_user_initial_cash(self.user_id, deposit_delta, self._is_mock)
-                        if deposit_delta > 0: self.add_log(f"💰 {self.mode_name} 계좌 외부 입금 포착: +{deposit_delta:,.0f}원")
-                        else: self.add_log(f"💸 {self.mode_name} 계좌 외부 출금 포착: {deposit_delta:,.0f}원")
+                    # 모의투자에서는 deposit_delta 감지 비활성화:
+                    # KIS 모의 API의 dnca_tot_amt / real_purchase 값이 T+2 정산 지연으로
+                    # 30초마다 들쭉날쭉하여 "외부 입금"으로 오인 → initial_cash 누적 부풀기 버그.
+                    # 실전 계좌에서만 실제 외부 입출금 감지가 의미 있음.
+                    if not self._is_mock:
+                        if deposit_delta > 10000 or deposit_delta < -10000:
+                            add_user_initial_cash(self.user_id, deposit_delta, self._is_mock)
+                            if deposit_delta > 0: self.add_log(f"💰 {self.mode_name} 계좌 외부 입금 포착: +{deposit_delta:,.0f}원")
+                            else: self.add_log(f"💸 {self.mode_name} 계좌 외부 출금 포착: {deposit_delta:,.0f}원")
                     self.last_asset_cost = current_asset_cost
                 else:
                     self.last_asset_cost = current_asset_cost
