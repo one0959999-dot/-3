@@ -581,8 +581,27 @@ window.toggleMode = async function () {
     }
 }
 
+window.switchSettingsTab = function (n) {
+    [1, 2].forEach(i => {
+        const panel = document.getElementById('stab-panel-' + i);
+        const btn   = document.getElementById('stab-' + i);
+        const active = (i === n);
+        panel.style.display = active ? 'block' : 'none';
+        if (active) {
+            btn.style.background = i === 1 ? 'rgba(16,185,129,0.2)' : 'rgba(99,102,241,0.2)';
+            btn.style.borderColor = i === 1 ? 'rgba(16,185,129,0.5)' : 'rgba(99,102,241,0.5)';
+            btn.style.color = i === 1 ? '#10b981' : '#818cf8';
+        } else {
+            btn.style.background = 'transparent';
+            btn.style.borderColor = 'rgba(255,255,255,0.1)';
+            btn.style.color = '#8b949e';
+        }
+    });
+}
+
 window.openSettingsModal = async function () {
     document.getElementById('settingsModal').style.display = 'block';
+    switchSettingsTab(1);   // 항상 탭1 부터 열기
     // 저장된 뉴스 API 키 불러오기 (마스킹된 값 표시)
     try {
         const res = await fetch('/api/settings/news_keys');

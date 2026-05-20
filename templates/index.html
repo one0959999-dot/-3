@@ -500,89 +500,113 @@
 
     </div>
     <div id="settingsModal" class="modal">
-        <div class="modal-content">
+        <div class="modal-content" style="max-height:88vh; display:flex; flex-direction:column;">
             <span class="close-modal" onclick="closeSettingsModal()">&times;</span>
-            <h2 style="font-family:'Outfit',sans-serif; margin-bottom:0.5rem;">API 계좌 설정</h2>
+            <h2 style="font-family:'Outfit',sans-serif; margin-bottom:0.8rem; flex-shrink:0;">⚙️ 설정</h2>
 
-            <div class="settings-group"
-                style="border: 1px solid rgba(239, 68, 68, 0.3); padding: 10px; border-radius: 8px; margin-bottom: 15px;">
-                <h3 style="color: #ef4444; font-size: 0.9rem; margin-bottom: 10px;">🔴 실전투자 API 설정</h3>
-                <label>App Key</label>
-                <input type="text" id="realAppKey" value="{{ user.data.real_app_key or '' }}">
-                <label>App Secret</label>
-                <input type="password" id="realAppSecret" value="{{ user.data.real_app_secret or '' }}">
-                <label>계좌번호</label>
-                <input type="text" id="realAccountNo" value="{{ user.data.real_account_no or '' }}">
-            </div>
-
-            <div class="settings-group"
-                style="border: 1px solid rgba(16, 185, 129, 0.3); padding: 10px; border-radius: 8px; margin-bottom: 15px;">
-                <h3 style="color: #10b981; font-size: 0.9rem; margin-bottom: 10px;">🟢 모의투자 API 설정</h3>
-                <label>App Key</label>
-                <input type="text" id="mockAppKey" value="{{ user.data.mock_app_key or '' }}">
-                <label>App Secret</label>
-                <input type="password" id="mockAppSecret" value="{{ user.data.mock_app_secret or '' }}">
-                <label>계좌번호</label>
-                <input type="text" id="mockAccountNo" value="{{ user.data.mock_account_no or '' }}">
-            </div>
-            <hr style="border:0; border-top:1px solid rgba(255,255,255,0.05); margin:1rem 0;">
-
-            <div class="settings-group"
-                style="background: rgba(59, 130, 246, 0.1); border: 1px solid rgba(59, 130, 246, 0.3); padding: 10px; border-radius: 8px; margin-bottom: 15px;">
-                <label style="color: #60a5fa;">💰 총 투자 원금 (누적 입금액)</label>
-                <input type="number" id="initialCash" value="{{ user.data.initial_cash or 10000000 }}"
-                    placeholder="예: 25000000">
-                <p style="font-size:0.75rem; color:#94a3b8; margin-top:6px; line-height: 1.4;">※ 봇이 <b>자동으로 입출금을 감지하여
-                        갱신</b>합니다. 오차가 발생했을 때만 수동으로 수정 후 저장하세요.</p>
+            <!-- ── 탭 버튼 ── -->
+            <div style="display:flex; gap:6px; margin-bottom:1rem; flex-shrink:0;">
+                <button id="stab-1" onclick="switchSettingsTab(1)"
+                    style="flex:1; padding:8px 0; border-radius:8px; border:1px solid rgba(16,185,129,0.5);
+                           background:rgba(16,185,129,0.2); color:#10b981; font-size:0.85rem; font-weight:600; cursor:pointer;">
+                    🏦 계좌 &amp; 원금
+                </button>
+                <button id="stab-2" onclick="switchSettingsTab(2)"
+                    style="flex:1; padding:8px 0; border-radius:8px; border:1px solid rgba(255,255,255,0.1);
+                           background:transparent; color:#8b949e; font-size:0.85rem; font-weight:600; cursor:pointer;">
+                    🔔 알림 &amp; AI
+                </button>
             </div>
 
-            <div class="settings-group">
-                <label>텔레그램 봇 토큰</label>
-                <input type="text" id="teleToken" value="{{ user.data.telegram_token or '' }}">
-            </div>
-            <div class="settings-group">
-                <label>텔레그램 Chat ID</label>
-                <input type="text" id="teleChatId" value="{{ user.data.telegram_chat_id or '' }}">
-            </div>
-            <div class="settings-group">
-                <label>Claude API Key <span style="font-size:0.75rem; color:#94a3b8;">(console.anthropic.com에서 발급)</span></label>
-                <input type="password" id="claudeApiKey" value="{{ user.data.claude_api_key or '' }}"
-                    placeholder="sk-ant-... 입력 시 AI 비서 활성화">
-            </div>
-            <button class="btn-save-keys" onclick="saveAccountSettings()" style="background:#10b981;">API 설정 저장</button>
+            <!-- ── 스크롤 영역 ── -->
+            <div style="overflow-y:auto; flex:1; padding-right:4px;">
 
-            <hr style="border:0; border-top:1px solid rgba(255,255,255,0.05); margin:1.2rem 0;">
+                <!-- ════ TAB 1: 계좌 & 원금 ════ -->
+                <div id="stab-panel-1">
+                    <div class="settings-group"
+                        style="border:1px solid rgba(239,68,68,0.3); padding:10px; border-radius:8px; margin-bottom:14px;">
+                        <h3 style="color:#ef4444; font-size:0.9rem; margin-bottom:10px;">🔴 실전투자 API 설정</h3>
+                        <label>App Key</label>
+                        <input type="text" id="realAppKey" value="{{ user.data.real_app_key or '' }}">
+                        <label>App Secret</label>
+                        <input type="password" id="realAppSecret" value="{{ user.data.real_app_secret or '' }}">
+                        <label>계좌번호</label>
+                        <input type="text" id="realAccountNo" value="{{ user.data.real_account_no or '' }}">
+                    </div>
 
-            <div class="settings-group"
-                style="border: 1px solid rgba(99, 102, 241, 0.35); padding: 12px; border-radius: 8px; margin-bottom: 12px;">
-                <h3 style="color: #818cf8; font-size: 0.9rem; margin-bottom: 10px;">📰 뉴스 & 공시 알림 설정 (선택)</h3>
-                <p style="font-size: 0.75rem; color: #94a3b8; margin-bottom: 10px; line-height: 1.5;">
-                    악재 공시 자동 손절 / 실적 발표 전 포지션 축소 / 매수 전 AI 뉴스 심사에 활용됩니다.<br>
-                    미입력 시 해당 기능만 비활성화되고 봇 동작에는 영향 없습니다.
-                </p>
-                <label>DART API Key <span style="font-size:0.72rem; color:#94a3b8;">(opendart.fss.or.kr → 인증키 신청)</span></label>
-                <input type="password" id="dartApiKey" placeholder="40자리 DART 인증키">
-                <label>Naver Client ID <span style="font-size:0.72rem; color:#94a3b8;">(developers.naver.com → 애플리케이션 등록)</span></label>
-                <input type="text" id="naverClientId" placeholder="Naver Client ID">
-                <label>Naver Client Secret</label>
-                <input type="password" id="naverClientSecret" placeholder="Naver Client Secret">
-            </div>
-            <button class="btn-save-keys" onclick="saveNewsKeys()" style="background:#6366f1; margin-bottom: 0.5rem;">뉴스 API 저장</button>
-            <div id="newsKeysSavedMsg" style="font-size:0.78rem; color:#10b981; display:none; margin-top:4px;">✅ 저장 완료 — 봇에 즉시 적용됩니다.</div>
-            <div style="margin-top:1.2rem; padding:1rem; background:rgba(245,158,11,0.08); border:1px solid rgba(245,158,11,0.3); border-radius:10px;">
-                <div style="font-size:0.8rem; color:#f59e0b; font-weight:600; margin-bottom:0.6rem;">🧪 주문 API 연결 테스트 (1주)</div>
-                <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap; margin-bottom:6px;">
-                    <label style="font-size:0.78rem; color:#94a3b8;">모드:</label>
-                    <label style="font-size:0.82rem; color:#94a3b8; cursor:pointer;"><input type="radio" name="testMode" value="mock" checked onchange="updateTestModeLabel()"> 모의</label>
-                    <label style="font-size:0.82rem; color:#f85149; cursor:pointer;"><input type="radio" name="testMode" value="real" onchange="updateTestModeLabel()"> 실전 ⚠️</label>
+                    <div class="settings-group"
+                        style="border:1px solid rgba(16,185,129,0.3); padding:10px; border-radius:8px; margin-bottom:14px;">
+                        <h3 style="color:#10b981; font-size:0.9rem; margin-bottom:10px;">🟢 모의투자 API 설정</h3>
+                        <label>App Key</label>
+                        <input type="text" id="mockAppKey" value="{{ user.data.mock_app_key or '' }}">
+                        <label>App Secret</label>
+                        <input type="password" id="mockAppSecret" value="{{ user.data.mock_app_secret or '' }}">
+                        <label>계좌번호</label>
+                        <input type="text" id="mockAccountNo" value="{{ user.data.mock_account_no or '' }}">
+                    </div>
+
+                    <div class="settings-group"
+                        style="background:rgba(59,130,246,0.1); border:1px solid rgba(59,130,246,0.3); padding:10px; border-radius:8px; margin-bottom:14px;">
+                        <label style="color:#60a5fa;">💰 총 투자 원금 (누적 입금액)</label>
+                        <input type="number" id="initialCash" value="{{ user.data.initial_cash or 10000000 }}" placeholder="예: 25000000">
+                        <p style="font-size:0.75rem; color:#94a3b8; margin-top:6px; line-height:1.4;">※ 봇이 <b>자동으로 입출금을 감지하여 갱신</b>합니다. 오차가 발생했을 때만 수동 수정하세요.</p>
+                    </div>
+
+                    <button class="btn-save-keys" onclick="saveAccountSettings()" style="background:#10b981;">API 설정 저장</button>
+
+                    <div style="margin-top:1rem; padding:1rem; background:rgba(245,158,11,0.08); border:1px solid rgba(245,158,11,0.3); border-radius:10px;">
+                        <div style="font-size:0.8rem; color:#f59e0b; font-weight:600; margin-bottom:0.6rem;">🧪 주문 API 연결 테스트 (1주)</div>
+                        <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap; margin-bottom:6px;">
+                            <label style="font-size:0.78rem; color:#94a3b8;">모드:</label>
+                            <label style="font-size:0.82rem; color:#94a3b8; cursor:pointer;"><input type="radio" name="testMode" value="mock" checked onchange="updateTestModeLabel()"> 모의</label>
+                            <label style="font-size:0.82rem; color:#f85149; cursor:pointer;"><input type="radio" name="testMode" value="real" onchange="updateTestModeLabel()"> 실전 ⚠️</label>
+                        </div>
+                        <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
+                            <input type="text" id="testOrderTicker" placeholder="종목코드 (예: 005930)" style="flex:1; min-width:140px; padding:6px 10px; border-radius:8px; border:1px solid rgba(255,255,255,0.15); background:rgba(255,255,255,0.05); color:white; font-size:0.85rem;">
+                            <button onclick="runTestOrder('BUY')" style="padding:6px 14px; background:rgba(248,81,73,0.2); border:1px solid rgba(248,81,73,0.5); color:#f85149; border-radius:8px; cursor:pointer; font-size:0.83rem; font-weight:600;">매수 1주</button>
+                            <button onclick="runTestOrder('SELL')" style="padding:6px 14px; background:rgba(88,166,255,0.2); border:1px solid rgba(88,166,255,0.5); color:#58a6ff; border-radius:8px; cursor:pointer; font-size:0.83rem; font-weight:600;">매도 1주</button>
+                        </div>
+                        <div id="testOrderResult" style="margin-top:6px; font-size:0.8rem; color:#94a3b8;"></div>
+                    </div>
                 </div>
-                <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
-                    <input type="text" id="testOrderTicker" placeholder="종목코드 (예: 005930)" style="flex:1; min-width:140px; padding:6px 10px; border-radius:8px; border:1px solid rgba(255,255,255,0.15); background:rgba(255,255,255,0.05); color:white; font-size:0.85rem;">
-                    <button onclick="runTestOrder('BUY')" style="padding:6px 14px; background:rgba(248,81,73,0.2); border:1px solid rgba(248,81,73,0.5); color:#f85149; border-radius:8px; cursor:pointer; font-size:0.83rem; font-weight:600;">매수 1주</button>
-                    <button onclick="runTestOrder('SELL')" style="padding:6px 14px; background:rgba(88,166,255,0.2); border:1px solid rgba(88,166,255,0.5); color:#58a6ff; border-radius:8px; cursor:pointer; font-size:0.83rem; font-weight:600;">매도 1주</button>
+
+                <!-- ════ TAB 2: 알림 & AI ════ -->
+                <div id="stab-panel-2" style="display:none;">
+                    <div class="settings-group">
+                        <label>텔레그램 봇 토큰</label>
+                        <input type="text" id="teleToken" value="{{ user.data.telegram_token or '' }}">
+                    </div>
+                    <div class="settings-group">
+                        <label>텔레그램 Chat ID</label>
+                        <input type="text" id="teleChatId" value="{{ user.data.telegram_chat_id or '' }}">
+                    </div>
+                    <div class="settings-group">
+                        <label>Claude API Key <span style="font-size:0.75rem; color:#94a3b8;">(console.anthropic.com)</span></label>
+                        <input type="password" id="claudeApiKey" value="{{ user.data.claude_api_key or '' }}" placeholder="sk-ant-... 입력 시 AI 비서 활성화">
+                    </div>
+                    <button class="btn-save-keys" onclick="saveAccountSettings()" style="background:#10b981; margin-bottom:1.2rem;">알림 설정 저장</button>
+
+                    <hr style="border:0; border-top:1px solid rgba(255,255,255,0.07); margin-bottom:1rem;">
+
+                    <div class="settings-group"
+                        style="border:1px solid rgba(99,102,241,0.35); padding:12px; border-radius:8px; margin-bottom:12px;">
+                        <h3 style="color:#818cf8; font-size:0.9rem; margin-bottom:8px;">📰 뉴스 &amp; 공시 알림 <span style="font-size:0.72rem; color:#94a3b8; font-weight:400;">(선택)</span></h3>
+                        <p style="font-size:0.74rem; color:#94a3b8; margin-bottom:10px; line-height:1.5;">
+                            악재 공시 자동 손절 · 실적 전 포지션 축소 · 매수 전 AI 뉴스 심사에 활용됩니다.<br>
+                            미입력 시 해당 기능만 비활성화, 봇 동작에는 영향 없습니다.
+                        </p>
+                        <label>DART API Key <span style="font-size:0.72rem; color:#94a3b8;">(opendart.fss.or.kr)</span></label>
+                        <input type="password" id="dartApiKey" placeholder="40자리 DART 인증키">
+                        <label>Naver Client ID <span style="font-size:0.72rem; color:#94a3b8;">(developers.naver.com)</span></label>
+                        <input type="text" id="naverClientId" placeholder="Naver Client ID">
+                        <label>Naver Client Secret</label>
+                        <input type="password" id="naverClientSecret" placeholder="Naver Client Secret">
+                    </div>
+                    <button class="btn-save-keys" onclick="saveNewsKeys()" style="background:#6366f1;">뉴스 API 저장</button>
+                    <div id="newsKeysSavedMsg" style="font-size:0.78rem; color:#10b981; display:none; margin-top:6px;">✅ 저장 완료 — 봇에 즉시 적용됩니다.</div>
                 </div>
-                <div id="testOrderResult" style="margin-top:6px; font-size:0.8rem; color:#94a3b8;"></div>
-            </div>
+
+            </div><!-- /scroll -->
         </div>
     </div>
 
