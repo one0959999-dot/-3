@@ -21,9 +21,13 @@ _dl_predictor_lock = threading.Lock()
 _dl_predictor_instance = None
 
 # 당일 전종목 OHLCV 캐시 (pykrx 일괄 조회 — 30분마다 갱신)
-_full_ticker_cache: dict = {'ts': 0.0, 'tickers': []}
+_full_ticker_cache: dict = {'ts': 0.0, 'movers': [], 'all': []}
 _full_ticker_lock  = threading.Lock()
 _FULL_TICKER_TTL   = 1800   # 30분 (장중 급등주 포착 주기)
+
+# 당일 급등 판단 기준
+_MOVER_CHG_MIN  = 1.5   # 등락률 1.5% 이상 → 급등 후보
+_MOVER_VAL_MIN  = 500_000_000   # 거래대금 5억 이상 → 유동성 확보 종목
 
 from pykrx import stock
 from datetime import datetime, timedelta
@@ -186,19 +190,20 @@ def get_sector_tickers(momentum, top_n_sectors=4):
 # ──────────────────────────────────────────────
 # 3. 거래량 급등 감지
 # ──────────────────────────────────────────────
-def _get_all_listed_tickers() -> list:
+def _get_all_listed_tickers() -> tuple:
     """KOSPI+KOSDAQ 당일 전종목 OHLCV 일괄 조회 — 30분 캐싱.
 
-    pykrx get_market_ohlcv_by_ticker()로 전체 시장 데이터를 한 번에 받아
-    오늘 등락률 높은 순 → 거래대금 높은 순으로 정렬해 반환.
-    → 랜덤 샘플 방식과 달리 당일 급등주를 누락 없이 포착.
-    pykrx 실패 시 종목 코드 목록만 반환(폴백).
+    Returns: (movers, all_sorted)
+      movers     : 등락률 >= 1.5% OR 거래대금 >= 5억 종목 전부 (개수 무제한 — 급등주 누락 방지)
+      all_sorted : 전체 종목 등락률 내림차순 (폴백용)
     """
     now = time.time()
     with _full_ticker_lock:
-        if now - _full_ticker_cache['ts'] < _FULL_TICKER_TTL and _full_ticker_cache['tickers']:
-            return list(_full_ticker_cache['tickers'])
+        if now - _full_ticker_cache['ts'] < _FULL_TICKER_TTL and _full_ticker_cache['movers']:
+            return list(_full_ticker_cache['movers']), list(_full_ticker_cache['all'])
 
+    movers = []
+    all_sorted = []
     try:
         today = datetime.today().strftime('%Y%m%d')
         frames = []
@@ -212,33 +217,36 @@ def _get_all_listed_tickers() -> list:
 
         if frames:
             all_df = pd.concat(frames)
-            # 등락률 컬럼 확인 (pykrx 버전마다 다를 수 있음)
             chg_col = next((c for c in ['등락률', '수익률', 'change'] if c in all_df.columns), None)
-            val_col = next((c for c in ['거래대금', 'value'] if c in all_df.columns), None)
+            val_col = next((c for c in ['거래대금', 'value']           if c in all_df.columns), None)
 
             if chg_col and val_col:
-                # 오늘 오른 종목 우선, 그 다음 거래대금 순
                 all_df = all_df.sort_values([chg_col, val_col], ascending=[False, False])
+                # 급등 조건: 오늘 오른 종목(등락률 기준) OR 유동성 큰 종목(거래대금 기준)
+                mask = (all_df[chg_col] >= _MOVER_CHG_MIN) | (all_df[val_col] >= _MOVER_VAL_MIN)
+                mover_df = all_df[mask]
+                movers = [t for t in mover_df.index if isinstance(t, str) and t.isdigit() and len(t) == 6]
             elif val_col:
                 all_df = all_df.sort_values(val_col, ascending=False)
 
-            tickers = [t for t in all_df.index if isinstance(t, str) and t.isdigit() and len(t) == 6]
-            logger.info(f"[스크리너] pykrx 당일 전종목 갱신: {len(tickers)}개 (등락률 정렬)")
+            all_sorted = [t for t in all_df.index if isinstance(t, str) and t.isdigit() and len(t) == 6]
+            logger.info(f"[스크리너] pykrx 전종목 갱신: 급등후보 {len(movers)}개 / 전체 {len(all_sorted)}개")
         else:
             # 장 시작 전 / pykrx 당일 데이터 없음 → 종목 목록만 폴백
             kospi  = list(stock.get_market_ticker_list(today, market='KOSPI'))
             kosdaq = list(stock.get_market_ticker_list(today, market='KOSDAQ'))
-            tickers = [t for t in kospi + kosdaq if isinstance(t, str) and t.isdigit() and len(t) == 6]
-            logger.info(f"[스크리너] pykrx 종목 목록 폴백: {len(tickers)}개")
+            all_sorted = [t for t in kospi + kosdaq if isinstance(t, str) and t.isdigit() and len(t) == 6]
+            movers = []
+            logger.info(f"[스크리너] pykrx 장전 폴백: {len(all_sorted)}개")
 
     except Exception as e:
         logger.warning(f"[스크리너] pykrx 전종목 조회 실패: {e}")
-        tickers = []
 
     with _full_ticker_lock:
-        _full_ticker_cache['ts']      = time.time()
-        _full_ticker_cache['tickers'] = tickers
-    return list(tickers)
+        _full_ticker_cache['ts']     = time.time()
+        _full_ticker_cache['movers'] = movers
+        _full_ticker_cache['all']    = all_sorted
+    return list(movers), list(all_sorted)
 
 
 def get_candidate_tickers(kis=None, verbose=False):
@@ -272,53 +280,59 @@ def get_candidate_tickers(kis=None, verbose=False):
             if t.isdigit() and len(t) == 6:
                 BASE_POOL.append(t)
 
-    # 중복 제거
+    # 우선순위 순서: ① KIS 실시간 → ② pykrx 당일 급등 → ③ BASE_POOL(고정 폴백)
+    # 이 순서로 max_scan을 자르면 급등주가 앞에 있어 누락 위험 최소화
     seen = set()
     unique = []
-    
-    # 1. 동적 급등주 추가 (KIS API)
+
+    # 1. KIS 실시간 상위 (가장 빠른 신호)
     dynamic_count = 0
     if kis is not None:
         if verbose:
             print("   🌐 KIS API 실시간 거래량/등락률 상위 종목 수집 중...")
         try:
-            top_kospi = kis.get_volume_rank(market_div="J", limit=30)
-            top_kosdaq = kis.get_volume_rank(market_div="Q", limit=30)
+            top_kospi      = kis.get_volume_rank(market_div="J", limit=30)
+            top_kosdaq     = kis.get_volume_rank(market_div="Q", limit=30)
             top_rise_kospi = kis.get_price_change_rank(market_div="J", limit=20)
-            top_rise_kosdaq = kis.get_price_change_rank(market_div="Q", limit=20)
-            dynamic_pool = top_kospi + top_kosdaq + top_rise_kospi + top_rise_kosdaq
-            for t in dynamic_pool:
+            top_rise_kosdaq= kis.get_price_change_rank(market_div="Q", limit=20)
+            for t in top_kospi + top_kosdaq + top_rise_kospi + top_rise_kosdaq:
                 if t not in seen and t not in EXCLUDE_TICKERS:
-                    seen.add(t)
-                    unique.append(t)
-                    dynamic_count += 1
+                    seen.add(t); unique.append(t); dynamic_count += 1
             if verbose:
-                print(f"   ✨ 시장 실시간 주도주 {dynamic_count}개 추가 완료!")
+                print(f"   ✨ KIS 실시간 {dynamic_count}개")
         except Exception as e:
             if verbose:
-                print(f"   ⚠️ 실시간 종목 수집 실패, 기본 풀만 사용합니다: {e}")
+                print(f"   ⚠️ KIS 실시간 수집 실패: {e}")
 
-    # 2. 기존 베이스 풀 추가
+    # 2. pykrx 당일 급등 — 조건 통과 종목 전부 (개수 제한 없음, 급등주 누락 방지)
+    try:
+        movers, all_sorted = _get_all_listed_tickers()
+        mover_added = 0
+        for t in movers:
+            if t not in seen and t not in EXCLUDE_TICKERS:
+                seen.add(t); unique.append(t); mover_added += 1
+
+        # 장 전 / 데이터 없는 경우 폴백: 등락률순 200개
+        fallback_added = 0
+        if not movers:
+            for t in all_sorted:
+                if fallback_added >= 200: break
+                if t not in seen and t not in EXCLUDE_TICKERS:
+                    seen.add(t); unique.append(t); fallback_added += 1
+
+        if verbose:
+            if mover_added:
+                print(f"   🚀 pykrx 급등 후보 {mover_added}개 (무제한)")
+            elif fallback_added:
+                print(f"   🗂️  pykrx 폴백 {fallback_added}개")
+    except Exception as e:
+        logger.warning(f"[스크리너] pykrx 보완 실패: {e}")
+
+    # 3. BASE_POOL — 위에서 빠진 대형주/섹터 대표 보완 (정적 폴백)
     for t in BASE_POOL:
         if t not in seen and t not in EXCLUDE_TICKERS:
             seen.add(t)
             unique.append(t)
-
-    # 3. pykrx 당일 전종목 보완 — 등락률 높은 순 정렬이므로 오늘 급등주 누락 없음
-    try:
-        all_listed = _get_all_listed_tickers()  # 등락률 내림차순 정렬된 전종목
-        added = 0
-        for t in all_listed:
-            if added >= 300:   # 상위 300개 (등락률순이므로 오늘 오른 종목이 앞에 옴)
-                break
-            if t not in seen and t not in EXCLUDE_TICKERS:
-                seen.add(t)
-                unique.append(t)
-                added += 1
-        if verbose and added:
-            print(f"   🗂️  pykrx 당일 전종목 보완: {added}개 추가 → 총 후보 {len(unique)}개")
-    except Exception as e:
-        logger.warning(f"[스크리너] pykrx 보완 종목 추가 실패: {e}")
 
     return unique
 
@@ -328,7 +342,7 @@ def get_volume_surge_tickers(kis=None,
                               surge_ratio=1.8,
                               min_cap_billion=300,
                               max_tickers=150,
-                              max_scan=250,
+                              max_scan=500,
                               verbose=False):
     """
     거래량 급등 종목 필터.
@@ -337,12 +351,12 @@ def get_volume_surge_tickers(kis=None,
     Returns: dict { ticker: volume_score }
     """
     tickers = get_candidate_tickers(kis=kis, verbose=verbose)
-    # 중요도 순 정렬 보장 (KIS 실시간 → BASE_POOL → pykrx 등락률 상위)
-    # max_scan 초과분은 서버 부하 방지를 위해 이번 회차에서 제외
+    # 하드 캡: 급등 활황일에도 max_scan 이내로 제한 (서버 보호)
+    # 후보 순서 = KIS 실시간 → BASE_POOL → pykrx 급등 조건 → 중요도 높은 순
     if len(tickers) > max_scan:
         tickers = tickers[:max_scan]
         if verbose:
-            print(f"   ⚡ 서버 부하 방지: 상위 {max_scan}개만 분석 (총 후보에서 중요도순 절단)")
+            print(f"   ⚡ 서버 부하 방지: 상위 {max_scan}개만 분석")
     candidates = {}
 
     if verbose:
