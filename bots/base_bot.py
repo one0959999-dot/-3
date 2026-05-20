@@ -856,7 +856,20 @@ class BaseBot:
         now = _now_kst()  # EC2(UTC) 환경에서도 KST 기준으로 장 시간 판단
         if now.weekday() >= 5: return
         current_time_str = now.strftime('%H:%M')
+        today_str        = now.strftime('%Y-%m-%d')
         is_golden_hours = ("09:01" <= current_time_str <= "19:50")
+
+        # ── KST 기준 일일 리포트 발행 (시스템 타임존 무관) ──────────────
+        # 리포트가 아직 생성 안 됐고 Claude API 설정 있을 때만 실행
+        if self.gemini:
+            for slot_time in ['11:00', '15:30', '20:00']:
+                if current_time_str == slot_time:
+                    dr = self.daily_report
+                    already = (isinstance(dr, dict) and dr.get('date') == today_str
+                               and dr.get(slot_time) is not None)
+                    if not already:
+                        self._run_threaded(lambda t=slot_time: self.generate_daily_report(t))
+                    break
         
         if not is_golden_hours:
             with self.lock:
@@ -1682,19 +1695,16 @@ class BaseBot:
         except Exception as e:
             logger.error(f"[{self.mode_name}] 포트폴리오 초기화 실패 (기본 코어로 계속 진행): {e}", exc_info=True)
 
-        # schedule 라이브러리는 시스템 시계(UTC)를 사용하므로 모든 시간을 UTC로 지정
-        # KST = UTC+9 → UTC = KST - 9h
+        # schedule 라이브러리는 항상 KST 기준으로 설정 (_now_kst() 기반 체크 사용)
+        # 리포트는 trading_job 안에서 _now_kst() 시간을 직접 체크해 발행 → 시스템 타임존 무관
         self.scheduler.every(1).minutes.do(self.trading_job)
         self.scheduler.every(30).minutes.do(lambda: self._run_threaded(self.analyze_continuous_market_flow))
-        self.scheduler.every().day.at("02:00").do(lambda: self._run_threaded(lambda: self.generate_daily_report("11:00")))  # 11:00 KST
-        self.scheduler.every().day.at("06:30").do(lambda: self._run_threaded(lambda: self.generate_daily_report("15:30")))  # 15:30 KST
-        self.scheduler.every().day.at("11:00").do(lambda: self._run_threaded(lambda: self.generate_daily_report("20:00")))  # 20:00 KST
-        self.scheduler.every().day.at("00:05").do(lambda: self._run_threaded(self._rescreen_satellites))                    # 09:05 KST
         self.scheduler.every(1).hours.do(lambda: self._run_threaded(self._rescreen_satellites))
-        self.scheduler.every(30).minutes.do(clear_expired_cache)  # 모멘텀 캐시 만료 항목 정리
-        self.scheduler.every().friday.at("07:00").do(lambda: self._run_threaded(self._weekly_self_reflection))              # 금요일 16:00 KST
-        self.scheduler.every().day.at("23:00").do(lambda: self._run_threaded(self.refresh_websocket))                       # 08:00 KST
-        self.scheduler.every().friday.at("17:00").do(lambda: self._run_threaded(self.run_lstm_training))                    # 토요일 02:00 KST → 금요일 17:00 UTC
+        self.scheduler.every(30).minutes.do(clear_expired_cache)
+        self.scheduler.every().day.at("00:05").do(lambda: self._run_threaded(self._rescreen_satellites))        # 00:05 KST (midnight rescreen)
+        self.scheduler.every().friday.at("16:00").do(lambda: self._run_threaded(self._weekly_self_reflection))  # 금요일 16:00 KST
+        self.scheduler.every().day.at("08:00").do(lambda: self._run_threaded(self.refresh_websocket))           # 08:00 KST
+        self.scheduler.every().friday.at("02:00").do(lambda: self._run_threaded(self.run_lstm_training))        # 금요일 02:00 KST
 
         try:
             self.trading_job()
@@ -1885,6 +1895,7 @@ class BaseBot:
                 else:
                     momentum_list.append(None)
 
-            return {"is_running": self.is_running, "is_mock": self._is_mock, "has_keys": self.kis is not None, "logs": self.logs[-30:], "hot_sectors": self.hot_sectors, "num_satellites": self.num_satellites, "cores": cores_data, "satellites": satellites, "momentum_list": momentum_list, "mock_total_asset": mock_total_asset, "mock_pnl": mock_pnl, "mock_pnl_rt": mock_pnl_rt, "initial_cash": current_initial_cash}
+            available_cash = self.internal_cash if self.internal_cash is not None else 0.0
+            return {"is_running": self.is_running, "is_mock": self._is_mock, "has_keys": self.kis is not None, "logs": self.logs[-30:], "hot_sectors": self.hot_sectors, "num_satellites": self.num_satellites, "cores": cores_data, "satellites": satellites, "momentum_list": momentum_list, "mock_total_asset": mock_total_asset, "mock_pnl": mock_pnl, "mock_pnl_rt": mock_pnl_rt, "initial_cash": current_initial_cash, "available_cash": available_cash}
         except Exception as critical_e:
             return {"is_running": False, "is_mock": self._is_mock, "has_keys": False, "logs": [{"time": "Error", "message": f"오류: {str(critical_e)}"}], "hot_sectors": [], "num_satellites": 3, "cores": [], "satellites": [], "momentum_list": [None, None, None], "mock_total_asset": 0, "mock_pnl": 0, "mock_pnl_rt": 0, "initial_cash": 10000000}

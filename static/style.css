@@ -1425,6 +1425,15 @@ body.theme-warm-beige #strat-desc {
     -webkit-text-fill-color: #334155 !important;
 }
 
+/* 예수금 표시 — 모의(밝은) 테마 */
+body.theme-warm-beige #available-cash-row {
+    color: #475569 !important;
+}
+body.theme-warm-beige #available-cash-val {
+    color: #334155 !important;
+    -webkit-text-fill-color: #334155 !important;
+}
+
 /* 모멘텀 슬롯 카드 — 모의(밝은) 테마 가독성 보정 */
 body.theme-warm-beige .momentum-slot-card {
     background: rgba(15, 23, 42, 0.06) !important;

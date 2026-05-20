@@ -296,6 +296,14 @@ document.addEventListener('DOMContentLoaded', () => {
             }
         }
 
+        // 예수금 표시
+        if (data.available_cash !== undefined) {
+            const cashValEl = document.getElementById('available-cash-val');
+            if (cashValEl) {
+                cashValEl.textContent = Math.round(data.available_cash).toLocaleString() + '원';
+            }
+        }
+
         const isLive = (data.is_mock === false || data.is_mock === 0);
 
         const cb = document.getElementById('modeSwitch');
@@ -827,32 +835,51 @@ window.openReportModal = async function () {
             const times = ['11:00', '15:30', '20:00'];
             let tabsHtml = '';
             let latestTime = null;
-            let latestContent = '해당 날짜에 생성된 리포트가 없습니다.';
+            let latestContent = null;
 
-            if (data.report_markdown) {
+            // report_markdown: 단일 텍스트 (아직 시간별 분리 전)
+            if (data.report_markdown && !data['11:00'] && !data['15:30'] && !data['20:00']) {
                 latestContent = data.report_markdown;
             } else {
+                // 현재 KST 시간으로 생성 가능 여부 판단
+                const nowKst = new Date(new Date().toLocaleString('en-US', { timeZone: 'Asia/Seoul' }));
+                const hhmm = nowKst.getHours().toString().padStart(2,'0') + ':' + nowKst.getMinutes().toString().padStart(2,'0');
+
                 times.forEach(t => {
                     const content = data[t];
-                    const btnStyle = content ? 'background:rgba(59,130,246,0.2); color:#60a5fa; border:1px solid #3b82f6; cursor:pointer;' : 'background:rgba(255,255,255,0.05); color:#64748b; border:1px solid rgba(255,255,255,0.1); cursor:not-allowed;';
-                    tabsHtml += `<button style="padding:6px 12px; border-radius:6px; font-size:0.85rem; font-weight:bold; ${btnStyle}" ${content ? `onclick="renderReportText('${encodeURIComponent(content)}', this)"` : 'disabled'}>${t}</button>`;
-                    if (content) {
+                    const hasDone = !!content;
+                    // 아직 시간이 안 됐고 내용도 없으면 비활성
+                    const notYet = !hasDone && hhmm < t;
+                    if (hasDone) {
+                        tabsHtml += `<button style="padding:6px 14px; border-radius:6px; font-size:0.85rem; font-weight:bold; background:rgba(59,130,246,0.2); color:#60a5fa; border:1px solid #3b82f6; cursor:pointer;" onclick="renderReportText('${encodeURIComponent(content)}', this)">${t}</button>`;
                         latestTime = t;
                         latestContent = content;
+                    } else if (notYet) {
+                        tabsHtml += `<button style="padding:6px 14px; border-radius:6px; font-size:0.85rem; font-weight:bold; background:rgba(255,255,255,0.04); color:#4b5563; border:1px solid rgba(255,255,255,0.08); cursor:not-allowed;" disabled>${t}</button>`;
+                    } else {
+                        // 시간은 됐는데 아직 미생성 → 클릭 가능하지만 내용 없음 안내
+                        const noContent = encodeURIComponent('📋 이 시간대 리포트는 아직 생성되지 않았습니다.\n\nAI 리포트가 활성화되어 있으면 잠시 후 자동으로 발행됩니다.');
+                        tabsHtml += `<button style="padding:6px 14px; border-radius:6px; font-size:0.85rem; font-weight:bold; background:rgba(59,130,246,0.08); color:#64748b; border:1px solid rgba(59,130,246,0.25); cursor:pointer;" onclick="renderReportText('${noContent}', this)">${t} ⏳</button>`;
                     }
                 });
+                if (!latestContent && data.report_markdown) latestContent = data.report_markdown;
             }
 
             document.getElementById('report-time-tabs').innerHTML = tabsHtml;
 
+            // 가장 최근 탭 활성화
             if (latestTime) {
                 setTimeout(() => {
-                    const btns = document.getElementById('report-time-tabs').querySelectorAll('button');
-                    btns.forEach(b => { if (b.textContent === latestTime) { b.style.background = '#3b82f6'; b.style.color = '#fff'; } });
+                    const btns = document.getElementById('report-time-tabs').querySelectorAll('button:not([disabled])');
+                    btns.forEach(b => {
+                        if (b.textContent.startsWith(latestTime)) {
+                            b.style.background = '#3b82f6'; b.style.color = '#fff';
+                        }
+                    });
                 }, 50);
             }
 
-            renderReportText(encodeURIComponent(latestContent), null);
+            renderReportText(encodeURIComponent(latestContent || '📋 오늘 생성된 리포트가 없습니다.\n\n리포트는 AI 설정이 있을 때 11:00 / 15:30 / 20:00 KST에 자동 발행됩니다.'), null);
         } else {
             document.getElementById('report-content').innerHTML = json.message || '리포트가 아직 생성되지 않았습니다.';
         }
