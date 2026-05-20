@@ -338,6 +338,21 @@ document.addEventListener('DOMContentLoaded', () => {
             toggleLabel.textContent = 'Stopped';
         }
 
+        // 반대 모드 봇 실행 상태 배지
+        let otherBadge = document.getElementById('other-mode-badge');
+        if (data.other_mode_running) {
+            if (!otherBadge) {
+                otherBadge = document.createElement('span');
+                otherBadge.id = 'other-mode-badge';
+                otherBadge.style.cssText = 'display:inline-block;margin-left:10px;padding:3px 10px;border-radius:20px;font-size:0.72rem;font-weight:700;background:rgba(63,185,80,0.18);color:#3fb950;border:1px solid rgba(63,185,80,0.4);vertical-align:middle;';
+                btnToggle.parentNode.insertBefore(otherBadge, btnToggle.nextSibling);
+            }
+            otherBadge.textContent = `${data.other_mode_label} 봇 실행 중`;
+            otherBadge.style.display = 'inline-block';
+        } else {
+            if (otherBadge) otherBadge.style.display = 'none';
+        }
+
         if (!data.has_keys) {
             if (!document.getElementById('key-warning')) {
                 const warn = document.createElement('div');

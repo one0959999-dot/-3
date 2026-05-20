@@ -126,7 +126,15 @@ def logout():
 @login_required
 def status():
     bot = get_current_bot()
-    return jsonify(bot.get_status())
+    result = bot.get_status()
+
+    # 반대 모드 봇의 실행 상태를 같이 전달 — UI 상태 배지용
+    is_mock = bool(current_user.data.get('is_mock', 1))
+    other_bot = manager.bots.get((current_user.id, not is_mock))
+    result['other_mode_running'] = bool(other_bot and other_bot.is_running)
+    result['other_mode_label'] = '실전' if is_mock else '모의'
+
+    return jsonify(result)
 
 @app.route('/api/kis_balance')
 @login_required
@@ -406,17 +414,11 @@ def ai_chat():
 @app.route('/api/settings/mode', methods=['POST'])
 @login_required
 def set_mode():
-    """실전/모의 투자 모드 전환 API — 반대 모드 봇을 정지하고 신규 모드 봇을 자동 재시작"""
+    """실전/모의 투자 모드 전환 API — 화면만 전환, 각 봇의 실행 상태는 독립 유지"""
     data = request.json
     is_mock = int(data.get('is_mock', 1))
 
-    # 반대 모드 봇이 실행 중이면 먼저 정지 + 실행 여부 기억
-    opposite_bot = manager.bots.get((current_user.id, not bool(is_mock)))
-    was_running = bool(opposite_bot and opposite_bot.is_running)
-    if was_running:
-        opposite_bot.stop()
-        logger.info(f"[mode switch] user={current_user.id} 반대 모드 봇 자동 정지")
-
+    # DB 업데이트 (화면 전환만, 봇 실행 상태 건드리지 않음)
     conn = get_db_connection()
     conn.execute('UPDATE users SET is_mock = ? WHERE id = ?', (is_mock, current_user.id))
     conn.commit()
@@ -426,14 +428,16 @@ def set_mode():
     for k, v in dict(user_data).items():
         current_user.data[k] = v
 
-    # 이전 모드가 실행 중이었다면 → 새 모드 봇을 즉시 자동 시작
-    if was_running:
-        new_bot = manager.get_bot(current_user.id, current_user.data)
-        if new_bot and not new_bot.is_running:
-            cash_key = 'mock_initial_cash' if is_mock else 'real_initial_cash'
-            user_cash = current_user.data.get(cash_key, current_user.data.get('initial_cash', 10000000))
-            new_bot.start(total_cash=user_cash)
-            logger.info(f"[mode switch] user={current_user.id} 새 모드({'모의' if is_mock else '실전'}) 봇 자동 시작")
+    # 새 모드 봇 인스턴스만 미리 생성(실행 X) — 이후 toggle로 개별 제어
+    manager.get_bot(current_user.id, current_user.data)
+
+    mock_bot = manager.bots.get((current_user.id, True))
+    real_bot = manager.bots.get((current_user.id, False))
+    logger.info(
+        f"[mode switch] user={current_user.id} 화면=({'모의' if is_mock else '실전'}) "
+        f"| 모의봇={'실행중' if mock_bot and mock_bot.is_running else '정지'} "
+        f"| 실전봇={'실행중' if real_bot and real_bot.is_running else '정지'}"
+    )
 
     return jsonify({"status": "success", "is_mock": is_mock})
 
