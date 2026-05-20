@@ -406,13 +406,14 @@ def ai_chat():
 @app.route('/api/settings/mode', methods=['POST'])
 @login_required
 def set_mode():
-    """실전/모의 투자 모드 전환 API — 반대 모드 봇을 자동 정지해 한방향만 동작하게 함"""
+    """실전/모의 투자 모드 전환 API — 반대 모드 봇을 정지하고 신규 모드 봇을 자동 재시작"""
     data = request.json
     is_mock = int(data.get('is_mock', 1))
 
-    # 반대 모드 봇이 실행 중이면 먼저 정지 (한방향 보장)
+    # 반대 모드 봇이 실행 중이면 먼저 정지 + 실행 여부 기억
     opposite_bot = manager.bots.get((current_user.id, not bool(is_mock)))
-    if opposite_bot and opposite_bot.is_running:
+    was_running = bool(opposite_bot and opposite_bot.is_running)
+    if was_running:
         opposite_bot.stop()
         logger.info(f"[mode switch] user={current_user.id} 반대 모드 봇 자동 정지")
 
@@ -424,6 +425,15 @@ def set_mode():
 
     for k, v in dict(user_data).items():
         current_user.data[k] = v
+
+    # 이전 모드가 실행 중이었다면 → 새 모드 봇을 즉시 자동 시작
+    if was_running:
+        new_bot = manager.get_bot(current_user.id, current_user.data)
+        if new_bot and not new_bot.is_running:
+            cash_key = 'mock_initial_cash' if is_mock else 'real_initial_cash'
+            user_cash = current_user.data.get(cash_key, current_user.data.get('initial_cash', 10000000))
+            new_bot.start(total_cash=user_cash)
+            logger.info(f"[mode switch] user={current_user.id} 새 모드({'모의' if is_mock else '실전'}) 봇 자동 시작")
 
     return jsonify({"status": "success", "is_mock": is_mock})
 

@@ -371,6 +371,65 @@ REASON: (핵심 근거 2~3줄, 구체적 수치 포함)"""
         except Exception:
             return False, "AI 오류 발생으로 자동 거절 (안전 모드)"
 
+    def review_satellite_candidates(self, candidates: list, hot_sectors: list) -> list:
+        """위성 종목·전략 AI 검토 — 부적합 종목 즉시 퇴출, 대체 전략 제안.
+
+        Returns:
+            approved: [{"ticker", "name", "strategy_name", "ai_reason", "approved": bool}]
+        """
+        if not self.client or not candidates:
+            return [dict(c, approved=True, ai_reason="AI 비활성화 — 자동 승인") for c in candidates]
+
+        hot_str = ", ".join(hot_sectors) if hot_sectors else "없음"
+        cand_lines = "\n".join(
+            f"{i+1}. {c['name']}({c['ticker']}) 전략=[{c.get('strategy_name','?')}] 예상수익={c.get('return_pct',0):+.1f}%"
+            for i, c in enumerate(candidates)
+        )
+
+        prompt = f"""당신은 단기 위성 트레이딩 포트폴리오를 검토하는 퀀트 전문가입니다.
+
+현재 강세 섹터: {hot_str}
+
+다음은 알고리즘이 선정한 위성 종목 후보입니다:
+{cand_lines}
+
+각 종목에 대해 다음을 평가하세요:
+1. 현재 강세 섹터와 부합하는가?
+2. 배정된 전략이 해당 종목의 특성(변동성·유동성·차트 패턴)에 적합한가?
+3. 더 적합한 전략이 있다면 제안하라.
+4. 퇴출해야 할 종목이 있다면 명시하라.
+
+반드시 아래 JSON 배열 형식으로만 답하라 (마크다운 코드블록 없이):
+[
+  {{"ticker": "종목코드", "approved": true/false, "strategy": "채택할전략명", "reason": "한줄이유"}},
+  ...
+]"""
+
+        try:
+            raw = self.generate_content(prompt, temperature=0.2)
+            # JSON 파싱
+            import re
+            json_match = re.search(r'\[[\s\S]*\]', raw)
+            if not json_match:
+                raise ValueError("JSON 파싱 실패")
+            results = json.loads(json_match.group())
+            # 원본 candidates에 AI 결과 병합
+            result_map = {r['ticker']: r for r in results if 'ticker' in r}
+            approved_list = []
+            for c in candidates:
+                ai = result_map.get(c['ticker'], {})
+                approved_list.append({
+                    **c,
+                    'approved':      bool(ai.get('approved', True)),
+                    'strategy_name': ai.get('strategy', c.get('strategy_name', 'RSI')),
+                    'ai_reason':     ai.get('reason', '검토 없음'),
+                })
+            return approved_list
+        except Exception as e:
+            import logging
+            logging.getLogger('lassi_bot').warning(f"review_satellite_candidates 파싱 오류: {e}")
+            return [dict(c, approved=True, ai_reason="AI 파싱 오류 — 자동 승인") for c in candidates]
+
     def generate_weekly_reflection(self, trade_history_text: str) -> str:
         """매주 금요일, 한 주간의 매매를 돌아보고 새로운 규칙을 생성 — GeminiApi 호환"""
         if not self.client:

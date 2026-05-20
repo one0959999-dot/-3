@@ -480,16 +480,40 @@ class BaseBot:
     def update_mode(self, is_mock, total_cash=10000000):
         pass
 
+    def _ai_filter_satellites(self, candidates: list) -> list:
+        """AI가 위성 후보 검토 — 부적합 종목 제거 + 전략 교체. AI 없으면 원본 반환."""
+        if not self.gemini or not candidates:
+            return candidates
+        try:
+            self.add_log("🤖 AI가 위성 후보 종목·전략 검토 중...")
+            reviewed = self.gemini.review_satellite_candidates(candidates, self.hot_sectors)
+            approved = [c for c in reviewed if c.get('approved', True)]
+            rejected = [c for c in reviewed if not c.get('approved', True)]
+            for c in rejected:
+                self.add_log(f"🛑 AI 위성 퇴출: {c['name']}({c['ticker']}) — {c.get('ai_reason','')}")
+                self._add_satellite_reject(c['ticker'], c.get('ai_reason', 'AI 부적합 판정'))
+            for c in approved:
+                old_st = candidates[[x['ticker'] for x in candidates].index(c['ticker'])].get('strategy_name','') if c['ticker'] in [x['ticker'] for x in candidates] else ''
+                if old_st and old_st != c.get('strategy_name', old_st):
+                    self.add_log(f"🔄 AI 전략 교체: {c['name']} [{old_st}] → [{c['strategy_name']}] | {c.get('ai_reason','')}")
+            return approved
+        except Exception as e:
+            logger.warning(f"[{self.mode_name}] _ai_filter_satellites 오류: {e}")
+            return candidates
+
     def initialize_portfolio(self, total_cash):
         self.add_log("포트폴리오 초기화 중...")
-        self.satellite_info, self.hot_sectors = select_satellites(kis=self.kis, n=self.num_satellites, verbose=False, gemini_client=self.gemini)
+        raw_info, self.hot_sectors = select_satellites(kis=self.kis, n=self.num_satellites * 2, verbose=False, gemini_client=self.gemini)
+        # AI 검토: 부적합 종목 제거 후 num_satellites 개수만 사용
+        filtered_info = self._ai_filter_satellites(raw_info)
+        self.satellite_info = filtered_info[:self.num_satellites]
         from stock_screener import select_ai_core_stock
         self.satellite_strategies = {c['ticker']: c['strategy_name'] for c in self.satellite_info}
         log_lines = [f"  {i+1}. {c['name']} ({c['ticker']}) → [{c['strategy_name']}] {c['return_pct']:+.1f}%" for i, c in enumerate(self.satellite_info)]
         for line in log_lines: self.add_log(f"✅ {line.strip()}")
         log_html = "\n".join([f"  · {c['name']} <code>{c['ticker']}</code>  [{c['strategy_name']}]" for c in self.satellite_info])
         self._send_telegram(
-            f"🔍 <b>위성 종목 선정 완료</b>  ·  {self.alert_icon} {self.mode_name}\n"
+            f"🔍 <b>위성 종목 선정 완료{'(AI 검토 반영)' if self.gemini else ''}</b>  ·  {self.alert_icon} {self.mode_name}\n"
             f"━━━━━━━━━━━━━━━━━━━━\n"
             f"{log_html}\n"
             f"━━━━━━━━━━━━━━━━━━━━\n"
@@ -1277,6 +1301,13 @@ class BaseBot:
 
             peak_p = mp.get('peak_price', avg_p)
 
+            # 상한가 여부 판단 (전일종가 × 1.295 이상이면 상한가 구간으로 간주)
+            # 상한가 구간: 거래량이 체결 제한으로 인위적으로 줄어드므로 페이드 기준 완화
+            prev_close = mp.get('avg_price', price)  # 진입가를 기준으로 사용
+            is_upper_limit = price >= prev_close * 1.295
+            # 상한가 직후 탈출 구간(진입가 대비 +20%~+29%): 완화 기준 70% 적용
+            is_post_upper = (not is_upper_limit) and avg_p > 0 and (price / avg_p - 1) >= 0.20
+
             # 현재 거래량 조회 (분봉 사용) + 5분봉 반납률 체크
             vol_fade = False
             giveback_signal = 'HOLD'
@@ -1290,8 +1321,19 @@ class BaseBot:
                     if recent_vol > peak_vol:
                         mp['peak_volume'] = recent_vol
                         peak_vol = recent_vol
-                    if peak_vol > 0 and recent_vol < peak_vol * 0.5:
-                        vol_fade = True
+
+                    if peak_vol > 0:
+                        if is_upper_limit:
+                            # 상한가 구간: 체결 제한으로 거래량 급감은 정상 — 페이드 체크 완전 스킵
+                            pass
+                        elif is_post_upper:
+                            # 상한가 탈출 직후: 완화 기준 70% 적용 (30% 미만으로 떨어질 때만 청산)
+                            if recent_vol < peak_vol * 0.30:
+                                vol_fade = True
+                        else:
+                            # 일반 구간: 기본 50% 기준
+                            if recent_vol < peak_vol * 0.5:
+                                vol_fade = True
 
                     # 5분봉 반납률 신호 (실전 원칙 적용)
                     is_ride = (peak_p / avg_p - 1) * 100 >= 10 if avg_p > 0 else False
@@ -1354,7 +1396,8 @@ class BaseBot:
 
         try:
             clear_expired_cache()
-            hits = scan_hot_momentum(kis=self.kis, top_n=5, verbose=False)  # 블랙리스트 제외 후보 확보
+            # top_n=3: 블랙리스트 회피용 예비 2개 유지하되 단타는 최상위 1종목 집중
+            hits = scan_hot_momentum(kis=self.kis, top_n=3, verbose=False)
         except Exception as e:
             logger.warning(f"[{self.mode_name}] 모멘텀 스캔 오류: {e}")
             return
@@ -1556,13 +1599,16 @@ class BaseBot:
                 verbose=False, gemini_client=self.gemini, bear_mode=(self.market_regime == "BEAR")
             )
             # 이미 보유 중인 종목 + 당일 AI 거절 블랙리스트 종목 모두 제외
-            new_info = [
+            pre_filter = [
                 c for c in raw_info
                 if c['ticker'] not in keep_tickers
                 and not self._is_satellite_blacklisted(c['ticker'])
-            ][:n_needed]
+            ]
+            # AI 종목·전략 검토 (여유분 포함해서 검토 후 필요 개수만큼 잘라냄)
+            ai_filtered = self._ai_filter_satellites(pre_filter)
+            new_info = ai_filtered[:n_needed]
             if len(new_info) < n_needed:
-                self.add_log(f"⚠️ 당일 블랙리스트로 인해 {n_needed - len(new_info)}개 위성 슬롯 공석 유지")
+                self.add_log(f"⚠️ 당일 블랙리스트/AI 퇴출로 인해 {n_needed - len(new_info)}개 위성 슬롯 공석 유지")
 
             for ticker in keep_tickers: freed_cash += self.satellite_positions[ticker].cash; self.satellite_positions[ticker].cash = 0
             
@@ -1735,8 +1781,49 @@ class BaseBot:
             if self.thread: self.thread.join(timeout=3)
 
     def get_pnl_data(self):
+        """일/주/월/년 4종 손익 집계를 반환합니다."""
+        from collections import defaultdict
         sorted_days = sorted(self.daily_pnl.keys())
-        return {"labels": sorted_days, "values": [round(self.daily_pnl[d]) for d in sorted_days]}
+
+        # 일별 (최근 30일)
+        daily_labels = sorted_days[-30:]
+        daily_values = [round(self.daily_pnl[d]) for d in daily_labels]
+
+        # 주별 집계 (YYYY-Www)
+        weekly: dict = defaultdict(float)
+        for d in sorted_days:
+            try:
+                dt = datetime.strptime(d, '%Y-%m-%d')
+                week_key = dt.strftime('%Y-W%W')
+                weekly[week_key] += self.daily_pnl[d]
+            except Exception:
+                pass
+        weekly_labels = sorted(weekly.keys())[-26:]  # 최근 26주
+        weekly_values = [round(weekly[w]) for w in weekly_labels]
+
+        # 월별 집계 (YYYY-MM)
+        monthly: dict = defaultdict(float)
+        for d in sorted_days:
+            monthly[d[:7]] += self.daily_pnl[d]
+        monthly_labels = sorted(monthly.keys())[-24:]  # 최근 24개월
+        monthly_values = [round(monthly[m]) for m in monthly_labels]
+
+        # 연별 집계 (YYYY)
+        yearly: dict = defaultdict(float)
+        for d in sorted_days:
+            yearly[d[:4]] += self.daily_pnl[d]
+        yearly_labels = sorted(yearly.keys())
+        yearly_values = [round(yearly[y]) for y in yearly_labels]
+
+        return {
+            "daily":   {"labels": daily_labels,   "values": daily_values},
+            "weekly":  {"labels": weekly_labels,   "values": weekly_values},
+            "monthly": {"labels": monthly_labels,  "values": monthly_values},
+            "yearly":  {"labels": yearly_labels,   "values": yearly_values},
+            # 하위 호환: 기존 labels/values 필드도 유지
+            "labels":  daily_labels,
+            "values":  daily_values,
+        }
 
     def get_status(self):
         try:

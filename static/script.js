@@ -27,48 +27,64 @@ document.addEventListener('DOMContentLoaded', () => {
     const miniLog = document.getElementById('mini-log');
     const satTbody = document.getElementById('sat-tbody');
 
-    // ── P&L Chart 초기화 ──
+    // ── P&L Chart (일/주/월/년 탭 점그래프) ──
     let pnlChart = null;
+    let activePnlTab = 'daily';
+    let pnlDataCache = null;
 
-    function initChart(labels, values) {
+    const PNL_TAB_LABELS = { daily: '일별', weekly: '주별', monthly: '월별', yearly: '연별' };
+
+    function buildChartPoints(labels, values) {
+        // scatter용 {x, y} 배열 + 색상 배열 생성
+        const points = labels.map((l, i) => ({ x: l, y: values[i] }));
+        const ptColors = values.map(v => v >= 0 ? 'rgba(248,81,73,0.85)' : 'rgba(88,166,255,0.85)');
+        const lineColor = values.reduce((s, v) => s + v, 0) >= 0 ? 'rgba(248,81,73,0.35)' : 'rgba(88,166,255,0.35)';
+        return { points, ptColors, lineColor };
+    }
+
+    function renderPnlChart(labels, values, tabKey) {
         const ctx = document.getElementById('pnl-chart').getContext('2d');
         const empty = document.getElementById('chart-empty');
 
         if (!labels || labels.length === 0) {
             empty.style.display = 'flex';
+            if (pnlChart) { pnlChart.destroy(); pnlChart = null; }
             return;
         }
         empty.style.display = 'none';
 
-        const colors = values.map(v =>
-            v >= 0 ? 'rgba(248,81,73,0.75)' : 'rgba(88,166,255,0.75)'
-        );
-        const borderColors = values.map(v =>
-            v >= 0 ? 'rgba(248,81,73,1)' : 'rgba(88,166,255,1)'
-        );
+        const { points, ptColors, lineColor } = buildChartPoints(labels, values);
+        const tabLabel = PNL_TAB_LABELS[tabKey] || '일별';
 
-        if (pnlChart) {
-            pnlChart.data.labels = labels;
-            pnlChart.data.datasets[0].data = values;
-            pnlChart.data.datasets[0].backgroundColor = colors;
-            pnlChart.data.datasets[0].borderColor = borderColors;
-            pnlChart.update('none');
-            return;
-        }
-
-        pnlChart = new Chart(ctx, {
-            type: 'bar',
+        const chartCfg = {
+            type: 'scatter',
             data: {
-                labels,
-                datasets: [{
-                    label: '일별 손익 (원)',
-                    data: values,
-                    backgroundColor: colors,
-                    borderColor: borderColors,
-                    borderWidth: 1.5,
-                    borderRadius: 6,
-                    borderSkipped: false,
-                }]
+                datasets: [
+                    // 연결선
+                    {
+                        type: 'line',
+                        label: '',
+                        data: points,
+                        parsing: false,
+                        borderColor: lineColor,
+                        borderWidth: 1.5,
+                        pointRadius: 0,
+                        tension: 0.35,
+                        fill: false,
+                    },
+                    // 점
+                    {
+                        type: 'scatter',
+                        label: `${tabLabel} 손익 (원)`,
+                        data: points,
+                        parsing: false,
+                        backgroundColor: ptColors,
+                        borderColor: ptColors,
+                        pointRadius: 6,
+                        pointHoverRadius: 9,
+                        pointStyle: 'circle',
+                    }
+                ]
             },
             options: {
                 responsive: true,
@@ -76,9 +92,11 @@ document.addEventListener('DOMContentLoaded', () => {
                 plugins: {
                     legend: { display: false },
                     tooltip: {
+                        filter: item => item.datasetIndex === 1,
                         callbacks: {
-                            label: ctx => {
-                                const v = ctx.parsed.y;
+                            title: items => items[0]?.raw?.x || '',
+                            label: item => {
+                                const v = item.raw.y;
                                 return ` ${v >= 0 ? '+' : ''}${v.toLocaleString()}원`;
                             }
                         },
@@ -92,20 +110,62 @@ document.addEventListener('DOMContentLoaded', () => {
                 },
                 scales: {
                     x: {
+                        type: 'category',
+                        labels: labels,
                         grid: { color: 'rgba(255,255,255,0.05)' },
-                        ticks: { color: '#8b949e', font: { size: 11 } }
+                        ticks: { color: '#8b949e', font: { size: 10 },
+                                 maxTicksLimit: 10, maxRotation: 45 }
                     },
                     y: {
                         grid: { color: 'rgba(255,255,255,0.05)' },
                         ticks: {
-                            color: '#8b949e',
-                            font: { size: 11 },
+                            color: '#8b949e', font: { size: 11 },
                             callback: v => (v >= 0 ? '+' : '') + v.toLocaleString() + '원'
                         }
                     }
                 }
             }
+        };
+
+        if (pnlChart) { pnlChart.destroy(); pnlChart = null; }
+        pnlChart = new Chart(ctx, chartCfg);
+    }
+
+    function switchPnlTab(tabKey) {
+        activePnlTab = tabKey;
+        document.querySelectorAll('.pnl-tab-btn').forEach(btn => {
+            btn.classList.toggle('active', btn.dataset.tab === tabKey);
+            applyTabStyle(btn, btn.dataset.tab === tabKey);
         });
+        if (!pnlDataCache) return;
+        const seg = pnlDataCache[tabKey] || { labels: [], values: [] };
+        renderPnlChart(seg.labels, seg.values, tabKey);
+    }
+
+    // 탭 버튼 이벤트 연결 (DOM 로드 후)
+    document.querySelectorAll('.pnl-tab-btn').forEach(btn => {
+        btn.addEventListener('click', () => switchPnlTab(btn.dataset.tab));
+    });
+
+    // 탭 active 스타일 헬퍼
+    function applyTabStyle(btn, isActive) {
+        if (isActive) {
+            btn.style.background = 'rgba(248,81,73,0.22)';
+            btn.style.borderColor = 'rgba(248,81,73,0.5)';
+            btn.style.color = '#e6edf3';
+        } else {
+            btn.style.background = 'transparent';
+            btn.style.borderColor = 'rgba(255,255,255,0.1)';
+            btn.style.color = '#8b949e';
+        }
+    }
+    document.querySelectorAll('.pnl-tab-btn').forEach(btn => {
+        applyTabStyle(btn, btn.dataset.tab === activePnlTab);
+    });
+
+    // 구형 initChart 호환 래퍼
+    function initChart(labels, values) {
+        renderPnlChart(labels, values, activePnlTab);
     }
 
     // ── Toggle Button ──
@@ -138,31 +198,35 @@ document.addEventListener('DOMContentLoaded', () => {
         fetch('/api/pnl')
             .then(r => r.json())
             .then(data => {
-                initChart(data.labels, data.values);
+                pnlDataCache = data;
+                const seg = data[activePnlTab] || { labels: data.labels || [], values: data.values || [] };
+                renderPnlChart(seg.labels, seg.values, activePnlTab);
 
-                const todayStr = new Date().toISOString().slice(0, 10);
-                const monthStr = new Date().toISOString().slice(0, 7);
-                const yearStr = new Date().toISOString().slice(0, 4);
+                const formatPnl = v => (v >= 0 ? '+' : '') + v.toLocaleString() + '원';
+                const colorPnl  = v => v >= 0 ? '#f85149' : '#58a6ff';
 
-                let total = 0, monthly = 0, yearly = 0;
+                // 월별·연별·누적 요약
+                const monthly = (data.monthly?.values || []).reduce((s, v) => {
+                    const now = new Date().toISOString().slice(0, 7);
+                    return s; // 아래에서 재계산
+                }, 0);
+                const nowMonth = new Date().toISOString().slice(0, 7);
+                const nowYear  = new Date().toISOString().slice(0, 4);
 
-                (data.values || []).forEach((val, i) => {
-                    total += val;
-                    const dateStr = data.labels[i];
-                    if (dateStr.startsWith(monthStr)) monthly += val;
-                    if (dateStr.startsWith(yearStr)) yearly += val;
+                let totalAcc = 0, monthlyAcc = 0, yearlyAcc = 0;
+                (data.daily?.labels || data.labels || []).forEach((d, i) => {
+                    const v = (data.daily?.values || data.values || [])[i] || 0;
+                    totalAcc += v;
+                    if (d.startsWith(nowMonth)) monthlyAcc += v;
+                    if (d.startsWith(nowYear))  yearlyAcc  += v;
                 });
 
-                const formatPnl = (val) => (val >= 0 ? '+' : '') + val.toLocaleString() + '원';
-                const colorPnl = (val) => val >= 0 ? '#f85149' : '#58a6ff';
-
                 const elMonth = document.getElementById('chart-monthly-pnl');
-                const elYear = document.getElementById('chart-yearly-pnl');
+                const elYear  = document.getElementById('chart-yearly-pnl');
                 const elTotal = document.getElementById('chart-total-pnl');
-
-                if (elMonth) { elMonth.textContent = `이번달: ${formatPnl(monthly)}`; elMonth.style.color = colorPnl(monthly); }
-                if (elYear) { elYear.textContent = `올해: ${formatPnl(yearly)}`; elYear.style.color = colorPnl(yearly); }
-                if (elTotal) { elTotal.textContent = `누적: ${formatPnl(total)}`; elTotal.style.color = colorPnl(total); }
+                if (elMonth) { elMonth.textContent = `이번달: ${formatPnl(monthlyAcc)}`; elMonth.style.color = colorPnl(monthlyAcc); }
+                if (elYear)  { elYear.textContent  = `올해: ${formatPnl(yearlyAcc)}`;   elYear.style.color  = colorPnl(yearlyAcc);  }
+                if (elTotal) { elTotal.textContent  = `누적: ${formatPnl(totalAcc)}`;    elTotal.style.color  = colorPnl(totalAcc);  }
             });
     }
 
