@@ -362,12 +362,16 @@ class BaseBot:
         result = self.kis.buy_market_order(ticker, qty)
         if result:
             # 내부 현금 즉시 차감 — KIS 모의 API 반영 지연 보정
+            # _last_trade_ts는 est_price 여부와 무관하게 항상 갱신:
+            # est_price=0(신규 위성종목 첫 매수)일 때도 _sync_internal_balances가
+            # KIS API 값으로 덮어쓰지 않도록 타임스탬프를 찍어 둬야 함
+            with self.lock:
+                self._last_trade_ts = time.time()
             est_price = self.live_prices.get(ticker, 0) or getattr(pos, 'avg_price', 0) or 0
             if est_price > 0:
                 with self.lock:
                     if self.internal_cash is not None:
                         self.internal_cash = max(0.0, self.internal_cash - est_price * qty * 1.00015)
-                    self._last_trade_ts = time.time()
             return True
         err = f"⚠️ [{self.mode_name}] {name}({ticker}) {qty}주 매수 주문 실패 — KIS API 오류"
         self.add_log(err)
@@ -384,12 +388,14 @@ class BaseBot:
         result = self.kis.sell_market_order(ticker, qty, price=price)
         if result:
             # 내부 현금 즉시 증가 — KIS 모의 API 반영 지연 보정
+            # _last_trade_ts는 est_price 여부와 무관하게 항상 갱신
+            with self.lock:
+                self._last_trade_ts = time.time()
             est_price = price or self.live_prices.get(ticker, 0) or getattr(pos, 'avg_price', 0) or 0
             if est_price > 0:
                 with self.lock:
                     if self.internal_cash is not None:
                         self.internal_cash += est_price * qty * (1 - 0.00015)
-                    self._last_trade_ts = time.time()
             return True
         err = f"⚠️ [{self.mode_name}] {name}({ticker}) {qty}주 매도 주문 실패 — KIS API 오류"
         self.add_log(err)
