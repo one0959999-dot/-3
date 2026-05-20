@@ -87,6 +87,13 @@ class BaseBot:
         self.daily_report = None
         self.fundamental_cache = {}
 
+        # ── 당일 블랙리스트 (날짜가 바뀌면 자동 초기화) ──────────────────
+        # momentum_exits  : 모멘텀 슬롯에서 오늘 청산된 종목 (재진입 금지)
+        # satellite_rejects: 오늘 AI 거절된 위성 종목 {ticker: reason}
+        self._bl_date           = ""          # 마지막 초기화 날짜 (YYYY-MM-DD)
+        self._momentum_exits    : set  = set()
+        self._satellite_rejects : dict = {}
+
         # 시장 국면 (BULL / BEAR / NEUTRAL)
         self.market_regime = "NEUTRAL"
         self.last_regime_check = 0.0
@@ -369,6 +376,32 @@ class BaseBot:
         with self.lock:
             pos.status = "주문 실패 ❌"
         return False
+
+    def _refresh_blacklist(self):
+        """날짜가 바뀌면 당일 블랙리스트를 초기화합니다."""
+        today = _now_kst().strftime('%Y-%m-%d')
+        if self._bl_date != today:
+            self._bl_date           = today
+            self._momentum_exits    = set()
+            self._satellite_rejects = {}
+
+    def _add_momentum_exit(self, ticker: str):
+        """모멘텀 청산 종목을 당일 재진입 금지 목록에 추가합니다."""
+        self._refresh_blacklist()
+        self._momentum_exits.add(ticker)
+
+    def _add_satellite_reject(self, ticker: str, reason: str):
+        """AI 거절 위성 종목을 당일 재편입 금지 목록에 추가합니다."""
+        self._refresh_blacklist()
+        self._satellite_rejects[ticker] = reason
+
+    def _is_momentum_blacklisted(self, ticker: str) -> bool:
+        self._refresh_blacklist()
+        return ticker in self._momentum_exits
+
+    def _is_satellite_blacklisted(self, ticker: str) -> bool:
+        self._refresh_blacklist()
+        return ticker in self._satellite_rejects
 
     def _fmt_trade_msg(self, action_emoji, action_name, ticker, name, price, qty,
                        profit=None, strategy=None, ai_reason=None, note=None):
@@ -966,6 +999,12 @@ class BaseBot:
                         log_trade_journal(self.user_id, ticker, p_nm, 'BUY', price, st_nm, f"2차 분할 매수 눌림목 ({sq}주)")
                         self._send_telegram(self._fmt_trade_msg("🛒", "2차 분할 매수", ticker, p_nm, price, sq, strategy=st_nm, note="-2% 눌림목 포착"))
 
+                # 당일 AI 거절 블랙리스트 종목은 매수 시도 자체를 차단
+                if sig == 'BUY' and p_sh == 0 and self._is_satellite_blacklisted(ticker):
+                    pos.status = "당일 블랙리스트 🚫"
+                    pos.status_msg = f"오늘 거절됨: {self._satellite_rejects.get(ticker, '')[:30]}"
+                    continue
+
                 if sig == 'BUY' and p_sh == 0 and is_cd_passed and is_golden_hours:
                     # ── BEAR 국면: 10개 저점 전략 스코어 기반 차등 진입 + AI 최종 심사 ──
                     if regime == "BEAR":
@@ -997,13 +1036,15 @@ class BaseBot:
                                         self._send_telegram(self._fmt_trade_msg("🎣", f"하락장 저점 매수 ({bear_label})", ticker, p_nm, price, qty, strategy=st_nm, ai_reason=ai_reason, note=bear_reason_str))
                                 else:
                                     pos.status = "AI 거절(하락장) 🛑"
+                                    self._add_satellite_reject(ticker, ai_reason)
                                     self._send_telegram(
                                         f"🛑 <b>매수 거절</b>  ·  {self.alert_icon} {self.mode_name}\n"
                                         f"━━━━━━━━━━━━━━━━━━━━\n"
                                         f"📌 <b>{p_nm}</b>  <code>{ticker}</code>\n"
                                         f"🤖 {ai_reason}\n"
-                                        f"📋 하락장 저점 — 근거 불충분"
+                                        f"📋 하락장 저점 — 근거 불충분 (당일 블랙리스트 등록)"
                                     )
+                                    threading.Thread(target=self._rescreen_satellites, daemon=True).start()
                             elif self._buy_order(ticker, qty, pos, p_nm):
                                 with self.lock: pos.last_order_time = time.time(); pos.status = "체결 대기 ⏳"
                                 log_trade_journal(self.user_id, ticker, p_nm, 'BUY', price, st_nm, f"하락장 저점포착 [{bear_reason_str}]")
@@ -1067,12 +1108,14 @@ class BaseBot:
                                 self._send_telegram(self._fmt_trade_msg("📈", f"AI 매수 승인  ({int(first_ratio*100)}% 1차)", ticker, p_nm, price, qty, strategy=f"{st_nm}  ·  {regime_label}", ai_reason=ai_reason, note=regime_reason_str))
                         else:
                             pos.status = "AI 거절 🛑"
+                            # 당일 블랙리스트 등록 — 같은 이유로 재편입 금지
+                            self._add_satellite_reject(ticker, ai_reason)
                             self._send_telegram(
                                 f"🛑 <b>매수 거절</b>  ·  {self.alert_icon} {self.mode_name}\n"
                                 f"━━━━━━━━━━━━━━━━━━━━\n"
                                 f"📌 <b>{p_nm}</b>  <code>{ticker}</code>\n"
                                 f"🤖 {ai_reason}\n"
-                                f"➡️ 즉시 대체 종목 탐색 중"
+                                f"➡️ 당일 블랙리스트 등록 후 즉시 대체 종목 탐색"
                             )
                             threading.Thread(target=self._rescreen_satellites, daemon=True).start()
                     else:
@@ -1243,6 +1286,8 @@ class BaseBot:
                 self._send_telegram(self._fmt_trade_msg("🏁", "모멘텀 슬롯 청산", ticker, name, price, shares, profit=profit, strategy="모멘텀슬롯", note=sell_reason))
                 with self.lock:
                     self.pnl_this_turn += profit
+                # 청산된 종목은 당일 재진입 금지 블랙리스트에 등록
+                self._add_momentum_exit(ticker)
                 self.momentum_position = None
             return  # 보유 중일 때는 진입 스캔 불필요
 
@@ -1257,7 +1302,7 @@ class BaseBot:
 
         try:
             clear_expired_cache()
-            hits = scan_hot_momentum(kis=self.kis, top_n=1, verbose=False)
+            hits = scan_hot_momentum(kis=self.kis, top_n=5, verbose=False)  # 블랙리스트 제외 후보 확보
         except Exception as e:
             logger.warning(f"[{self.mode_name}] 모멘텀 스캔 오류: {e}")
             return
@@ -1265,7 +1310,16 @@ class BaseBot:
         if not hits:
             return
 
-        best = hits[0]
+        # 당일 블랙리스트 종목을 제외한 첫 번째 후보 선택
+        best = None
+        for candidate in hits:
+            if not self._is_momentum_blacklisted(candidate['ticker']):
+                best = candidate
+                break
+
+        if best is None:
+            return  # 오늘 유효한 종목 없음 (전부 청산 이력)
+
         b_ticker = best['ticker']
         b_name   = best['name']
         b_price  = best['price']
@@ -1375,8 +1429,20 @@ class BaseBot:
             n_needed = self.num_satellites - len(keep_tickers)
             if n_needed <= 0: return
 
-            raw_info, self.hot_sectors = select_satellites(kis=self.kis, n=self.num_satellites + n_needed, verbose=False, gemini_client=self.gemini, bear_mode=(self.market_regime == "BEAR"))
-            new_info = [c for c in raw_info if c['ticker'] not in keep_tickers][:n_needed]
+            # 당일 블랙리스트 종목을 충분히 걸러낼 수 있도록 여유 있게 조회
+            self._refresh_blacklist()
+            raw_info, self.hot_sectors = select_satellites(
+                kis=self.kis, n=self.num_satellites + n_needed + len(self._satellite_rejects) + 3,
+                verbose=False, gemini_client=self.gemini, bear_mode=(self.market_regime == "BEAR")
+            )
+            # 이미 보유 중인 종목 + 당일 AI 거절 블랙리스트 종목 모두 제외
+            new_info = [
+                c for c in raw_info
+                if c['ticker'] not in keep_tickers
+                and not self._is_satellite_blacklisted(c['ticker'])
+            ][:n_needed]
+            if len(new_info) < n_needed:
+                self.add_log(f"⚠️ 당일 블랙리스트로 인해 {n_needed - len(new_info)}개 위성 슬롯 공석 유지")
 
             for ticker in keep_tickers: freed_cash += self.satellite_positions[ticker].cash; self.satellite_positions[ticker].cash = 0
             
