@@ -48,7 +48,9 @@ def init_db():
                 ('gemini_api_key', 'TEXT'), ('claude_api_key', 'TEXT'),
                 ('is_running', 'INTEGER DEFAULT 0'),
                 ('core_stocks', 'TEXT'), ('is_mock', 'INTEGER DEFAULT 1'),
-                ('real_initial_cash', 'REAL DEFAULT 10000000'), ('mock_initial_cash', 'REAL DEFAULT 10000000')
+                ('real_initial_cash', 'REAL DEFAULT 10000000'), ('mock_initial_cash', 'REAL DEFAULT 10000000'),
+                # 뉴스 모니터 API 키
+                ('dart_api_key', 'TEXT'), ('naver_client_id', 'TEXT'), ('naver_client_secret', 'TEXT'),
             ]
             for col_name, col_type in new_columns:
                 try:
@@ -306,6 +308,38 @@ def add_user_initial_cash(user_id, deposit_delta, is_mock):
             conn.commit()
         finally:
             conn.close()  # [BUG-C6]
+
+def get_news_api_keys(user_id: int) -> dict:
+    """DART + Naver 뉴스 API 키 조회."""
+    conn = get_db_connection()
+    try:
+        row = conn.execute(
+            'SELECT dart_api_key, naver_client_id, naver_client_secret FROM users WHERE id = ?',
+            (user_id,)
+        ).fetchone()
+    finally:
+        conn.close()
+    if row:
+        return {
+            'dart_api_key':        row['dart_api_key'] or '',
+            'naver_client_id':     row['naver_client_id'] or '',
+            'naver_client_secret': row['naver_client_secret'] or '',
+        }
+    return {'dart_api_key': '', 'naver_client_id': '', 'naver_client_secret': ''}
+
+def set_news_api_keys(user_id: int, dart_api_key: str, naver_client_id: str, naver_client_secret: str):
+    """DART + Naver 뉴스 API 키 저장."""
+    with db_lock:
+        conn = get_db_connection()
+        try:
+            conn.execute(
+                'UPDATE users SET dart_api_key=?, naver_client_id=?, naver_client_secret=? WHERE id=?',
+                (dart_api_key, naver_client_id, naver_client_secret, user_id)
+            )
+            conn.commit()
+        finally:
+            conn.close()
+
 
 def init_default_ai_rules(user_id: int):
     """

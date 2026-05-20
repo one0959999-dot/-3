@@ -8,7 +8,7 @@ from flask import Flask, render_template, jsonify, request, redirect, url_for, f
 from flask_login import LoginManager, UserMixin, login_user, logout_user, login_required, current_user
 
 from bots.bot_manager import manager
-from database import get_db_connection, verify_user, add_user, init_db, update_user_keys, init_default_ai_rules, set_user_initial_cash
+from database import get_db_connection, verify_user, add_user, init_db, update_user_keys, init_default_ai_rules, set_user_initial_cash, get_news_api_keys, set_news_api_keys
 
 # ── 통합 로깅 설정 (파일 + 콘솔) ──
 logging.basicConfig(
@@ -490,6 +490,33 @@ def set_satellites_count():
         bot._save_state()
         return jsonify({"status": "success", "num_satellites": count})
     return jsonify({"status": "error", "message": "봇을 활성화할 수 없습니다."}), 400
+
+@app.route('/api/settings/news_keys', methods=['POST'])
+@login_required
+def set_news_keys():
+    """DART + Naver 뉴스 API 키 저장 및 봇 즉시 반영."""
+    data = request.json or {}
+    dart_key   = (data.get('dart_api_key') or '').strip()
+    naver_id   = (data.get('naver_client_id') or '').strip()
+    naver_sec  = (data.get('naver_client_secret') or '').strip()
+    set_news_api_keys(current_user.id, dart_key, naver_id, naver_sec)
+    # 실행 중인 봇에 즉시 적용
+    for is_mock in (True, False):
+        bot = manager.bots.get((current_user.id, is_mock))
+        if bot:
+            bot.reload_news_monitor(dart_key, naver_id, naver_sec)
+    return jsonify({"status": "success"})
+
+@app.route('/api/settings/news_keys', methods=['GET'])
+@login_required
+def get_news_keys():
+    """저장된 뉴스 API 키 조회 (Secret은 마스킹)."""
+    keys = get_news_api_keys(current_user.id)
+    return jsonify({
+        "dart_api_key":        keys['dart_api_key'][:8] + '****' if keys['dart_api_key'] else '',
+        "naver_client_id":     keys['naver_client_id'],
+        "naver_client_secret": keys['naver_client_secret'][:4] + '****' if keys['naver_client_secret'] else '',
+    })
 
 @app.route('/api/settings/keys', methods=['POST'])
 @login_required

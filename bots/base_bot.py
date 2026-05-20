@@ -24,7 +24,8 @@ from telegram_bot import TelegramNotifier
 from strategy import CorePosition, Position, get_rsi_signal, get_signal_by_strategy, REINVEST_RATIO, get_market_regime, get_bear_bounce_signal, get_bear_bottom_score, get_bull_momentum_score, get_neutral_range_score, INVERSE_ETF_TICKER, INVERSE_ETF_NAME, INVERSE_BUDGET_RATIO, DEFENSIVE_ASSETS, check_giveback_stop, check_early_drop_stop
 from stock_screener import select_satellites, generate_daily_market_report
 from hot_momentum_scanner import scan_hot_momentum, clear_expired_cache
-from database import update_bot_status, save_portfolio_state, load_portfolio_state, log_trade_journal, get_recent_trades, save_ai_rules, load_ai_rules, get_ai_rules_history, get_user_initial_cash, set_user_initial_cash, add_user_initial_cash
+from database import update_bot_status, save_portfolio_state, load_portfolio_state, log_trade_journal, get_recent_trades, save_ai_rules, load_ai_rules, get_ai_rules_history, get_user_initial_cash, set_user_initial_cash, add_user_initial_cash, get_news_api_keys
+from news_monitor import NewsMonitor
 
 _SELL_FEE = 0.00015   # 매도 수수료율 (0.015%)
 _SELL_TAX = 0.0018    # 증권거래세율 (0.18%)
@@ -123,8 +124,16 @@ class BaseBot:
         self.kis = None
         self.telegram = None
         self.gemini = None
+        self.news_monitor: NewsMonitor | None = None   # DART + Naver 뉴스 모니터
+
+        # 뉴스 모니터 주기 제어
+        self._last_dart_check    = 0.0   # 마지막 악재 공시 체크 타임스탬프
+        self._dart_check_interval = 600  # 10분마다 체크
+        self._last_earnings_check = 0.0  # 마지막 실적 발표일 체크
+        self._earnings_check_interval = 3600  # 1시간마다 체크
 
         self._init_api(kis_config)
+        self._init_news_monitor()  # DB에서 뉴스 API 키 로드
         
         if telegram_config and telegram_config.get('token'):
             self.telegram = TelegramNotifier(
@@ -171,6 +180,27 @@ class BaseBot:
 
     def _create_websocket(self, app_key, callback):
         raise NotImplementedError("자식 클래스에서 웹소켓 객체를 반환해야 합니다.")
+
+    def _init_news_monitor(self):
+        """DB에 저장된 뉴스 API 키로 NewsMonitor 초기화."""
+        try:
+            keys = get_news_api_keys(self.user_id)
+            dart  = keys.get('dart_api_key', '')
+            n_id  = keys.get('naver_client_id', '')
+            n_sec = keys.get('naver_client_secret', '')
+            if dart and n_id and n_sec:
+                self.news_monitor = NewsMonitor(dart, n_id, n_sec)
+                self.add_log("📡 뉴스 모니터 초기화 완료 (DART + Naver)")
+        except Exception as e:
+            logger.warning(f"[{self.mode_name}] 뉴스 모니터 초기화 실패: {e}")
+
+    def reload_news_monitor(self, dart_key: str, naver_id: str, naver_secret: str):
+        """설정 변경 시 뉴스 모니터를 새 키로 즉시 재초기화."""
+        if dart_key and naver_id and naver_secret:
+            self.news_monitor = NewsMonitor(dart_key, naver_id, naver_secret)
+            self.add_log("📡 뉴스 모니터 키 업데이트 완료")
+        else:
+            self.news_monitor = None
 
     def _perpetual_sync_loop(self):
         while True:
@@ -447,6 +477,118 @@ class BaseBot:
         today = _now_kst().strftime('%Y-%m-%d')
         with self.lock:
             self.daily_pnl[today] = self.daily_pnl.get(today, 0.0) + profit
+
+    # ══════════════════════════════════════════════════════════════════
+    # 📡 뉴스 모니터 — 악재 공시 감지 / 실적 발표 예정 포지션 축소
+    # ══════════════════════════════════════════════════════════════════
+
+    def _check_news_alerts(self):
+        """
+        보유 종목별 악재 공시·실적 발표 예정 체크 (10분/1시간 주기).
+        - 악재 공시 발견  → 텔레그램 경보 + AI 손절 검토
+        - 실적 발표 D-7내 → 텔레그램 알림 + 포지션 30% 축소
+        """
+        if not self.news_monitor:
+            return
+        now_ts = time.time()
+
+        # ── 1. 악재 공시 체크 (10분 주기) ─────────────────────────────
+        if now_ts - self._last_dart_check >= self._dart_check_interval:
+            self._last_dart_check = now_ts
+            with self.lock:
+                held = [(c.ticker, c.name, c.shares, c.avg_price) for c in self.core_positions if c.shares > 0]
+                held += [(t, p.name, p.shares, p.avg_price) for t, p in self.satellite_positions.items() if p.shares > 0]
+
+            for ticker, name, shares, avg_price in held:
+                try:
+                    neg = self.news_monitor.check_negative_disclosure(ticker, days=2)
+                    if not neg:
+                        continue
+                    for d in neg:
+                        report_nm = d.get('report_nm', '')
+                        rcept_dt  = d.get('rcept_dt', '')
+                        msg = (
+                            f"⚠️ <b>악재 공시 감지</b>  ·  {self.alert_icon} {self.mode_name}\n"
+                            f"━━━━━━━━━━━━━━━━━━━━\n"
+                            f"📌 <b>{name}</b>  <code>{ticker}</code>\n"
+                            f"📋 {report_nm}\n"
+                            f"📅 공시일: {rcept_dt}\n"
+                            f"💼 보유: {shares}주 @ {avg_price:,.0f}원\n"
+                            f"━━━━━━━━━━━━━━━━━━━━\n"
+                            f"🤖 AI 손절 검토 중..."
+                        )
+                        self._send_telegram(msg, 'news')
+                        self.add_log(f"⚠️ {name}({ticker}) 악재 공시: {report_nm}")
+
+                        # AI가 있으면 손절 여부 판단 요청
+                        if self.gemini:
+                            try:
+                                context = f"악재 공시 발생: {report_nm} ({rcept_dt})\n보유: {shares}주 @ 평단 {avg_price:,.0f}원"
+                                decision, ai_reason = self.gemini.ai_approve_trade(
+                                    'SELL', name, ticker, avg_price, "공시감지",
+                                    {}, self.hot_sectors,
+                                    get_recent_trades(self.user_id, ticker),
+                                    load_ai_rules(self.user_id), context=context
+                                )
+                                if decision:
+                                    # 위성 포지션이면 즉시 매도
+                                    pos = self.satellite_positions.get(ticker)
+                                    if pos and pos.shares > 0:
+                                        if self._sell_order(ticker, pos.shares, pos, name):
+                                            with self.lock:
+                                                pos.shares = 0; pos.status = "악재공시 손절 🚨"
+                                            self.add_log(f"🚨 {name}({ticker}) 악재 공시 AI 손절 완료")
+                                            self._send_telegram(
+                                                f"🚨 <b>악재공시 손절 완료</b>  {self.alert_icon}\n"
+                                                f"📌 <b>{name}</b> | 🤖 {ai_reason[:100]}",
+                                                'news'
+                                            )
+                            except Exception as ae:
+                                logger.warning(f"[{self.mode_name}] 악재 공시 AI 판단 오류 ({ticker}): {ae}")
+                except Exception as e:
+                    logger.warning(f"[{self.mode_name}] DART 공시 체크 오류 ({ticker}): {e}")
+
+        # ── 2. 실적 발표 예정 체크 (1시간 주기) ───────────────────────
+        if now_ts - self._last_earnings_check >= self._earnings_check_interval:
+            self._last_earnings_check = now_ts
+            with self.lock:
+                sat_items = [(t, p.name, p.shares, p.avg_price)
+                             for t, p in self.satellite_positions.items() if p.shares > 0]
+
+            for ticker, name, shares, avg_price in sat_items:
+                try:
+                    earnings = self.news_monitor.get_upcoming_earnings(ticker)
+                    if not earnings:
+                        continue
+                    days_until = earnings['days_until']
+                    exp_date   = earnings['expected_date']
+
+                    if days_until <= 7 and shares > 1:
+                        # 30% 포지션 축소
+                        reduce_qty = max(1, int(shares * 0.30))
+                        pos = self.satellite_positions.get(ticker)
+                        if pos and pos.shares > 0:
+                            if self._sell_order(ticker, reduce_qty, pos, name):
+                                with self.lock:
+                                    pos.shares = max(0, pos.shares - reduce_qty)
+                                    pos.status = "실적전 축소 📊"
+                                price_now = self.live_prices.get(ticker) or avg_price
+                                profit = (price_now - avg_price) * reduce_qty * (1 - _SELL_FEE - _SELL_TAX)
+                                self._log_trade(ticker, name, 'SELL', price_now, "실적공시대응", f"실적발표 D-{days_until} 30% 축소", profit=profit)
+                                msg = (
+                                    f"📊 <b>실적 발표 전 포지션 축소</b>  ·  {self.alert_icon} {self.mode_name}\n"
+                                    f"━━━━━━━━━━━━━━━━━━━━\n"
+                                    f"📌 <b>{name}</b>  <code>{ticker}</code>\n"
+                                    f"📅 실적 발표 예정: {exp_date} (D-{days_until})\n"
+                                    f"✂️ {reduce_qty}주 (30%) 선익절\n"
+                                    f"💼 잔여: {pos.shares}주 계속 보유\n"
+                                    f"━━━━━━━━━━━━━━━━━━━━\n"
+                                    f"⏰ {_now_kst().strftime('%H:%M KST')}"
+                                )
+                                self._send_telegram(msg, 'news')
+                                self.add_log(f"📊 {name}({ticker}) 실적 발표 D-{days_until} → 30% 축소")
+                except Exception as e:
+                    logger.warning(f"[{self.mode_name}] 실적 발표 체크 오류 ({ticker}): {e}")
 
     def _refresh_blacklist(self):
         """날짜가 바뀌면 당일 블랙리스트를 초기화합니다. [BUG-M1] 락 내부에서 호출 전제."""
@@ -779,12 +921,23 @@ class BaseBot:
         """AI에게 전달할 종합 분석 컨텍스트를 빌드합니다 (뉴스·재무·기술적 지표·분봉)."""
         lines = []
 
-        # ── 1. 뉴스 ──────────────────────────────────────────────
-        try:
-            news = fetch_recent_news(stock_name)
-        except Exception:
-            news = "뉴스 조회 실패"
-        lines.append(f"[최근 뉴스] {news}")
+        # ── 1. 뉴스 + 공시 (NewsMonitor 우선, 없으면 기존 크롤러 사용) ──
+        if self.news_monitor:
+            try:
+                naver_news = self.news_monitor.get_news_summary(stock_name, display=5)
+                dart_disc  = self.news_monitor.get_disclosure_summary(ticker, days=5)
+                if naver_news:
+                    lines.append(naver_news)
+                if dart_disc:
+                    lines.append(f"[DART 공시]\n{dart_disc}")
+            except Exception as ne:
+                logger.warning(f"[{self.mode_name}] NewsMonitor 컨텍스트 조회 실패: {ne}")
+        else:
+            try:
+                news = fetch_recent_news(stock_name)
+            except Exception:
+                news = "뉴스 조회 실패"
+            lines.append(f"[최근 뉴스] {news}")
 
         # ── 2. 재무제표 (캐시에 있으면 사용) ─────────────────────
         today_str = _now_kst().strftime('%Y-%m-%d')
@@ -947,6 +1100,10 @@ class BaseBot:
                     if "대기" not in sat.status and "심사" not in sat.status:
                         sat.status = "감시 중 👀"
                         sat.status_msg = "최적 타이밍 스캔 중"
+
+        # ── 📡 뉴스 모니터: 악재 공시 감지 + 실적 발표 예정 체크 ───────────
+        if self.news_monitor and is_golden_hours:
+            self._run_threaded(self._check_news_alerts)
 
         # C-01: is_crisis_mode 체크를 else 블록 밖으로 이동
         # → 장중(golden hours)이 아닐 때도 위기 모드가 유지되며,
