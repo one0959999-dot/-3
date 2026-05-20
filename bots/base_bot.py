@@ -1322,8 +1322,15 @@ class BaseBot:
                 sell_reason = "보유 60분 초과 강제 청산"
 
             if sell_reason:
-                self.kis.sell_market_order(ticker, shares)
+                if not self.kis.sell_market_order(ticker, shares):
+                    self.add_log(f"⚠️ 모멘텀 슬롯 청산 주문 실패: {name}({ticker})")
+                    return
                 profit = _net_profit(price, avg_p, shares)
+                # internal_cash 즉시 증가 (KIS 반영 지연 보정)
+                with self.lock:
+                    if self.internal_cash is not None:
+                        self.internal_cash += price * shares * (1 - 0.00015)
+                    self._last_trade_ts = time.time()
                 log_trade_journal(self.user_id, ticker, name, 'SELL', price,
                                   "모멘텀슬롯", sell_reason, profit=profit)
                 self.add_log(f"🏁 모멘텀 슬롯 청산 | {name}({ticker}) {shares}주 @ {price:,.0f}원 | {sell_reason} | 손익: {profit:+,.0f}원")
@@ -1406,7 +1413,43 @@ class BaseBot:
         except Exception:
             pass
 
-        self.kis.buy_market_order(b_ticker, qty)
+        # AI 심사 (설정된 경우 — 청산은 속도 우선이라 진입만 심사)
+        if self.gemini:
+            trade_ctx = (
+                f"테마·급등주 모멘텀 슬롯 초기 진입 요청.\n"
+                f"트리거: {best['trigger_reason']}\n"
+                f"모멘텀 점수: {best['momentum_score']:.1f}점\n"
+                f"현재가: {b_price:,.0f}원  ATR(손절폭): {atr_val:,.0f}원\n"
+                f"익절 목표: +5% 즉시 전량 / 손절: 진입가 - 1×ATR"
+            )
+            m_decision, m_ai_reason = self.gemini.ai_approve_trade(
+                'BUY', b_name, b_ticker, b_price, "모멘텀슬롯",
+                {"momentum_score": best['momentum_score']}, self.hot_sectors,
+                get_recent_trades(self.user_id, b_ticker),
+                load_ai_rules(self.user_id),
+                context=trade_ctx
+            )
+            if not m_decision:
+                self.add_log(f"🛑 모멘텀 슬롯 AI 거절: {b_name}({b_ticker}) — {m_ai_reason}")
+                self._add_momentum_exit(b_ticker)  # 당일 재탐색 방지
+                return
+            m_buy_note = f"테마급등 초기포착 [AI 승인] [{best['trigger_reason']}] 점수:{best['momentum_score']:.1f} ({m_ai_reason})"
+            buy_label = "🚀 AI 승인 모멘텀 슬롯 진입!"
+        else:
+            m_ai_reason = "알고리즘 자동 승인"
+            m_buy_note = f"테마급등 초기포착 [알고리즘] [{best['trigger_reason']}] 점수:{best['momentum_score']:.1f}"
+            buy_label = "🚀 모멘텀 슬롯 진입!"
+
+        if not self.kis.buy_market_order(b_ticker, qty):
+            self.add_log(f"⚠️ 모멘텀 슬롯 매수 주문 실패: {b_name}({b_ticker})")
+            return
+
+        # internal_cash 즉시 차감 (KIS 반영 지연 보정)
+        with self.lock:
+            if self.internal_cash is not None:
+                self.internal_cash = max(0.0, self.internal_cash - b_price * qty * 1.00015)
+            self._last_trade_ts = time.time()
+
         self.momentum_position = {
             'ticker':      b_ticker,
             'name':        b_name,
@@ -1420,16 +1463,16 @@ class BaseBot:
             'reason':      best['trigger_reason'],
         }
         log_trade_journal(self.user_id, b_ticker, b_name, 'BUY', b_price,
-                          "모멘텀슬롯",
-                          f"테마급등 초기포착 [{best['trigger_reason']}] 점수:{best['momentum_score']:.1f}")
-        self.add_log(f"🚀 모멘텀 슬롯 진입 | {b_name}({b_ticker}) {qty}주 @ {b_price:,.0f}원 | {best['trigger_reason']}")
+                          "모멘텀슬롯", m_buy_note)
+        self.add_log(f"🚀 모멘텀 슬롯 진입 | {b_name}({b_ticker}) {qty}주 @ {b_price:,.0f}원 | {best['trigger_reason']} | {m_ai_reason}")
         self._send_telegram(
-            f"🚀 <b>모멘텀 슬롯 진입!</b>  ·  {self.alert_icon} {self.mode_name}\n"
+            f"{buy_label}  ·  {self.alert_icon} {self.mode_name}\n"
             f"━━━━━━━━━━━━━━━━━━━━\n"
             f"📌 <b>{b_name}</b>  <code>{b_ticker}</code>\n"
             f"💰 <b>{b_price:,.0f}원</b> × <b>{qty}주</b>  =  <b>{b_price*qty:,.0f}원</b>\n"
             f"🔥 {best['trigger_reason']}\n"
             f"📊 모멘텀 점수  <b>{best['momentum_score']:.1f}점</b>\n"
+            f"🤖 AI 판단: {m_ai_reason}\n"
             f"🛡️ 손절: ATR <b>{atr_val:,.0f}원</b>  ·  🎯 익절: <b>+5% 즉시 전량</b>\n"
             f"━━━━━━━━━━━━━━━━━━━━\n"
             f"⏰ {now.strftime('%H:%M KST')}"
