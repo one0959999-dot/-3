@@ -166,6 +166,11 @@ class BaseBot:
 
     def _perpetual_sync_loop(self):
         while True:
+            # 봇이 정지 상태일 때는 KIS API 호출 및 잔고 동기화 건너뜀
+            # (정지 중에도 cached_balance/internal_cash가 변경되면 UI 혼선 유발)
+            if not self.is_running:
+                time.sleep(30)
+                continue
             try:
                 if self.kis:
                     # 잔고 조회를 별도 스레드에서 실행해 메인 sync 루프 블록 방지
@@ -1763,7 +1768,7 @@ class BaseBot:
             self.initial_capital_captured = False
             self.thread = threading.Thread(target=self._run_loop, args=(total_cash,), daemon=True)
             self.thread.start()
-            update_bot_status(self.user_id, True)
+            update_bot_status(self.user_id, True, is_mock=self._is_mock)
             self.add_log(f"▶️ [{self.mode_name}투자] 매매 봇이 시작되었습니다.")
             return True
         return False
@@ -1771,7 +1776,7 @@ class BaseBot:
     def stop(self):
         if self.is_running:
             self.is_running = False
-            update_bot_status(self.user_id, False)
+            update_bot_status(self.user_id, False, is_mock=self._is_mock)
             if self.thread: self.thread.join(timeout=3)
 
     def get_pnl_data(self):
@@ -1877,7 +1882,7 @@ class BaseBot:
                         et = mp.get('enter_time')
                         if et:
                             try:
-                                elapsed = f"{(datetime.now() - et).total_seconds() / 60:.0f}분 보유"
+                                elapsed = f"{(_now_kst() - et).total_seconds() / 60:.0f}분 보유"
                             except Exception:
                                 pass
                         momentum_list.append({

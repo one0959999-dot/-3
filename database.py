@@ -136,10 +136,28 @@ def update_user_keys(user_id, keys_dict):
         conn.commit()
         conn.close()
 
-def update_bot_status(user_id, is_running):
+def update_bot_status(user_id, is_running, is_mock=None):
+    """봇 실행 상태 DB 갱신.
+    is_mock=None  → 레거시 단일 is_running 컬럼만 업데이트 (하위 호환)
+    is_mock=True  → mock_running 컬럼 업데이트 (없으면 자동 생성)
+    is_mock=False → real_running 컬럼 업데이트
+    """
     with db_lock:
         conn = get_db_connection()
-        conn.execute('UPDATE users SET is_running = ? WHERE id = ?', (1 if is_running else 0, user_id))
+        # 모드별 전용 컬럼 확보 (없으면 추가)
+        for col in [('mock_running', 'INTEGER DEFAULT 0'), ('real_running', 'INTEGER DEFAULT 0')]:
+            try:
+                conn.execute(f'ALTER TABLE users ADD COLUMN {col[0]} {col[1]}')
+            except Exception:
+                pass
+        val = 1 if is_running else 0
+        # 레거시 단일 컬럼 항상 갱신 (UI 호환)
+        conn.execute('UPDATE users SET is_running = ? WHERE id = ?', (val, user_id))
+        # 모드별 컬럼 갱신
+        if is_mock is True:
+            conn.execute('UPDATE users SET mock_running = ? WHERE id = ?', (val, user_id))
+        elif is_mock is False:
+            conn.execute('UPDATE users SET real_running = ? WHERE id = ?', (val, user_id))
         conn.commit()
         conn.close()
 
