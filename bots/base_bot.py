@@ -314,11 +314,12 @@ class BaseBot:
                     target_core_pool = total_equity * self.core_ratio
                     target_sat_pool = total_equity * self.satellite_ratio
                     
-                    current_core_stock_val = sum([float(s['value']) for s in real_balance['stocks'] if any(c.ticker == s['ticker'] for c in self.core_positions)])
+                    # [W-09] 'value' 키 없으면 KeyError → .get() 으로 방어
+                    current_core_stock_val = sum([float(s.get('value', 0)) for s in real_balance['stocks'] if any(c.ticker == s['ticker'] for c in self.core_positions)])
                     per_core_cash = max(0.0, (target_core_pool - current_core_stock_val) / max(1, len(self.core_positions)))
                     for core in self.core_positions: core.cash = round(per_core_cash, 2)
                         
-                    current_sat_stock_val = sum([float(s['value']) for s in real_balance['stocks'] if s['ticker'] in self.satellite_positions])
+                    current_sat_stock_val = sum([float(s.get('value', 0)) for s in real_balance['stocks'] if s['ticker'] in self.satellite_positions])
                     total_sat_cash = max(0.0, target_sat_pool - current_sat_stock_val)
                     empty_sat_count = sum(1 for sat in self.satellite_positions.values() if int(sat.shares) == 0)
                     for t, sat in self.satellite_positions.items():
@@ -965,6 +966,10 @@ class BaseBot:
                         self._defensive_sold_ts[ticker] = time.time()  # 종목별 24h 쿨다운 시작
                         price = self.kis.get_current_price(ticker) or 0
                         def_profit = _net_profit(price, float(holding.get('purchase_price', price)), shares_held) if holding else 0
+                        # [C-05] 방어 자산 청산 손익을 장부에 반영
+                        with self.lock:
+                            self.pnl_this_turn += def_profit
+                        self._record_daily_pnl(def_profit)
                         self.add_log(f"🐂 국면 전환({regime}) → {emoji} {name} {shares_held}주 전량 청산 (24h 재매수 대기)")
                         self._log_trade(ticker, name, 'SELL', price, "방어자산", f"국면 전환 BEAR→{regime}", profit=def_profit)
                         self._send_telegram(
@@ -1998,16 +2003,27 @@ class BaseBot:
                     if pos:
                         with self.lock:
                             shares_now = pos.shares
-                        if shares_now > 0:
-                            price_e = self.live_prices.get(t) or (self.kis.get_current_price(t) if self.kis else 0) or pos.avg_price
-                            if self.kis and price_e:
-                                self.kis.sell_market_order(t, shares_now, price=int(price_e))
-                            with self.lock:
-                                if pos.shares > 0:
-                                    freed_cash += pos.cash
+                        price_e = (self.live_prices.get(t)
+                                   or (self.kis.get_current_price(t) if self.kis else 0)
+                                   or pos.avg_price or 0)
+                        sell_qty, excess_profit = 0, 0.0
+                        if shares_now > 0 and price_e:
+                            if self.kis and self.kis.sell_market_order(t, shares_now, price=int(price_e)):
+                                with self.lock:
+                                    if pos.shares > 0:
+                                        # [C-03] pos.sell()로 내부 현금 갱신 + 손익 계산
+                                        sell_qty, excess_profit = pos.sell(price_e)
+                                        self.pnl_this_turn += excess_profit
                         with self.lock:
+                            freed_cash += pos.cash  # sell() 후 cash = 매도 대금 포함 전액
                             if t in self.satellite_positions: del self.satellite_positions[t]
                             if t in self.satellite_strategies: del self.satellite_strategies[t]
+                        if sell_qty > 0:
+                            # [C-03] 누락된 거래 로그 및 손익 통계 추가
+                            self._log_trade(t, pos.name, 'SELL', price_e, '위성초과정리',
+                                            f'초과({self.num_satellites}개 한도) 강제 청산',
+                                            profit=excess_profit)
+                            self._record_daily_pnl(excess_profit)
                         keep_tickers.discard(t)
                         self.add_log(f"✂️ 위성 초과({self.num_satellites}개 한도) 정리: {pos.name}({t}) 청산")
 

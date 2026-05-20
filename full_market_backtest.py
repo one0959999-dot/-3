@@ -375,9 +375,10 @@ def simulate_bear_strategy(start_str, end_str, regime_map, budget):
     dates  = df.index.tolist()
     trades = []
 
-    cash     = budget
-    holding  = 0
-    buy_price = 0.0
+    cash          = budget
+    holding       = 0
+    buy_price     = 0.0
+    entry_bear_i  = 0  # [I-03] 매수 시점 인덱스 추적 → hold days 계산용
 
     for i in range(len(dates)):
         date   = dates[i]
@@ -385,9 +386,10 @@ def simulate_bear_strategy(start_str, end_str, regime_map, budget):
         price  = closes[i]
 
         if regime == "bear" and holding == 0 and cash >= price:
-            holding    = int(cash // price)
-            buy_price  = apply_cost(price, is_buy=True)
-            cash      -= holding * buy_price
+            holding       = int(cash // price)
+            buy_price     = apply_cost(price, is_buy=True)
+            cash         -= holding * buy_price
+            entry_bear_i  = i  # [I-03] 진입 인덱스 기록
 
         elif regime != "bear" and holding > 0:
             sell_p = apply_cost(price, is_buy=False)
@@ -398,7 +400,7 @@ def simulate_bear_strategy(start_str, end_str, regime_map, budget):
                 "date":   date,
                 "ret":    (sell_p - buy_price) / buy_price,
                 "result": "regime_exit",
-                "hold":   i,
+                "hold":   i - entry_bear_i,  # [I-03] 보유 일수 (절대 인덱스 아님)
             })
             holding = 0
 

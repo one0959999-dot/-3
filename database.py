@@ -163,9 +163,12 @@ def update_bot_status(user_id, is_running, is_mock=None):
     with db_lock:
         conn = get_db_connection()
         # 모드별 전용 컬럼 확보 (없으면 추가)
+        # [W-06] ALTER TABLE은 암묵적 트랜잭션 안에서 실행될 수 있어
+        # 이후 예외 시 롤백될 가능성 있음. 컬럼 추가 후 바로 커밋.
         for col in [('mock_running', 'INTEGER DEFAULT 0'), ('real_running', 'INTEGER DEFAULT 0')]:
             try:
                 conn.execute(f'ALTER TABLE users ADD COLUMN {col[0]} {col[1]}')
+                conn.commit()
             except Exception:
                 pass
         val = 1 if is_running else 0

@@ -421,7 +421,14 @@ REASON: (핵심 근거 2~3줄, 구체적 수치 포함)"""
 
         try:
             res = self.generate_content(prompt, temperature=0.1)
-            decision = "CONFIRM" in res.upper()
+            # [W-01] "CONFIRM" 단순 포함 검사는 "DO NOT CONFIRM" 등 false positive 유발.
+            # DECISION: 라인을 우선 파싱하고, 없으면 전문에서 REJECT 포함 여부 교차 확인.
+            upper = res.upper()
+            decision_line = next((ln for ln in upper.splitlines() if "DECISION:" in ln), "")
+            if decision_line:
+                decision = "CONFIRM" in decision_line and "REJECT" not in decision_line
+            else:
+                decision = "CONFIRM" in upper and "REJECT" not in upper
             reason = res.split("REASON:")[-1].strip() if "REASON:" in res else res.strip()
             return decision, reason
         except Exception as e:

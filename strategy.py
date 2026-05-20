@@ -234,7 +234,8 @@ def _signal_morning_star(df) -> tuple:
         o1, c1 = float(df['open'].iloc[-3]), float(df['close'].iloc[-3])
         o2, c2 = float(df['open'].iloc[-2]), float(df['close'].iloc[-2])
         o3, c3 = float(df['open'].iloc[-1]), float(df['close'].iloc[-1])
-        first_bearish  = c1 < o1 and (o1 - c1) > abs(o1) * 0.01
+        # [W-10] 비율 계산: (o1-c1)/o1 > 1% — 절대값 비교 시 고가종목 편향 발생
+        first_bearish  = c1 < o1 and (o1 - c1) / o1 > 0.01
         second_small   = abs(c2 - o2) < abs(o1 - c1) * 0.5
         third_bullish  = c3 > o3 and c3 > (o1 + c1) / 2
         if first_bearish and second_small and third_bullish:
@@ -1167,8 +1168,13 @@ def check_giveback_stop(
       giveback_pct: 현재 반납률(%)
       reason: 사유 문자열
     """
-    if not candles or len(candles) < 3 or entry_price <= 0 or peak_price <= entry_price:
+    if not candles or len(candles) < 3 or entry_price <= 0:
         return 'HOLD', 0.0, '데이터 부족'
+    if peak_price <= entry_price:
+        # [W-05] 진입 후 한 번도 진입가를 상회하지 못한 경우 — 반납률 계산 불가.
+        # giveback_stop 은 "상승분을 얼마나 반납했는가" 기반이므로 여기선 HOLD.
+        # 손절은 상위 호출부의 ATR 하드 손절 또는 고정 -3% 손절이 담당한다.
+        return 'HOLD', 0.0, 'peak≤entry (ATR 손절 대기)'
 
     gain = peak_price - entry_price       # 총 상승폭
     current_price = float(candles[-1]['close'])
@@ -1366,7 +1372,9 @@ class CorePosition:
 
     def buy(self, price, cash_to_use=None):
         """매수 (cash_to_use 미지정 시 전액 매수)"""
-        budget = cash_to_use if cash_to_use else self.cash
+        # [C-06] cash_to_use=0.0 → 'if cash_to_use' 는 False → 전액 매수 오인.
+        # is not None 패턴으로 수정.
+        budget = cash_to_use if cash_to_use is not None else self.cash
         available_budget = min(budget, self.cash)
         
         # 수수료 비용 및 시장가(최유리지정가) 매수 시 증거금 버퍼(1%)를 반영하여 예수금 펑크를 방지합니다.
