@@ -32,6 +32,12 @@ class BotManager:
 
         bot = self.bots[bot_key]
 
+        # 모의봇이면 실전봇의 KIS를 real_kis로 주입 — 외인/기관 데이터 조회에 사용
+        if is_mock:
+            real_bot = self.bots.get((user_id, False))
+            if real_bot and real_bot.kis is not None:
+                bot.real_kis = real_bot.kis
+
         # 각 봇은 자체 ClaudeApi 인스턴스를 가짐 — 유저 간 채팅 히스토리 공유 방지
         api_key = (user_data.get('claude_api_key') or '').strip()
         if api_key:

@@ -122,6 +122,7 @@ class BaseBot:
         self._EMERGENCY_COOLDOWN = 4 * 3600       # 긴급 반성 최소 간격 (4시간)
 
         self.kis = None
+        self.real_kis = None   # 모의봇에서 외인/기관 데이터 조회용 실전 KIS 인스턴스 (주입 시 사용)
         self.telegram = None
         self.gemini = None
         self.news_monitor: NewsMonitor | None = None   # DART + Naver 뉴스 모니터
@@ -737,7 +738,7 @@ class BaseBot:
 
     def initialize_portfolio(self, total_cash):
         self.add_log("포트폴리오 초기화 중...")
-        raw_info, self.hot_sectors = select_satellites(kis=self.kis, n=self.num_satellites * 2, verbose=False, gemini_client=self.gemini, sector_guide=self.sector_guide)
+        raw_info, self.hot_sectors = select_satellites(kis=self.kis, n=self.num_satellites * 2, verbose=False, gemini_client=self.gemini, sector_guide=self.sector_guide, real_kis=self.real_kis)
         # AI 검토: 부적합 종목 제거 후 num_satellites 개수만 사용
         filtered_info = self._ai_filter_satellites(raw_info)
         self.satellite_info = filtered_info[:self.num_satellites]
@@ -1941,7 +1942,7 @@ class BaseBot:
             raw_info, self.hot_sectors = select_satellites(
                 kis=self.kis, n=self.num_satellites + n_needed + len(self._satellite_rejects) + 3,
                 verbose=False, gemini_client=self.gemini, bear_mode=(self.market_regime == "BEAR"),
-                sector_guide=self.sector_guide
+                sector_guide=self.sector_guide, real_kis=self.real_kis
             )
             # 이미 보유 중인 종목 + 당일 AI 거절 블랙리스트 종목 모두 제외
             pre_filter = [

@@ -436,7 +436,7 @@ def find_best_strategy(df):
 # ──────────────────────────────────────────────
 # 5. 메인 선정 함수
 # ──────────────────────────────────────────────
-def select_satellites(kis=None, n=NUM_SATELLITES, verbose=True, gemini_client=None, bear_mode=False, sector_guide: str = ''):
+def select_satellites(kis=None, n=NUM_SATELLITES, verbose=True, gemini_client=None, bear_mode=False, sector_guide: str = '', real_kis=None):
     """
     멀티팩터 위성 종목 선정 (딥러닝 PyTorch 확률 예측 엔진 연동 완료)
     """
@@ -461,16 +461,19 @@ def select_satellites(kis=None, n=NUM_SATELLITES, verbose=True, gemini_client=No
     )
 
     # 외인/기관 순매수 팩터 수집
+    # real_kis가 주입된 경우(모의봇) 실전 API로 데이터 조회, 없으면 kis 자체 사용
+    _fi_kis = real_kis or kis
     frgn_inst_tickers = set()
-    if kis is not None:
+    if _fi_kis is not None:
         try:
-            fi_kospi = kis.get_foreign_institution_rank(market_div="J", limit=30)
-            fi_kosdaq = kis.get_foreign_institution_rank(market_div="Q", limit=30)
+            fi_kospi = _fi_kis.get_foreign_institution_rank(market_div="J", limit=30)
+            fi_kosdaq = _fi_kis.get_foreign_institution_rank(market_div="Q", limit=30)
             for item in fi_kospi + fi_kosdaq:
                 if (item.get("frgn_ntby_qty", 0) > 0 or item.get("orgn_ntby_qty", 0) > 0):
                     frgn_inst_tickers.add(item["ticker"])
             if verbose:
-                print(f"   💼 외인/기관 순매수 종목: {len(frgn_inst_tickers)}개")
+                src = "(실전 API)" if real_kis else ""
+                print(f"   💼 외인/기관 순매수 종목: {len(frgn_inst_tickers)}개 {src}")
         except Exception:
             pass
 
