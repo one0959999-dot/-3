@@ -277,15 +277,19 @@ class BaseBot:
                     if not is_core:
                         if t in self.satellite_positions:
                             sat = self.satellite_positions[t]
-                            sat.shares = q; sat.avg_price = p; sat.kis_current_price = c_p 
+                            sat.shares = q; sat.avg_price = p; sat.kis_current_price = c_p
                         else:
-                            self.add_log(f"🌟 {self.mode_name} 계좌 미등록 종목 '{stock_name}'을 위성으로 강제 편입합니다!")
-                            new_sat = Position(t, stock_name, 0.0)
-                            new_sat.shares = q; new_sat.avg_price = p; new_sat.kis_current_price = c_p 
-                            self.satellite_positions[t] = new_sat
-                            self.satellite_strategies[t] = 'RSI(9) 30/70'
-                            if not any(x['ticker'] == t for x in self.satellite_info):
-                                self.satellite_info.append({'ticker': t, 'name': stock_name, 'strategy_name': 'RSI(9) 30/70', 'return_pct': 0.0, 'sector': '-'})
+                            # num_satellites 한도 초과 시 새 위성 자동 추가 차단
+                            if len(self.satellite_positions) < self.num_satellites:
+                                self.add_log(f"🌟 {self.mode_name} 계좌 미등록 종목 '{stock_name}'을 위성으로 강제 편입합니다!")
+                                new_sat = Position(t, stock_name, 0.0)
+                                new_sat.shares = q; new_sat.avg_price = p; new_sat.kis_current_price = c_p
+                                self.satellite_positions[t] = new_sat
+                                self.satellite_strategies[t] = 'RSI(9) 30/70'
+                                if not any(x['ticker'] == t for x in self.satellite_info):
+                                    self.satellite_info.append({'ticker': t, 'name': stock_name, 'strategy_name': 'RSI(9) 30/70', 'return_pct': 0.0, 'sector': '-'})
+                            else:
+                                logger.warning(f"[{self.mode_name}] 위성 한도({self.num_satellites}) 초과 — '{stock_name}'({t}) 자동 편입 생략")
             except Exception as e:
                 logger.error(f"[{self.mode_name}] 장부 동기화 중 오류: {e}", exc_info=True)
 
@@ -1426,6 +1430,38 @@ class BaseBot:
                             with self.lock:
                                 if ticker in self.satellite_positions: del self.satellite_positions[ticker]
 
+            # ── 초과 포지션 정리: keep_tickers가 num_satellites 초과 시 ───────────
+            # 예) num_satellites=5 인데 이익 중인 포지션이 7개 → 최하위 2개 청산
+            if len(keep_tickers) > self.num_satellites:
+                # 수익률 순으로 정렬 (최저 수익 먼저 제거)
+                profit_map = {}
+                for t in list(keep_tickers):
+                    pos = self.satellite_positions.get(t)
+                    if pos and pos.avg_price > 0:
+                        p = self.live_prices.get(t) or (self.kis.get_current_price(t) if self.kis else 0) or pos.avg_price
+                        profit_map[t] = (p / pos.avg_price - 1) * 100
+                    else:
+                        profit_map[t] = 0.0
+                sorted_keep = sorted(keep_tickers, key=lambda t: profit_map.get(t, 0))
+                excess = sorted_keep[:len(keep_tickers) - self.num_satellites]
+                for t in excess:
+                    pos = self.satellite_positions.get(t)
+                    if pos:
+                        with self.lock:
+                            shares_now = pos.shares
+                        if shares_now > 0:
+                            price_e = self.live_prices.get(t) or (self.kis.get_current_price(t) if self.kis else 0) or pos.avg_price
+                            if self.kis and price_e:
+                                self.kis.sell_market_order(t, shares_now, price=int(price_e))
+                            with self.lock:
+                                if pos.shares > 0:
+                                    freed_cash += pos.cash
+                        with self.lock:
+                            if t in self.satellite_positions: del self.satellite_positions[t]
+                            if t in self.satellite_strategies: del self.satellite_strategies[t]
+                        keep_tickers.discard(t)
+                        self.add_log(f"✂️ 위성 초과({self.num_satellites}개 한도) 정리: {pos.name}({t}) 청산")
+
             n_needed = self.num_satellites - len(keep_tickers)
             if n_needed <= 0: return
 
@@ -1633,7 +1669,11 @@ class BaseBot:
                 cores_data.append({"name": core.name, "ticker": core.ticker, "shares": core.shares, "floor": core.floor_shares, "price": cp, "value": core_val, "budget": getattr(core, 'initial_cash', 0), "strategy": "장기 우상향" if core.ticker != self.core_ticker else "RSI + floor 보호", "status": getattr(core, 'status', '감시 중 👀'), "status_msg": getattr(core, 'status_msg', '지표 점검 중...')})
 
             satellites = []
-            for ticker, pos in safe_satellite_items:
+            # num_satellites 한도만큼만 UI에 표시 (보유 중인 종목 우선)
+            holding_items = [(t, p) for t, p in safe_satellite_items if p.shares > 0]
+            empty_items   = [(t, p) for t, p in safe_satellite_items if p.shares == 0]
+            capped_items  = (holding_items + empty_items)[:self.num_satellites]
+            for ticker, pos in capped_items:
                 sp = float(getattr(pos, '_last_price', 0) or self.live_prices.get(ticker, 0) or getattr(pos, 'kis_current_price', 0) or pos.avg_price or 0)
                 sat_val = float(pos.shares) * sp
                 total_realtime_stock_val += sat_val
