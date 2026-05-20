@@ -258,7 +258,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 el.innerHTML  = `
                     <div class="mslot-label">슬롯 #${i + 1} · 🚀 보유 중</div>
                     <div class="mslot-name">${mp.name} <span style="color:#64748b;font-size:0.75rem;">${mp.ticker}</span></div>
-                    <div class="mslot-pnl" style="color:${pnlClr}">${pnlSign}${pnl.toFixed(2)}%
+                    <div class="mslot-pnl pnl-rate" data-pnl="${pnl > 0 ? 'profit' : pnl < 0 ? 'loss' : 'neutral'}" style="color:${pnlClr}">${pnlSign}${pnl.toFixed(2)}%
                         <span style="font-size:0.75rem;font-weight:400;color:#94a3b8;margin-left:6px;">${Math.round(mp.value || 0).toLocaleString()}원</span>
                     </div>
                     <div class="mslot-meta">
@@ -425,6 +425,20 @@ document.addEventListener('DOMContentLoaded', () => {
             if (sText.includes('주문') || sText.includes('대기')) badgeStyle = "background:rgba(245,158,11,0.2); color:#fcd34d; border:1px solid rgba(245,158,11,0.4); animation:pulse 2s infinite;";
             if (sText.includes('거절') || sText.includes('손절') || sText.includes('청산')) badgeStyle = "background:rgba(239,68,68,0.2); color:#fca5a5; border:1px solid rgba(239,68,68,0.4);";
 
+            // 코어 수익률 계산
+            const coreAvgP = core.avg_price || 0;
+            const coreCurP = core.price || 0;
+            let corePnlHtml = '';
+            if (core.shares > 0 && coreAvgP > 0 && coreCurP > 0) {
+                const corePnlPct = ((coreCurP / coreAvgP) - 1) * 100;
+                const corePnlState = corePnlPct > 0 ? 'profit' : (corePnlPct < 0 ? 'loss' : 'neutral');
+                const corePnlClr  = corePnlPct > 0 ? '#f85149' : (corePnlPct < 0 ? '#58a6ff' : '#8b949e');
+                const corePnlSign = corePnlPct >= 0 ? '+' : '';
+                corePnlHtml = `<div class="pnl-rate" data-pnl="${corePnlState}" style="font-size:0.85rem;font-weight:700;margin-top:3px;color:${corePnlClr};">${corePnlSign}${corePnlPct.toFixed(2)}%</div>`;
+            } else if (core.shares > 0) {
+                corePnlHtml = `<div class="pnl-rate" data-pnl="neutral" style="font-size:0.8rem;color:#8b949e;margin-top:3px;">수익률 계산 중...</div>`;
+            }
+
             const div = document.createElement('div');
             div.className = 'info-card glass-card core-card';
             div.innerHTML = `
@@ -437,9 +451,10 @@ document.addEventListener('DOMContentLoaded', () => {
                 </div>
                 <div class="card-value highlight">${(core.shares || 0).toLocaleString()} 주</div>
                 <div class="card-subvalue">
-                    평가금액 ${(core.value || 0).toLocaleString()}원<br>
+                    평가금액 ${Math.round(core.value || 0).toLocaleString()}원<br>
                     <span style="color:#64748b;font-size:0.8rem;">(배정 예산: ${(core.budget || 0).toLocaleString()}원)</span>
                 </div>
+                ${corePnlHtml}
                 <div class="card-subvalue" style="color:#f59e0b;font-size:0.8rem;margin-top:4px">🔒 floor: ${core.floor}주 보호</div>
             `;
             fragment.appendChild(div);
@@ -471,17 +486,19 @@ document.addEventListener('DOMContentLoaded', () => {
                     : `<span style="color:#64748b">-</span>`;
 
                 // 수익률: avg_price 기반 계산 (고점 갱신대기 대체)
+                // data-pnl 속성 사용 — warm-beige td { -webkit-text-fill-color: !important } 상속 극복
                 let pnlCell = '';
                 if (isHolding) {
                     const avgP = s.avg_price || 0;
                     const curP = s.price || 0;
                     if (avgP > 0 && curP > 0) {
                         const pnlPct = ((curP / avgP) - 1) * 100;
+                        const pnlState = pnlPct > 0 ? 'profit' : (pnlPct < 0 ? 'loss' : 'neutral');
                         const pnlColor = pnlPct > 0 ? '#f85149' : (pnlPct < 0 ? '#58a6ff' : '#8b949e');
                         const pnlSign = pnlPct >= 0 ? '+' : '';
-                        pnlCell = `<div style="font-size:0.75rem;color:${pnlColor};margin-top:3px;font-weight:700;">${pnlSign}${pnlPct.toFixed(2)}%</div>`;
+                        pnlCell = `<div class="pnl-rate" data-pnl="${pnlState}" style="font-size:0.75rem;color:${pnlColor};margin-top:3px;font-weight:700;">${pnlSign}${pnlPct.toFixed(2)}%</div>`;
                     } else {
-                        pnlCell = `<div style="font-size:0.75rem;color:#64748b;margin-top:3px;">수익률 계산 중...</div>`;
+                        pnlCell = `<div class="pnl-rate" data-pnl="neutral" style="font-size:0.75rem;color:#64748b;margin-top:3px;">수익률 계산 중...</div>`;
                     }
                 }
 
