@@ -577,8 +577,12 @@ class BaseBot:
                             )
                             if decision:
                                 pos = self.satellite_positions.get(ticker)
-                                if pos and pos.shares > 0:
-                                    sell_shares = pos.shares
+                                # [C-NEW-04] sell_shares 를 락 안에서 재확인 — trading_job 동시 매도 경합 방지
+                                sell_shares = 0
+                                with self.lock:
+                                    if pos and pos.shares > 0:
+                                        sell_shares = pos.shares
+                                if sell_shares > 0:
                                     if self._sell_order(ticker, sell_shares, pos, name):
                                         with self.lock:
                                             price_now = self.live_prices.get(ticker) or avg_price
@@ -1235,10 +1239,14 @@ class BaseBot:
                         for core in safe_core_positions:
                             if core.shares > 0:
                                 self.kis.sell_market_order(core.ticker, core.shares)
+                                with self.lock:
+                                    core.shares = 0  # [C-NEW-03] 서킷브레이커 청산 후 잔여주수 초기화
                                 self.add_log(f"🔥 {self.mode_name} 코어 {core.name} 청산")
                         for ticker, pos in safe_satellite_items:
                             if pos.shares > 0:
                                 self.kis.sell_market_order(ticker, pos.shares)
+                                with self.lock:
+                                    pos.shares = 0  # [C-NEW-03] 서킷브레이커 청산 후 잔여주수 초기화
                                 self.add_log(f"🔥 {self.mode_name} 위성 {pos.name} 청산")
                         return
             except Exception as e:
@@ -1272,7 +1280,10 @@ class BaseBot:
                     # W-03: avg_price가 0이면 수익 계산이 무의미하므로 매도 건너뜀
                     if sellable > 0 and core.avg_price > 0 and self._sell_order(c_tk, sellable, core, c_nm):
                         core_profit = _net_profit(cp, core.avg_price, sellable)
-                        with self.lock: core.last_order_time = time.time(); core.status = "체결 대기 ⏳"; self.pnl_this_turn += core_profit
+                        with self.lock:
+                            core.last_order_time = time.time(); core.status = "체결 대기 ⏳"
+                            core.shares = max(0, core.shares - sellable)  # [C-NEW-02] 매도 후 잔여주수 반영
+                            self.pnl_this_turn += core_profit
                         self._record_daily_pnl(core_profit)
                         self.add_log(f"💎 {c_nm} 매도 | {sellable}주 @ {cp:,}원 | 손익: {core_profit:+,.0f}원")
                         self._log_trade(c_tk, c_nm, 'SELL', cp, "RSI 코어 장기보유", "RSI 데드크로스", profit=core_profit)
@@ -1325,7 +1336,13 @@ class BaseBot:
                             profit = _net_profit(price, p_avg, p_sh)
                             self._log_trade(ticker, p_nm, 'SELL', price, st_nm, "ATR 트레일링 익절", profit=profit)
                             self._send_trade_telegram(self._fmt_trade_msg("🎯", "트레일링 익절", ticker, p_nm, price, p_sh, profit=profit, strategy=st_nm, note="ATR 트레일링 스탑 발동"))
-                            with self.lock: self.pnl_this_turn += profit
+                            with self.lock:
+                                self.pnl_this_turn += profit
+                                # [W-NEW-03] 트레일링 익절 수익도 코어 재투자 적용
+                                if profit > 0 and self.core_positions:
+                                    reinvest_trail = profit * REINVEST_RATIO
+                                    for core in self.core_positions:
+                                        core.cash += reinvest_trail / len(self.core_positions)
                             self._record_daily_pnl(profit)
                         continue
 
@@ -1352,7 +1369,8 @@ class BaseBot:
                         if self._sell_order(ticker, p_sh, pos, p_nm):
                             with self.lock:
                                 pos.last_order_time = time.time(); pos.status = "체결 대기 ⏳"
-                                pos.second_buy_done = True; pos.pyramid_done = True; pos.partial_sold = False
+                                pos.second_buy_done = True; pos.pyramid_done = True
+                                pos.partial_sold = False; pos.partial_sold_2 = False  # [C-NEW-01/W-NEW-02] 두 플래그 모두 리셋
                                 pos.second_buy_price = 0; pos.second_buy_cash = 0
                                 pos.shares = 0  # [BUG-M5] 하드 손절 전량 매도 후 잔여주수 초기화
                             profit = _net_profit(price, p_avg, p_sh)
@@ -1540,6 +1558,7 @@ class BaseBot:
                                     pos.second_buy_done  = False
                                     pos.pyramid_done     = False
                                     pos.partial_sold     = False
+                                    pos.partial_sold_2   = False  # [C-NEW-01] 신규 진입 시 반드시 초기화
                                 self._log_trade(ticker, p_nm, 'BUY', price, st_nm, f"AI 승인 [{regime_label}] 1차({int(first_ratio*100)}%) ({ai_reason})")
                                 self._send_trade_telegram(self._fmt_trade_msg("📈", f"AI 매수 승인  ({int(first_ratio*100)}% 1차)", ticker, p_nm, price, qty, strategy=f"{st_nm}  ·  {regime_label}", ai_reason=ai_reason, note=regime_reason_str))
                         else:
@@ -1564,6 +1583,7 @@ class BaseBot:
                                 pos.second_buy_done  = False
                                 pos.pyramid_done     = False
                                 pos.partial_sold     = False
+                                pos.partial_sold_2   = False  # [C-NEW-01] 알고리즘 경로도 동일하게 초기화
                             self._log_trade(ticker, p_nm, 'BUY', price, st_nm, f"알고리즘 [{regime_label}] 1차({int(first_ratio*100)}%): {regime_reason_str}")
                             self._send_trade_telegram(self._fmt_trade_msg("📈", f"알고리즘 매수  ({int(first_ratio*100)}% 1차)", ticker, p_nm, price, qty, strategy=f"{st_nm}  ·  {regime_label}", note=regime_reason_str))
 
@@ -1599,7 +1619,13 @@ class BaseBot:
                             profit = _net_profit(price, p_avg, p_sh)
                             self._log_trade(ticker, p_nm, 'SELL', price, st_nm, "알고리즘 직통", profit=profit)
                             self._send_trade_telegram(self._fmt_trade_msg("📉", "알고리즘 매도", ticker, p_nm, price, p_sh, profit=profit, strategy=st_nm))
-                            with self.lock: self.pnl_this_turn += profit
+                            with self.lock:
+                                self.pnl_this_turn += profit
+                                # [W-NEW-01] AI 없는 경로에도 재투자 로직 동일 적용
+                                if profit > 0 and self.core_positions:
+                                    reinvest_sat = profit * REINVEST_RATIO
+                                    for core in self.core_positions:
+                                        core.cash += reinvest_sat / len(self.core_positions)
                             self._record_daily_pnl(profit)
             except Exception as e:
                 logger.error(f"[{self.mode_name}] 위성 매매 오류 ({ticker}): {e}", exc_info=True)
@@ -1764,9 +1790,9 @@ class BaseBot:
             self._send_trade_telegram(self._fmt_trade_msg("🏁", f"모멘텀#{slot_idx+1} 청산", ticker, name, price, shares, profit=profit, strategy="모멘텀슬롯", note=sell_reason))
             self._record_daily_pnl(profit)
             self._record_ticker_loss(ticker, profit)   # 종목별 일일 손실 추적
-            # 수익의 50% → 코어 슬롯 재투자
+            # 수익의 REINVEST_RATIO(50%) → 코어 슬롯 재투자  [I-NEW-05] 상수 통일
             if profit > 0 and self.core_positions:
-                reinvest = profit * 0.50
+                reinvest = profit * REINVEST_RATIO
                 per_core = reinvest / len(self.core_positions)
                 with self.lock:
                     for core in self.core_positions:
@@ -1919,13 +1945,19 @@ class BaseBot:
                 self._last_trade_ts = time.time()
             available_cash = max(0.0, available_cash - b_price * qty)  # 로컬 잔고 갱신
 
-            self.momentum_positions[slot_idx] = {
-                'ticker': b_ticker, 'name': b_name, 'shares': qty,
-                'avg_price': b_price, 'atr': atr_val, 'peak_price': b_price,
-                'peak_volume': 0, 'enter_time': now,
-                'score': best['momentum_score'], 'reason': best['trigger_reason'],
-                'slot_idx': slot_idx,
-            }
+            # [C-NEW-06] 포지션 딕셔너리 저장 실패 시 실매수 후 미추적 상태 방지 — try-except 보호
+            try:
+                self.momentum_positions[slot_idx] = {
+                    'ticker': b_ticker, 'name': b_name, 'shares': qty,
+                    'avg_price': b_price, 'atr': atr_val, 'peak_price': b_price,
+                    'peak_volume': 0, 'enter_time': now,
+                    'score': best['momentum_score'], 'reason': best['trigger_reason'],
+                    'slot_idx': slot_idx,
+                }
+            except Exception as dict_err:
+                logger.error(f"[{self.mode_name}] 모멘텀#{slot_idx+1} 포지션 저장 실패 → 즉시 시장가 청산: {dict_err}")
+                self.kis.sell_market_order(b_ticker, qty)
+                continue
             self._log_trade(b_ticker, b_name, 'BUY', b_price, "모멘텀슬롯", m_buy_note)
             self.add_log(f"{buy_label} | {b_name}({b_ticker}) {qty}주 @ {b_price:,.0f}원 | {best['trigger_reason']}")
             self._send_trade_telegram(
@@ -2034,8 +2066,11 @@ class BaseBot:
             # [BUG-7] _refresh_blacklist 는 내부 딕셔너리를 수정하므로 락 필요
             with self.lock:
                 self._refresh_blacklist()
+            # [W-NEW-08] _satellite_rejects 를 락 안에서 스냅샷으로 읽어 경합 방지
+            with self.lock:
+                n_rejects = len(self._satellite_rejects)
             raw_info, self.hot_sectors = select_satellites(
-                kis=self.kis, n=self.num_satellites + n_needed + len(self._satellite_rejects) + 3,
+                kis=self.kis, n=self.num_satellites + n_needed + n_rejects + 3,
                 verbose=False, gemini_client=self.gemini, bear_mode=(self.market_regime == "BEAR"),
                 sector_guide=self.sector_guide, real_kis=self.real_kis
             )
@@ -2055,11 +2090,18 @@ class BaseBot:
             keep_tickers = {t for t in keep_tickers if t in self.satellite_positions}
             for ticker in keep_tickers: freed_cash += self.satellite_positions[ticker].cash; self.satellite_positions[ticker].cash = 0
 
-            if freed_cash > 0 and (len(keep_tickers) + len(new_info)) > 0:
+            # [C-NEW-05] 배분 분모를 실제 현금이 필요한 슬롯(shares==0인 keep + new)으로만 계산
+            # shares>0 인 keep 포지션에 cash를 주면 의도치 않은 추가 매수(피라미딩)가 발생함
+            empty_keep = [t for t in keep_tickers
+                          if t in self.satellite_positions
+                          and self.satellite_positions[t].shares == 0]
+            cash_receivers = len(empty_keep) + len(new_info)
+            if freed_cash > 0 and cash_receivers > 0:
                 with self.lock:
-                    alloc = freed_cash / (len(keep_tickers) + len(new_info))
-                    for t in keep_tickers:
-                        if t in self.satellite_positions and self.satellite_positions[t].shares == 0: self.satellite_positions[t].cash = alloc
+                    alloc = freed_cash / cash_receivers
+                    for t in empty_keep:
+                        if t in self.satellite_positions:
+                            self.satellite_positions[t].cash = alloc
                     for c in new_info:
                         self.satellite_positions[c['ticker']] = Position(c['ticker'], c['name'], alloc)
                         self.satellite_strategies[c['ticker']] = c['strategy_name']

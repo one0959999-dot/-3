@@ -1395,12 +1395,14 @@ class CorePosition:
         # (최초 설정값 고정 시 장기 보유 중 보호 물량 비율이 점차 줄어드는 버그 수정)
         self.floor_shares = max(self.floor_shares, max(1, int(self.shares * CORE_MIN_FLOOR_RATIO)))
             
+        # [C-NEW-07] append 전에 reason 계산해야 len()==0 조건이 의미있음
+        buy_reason = 'initial' if len(self.buy_log) == 0 else 'reinvest'
         self.buy_log.append({
             'time': datetime.now().strftime('%Y-%m-%d %H:%M'),
             'price': price, 'qty': qty,
             'total_shares': self.shares,
             'fee': brokerage_fee,
-            'reason': 'initial' if len(self.buy_log) == 0 else 'reinvest'
+            'reason': buy_reason,
         })
         return qty
 

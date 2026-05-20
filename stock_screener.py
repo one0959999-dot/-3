@@ -771,8 +771,9 @@ def select_ai_core_stock(verbose=False):
 
     for ticker in list(candidates):
         try:
-            df = fetch_ohlcv(ticker, days=150)
-            if len(df) < 130 or 'close' not in df.columns:
+            # [I-NEW-06] days=150 → BACKTEST_DAYS(130) 통일로 fetch 캐시 재사용
+            df = fetch_ohlcv(ticker, days=BACKTEST_DAYS)
+            if len(df) < 120 or 'close' not in df.columns:
                 continue
                 
             close = df['close']
