@@ -1462,6 +1462,13 @@ class BaseBot:
                 )
                 if not m_decision:
                     self.add_log(f"🛑 모멘텀#{slot_idx+1} AI 거절: {b_name} — {m_ai_reason}")
+                    self._send_telegram(
+                        f"🛑 <b>모멘텀#{slot_idx+1} 진입 거절</b>  ·  {self.alert_icon} {self.mode_name}\n"
+                        f"━━━━━━━━━━━━━━━━━━━━\n"
+                        f"📌 <b>{b_name}</b>  <code>{b_ticker}</code>\n"
+                        f"💰 진입 예정가: {b_price:,.0f}원\n"
+                        f"❌ {m_ai_reason[:500]}"
+                    )
                     self._add_momentum_exit(b_ticker)
                     used_tickers.add(b_ticker)
                     continue
@@ -1830,7 +1837,7 @@ class BaseBot:
                 sp = float(getattr(pos, '_last_price', 0) or self.live_prices.get(ticker, 0) or getattr(pos, 'kis_current_price', 0) or pos.avg_price or 0)
                 sat_val = float(pos.shares) * sp
                 total_realtime_stock_val += sat_val
-                satellites.append({"name": pos.name, "ticker": ticker, "strategy": self.satellite_strategies.get(ticker, '-'), "shares": pos.shares, "price": sp, "value": sat_val, "budget": getattr(pos, 'initial_cash', getattr(pos, 'budget', 0)), "status": getattr(pos, 'status', '감시 중 👀'), "status_msg": getattr(pos, 'status_msg', '지표 점검 중...')})
+                satellites.append({"name": pos.name, "ticker": ticker, "strategy": self.satellite_strategies.get(ticker, '-'), "shares": pos.shares, "price": sp, "value": sat_val, "avg_price": float(getattr(pos, 'avg_price', 0) or 0), "budget": getattr(pos, 'initial_cash', getattr(pos, 'budget', 0)), "status": getattr(pos, 'status', '감시 중 👀'), "status_msg": getattr(pos, 'status_msg', '지표 점검 중...')})
 
             try:
                 current_initial_cash = get_user_initial_cash(self.user_id, self._is_mock)

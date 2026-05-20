@@ -252,13 +252,17 @@ document.addEventListener('DOMContentLoaded', () => {
                 const pnl     = mp.pnl_pct || 0;
                 const pnlSign = pnl >= 0 ? '+' : '';
                 const pnlClr  = pnl > 0 ? '#f85149' : (pnl < 0 ? '#58a6ff' : '#8b949e');
+                const avgPStr = mp.avg_price > 0 ? Math.round(mp.avg_price).toLocaleString() : '-';
+                const curPStr = mp.price > 0 ? Math.round(mp.price).toLocaleString() : '-';
                 el.className  = 'momentum-slot-card occupied' + (pnl > 0 ? ' profit' : pnl < 0 ? ' loss' : '');
                 el.innerHTML  = `
                     <div class="mslot-label">슬롯 #${i + 1} · 🚀 보유 중</div>
                     <div class="mslot-name">${mp.name} <span style="color:#64748b;font-size:0.75rem;">${mp.ticker}</span></div>
-                    <div class="mslot-pnl" style="color:${pnlClr}">${pnlSign}${pnl.toFixed(2)}%</div>
+                    <div class="mslot-pnl" style="color:${pnlClr}">${pnlSign}${pnl.toFixed(2)}%
+                        <span style="font-size:0.75rem;font-weight:400;color:#94a3b8;margin-left:6px;">${Math.round(mp.value || 0).toLocaleString()}원</span>
+                    </div>
                     <div class="mslot-meta">
-                        ${(mp.shares || 0).toLocaleString()}주 · ${Math.round(mp.value || 0).toLocaleString()}원<br>
+                        ${(mp.shares || 0).toLocaleString()}주 · 단가 ${avgPStr}원 → 현재 ${curPStr}원<br>
                         ${mp.elapsed || ''} · ${mp.reason || ''}
                     </div>`;
             }
@@ -460,9 +464,26 @@ document.addEventListener('DOMContentLoaded', () => {
                     ? `<span class="badge badge-strategy" style="cursor:pointer;" onclick="showStrategyInfo('${s.strategy}')" title="클릭하여 전략 상세 설명 보기">${s.strategy}</span>`
                     : '<span style="color:#8b949e">-</span>';
                 const sharesCell = isHolding ? `${s.shares.toLocaleString()}주` : `<span style="color:#64748b">-</span>`;
-                const valueCell = isHolding ? `${(s.value || 0).toLocaleString()}원` : `<span style="color:#64748b">-</span>`;
 
-                const maxPriceStr = (s.max_price && s.max_price > 0) ? `${s.max_price.toLocaleString()}원` : '갱신 대기';
+                // 평가금액: 실시간 live_prices 기반 (3초 폴링)
+                const valueCell = isHolding
+                    ? `<span style="font-weight:600;">${Math.round(s.value || 0).toLocaleString()}원</span>`
+                    : `<span style="color:#64748b">-</span>`;
+
+                // 수익률: avg_price 기반 계산 (고점 갱신대기 대체)
+                let pnlCell = '';
+                if (isHolding) {
+                    const avgP = s.avg_price || 0;
+                    const curP = s.price || 0;
+                    if (avgP > 0 && curP > 0) {
+                        const pnlPct = ((curP / avgP) - 1) * 100;
+                        const pnlColor = pnlPct > 0 ? '#f85149' : (pnlPct < 0 ? '#58a6ff' : '#8b949e');
+                        const pnlSign = pnlPct >= 0 ? '+' : '';
+                        pnlCell = `<div style="font-size:0.75rem;color:${pnlColor};margin-top:3px;font-weight:700;">${pnlSign}${pnlPct.toFixed(2)}%</div>`;
+                    } else {
+                        pnlCell = `<div style="font-size:0.75rem;color:#64748b;margin-top:3px;">수익률 계산 중...</div>`;
+                    }
+                }
 
                 satHtmlBuffer += `
                     <tr>
@@ -473,7 +494,7 @@ document.addEventListener('DOMContentLoaded', () => {
                         <td>${sharesCell}</td>
                         <td>
                             <div>${valueCell}</div>
-                            ${isHolding ? `<div style="font-size:0.75rem; color:#f59e0b; margin-top:3px;">고점: ${maxPriceStr}</div>` : ''}
+                            ${pnlCell}
                         </td>
                         <td>${statusBadge}</td>
                     </tr>`;
