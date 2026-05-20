@@ -1425,6 +1425,41 @@ body.theme-warm-beige #strat-desc {
     -webkit-text-fill-color: #334155 !important;
 }
 
+/* 모멘텀 슬롯 카드 — 모의(밝은) 테마 가독성 보정 */
+body.theme-warm-beige .momentum-slot-card {
+    background: rgba(15, 23, 42, 0.06) !important;
+    border: 1.5px solid rgba(15, 23, 42, 0.18) !important;
+    box-shadow: inset 0 0 0 1px rgba(15,23,42,0.06), 0 2px 8px rgba(100,80,60,0.08);
+}
+body.theme-warm-beige .momentum-slot-card.occupied {
+    background: rgba(245,158,11,0.09) !important;
+    border-color: rgba(180,120,0,0.38) !important;
+}
+body.theme-warm-beige .momentum-slot-card.profit {
+    border-color: rgba(200,30,20,0.4) !important;
+    background: rgba(200,30,20,0.05) !important;
+}
+body.theme-warm-beige .momentum-slot-card.loss {
+    border-color: rgba(30,90,200,0.38) !important;
+    background: rgba(30,90,200,0.05) !important;
+}
+body.theme-warm-beige .mslot-label {
+    color: #64748b !important;
+    -webkit-text-fill-color: #64748b !important;
+}
+body.theme-warm-beige .mslot-name {
+    color: #0f172a !important;
+    -webkit-text-fill-color: #0f172a !important;
+}
+body.theme-warm-beige .mslot-meta {
+    color: #475569 !important;
+    -webkit-text-fill-color: #475569 !important;
+}
+body.theme-warm-beige .mslot-empty {
+    color: #94a3b8 !important;
+    -webkit-text-fill-color: #94a3b8 !important;
+}
+
 /* ==========================================================================
    ⚙️ [라씨 AI 채팅창] 모의투자 모드(라이트 테마) 독점 가독성 극대화 패치
    ========================================================================== */
