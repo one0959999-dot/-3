@@ -81,6 +81,17 @@ def init_db():
         )
         ''')
 
+            # 규칙 변경 히스토리 — 최근 10버전 보존, 롤백용
+            cursor.execute('''
+        CREATE TABLE IF NOT EXISTS ai_rules_history (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER NOT NULL,
+            rule_text TEXT,
+            trigger_type TEXT DEFAULT 'manual',
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+        ''')
+
             cursor.execute('UPDATE users SET is_running = 0')
             conn.commit()
         finally:
@@ -207,9 +218,25 @@ def get_recent_trades(user_id, ticker, limit=5):
         conn.close()
     return [dict(r) for r in rows]
 
-def save_ai_rules(user_id, rule_text):
+def save_ai_rules(user_id, rule_text, trigger_type: str = 'manual'):
+    """ai_rules 저장 + 자동으로 히스토리에 버전 기록 (최근 10개 유지)."""
     with db_lock:
         conn = get_db_connection()
+        # 현재 규칙 → 히스토리에 백업 (덮어쓰기 전에 저장)
+        current = conn.execute('SELECT rule_text FROM ai_rules WHERE user_id = ?', (user_id,)).fetchone()
+        if current and current['rule_text']:
+            conn.execute('''
+                INSERT INTO ai_rules_history (user_id, rule_text, trigger_type)
+                VALUES (?, ?, ?)
+            ''', (user_id, current['rule_text'], trigger_type))
+            # 히스토리 최대 10개 유지 (오래된 것 삭제)
+            conn.execute('''
+                DELETE FROM ai_rules_history
+                WHERE user_id = ? AND id NOT IN (
+                    SELECT id FROM ai_rules_history
+                    WHERE user_id = ? ORDER BY created_at DESC LIMIT 10
+                )
+            ''', (user_id, user_id))
         conn.execute('''
             INSERT OR REPLACE INTO ai_rules (user_id, rule_text, updated_at)
             VALUES (?, ?, CURRENT_TIMESTAMP)
@@ -224,6 +251,19 @@ def load_ai_rules(user_id):
     finally:
         conn.close()
     return row['rule_text'] if row else ""
+
+def get_ai_rules_history(user_id, limit: int = 5):
+    """최근 N개 규칙 버전 반환. 롤백/비교용."""
+    conn = get_db_connection()
+    try:
+        rows = conn.execute('''
+            SELECT rule_text, trigger_type, created_at
+            FROM ai_rules_history WHERE user_id = ?
+            ORDER BY created_at DESC LIMIT ?
+        ''', (user_id, limit)).fetchall()
+    finally:
+        conn.close()
+    return [dict(r) for r in rows]
 
 # 🟢 [리팩토링] BaseBot에서 SQL을 직접 다루지 않도록 Repository 함수들을 신규 추가합니다.
 def get_user_initial_cash(user_id, is_mock):

@@ -24,7 +24,7 @@ from telegram_bot import TelegramNotifier
 from strategy import CorePosition, Position, get_rsi_signal, get_signal_by_strategy, REINVEST_RATIO, get_market_regime, get_bear_bounce_signal, get_bear_bottom_score, get_bull_momentum_score, get_neutral_range_score, INVERSE_ETF_TICKER, INVERSE_ETF_NAME, INVERSE_BUDGET_RATIO, DEFENSIVE_ASSETS, check_giveback_stop, check_early_drop_stop
 from stock_screener import select_satellites, generate_daily_market_report
 from hot_momentum_scanner import scan_hot_momentum, clear_expired_cache
-from database import update_bot_status, save_portfolio_state, load_portfolio_state, log_trade_journal, get_recent_trades, save_ai_rules, load_ai_rules, get_user_initial_cash, set_user_initial_cash, add_user_initial_cash
+from database import update_bot_status, save_portfolio_state, load_portfolio_state, log_trade_journal, get_recent_trades, save_ai_rules, load_ai_rules, get_ai_rules_history, get_user_initial_cash, set_user_initial_cash, add_user_initial_cash
 
 _SELL_FEE = 0.00015   # 매도 수수료율 (0.015%)
 _SELL_TAX = 0.0018    # 증권거래세율 (0.18%)
@@ -113,6 +113,12 @@ class BaseBot:
         self.momentum_budget_ratio = 0.05    # 총자산의 5% 를 모멘텀 슬롯에 배정
         self._last_momentum_scan = 0.0       # 마지막 스캔 타임스탬프
         self._momentum_scan_interval = 60    # 1분마다 스캔
+
+        # ── 🧠 자가학습 트리거 ───────────────────────────────────────
+        self._trades_since_reflection = 0        # 누적 거래 수 (10건마다 반성)
+        self._last_emergency_reflection_ts = 0.0  # 긴급 반성 마지막 실행 (4시간 쿨다운)
+        self._EMERGENCY_LOSS_THRESHOLD = -80_000  # 8만원 이상 손실 시 긴급 반성 트리거
+        self._EMERGENCY_COOLDOWN = 4 * 3600       # 긴급 반성 최소 간격 (4시간)
 
         self.kis = None
         self.telegram = None
@@ -1056,7 +1062,7 @@ class BaseBot:
                         if self._sell_order(ticker, p_sh, pos, p_nm):
                             with self.lock: pos.last_order_time = time.time(); pos.max_price = 0; pos.status = "체결 대기 ⏳"
                             profit = _net_profit(price, p_avg, p_sh)
-                            log_trade_journal(self.user_id, ticker, p_nm, 'SELL', price, st_nm, "ATR 트레일링 익절", profit=profit)
+                            self._log_trade(ticker, p_nm, 'SELL', price, st_nm, "ATR 트레일링 익절", profit=profit)
                             self._send_trade_telegram(self._fmt_trade_msg("🎯", "트레일링 익절", ticker, p_nm, price, p_sh, profit=profit, strategy=st_nm, note="ATR 트레일링 스탑 발동"))
                             with self.lock: self.pnl_this_turn += profit
                             self._record_daily_pnl(profit)
@@ -1072,7 +1078,7 @@ class BaseBot:
                             with self.lock:
                                 pos.last_order_time = time.time(); pos.status = "장초 급락 손절 🚨"
                             profit = _net_profit(price, p_avg, stop_qty)
-                            log_trade_journal(self.user_id, ticker, p_nm, 'SELL', price, st_nm, f"장초 급락 손절 {_es_pct*100:.0f}% [{_es_reason}]", profit=profit)
+                            self._log_trade(ticker, p_nm, 'SELL', price, st_nm, f"장초 급락 손절 {_es_pct*100:.0f}% [{_es_reason}]", profit=profit)
                             self._send_trade_telegram(self._fmt_trade_msg("🚨", "장초 급락 손절", ticker, p_nm, price, stop_qty, profit=profit, strategy=st_nm, note=_es_reason))
                             with self.lock: self.pnl_this_turn += profit
                             self._record_daily_pnl(profit)
@@ -1086,7 +1092,7 @@ class BaseBot:
                                 pos.second_buy_done = True; pos.pyramid_done = True; pos.partial_sold = False
                                 pos.second_buy_price = 0; pos.second_buy_cash = 0
                             profit = _net_profit(price, p_avg, p_sh)
-                            log_trade_journal(self.user_id, ticker, p_nm, 'SELL', price, st_nm, "ATR 하드 손절", profit=profit)
+                            self._log_trade(ticker, p_nm, 'SELL', price, st_nm, "ATR 하드 손절", profit=profit)
                             self._send_trade_telegram(self._fmt_trade_msg("💥", "손절 체결", ticker, p_nm, price, p_sh, profit=profit, strategy=st_nm, note="ATR 하드 손절선 이탈"))
                             with self.lock: self.pnl_this_turn += profit
                             self._record_daily_pnl(profit)
@@ -1101,7 +1107,7 @@ class BaseBot:
                         with self.lock:
                             pos.last_order_time = time.time(); pos.partial_sold = True; pos.status = "1차익절 ✅"
                         profit = _net_profit(price, p_avg, sell_qty)
-                        log_trade_journal(self.user_id, ticker, p_nm, 'SELL', price, st_nm, f"1차 분할 익절 +5% ({sell_qty}주)", profit=profit)
+                        self._log_trade(ticker, p_nm, 'SELL', price, st_nm, f"1차 분할 익절 +5% ({sell_qty}주)", profit=profit)
                         self._send_trade_telegram(self._fmt_trade_msg("🎯", "1차 분할 익절", ticker, p_nm, price, sell_qty, profit=profit, strategy=st_nm, note=f"나머지 {p_sh - sell_qty}주는 ATR 트레일링 계속 보유"))
                         with self.lock: self.pnl_this_turn += profit
                         self._record_daily_pnl(profit)
@@ -1118,7 +1124,7 @@ class BaseBot:
                     if pyramid_qty > 0 and self._buy_order(ticker, pyramid_qty, pos, p_nm):
                         with self.lock:
                             pos.last_order_time = time.time(); pos.pyramid_done = True; pos.status = "피라미딩 📈"
-                        log_trade_journal(self.user_id, ticker, p_nm, 'BUY', price, st_nm, f"피라미딩 +3% 추세 지속 ({pyramid_qty}주)")
+                        self._log_trade(ticker, p_nm, 'BUY', price, st_nm, f"피라미딩 +3% 추세 지속 ({pyramid_qty}주)")
                         self._send_trade_telegram(self._fmt_trade_msg("📈", "피라미딩 추가 매수", ticker, p_nm, price, pyramid_qty, strategy=st_nm, note="+3% 돌파 · 상승 추세 지속 확인"))
 
                 # ── 2차 분할 매수: 1차 매수가 대비 -2% 눌림목 ──
@@ -1133,7 +1139,7 @@ class BaseBot:
                         with self.lock:
                             pos.last_order_time = time.time(); pos.second_buy_done = True
                             pos.second_buy_cash = 0; pos.status = "2차매수 ✅"
-                        log_trade_journal(self.user_id, ticker, p_nm, 'BUY', price, st_nm, f"2차 분할 매수 눌림목 ({sq}주)")
+                        self._log_trade(ticker, p_nm, 'BUY', price, st_nm, f"2차 분할 매수 눌림목 ({sq}주)")
                         self._send_trade_telegram(self._fmt_trade_msg("🛒", "2차 분할 매수", ticker, p_nm, price, sq, strategy=st_nm, note="-2% 눌림목 포착"))
 
                 # 당일 AI 거절 블랙리스트 종목은 매수 시도 자체를 차단
@@ -1169,7 +1175,7 @@ class BaseBot:
                                 if decision:
                                     if self._buy_order(ticker, qty, pos, p_nm):
                                         with self.lock: pos.last_order_time = time.time(); pos.status = "체결 대기 ⏳"
-                                        log_trade_journal(self.user_id, ticker, p_nm, 'BUY', price, st_nm, f"하락장 저점포착 AI승인 [{bear_reason_str}]")
+                                        self._log_trade(ticker, p_nm, 'BUY', price, st_nm, f"하락장 저점포착 AI승인 [{bear_reason_str}]")
                                         self._send_trade_telegram(self._fmt_trade_msg("🎣", f"하락장 저점 매수 ({bear_label})", ticker, p_nm, price, qty, strategy=st_nm, ai_reason=ai_reason, note=bear_reason_str))
                                 else:
                                     pos.status = "AI 거절(하락장) 🛑"
@@ -1184,7 +1190,7 @@ class BaseBot:
                                     threading.Thread(target=self._rescreen_satellites, daemon=True).start()
                             elif self._buy_order(ticker, qty, pos, p_nm):
                                 with self.lock: pos.last_order_time = time.time(); pos.status = "체결 대기 ⏳"
-                                log_trade_journal(self.user_id, ticker, p_nm, 'BUY', price, st_nm, f"하락장 저점포착 [{bear_reason_str}]")
+                                self._log_trade(ticker, p_nm, 'BUY', price, st_nm, f"하락장 저점포착 [{bear_reason_str}]")
                                 self._send_trade_telegram(self._fmt_trade_msg("🎣", f"하락장 저점 매수 ({bear_label})", ticker, p_nm, price, qty, strategy=st_nm, note=bear_reason_str))
                         continue
 
@@ -1241,7 +1247,7 @@ class BaseBot:
                                     pos.second_buy_done  = False
                                     pos.pyramid_done     = False
                                     pos.partial_sold     = False
-                                log_trade_journal(self.user_id, ticker, p_nm, 'BUY', price, st_nm, f"AI 승인 [{regime_label}] 1차({int(first_ratio*100)}%) ({ai_reason})")
+                                self._log_trade(ticker, p_nm, 'BUY', price, st_nm, f"AI 승인 [{regime_label}] 1차({int(first_ratio*100)}%) ({ai_reason})")
                                 self._send_trade_telegram(self._fmt_trade_msg("📈", f"AI 매수 승인  ({int(first_ratio*100)}% 1차)", ticker, p_nm, price, qty, strategy=f"{st_nm}  ·  {regime_label}", ai_reason=ai_reason, note=regime_reason_str))
                         else:
                             pos.status = "AI 거절 🛑"
@@ -1265,7 +1271,7 @@ class BaseBot:
                                 pos.second_buy_done  = False
                                 pos.pyramid_done     = False
                                 pos.partial_sold     = False
-                            log_trade_journal(self.user_id, ticker, p_nm, 'BUY', price, st_nm, f"알고리즘 [{regime_label}] 1차({int(first_ratio*100)}%): {regime_reason_str}")
+                            self._log_trade(ticker, p_nm, 'BUY', price, st_nm, f"알고리즘 [{regime_label}] 1차({int(first_ratio*100)}%): {regime_reason_str}")
                             self._send_trade_telegram(self._fmt_trade_msg("📈", f"알고리즘 매수  ({int(first_ratio*100)}% 1차)", ticker, p_nm, price, qty, strategy=f"{st_nm}  ·  {regime_label}", note=regime_reason_str))
 
                 elif sig == 'SELL' and p_sh > 0 and is_cd_passed:
@@ -1277,7 +1283,7 @@ class BaseBot:
                             if self._sell_order(ticker, p_sh, pos, p_nm):
                                 with self.lock: pos.last_order_time = time.time(); pos.status = "체결 대기 ⏳"
                                 profit = _net_profit(price, p_avg, p_sh)
-                                log_trade_journal(self.user_id, ticker, p_nm, 'SELL', price, st_nm, f"AI 승인 ({ai_reason})", profit=profit)
+                                self._log_trade(ticker, p_nm, 'SELL', price, st_nm, f"AI 승인 ({ai_reason})", profit=profit)
                                 self._send_trade_telegram(self._fmt_trade_msg("📉", "AI 매도 승인", ticker, p_nm, price, p_sh, profit=profit, strategy=st_nm, ai_reason=ai_reason))
                                 with self.lock:
                                     self.pnl_this_turn += profit
@@ -1291,7 +1297,7 @@ class BaseBot:
                         if self._sell_order(ticker, p_sh, pos, p_nm):
                             with self.lock: pos.last_order_time = time.time(); pos.status = "체결 대기 ⏳"
                             profit = _net_profit(price, p_avg, p_sh)
-                            log_trade_journal(self.user_id, ticker, p_nm, 'SELL', price, st_nm, "알고리즘 직통", profit=profit)
+                            self._log_trade(ticker, p_nm, 'SELL', price, st_nm, "알고리즘 직통", profit=profit)
                             self._send_trade_telegram(self._fmt_trade_msg("📉", "알고리즘 매도", ticker, p_nm, price, p_sh, profit=profit, strategy=st_nm))
                             with self.lock: self.pnl_this_turn += profit
                             self._record_daily_pnl(profit)
@@ -1393,7 +1399,7 @@ class BaseBot:
                     self._last_trade_ts = time.time()
                     self.pnl_this_turn += partial_profit
                 mp['shares'] = shares - partial_qty   # 남은 70% 계속 보유
-                log_trade_journal(self.user_id, ticker, name, 'SELL', price, "모멘텀슬롯",
+                self._log_trade(ticker, name, 'SELL', price, "모멘텀슬롯",
                                   f"giveback MA5 이탈 → 30% 축소 ({giveback_reason})", profit=partial_profit)
                 self.add_log(f"✂️ 모멘텀#{slot_idx+1} 부분청산 30% | {name} {partial_qty}주 @ {price:,.0f}원 | {giveback_reason} | 손익: {partial_profit:+,.0f}원")
                 self._send_trade_telegram(self._fmt_trade_msg("✂️", f"모멘텀#{slot_idx+1} 30% 축소",
@@ -1413,7 +1419,7 @@ class BaseBot:
                     self._last_trade_ts = time.time()
                     self.pnl_this_turn += partial_profit
                 mp['shares'] = shares - partial_qty   # 남은 30% 계속 보유
-                log_trade_journal(self.user_id, ticker, name, 'SELL', price, "모멘텀슬롯",
+                self._log_trade(ticker, name, 'SELL', price, "모멘텀슬롯",
                                   f"giveback 30% 반납 → 70% 선익절 ({giveback_reason})", profit=partial_profit)
                 self.add_log(f"✂️ 모멘텀#{slot_idx+1} 부분청산 70% | {name} {partial_qty}주 @ {price:,.0f}원 | {giveback_reason} | 손익: {partial_profit:+,.0f}원")
                 self._send_trade_telegram(self._fmt_trade_msg("✂️", f"모멘텀#{slot_idx+1} 70% 부분청산",
@@ -1443,7 +1449,7 @@ class BaseBot:
                 if self.internal_cash is not None:
                     self.internal_cash += price * shares * (1 - _SELL_FEE - _SELL_TAX)
                 self._last_trade_ts = time.time()
-            log_trade_journal(self.user_id, ticker, name, 'SELL', price, "모멘텀슬롯", sell_reason, profit=profit)
+            self._log_trade(ticker, name, 'SELL', price, "모멘텀슬롯", sell_reason, profit=profit)
             self.add_log(f"🏁 모멘텀#{slot_idx+1} 청산 | {name}({ticker}) {shares}주 @ {price:,.0f}원 | {sell_reason} | 손익: {profit:+,.0f}원")
             self._send_trade_telegram(self._fmt_trade_msg("🏁", f"모멘텀#{slot_idx+1} 청산", ticker, name, price, shares, profit=profit, strategy="모멘텀슬롯", note=sell_reason))
             with self.lock:
@@ -1590,7 +1596,7 @@ class BaseBot:
                 'score': best['momentum_score'], 'reason': best['trigger_reason'],
                 'slot_idx': slot_idx,
             }
-            log_trade_journal(self.user_id, b_ticker, b_name, 'BUY', b_price, "모멘텀슬롯", m_buy_note)
+            self._log_trade(b_ticker, b_name, 'BUY', b_price, "모멘텀슬롯", m_buy_note)
             self.add_log(f"{buy_label} | {b_name}({b_ticker}) {qty}주 @ {b_price:,.0f}원 | {best['trigger_reason']}")
             self._send_trade_telegram(
                 f"{buy_label} 진입!  ·  {self.alert_icon} {self.mode_name}\n"
@@ -1759,7 +1765,32 @@ class BaseBot:
         except Exception as e:
             logger.error(f"[{self.mode_name}] 일일 리포트 생성 오류: {e}", exc_info=True)
 
+    # ── 🧠 자가학습 메서드 그룹 ──────────────────────────────────────
+
+    def _log_trade(self, ticker: str, name: str, action: str, price: float,
+                   strategy: str, reason: str, profit: float = 0):
+        """log_trade_journal 래퍼 — 매매 기록 후 자가학습 트리거 체크.
+        모든 self._log_trade(...) 호출 대신 이 메서드를 사용."""
+        self._log_trade(ticker, name, action, price, strategy, reason, profit)
+
+        # ① 누적 거래 카운터: 10건마다 누적 반성
+        self._trades_since_reflection += 1
+        if self._trades_since_reflection >= 10:
+            self._trades_since_reflection = 0
+            self.add_log("📚 [누적 10건 달성] 학습 반성 트리거")
+            self._run_threaded(self._incremental_reflection)
+            return  # 긴급 반성과 중복 방지
+
+        # ② 큰 손실 감지: SELL이고 손실이 임계값 초과하면 긴급 반성
+        if action == 'SELL' and profit < self._EMERGENCY_LOSS_THRESHOLD:
+            cooldown_remaining = self._EMERGENCY_COOLDOWN - (time.time() - self._last_emergency_reflection_ts)
+            if cooldown_remaining <= 0:
+                self.add_log(f"🚨 [큰 손실 감지] {name} {profit:,.0f}원 — 긴급 반성 시작")
+                self._last_emergency_reflection_ts = time.time()
+                self._run_threaded(lambda: self._emergency_reflection(ticker, name, profit, reason))
+
     def _weekly_self_reflection(self):
+        """주간 반성 — 기존 규칙 보존하면서 학습 결과 병합 (덮어쓰기 금지)."""
         from database import get_db_connection
         conn = None
         try:
@@ -1773,11 +1804,54 @@ class BaseBot:
         if not rows: return
 
         history_text = "\n".join([f"- {r['date']} | {r['stock_name']} | {r['action']} | {r['ai_reason']} | 손익:{r['profit']}" for r in rows])
+        existing_rules = load_ai_rules(self.user_id)   # ← 기존 규칙 로드
         if self.gemini:
-            new_rules = self.gemini.generate_weekly_reflection(history_text)
+            new_rules = self.gemini.generate_weekly_reflection(history_text, existing_rules)
             if new_rules:
-                save_ai_rules(self.user_id, new_rules)
-                self._send_telegram(f"🧠 [봇 자가 학습 완료]\n\n{new_rules}")
+                save_ai_rules(self.user_id, new_rules, trigger_type='weekly')
+                self._send_telegram(f"🧠 [주간 학습 완료]\n\n{new_rules[:2000]}")
+
+    def _incremental_reflection(self):
+        """누적 10건 반성 — 주간 반성과 동일 로직, 트리거만 다름."""
+        from database import get_db_connection
+        conn = None
+        try:
+            conn = get_db_connection()
+            rows = conn.execute('SELECT date(created_at) as date, stock_name, action, price, ai_reason, profit FROM trade_journal WHERE user_id = ? ORDER BY created_at DESC LIMIT 10', (self.user_id,)).fetchall()
+        except Exception as e:
+            logger.warning(f"[{self.mode_name}] 누적 반성 데이터 조회 실패: {e}")
+            rows = []
+        finally:
+            if conn: conn.close()
+        if not rows: return
+
+        history_text = "\n".join([f"- {r['date']} | {r['stock_name']} | {r['action']} | {r['ai_reason']} | 손익:{r['profit']}" for r in rows])
+        existing_rules = load_ai_rules(self.user_id)
+        if self.gemini:
+            new_rules = self.gemini.generate_weekly_reflection(history_text, existing_rules)
+            if new_rules:
+                save_ai_rules(self.user_id, new_rules, trigger_type='incremental')
+                self._send_telegram(f"📚 [누적 10건 학습 완료]\n\n{new_rules[:2000]}")
+
+    def _emergency_reflection(self, ticker: str, stock_name: str,
+                               profit: float, ai_reason: str):
+        """큰 손실 직후 긴급 반성 — 관련 규칙 항목만 수정/강화, 나머지 보존."""
+        existing_rules = load_ai_rules(self.user_id)
+        if not self.gemini:
+            return
+        new_rules = self.gemini.generate_emergency_reflection(
+            ticker, stock_name, profit, ai_reason, existing_rules
+        )
+        if new_rules:
+            save_ai_rules(self.user_id, new_rules, trigger_type='emergency')
+            self._send_telegram(
+                f"🚨 <b>긴급 학습 완료</b>  ·  {self.alert_icon} {self.mode_name}\n"
+                f"━━━━━━━━━━━━━━━━━━━━\n"
+                f"📌 <b>{stock_name}</b>  <code>{ticker}</code>\n"
+                f"💸 손실: <b>{profit:,.0f}원</b>\n"
+                f"🧠 규칙 업데이트 완료 (기존 규칙 보존)\n"
+                f"⏰ {_now_kst().strftime('%H:%M KST')}"
+            )
 
     def _run_threaded(self, job_func): threading.Thread(target=job_func, daemon=True).start()
 

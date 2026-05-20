@@ -460,19 +460,64 @@ REASON: (핵심 근거 2~3줄, 구체적 수치 포함)"""
             # 파싱 실패 시 → 안전 정책: 원본 candidates 그대로 반환 (자동 승인 X, 알고리즘 선정값 유지)
             return [dict(c, approved=True, ai_reason="AI 파싱 오류 — 알고리즘 원본 유지") for c in candidates]
 
-    def generate_weekly_reflection(self, trade_history_text: str) -> str:
-        """매주 금요일, 한 주간의 매매를 돌아보고 새로운 규칙을 생성 — GeminiApi 호환"""
+    def generate_weekly_reflection(self, trade_history_text: str, existing_rules: str = "") -> str:
+        """주간/누적 반성 — 기존 규칙을 유지하면서 학습 결과를 병합.
+        기존 규칙을 통째로 교체하지 않고, 검증된 것은 강화·반증된 것은 수정·새 패턴은 추가."""
         if not self.client:
             return ""
 
-        prompt = f"""당신은 AI 주식 트레이더입니다. 다음은 이번 주 당신의 실제 매매 결과입니다.
+        existing_section = f"""
+[현재 적용 중인 기존 규칙 — 아래를 기반으로 수정/보완하라]
+{existing_rules}
+""" if existing_rules.strip() else "[기존 규칙 없음 — 새로 작성]"
+
+        prompt = f"""당신은 AI 주식 트레이더입니다. 다음은 최근 매매 결과입니다.
 {trade_history_text}
 
-위 결과를 분석하여, 어떤 조건에서 손실이 발생했고 어떤 조건에서 수익이 났는지 파악하세요.
-그리고 다음 주 매매 승인에 직접적으로 적용할 **[나만의 새로운 투자 원칙 3가지]**를 간결하게 마크다운 글머리 기호로 작성해주세요."""
+{existing_section}
+
+위 매매 결과를 분석하여 아래 원칙에 따라 규칙을 업데이트하라:
+1. 기존 규칙 중 이번 매매에서 검증된 항목 → 유지 또는 강화 (삭제 금지)
+2. 기존 규칙 중 이번 매매에서 반증된 항목 → 수정 (이유 한 줄 명시)
+3. 이번 매매에서 새로 발견한 패턴 → 규칙 말미에 추가 (최대 2개)
+4. 전체 규칙은 마크다운 글머리 기호로 작성, 총 길이는 600자 이내로 유지
+
+출력: 업데이트된 전체 규칙 텍스트만 출력 (설명·머리말 없이)"""
 
         try:
             return self.generate_content(prompt)
+        except Exception:
+            return ""
+
+    def generate_emergency_reflection(self, ticker: str, stock_name: str,
+                                       profit: float, ai_reason: str,
+                                       existing_rules: str = "") -> str:
+        """큰 손실 직후 긴급 반성 — 해당 거래 1건에서 배운 교훈만 기존 규칙에 추가/강화.
+        기존 규칙은 최대한 보존하고 관련 항목 1~2개만 수정/추가."""
+        if not self.client:
+            return ""
+
+        existing_section = (f"[현재 적용 규칙]\n{existing_rules}"
+                            if existing_rules.strip() else "[기존 규칙 없음]")
+
+        prompt = f"""방금 큰 손실 거래가 발생했습니다. 즉시 원인을 분석하고 규칙을 보강하라.
+
+[손실 거래 정보]
+- 종목: {stock_name} ({ticker})
+- 손실: {profit:,.0f}원
+- 매매 판단 근거: {ai_reason}
+
+{existing_section}
+
+지시:
+1. 위 손실의 핵심 원인 1줄로 파악
+2. 기존 규칙 중 이 손실과 관련된 항목 찾아서 강화 (없으면 새 항목 추가)
+3. 나머지 기존 규칙은 그대로 유지
+
+출력: 수정된 전체 규칙 텍스트만 출력 (설명 없이). 수정/추가된 항목 앞에 [NEW] 또는 [UPDATED] 태그 표시."""
+
+        try:
+            return self.generate_content(prompt, temperature=0.2)
         except Exception:
             return ""
 
