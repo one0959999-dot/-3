@@ -30,27 +30,62 @@ def get_market_regime(kis_api) -> str:
     KOSPI200 ETF(069500) 일봉 기준 시장 국면 판단.
     Returns: 'BULL' | 'BEAR' | 'NEUTRAL'
 
-    판단 기준 (이중 이동평균 배열):
-      BEAR  : 현재가 < 20일선 < 60일선  (하향 배열)
-      BULL  : 현재가 > 20일선 > 60일선  (상향 배열)
-      NEUTRAL: 그 외 (혼조)
+    판단 기준: 최근 2일~1달(22 거래일) 다중 타임프레임 7개 신호 종합 스코어
+    ─────────────────────────────────────────────────────────────────────────
+    [단기 2~5일]
+      S1. 현재가 vs 5일선  : 위 +1 / 아래 -1
+      S2. 5일선 기울기(최근 3일): 상승 +1 / 하락 -1
+
+    [중기 10~20일]
+      M1. 현재가 vs 20일선 : 위 +1 / 아래 -1
+      M2. 20일선 기울기(최근 5일): 상승 +1 / 하락 -1
+      M3. RSI(14)          : >55 → +1 | <45 → -1 | 45~55 → 0
+
+    [장기 ~1달]
+      L1. 20일선 vs 60일선 : 골든크로스(위) +1 / 데드크로스(아래) -1
+      L2. 최근 22일(≈1달) 수익률 : >+3% → +1 | <-3% → -1 | 그 외 → 0
+
+    최종 판정:  score ≥ +5 → BULL  |  score ≤ -5 → BEAR  |  그 외 → NEUTRAL
     """
     try:
         df = kis_api.get_ohlcv("069500", "D")
-        if df is None or df.empty or len(df) < 62:
+        if df is None or df.empty or len(df) < 65:
             return "NEUTRAL"
         c = df['close'].dropna()
-        if len(c) < 62:
+        if len(c) < 65:
             return "NEUTRAL"
-        ma20 = c.rolling(20).mean()
-        ma60 = c.rolling(60).mean()
-        price = float(c.iloc[-1])
-        m20   = float(ma20.iloc[-1])
-        m60   = float(ma60.iloc[-1])
-        if price < m20 and m20 < m60:
-            return "BEAR"
-        if price > m20 and m20 > m60:
-            return "BULL"
+
+        price    = float(c.iloc[-1])
+        ma5      = c.rolling(5).mean()
+        ma20     = c.rolling(20).mean()
+        ma60     = c.rolling(60).mean()
+        m5_now   = float(ma5.iloc[-1])
+        m5_3ago  = float(ma5.iloc[-4])    # 3일 전 5일선
+        m20_now  = float(ma20.iloc[-1])
+        m20_5ago = float(ma20.iloc[-6])   # 5일 전 20일선
+        m60_now  = float(ma60.iloc[-1])
+        p22ago   = float(c.iloc[-23]) if len(c) >= 23 else float(c.iloc[0])
+
+        # RSI(14)
+        d   = c.diff()
+        g   = d.clip(lower=0).rolling(14).mean()
+        lo  = (-d.clip(upper=0)).rolling(14).mean()
+        rsi = float((100 - 100 / (1 + g / (lo + 1e-10))).iloc[-1])
+
+        score = 0
+        score += 1 if price > m5_now   else -1          # S1
+        score += 1 if m5_now > m5_3ago else -1          # S2
+        score += 1 if price > m20_now  else -1          # M1
+        score += 1 if m20_now > m20_5ago else -1        # M2
+        if rsi > 55:   score += 1                        # M3
+        elif rsi < 45: score -= 1
+        score += 1 if m20_now > m60_now else -1         # L1
+        ret22 = (price / p22ago - 1) * 100 if p22ago > 0 else 0
+        if ret22 > 3.0:   score += 1                    # L2
+        elif ret22 < -3.0: score -= 1
+
+        if score >= 5:  return "BULL"
+        if score <= -5: return "BEAR"
         return "NEUTRAL"
     except Exception:
         return "NEUTRAL"

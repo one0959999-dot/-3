@@ -896,17 +896,17 @@ class BaseBot:
                         continue
 
                 # I-01: 장 초반(09:00~09:30) 급락 단계별 손절 — check_early_drop_stop 실제 연결
-                if p_sh > 0 and p_avg > 0 and is_cd_passed:
-                    early_stop_result = check_early_drop_stop(price, p_avg)
-                    if early_stop_result:
-                        stop_qty = max(1, int(p_sh * early_stop_result))  # 비율만큼 매도
-                        if self.kis:
-                            self.kis.sell_market_order(ticker, stop_qty)
+                # check_early_drop_stop은 (stage, sell_pct, reason) 튜플을 반환
+                if p_sh > 0 and p_avg > 0 and is_cd_passed and "09:00" <= current_time_str <= "09:30":
+                    _es_stage, _es_pct, _es_reason = check_early_drop_stop(price, p_avg)
+                    if _es_stage > 0 and _es_pct > 0:
+                        stop_qty = max(1, int(p_sh * _es_pct))
+                        if self._sell_order(ticker, stop_qty, pos, p_nm):
                             with self.lock:
                                 pos.last_order_time = time.time(); pos.status = "장초 급락 손절 🚨"
                             profit = _net_profit(price, p_avg, stop_qty)
-                            log_trade_journal(self.user_id, ticker, p_nm, 'SELL', price, st_nm, f"장초 급락 손절 {early_stop_result*100:.0f}%", profit=profit)
-                            self._send_telegram(self._fmt_trade_msg("🚨", "장초 급락 손절", ticker, p_nm, price, stop_qty, profit=profit, strategy=st_nm, note=f"개장 급락 {early_stop_result*100:.0f}% 분할 손절"))
+                            log_trade_journal(self.user_id, ticker, p_nm, 'SELL', price, st_nm, f"장초 급락 손절 {_es_pct*100:.0f}% [{_es_reason}]", profit=profit)
+                            self._send_telegram(self._fmt_trade_msg("🚨", "장초 급락 손절", ticker, p_nm, price, stop_qty, profit=profit, strategy=st_nm, note=_es_reason))
                             with self.lock: self.pnl_this_turn += profit
                         continue
 

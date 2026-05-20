@@ -388,19 +388,25 @@ def ai_chat():
 @app.route('/api/settings/mode', methods=['POST'])
 @login_required
 def set_mode():
-    """실전/모의 투자 모드 전환 API"""
+    """실전/모의 투자 모드 전환 API — 반대 모드 봇을 자동 정지해 한방향만 동작하게 함"""
     data = request.json
     is_mock = int(data.get('is_mock', 1))
-    
+
+    # 반대 모드 봇이 실행 중이면 먼저 정지 (한방향 보장)
+    opposite_bot = manager.bots.get((current_user.id, not bool(is_mock)))
+    if opposite_bot and opposite_bot.is_running:
+        opposite_bot.stop()
+        logger.info(f"[mode switch] user={current_user.id} 반대 모드 봇 자동 정지")
+
     conn = get_db_connection()
     conn.execute('UPDATE users SET is_mock = ? WHERE id = ?', (is_mock, current_user.id))
     conn.commit()
     user_data = conn.execute('SELECT * FROM users WHERE id = ?', (current_user.id,)).fetchone()
     conn.close()
-    
+
     for k, v in dict(user_data).items():
         current_user.data[k] = v
-        
+
     return jsonify({"status": "success", "is_mock": is_mock})
 
 @app.route('/api/settings/satellites', methods=['POST'])

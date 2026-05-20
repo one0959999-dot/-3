@@ -167,6 +167,7 @@ class KisRealApi:
 
     def _place_order(self, stock_code: str, qty: int, side: str, price: int = 0):
         if not self._ensure_token():
+            print(f"[KIS 실전] ⚠️ 토큰 없음 → {side} {stock_code} 주문 취소")
             return None
 
         kst_now = datetime.now(tz=timezone(timedelta(hours=9)))
@@ -174,6 +175,8 @@ class KisRealApi:
         # ATS/NXT session: 15:30–19:50 KST
         is_nxt = (15 * 60 + 30) <= kst_time < (19 * 60 + 50)
 
+        # 09:00~15:30 정규장, 15:30~19:50 NXT(대체거래소)
+        print(f"[KIS 실전] 주문 시도 | {side} {stock_code} {qty}주 | 시간:{kst_now.strftime('%H:%M')} NXT:{is_nxt}")
         # New TR-IDs per KIS docs (old 0802U/0801U may be blocked without notice)
         tr_id = "TTTC0012U" if side == 'BUY' else "TTTC0011U"
 
