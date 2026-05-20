@@ -1010,3 +1010,32 @@ window.resetAiChat = async function () {
     const messages = document.getElementById('chat-messages');
     messages.innerHTML = `<div class="chat-msg ai"><div class="chat-bubble">대화 기록이 초기화되었습니다.</div><span class="chat-msg-time">라씨 AI · ${new Date().toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit' })}</span></div>`;
 }
+
+window.resetInitialCash = async function () {
+    const totalValEl = document.getElementById('total-value');
+    const currentTotal = totalValEl ? parseInt(totalValEl.textContent.replace(/[^0-9]/g, '')) : 0;
+    const input = prompt(
+        '수익률 기준 원금을 재설정합니다.\n' +
+        '현재 총평가금액: ' + (currentTotal ? currentTotal.toLocaleString() + '원' : '알 수 없음') + '\n\n' +
+        '재설정할 원금을 입력하세요 (원 단위, 기본 10,000,000):',
+        '10000000'
+    );
+    if (input === null) return;
+    const amount = parseInt(input.replace(/[^0-9]/g, ''));
+    if (!amount || amount <= 0) { alert('올바른 금액을 입력해주세요.'); return; }
+    try {
+        const res = await fetch('/api/reset_initial_cash', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ amount })
+        });
+        const data = await res.json();
+        if (data.status === 'ok') {
+            alert('✅ ' + data.message + '\n페이지를 새로고침하면 수익률이 정확하게 반영됩니다.');
+        } else {
+            alert('❌ ' + (data.message || '오류 발생'));
+        }
+    } catch (e) {
+        alert('❌ 서버 통신 오류: ' + e.message);
+    }
+}

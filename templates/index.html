@@ -6,7 +6,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>라씨 매매비서 봇 대시보드</title>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600;700;800&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}?v=11">
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}?v=12">
     <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@500;700&display=swap" rel="stylesheet">
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
     <style>
@@ -432,6 +432,9 @@
                     예수금 <span id="available-cash-val" style="color:#94a3b8; font-weight:600;">-</span>
                 </div>
                 <div class="card-subvalue" id="total-pnl">수익: -</div>
+                <div style="margin-top:6px;">
+                    <button id="reset-principal-btn" onclick="resetInitialCash()" style="font-size:0.7rem;padding:2px 8px;background:rgba(255,255,255,0.07);border:1px solid rgba(255,255,255,0.15);border-radius:4px;color:#8b949e;cursor:pointer;" title="수익률 기준 원금을 현재 총자산으로 재설정합니다">⚙ 원금 기준 리셋</button>
+                </div>
             </div>
         </div>
 
@@ -643,7 +646,7 @@
         </div>
     </div>
 
-    <script src="{{ url_for('static', filename='script.js') }}?v=11"></script>
+    <script src="{{ url_for('static', filename='script.js') }}?v=12"></script>
 
     {% if gemini_enabled %}
     <button id="ai-chat-fab" onclick="toggleAiChat()" title="라씨 AI와 대화하기">

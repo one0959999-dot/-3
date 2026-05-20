@@ -4,7 +4,6 @@ import schedule
 import json
 import logging
 import os
-import tempfile
 import pandas as pd
 import requests
 from bs4 import BeautifulSoup
@@ -220,22 +219,15 @@ class BaseBot:
                 pure_principal = real_cash + real_purchase
 
                 if not getattr(self, 'initial_capital_captured', False):
-                    cash_col = "mock_initial_cash" if self._is_mock else "real_initial_cash"
-                    # EC2 읽기 전용 디렉토리 대응: /tmp 아래에 플래그 파일 생성
-                    _flag_dir = os.path.join(tempfile.gettempdir(), 'lassi_bot')
-                    os.makedirs(_flag_dir, exist_ok=True)
-                    flag_file = os.path.join(_flag_dir, f"{cash_col}_{self.user_id}_locked.flag")
-
-                    if not os.path.exists(flag_file) and pure_principal > 0:
+                    # DB 값이 기본값(1000만)인 경우에만 실제 원금으로 교체.
+                    # ─ 이전에는 /tmp/ 플래그 파일을 사용했으나, PC 재시작 시 /tmp/ 가 초기화되면서
+                    #   봇이 재기동할 때마다 "현재 잔고"를 원금으로 덮어쓰는 버그가 있었음.
+                    #   (예: 손실 발생 후 재시작 → 남은 잔고를 원금으로 저장 → 수익률 왜곡)
+                    # ─ 수정: 파일 플래그 제거, DB 값이 기본값일 때만 업데이트 (재시작-덮어쓰기 방지).
+                    db_cash = get_user_initial_cash(self.user_id, self._is_mock)
+                    if db_cash == 10000000.0 and pure_principal > 0:
                         set_user_initial_cash(self.user_id, pure_principal, self._is_mock)
-                        with open(flag_file, 'w') as f: f.write("Locked")
-                        self.add_log(f"💰 [{self.mode_name} 원금 셋업] 실시간 계좌 진짜 원금 {pure_principal:,.0f}원으로 영구 고정 완료.")
-                    else:
-                        db_cash = get_user_initial_cash(self.user_id, self._is_mock)
-                        if db_cash == 10000000.0 and pure_principal > 0:
-                            set_user_initial_cash(self.user_id, pure_principal, self._is_mock)
-                            self.add_log(f"💰 [{self.mode_name} 최초 원금 계산] 투자 원금 {pure_principal:,.0f}원 셋업 완료.")
-                            with open(flag_file, 'w') as f: f.write("Locked")
+                        self.add_log(f"💰 [{self.mode_name} 원금 셋업] 투자 원금 {pure_principal:,.0f}원 확정 (첫 실행 감지).")
                     self.initial_capital_captured = True
                 
                 current_asset_cost = real_cash + real_purchase 

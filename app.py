@@ -8,7 +8,7 @@ from flask import Flask, render_template, jsonify, request, redirect, url_for, f
 from flask_login import LoginManager, UserMixin, login_user, logout_user, login_required, current_user
 
 from bots.bot_manager import manager
-from database import get_db_connection, verify_user, add_user, init_db, update_user_keys, init_default_ai_rules
+from database import get_db_connection, verify_user, add_user, init_db, update_user_keys, init_default_ai_rules, set_user_initial_cash
 
 # ── 통합 로깅 설정 (파일 + 콘솔) ──
 logging.basicConfig(
@@ -252,6 +252,20 @@ def toggle_bot():
 def get_pnl():
     bot = get_current_bot()
     return jsonify(bot.get_pnl_data())
+
+@app.route('/api/reset_initial_cash', methods=['POST'])
+@login_required
+def reset_initial_cash():
+    """투자 원금 기준값 수동 리셋 — 재시작 후 수익률 왜곡 시 사용."""
+    data = request.json or {}
+    is_mock = current_user.data.get('is_mock', 1)
+    # 요청에 amount가 있으면 그 값으로, 없으면 10,000,000 원으로 리셋
+    amount = float(data.get('amount', 10000000))
+    if amount <= 0:
+        return jsonify({"status": "error", "message": "금액은 0보다 커야 합니다."}), 400
+    set_user_initial_cash(current_user.id, amount, bool(is_mock))
+    # 봇 메모리 내 initial_capital_captured 재활성화 방지 — 이미 True이므로 DB 값만 변경
+    return jsonify({"status": "ok", "message": f"투자 원금 기준값이 {amount:,.0f}원으로 재설정되었습니다."})
 
 @app.route('/api/daily_report')
 @login_required
