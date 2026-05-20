@@ -42,21 +42,21 @@ def init_db():
         )
         ''')
 
-        new_columns = [
-            ('real_app_key', 'TEXT'), ('real_app_secret', 'TEXT'), ('real_account_no', 'TEXT'),
-            ('mock_app_key', 'TEXT'), ('mock_app_secret', 'TEXT'), ('mock_account_no', 'TEXT'),
-            ('gemini_api_key', 'TEXT'), ('claude_api_key', 'TEXT'),
-            ('is_running', 'INTEGER DEFAULT 0'),
-            ('core_stocks', 'TEXT'), ('is_mock', 'INTEGER DEFAULT 1'),
-            ('real_initial_cash', 'REAL DEFAULT 10000000'), ('mock_initial_cash', 'REAL DEFAULT 10000000')
-        ]
-        for col_name, col_type in new_columns:
-            try:
-                cursor.execute(f'ALTER TABLE users ADD COLUMN {col_name} {col_type}')
-            except sqlite3.OperationalError:
-                pass 
+            new_columns = [
+                ('real_app_key', 'TEXT'), ('real_app_secret', 'TEXT'), ('real_account_no', 'TEXT'),
+                ('mock_app_key', 'TEXT'), ('mock_app_secret', 'TEXT'), ('mock_account_no', 'TEXT'),
+                ('gemini_api_key', 'TEXT'), ('claude_api_key', 'TEXT'),
+                ('is_running', 'INTEGER DEFAULT 0'),
+                ('core_stocks', 'TEXT'), ('is_mock', 'INTEGER DEFAULT 1'),
+                ('real_initial_cash', 'REAL DEFAULT 10000000'), ('mock_initial_cash', 'REAL DEFAULT 10000000')
+            ]
+            for col_name, col_type in new_columns:
+                try:
+                    cursor.execute(f'ALTER TABLE users ADD COLUMN {col_name} {col_type}')
+                except sqlite3.OperationalError:
+                    pass
 
-        cursor.execute('''
+            cursor.execute('''
         CREATE TABLE IF NOT EXISTS bot_states (
             user_id INTEGER, is_mock INTEGER, state_json TEXT,
             last_updated TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
@@ -65,7 +65,7 @@ def init_db():
         )
         ''')
 
-        cursor.execute('''
+            cursor.execute('''
         CREATE TABLE IF NOT EXISTS trade_journal (
             id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER,
             ticker TEXT, stock_name TEXT, action TEXT, price REAL,
@@ -73,14 +73,14 @@ def init_db():
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
         ''')
-        
-        cursor.execute('''
+
+            cursor.execute('''
         CREATE TABLE IF NOT EXISTS ai_rules (
             user_id INTEGER PRIMARY KEY, rule_text TEXT,
             updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
         ''')
-        
+
             cursor.execute('UPDATE users SET is_running = 0')
             conn.commit()
         finally:
