@@ -386,7 +386,7 @@ REASON: (핵심 근거 2~3줄, 구체적 수치 포함)"""
         "CCI ±100", "Williams %R",
     ]
 
-    def review_satellite_candidates(self, candidates: list, hot_sectors: list) -> list:
+    def review_satellite_candidates(self, candidates: list, hot_sectors: list, sector_guide: str = '') -> list:
         """위성 종목·전략 AI 검토 — 부적합 종목 즉시 퇴출, 대체 전략 제안.
 
         Returns:
@@ -406,10 +406,12 @@ REASON: (핵심 근거 2~3줄, 구체적 수치 포함)"""
             for i, c in enumerate(candidates)
         )
 
+        sector_guide_section = f"\n[📊 섹터 가이드 / 커스텀 전략]\n{sector_guide}\n" if sector_guide else ""
+
         prompt = f"""당신은 단기 위성 트레이딩 포트폴리오를 검토하는 퀀트 전문가입니다.
 
 현재 강세 섹터: {hot_str}
-
+{sector_guide_section}
 [시스템이 지원하는 전략 목록 — 반드시 아래 중 하나만 선택]
 {strategy_list_str}
 

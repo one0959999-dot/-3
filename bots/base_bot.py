@@ -720,7 +720,7 @@ class BaseBot:
             return candidates
         try:
             self.add_log("🤖 AI가 위성 후보 종목·전략 검토 중...")
-            reviewed = self.gemini.review_satellite_candidates(candidates, self.hot_sectors)
+            reviewed = self.gemini.review_satellite_candidates(candidates, self.hot_sectors, sector_guide=self.sector_guide)
             approved = [c for c in reviewed if c.get('approved', True)]
             rejected = [c for c in reviewed if not c.get('approved', True)]
             for c in rejected:
