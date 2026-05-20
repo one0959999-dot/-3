@@ -51,6 +51,8 @@ def init_db():
                 ('real_initial_cash', 'REAL DEFAULT 10000000'), ('mock_initial_cash', 'REAL DEFAULT 10000000'),
                 # 뉴스 모니터 API 키
                 ('dart_api_key', 'TEXT'), ('naver_client_id', 'TEXT'), ('naver_client_secret', 'TEXT'),
+                # 섹터 가이드 (사용자가 직접 입력하는 MD 형식 전략 메모)
+                ('sector_guide', 'TEXT'),
             ]
             for col_name, col_type in new_columns:
                 try:
@@ -336,6 +338,26 @@ def set_news_api_keys(user_id: int, dart_api_key: str, naver_client_id: str, nav
                 'UPDATE users SET dart_api_key=?, naver_client_id=?, naver_client_secret=? WHERE id=?',
                 (dart_api_key, naver_client_id, naver_client_secret, user_id)
             )
+            conn.commit()
+        finally:
+            conn.close()
+
+
+def get_sector_guide(user_id: int) -> str:
+    """섹터 가이드 / 커스텀 전략 메모 조회."""
+    conn = get_db_connection()
+    try:
+        row = conn.execute('SELECT sector_guide FROM users WHERE id=?', (user_id,)).fetchone()
+        return (row['sector_guide'] or '') if row else ''
+    finally:
+        conn.close()
+
+def set_sector_guide(user_id: int, guide_text: str):
+    """섹터 가이드 저장."""
+    with db_lock:
+        conn = get_db_connection()
+        try:
+            conn.execute('UPDATE users SET sector_guide=? WHERE id=?', (guide_text, user_id))
             conn.commit()
         finally:
             conn.close()

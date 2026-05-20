@@ -24,7 +24,7 @@ from telegram_bot import TelegramNotifier
 from strategy import CorePosition, Position, get_rsi_signal, get_signal_by_strategy, REINVEST_RATIO, get_market_regime, get_bear_bounce_signal, get_bear_bottom_score, get_bull_momentum_score, get_neutral_range_score, INVERSE_ETF_TICKER, INVERSE_ETF_NAME, INVERSE_BUDGET_RATIO, DEFENSIVE_ASSETS, check_giveback_stop, check_early_drop_stop
 from stock_screener import select_satellites, generate_daily_market_report
 from hot_momentum_scanner import scan_hot_momentum, clear_expired_cache
-from database import update_bot_status, save_portfolio_state, load_portfolio_state, log_trade_journal, get_recent_trades, save_ai_rules, load_ai_rules, get_ai_rules_history, get_user_initial_cash, set_user_initial_cash, add_user_initial_cash, get_news_api_keys
+from database import update_bot_status, save_portfolio_state, load_portfolio_state, log_trade_journal, get_recent_trades, save_ai_rules, load_ai_rules, get_ai_rules_history, get_user_initial_cash, set_user_initial_cash, add_user_initial_cash, get_news_api_keys, get_sector_guide
 from news_monitor import NewsMonitor
 
 _SELL_FEE = 0.00015   # 매도 수수료율 (0.015%)
@@ -134,6 +134,9 @@ class BaseBot:
         self._news_check_lock      = threading.Lock()  # [BUG-C3] 중복 실행 방지
         self._notified_disclosures: set  = set()       # [BUG-M5] 중복 알림 방지 {ticker+rcept_no}
         self._earnings_notified:    dict = {}          # [BUG-C1] 실적 축소 재발동 방지 {ticker: exp_date}
+
+        # 섹터 가이드: 사용자가 입력한 MD 형식 전략 메모 → Claude 매매 심사 시 context로 주입
+        self.sector_guide: str = get_sector_guide(user_id) or ''
 
         self._init_api(kis_config)
         self._init_news_monitor()  # DB에서 뉴스 API 키 로드
@@ -562,7 +565,8 @@ class BaseBot:
                                 'SELL', name, ticker, avg_price, "공시감지",
                                 {}, self.hot_sectors,
                                 get_recent_trades(self.user_id, ticker),
-                                load_ai_rules(self.user_id), context=context
+                                load_ai_rules(self.user_id) + ("\n\n[📊 섹터 가이드]\n" + self.sector_guide if self.sector_guide else ''),
+                                context=context
                             )
                             if decision:
                                 pos = self.satellite_positions.get(ticker)
@@ -1409,7 +1413,7 @@ class BaseBot:
                             if self.gemini:
                                 pos.status = "AI 심사 중 🤖"
                                 trade_ctx = self._build_trade_context(ticker, p_nm, price, ex_df, st_nm, regime)
-                                decision, ai_reason = self.gemini.ai_approve_trade(sig, p_nm, ticker, price, st_nm, ind_val, self.hot_sectors, get_recent_trades(self.user_id, ticker), load_ai_rules(self.user_id) + "\n" + getattr(self, 'current_ai_market_view', ''), context=trade_ctx)
+                                decision, ai_reason = self.gemini.ai_approve_trade(sig, p_nm, ticker, price, st_nm, ind_val, self.hot_sectors, get_recent_trades(self.user_id, ticker), load_ai_rules(self.user_id) + "\n" + getattr(self, 'current_ai_market_view', '') + ("\n\n[📊 섹터 가이드 / 커스텀 전략]\n" + self.sector_guide if self.sector_guide else ''), context=trade_ctx)
                                 if decision:
                                     if self._buy_order(ticker, qty, pos, p_nm):
                                         with self.lock: pos.last_order_time = time.time(); pos.status = "체결 대기 ⏳"
@@ -1474,7 +1478,7 @@ class BaseBot:
                     if self.gemini:
                         pos.status = "AI 심사 중 🤖"
                         trade_ctx = self._build_trade_context(ticker, p_nm, price, ex_df, st_nm, regime)
-                        decision, ai_reason = self.gemini.ai_approve_trade(sig, p_nm, ticker, price, st_nm, ind_val, self.hot_sectors, get_recent_trades(self.user_id, ticker), load_ai_rules(self.user_id) + "\n" + getattr(self, 'current_ai_market_view', ''), context=trade_ctx)
+                        decision, ai_reason = self.gemini.ai_approve_trade(sig, p_nm, ticker, price, st_nm, ind_val, self.hot_sectors, get_recent_trades(self.user_id, ticker), load_ai_rules(self.user_id) + "\n" + getattr(self, 'current_ai_market_view', '') + ("\n\n[📊 섹터 가이드 / 커스텀 전략]\n" + self.sector_guide if self.sector_guide else ''), context=trade_ctx)
                         if decision:
                             qty = int((entry_cash * 0.98) // price)
                             if qty > 0 and self._buy_order(ticker, qty, pos, p_nm):
@@ -1516,7 +1520,7 @@ class BaseBot:
                     if self.gemini:
                         pos.status = "AI 심사 중 🤖"
                         trade_ctx = self._build_trade_context(ticker, p_nm, price, ex_df, st_nm, regime)
-                        decision, ai_reason = self.gemini.ai_approve_trade(sig, p_nm, ticker, price, st_nm, ind_val, self.hot_sectors, get_recent_trades(self.user_id, ticker), load_ai_rules(self.user_id) + "\n" + getattr(self, 'current_ai_market_view', ''), context=trade_ctx)
+                        decision, ai_reason = self.gemini.ai_approve_trade(sig, p_nm, ticker, price, st_nm, ind_val, self.hot_sectors, get_recent_trades(self.user_id, ticker), load_ai_rules(self.user_id) + "\n" + getattr(self, 'current_ai_market_view', '') + ("\n\n[📊 섹터 가이드 / 커스텀 전략]\n" + self.sector_guide if self.sector_guide else ''), context=trade_ctx)
                         if decision:
                             if self._sell_order(ticker, p_sh, pos, p_nm):
                                 with self.lock:
@@ -1800,7 +1804,8 @@ class BaseBot:
                     'BUY', b_name, b_ticker, b_price, "모멘텀슬롯",
                     {"momentum_score": best['momentum_score']}, self.hot_sectors,
                     get_recent_trades(self.user_id, b_ticker),
-                    load_ai_rules(self.user_id), context=trade_ctx
+                    load_ai_rules(self.user_id) + ("\n\n[📊 섹터 가이드]\n" + self.sector_guide if self.sector_guide else ''),
+                    context=trade_ctx
                 )
                 if not m_decision:
                     self.add_log(f"🛑 모멘텀#{slot_idx+1} AI 거절: {b_name} — {m_ai_reason}")

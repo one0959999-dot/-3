@@ -612,6 +612,14 @@ window.openSettingsModal = async function () {
             if (keys.naver_client_secret) document.getElementById('naverClientSecret').placeholder = keys.naver_client_secret + ' (저장됨)';
         }
     } catch (e) { /* 조회 실패 시 무시 */ }
+    // 저장된 섹터 가이드 불러오기
+    try {
+        const res2 = await fetch('/api/settings/sector_guide');
+        if (res2.ok) {
+            const data = await res2.json();
+            if (data.sector_guide) document.getElementById('sectorGuideText').value = data.sector_guide;
+        }
+    } catch (e) { /* 무시 */ }
 }
 window.closeSettingsModal = function () {
     document.getElementById('settingsModal').style.display = 'none';
@@ -925,6 +933,22 @@ window.saveNewsKeys = async function () {
             if (naverId)  { document.getElementById('naverClientId').value = '';     document.getElementById('naverClientId').placeholder     = naverId.slice(0,4) + '**** (저장됨)'; }
             if (naverSec) { document.getElementById('naverClientSecret').value = ''; document.getElementById('naverClientSecret').placeholder = naverSec.slice(0,4) + '**** (저장됨)'; }
         } else { showToast('뉴스 키 저장 실패', 'error'); }
+    } catch (e) { showToast('서버 통신 오류', 'error'); }
+}
+
+window.saveSectorGuide = async function () {
+    const guide = document.getElementById('sectorGuideText').value.trim();
+    try {
+        const res = await fetch('/api/settings/sector_guide', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ sector_guide: guide })
+        });
+        const result = await res.json();
+        if (result.status === 'success') {
+            const msg = document.getElementById('sectorGuideSavedMsg');
+            msg.style.display = 'block';
+            setTimeout(() => { msg.style.display = 'none'; }, 3000);
+        } else { showToast('저장 실패', 'error'); }
     } catch (e) { showToast('서버 통신 오류', 'error'); }
 }
 

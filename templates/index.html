@@ -604,6 +604,22 @@
                     </div>
                     <button class="btn-save-keys" onclick="saveNewsKeys()" style="background:#6366f1;">뉴스 API 저장</button>
                     <div id="newsKeysSavedMsg" style="font-size:0.78rem; color:#10b981; display:none; margin-top:6px;">✅ 저장 완료 — 봇에 즉시 적용됩니다.</div>
+
+                    <hr style="border:0; border-top:1px solid rgba(255,255,255,0.07); margin:1.2rem 0;">
+
+                    <div class="settings-group"
+                        style="border:1px solid rgba(234,179,8,0.3); padding:12px; border-radius:8px; margin-bottom:12px;">
+                        <h3 style="color:#fbbf24; font-size:0.9rem; margin-bottom:8px;">📊 섹터 가이드 / 커스텀 전략 <span style="font-size:0.72rem; color:#94a3b8; font-weight:400;">(선택)</span></h3>
+                        <p style="font-size:0.74rem; color:#94a3b8; margin-bottom:10px; line-height:1.5;">
+                            MD 형식으로 작성된 섹터 분석·종목 전략을 붙여넣으면<br>
+                            Claude AI가 매수 심사·종목 선정 시 자동으로 참고합니다.
+                        </p>
+                        <textarea id="sectorGuideText"
+                            placeholder="예시)&#10;## 강세 섹터&#10;- 반도체: 삼성전자, SK하이닉스&#10;- 2차전지: LG에너지솔루션, 삼성SDI&#10;&#10;## 약세 섹터&#10;- 금융: 매수 자제"
+                            style="width:100%; min-height:160px; background:rgba(255,255,255,0.04); border:1px solid rgba(255,255,255,0.12); border-radius:8px; color:#e2e8f0; padding:10px; font-size:0.82rem; line-height:1.6; resize:vertical; font-family:monospace;"></textarea>
+                    </div>
+                    <button class="btn-save-keys" onclick="saveSectorGuide()" style="background:#d97706;">섹터 가이드 저장</button>
+                    <div id="sectorGuideSavedMsg" style="font-size:0.78rem; color:#10b981; display:none; margin-top:6px;">✅ 저장 완료 — 다음 매수 심사부터 즉시 반영됩니다.</div>
                 </div>
 
             </div><!-- /scroll -->

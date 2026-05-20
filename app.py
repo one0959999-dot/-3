@@ -8,7 +8,7 @@ from flask import Flask, render_template, jsonify, request, redirect, url_for, f
 from flask_login import LoginManager, UserMixin, login_user, logout_user, login_required, current_user
 
 from bots.bot_manager import manager
-from database import get_db_connection, verify_user, add_user, init_db, update_user_keys, init_default_ai_rules, set_user_initial_cash, get_news_api_keys, set_news_api_keys
+from database import get_db_connection, verify_user, add_user, init_db, update_user_keys, init_default_ai_rules, set_user_initial_cash, get_news_api_keys, set_news_api_keys, get_sector_guide, set_sector_guide
 
 # ── 통합 로깅 설정 (파일 + 콘솔) ──
 logging.basicConfig(
@@ -517,6 +517,26 @@ def get_news_keys():
         "naver_client_id":     keys['naver_client_id'][:4] + '****' if keys['naver_client_id'] else '',  # [BUG-N5] 마스킹 추가
         "naver_client_secret": keys['naver_client_secret'][:4] + '****' if keys['naver_client_secret'] else '',
     })
+
+@app.route('/api/settings/sector_guide', methods=['GET'])
+@login_required
+def get_sector_guide_route():
+    """섹터 가이드 조회."""
+    return jsonify({"sector_guide": get_sector_guide(current_user.id)})
+
+@app.route('/api/settings/sector_guide', methods=['POST'])
+@login_required
+def set_sector_guide_route():
+    """섹터 가이드 저장 + 실행 중인 봇에 즉시 반영."""
+    data = request.json or {}
+    guide = (data.get('sector_guide') or '').strip()
+    set_sector_guide(current_user.id, guide)
+    # 실행 중인 봇에 즉시 반영
+    for is_mock in (True, False):
+        bot = manager.bots.get((current_user.id, is_mock))
+        if bot:
+            bot.sector_guide = guide
+    return jsonify({"status": "success"})
 
 @app.route('/api/settings/keys', methods=['POST'])
 @login_required
