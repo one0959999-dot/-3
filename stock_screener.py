@@ -25,8 +25,11 @@ _full_ticker_cache: dict = {'ts': 0.0, 'movers': [], 'all': []}
 _full_ticker_lock  = threading.Lock()
 _FULL_TICKER_TTL   = 1800   # 30분 (장중 급등주 포착 주기)
 
-# 당일 급등 판단 기준
-_MOVER_CHG_MIN  = 1.5   # 등락률 1.5% 이상 → 급등 후보
+# 당일 위성 후보 기준 (단타 모멘텀 슬롯과 역할 분리)
+# 위성: 완만한 상승 추세 (0.3% ~ 3%) → 중기 홀딩, 한달 20% 목표
+# 모멘텀: 급등주 (3%↑) → hot_momentum_scanner 전담
+_MOVER_CHG_MIN  = 0.3           # 등락률 최소 0.3% — 완전히 멈춘 종목 제외
+_MOVER_CHG_MAX  = 3.0           # 등락률 3% 이상은 급등주 → 모멘텀 슬롯으로
 _MOVER_VAL_MIN  = 500_000_000   # 거래대금 5억 이상 → 유동성 확보 종목
 
 from pykrx import stock
@@ -222,8 +225,10 @@ def _get_all_listed_tickers() -> tuple:
 
             if chg_col and val_col:
                 all_df = all_df.sort_values([chg_col, val_col], ascending=[False, False])
-                # 급등 조건: 오늘 오른 종목(등락률 기준) OR 유동성 큰 종목(거래대금 기준)
-                mask = (all_df[chg_col] >= _MOVER_CHG_MIN) | (all_df[val_col] >= _MOVER_VAL_MIN)
+                # 위성 후보: 0.3~3% 상승 OR 거래대금 5억↑ (단, 3%↑ 급등주는 제외 → 모멘텀 슬롯 전담)
+                mask = (all_df[chg_col] < _MOVER_CHG_MAX) & (
+                    (all_df[chg_col] >= _MOVER_CHG_MIN) | (all_df[val_col] >= _MOVER_VAL_MIN)
+                )
                 mover_df = all_df[mask]
                 movers = [t for t in mover_df.index if isinstance(t, str) and t.isdigit() and len(t) == 6]
             elif val_col:
@@ -638,13 +643,20 @@ def select_satellites(kis=None, n=NUM_SATELLITES, verbose=True, gemini_client=No
             sector_bonus = 10 if ticker in sector_tickers else 0
             frgn_inst_bonus = 8 if ticker in frgn_inst_tickers else 0
 
+            # 20일 모멘텀 부스트 — 이미 오르고 있는 종목 우대 (한달 20% 목표)
+            # 3~20% 범위: 적당한 상승 추세 → 최대 +16점 보너스
+            # 20% 초과: 부스트 없음 (아래 과열 패널티로 이어짐)
+            momentum_boost = 0.0
+            if 3.0 <= recent_ret <= 20.0:
+                momentum_boost = recent_ret * 0.8   # 3%→+2.4점, 10%→+8점, 20%→+16점
+
             overheated_penalty = 0
             if recent_ret > 15 and vol_score < 2.0:
                 overheated_penalty = (recent_ret - 15) * 1.5
 
             stat_arb_penalty = 0
             if recent_ret > 30:
-                stat_arb_penalty = (recent_ret - 30) * 0.8  
+                stat_arb_penalty = (recent_ret - 30) * 0.8
 
             # dl_predictor가 None이면 중립 50.0으로 폴백 (DL 없이도 스크리닝 계속)
             ai_up_prob = dl_predictor.predict_up_probability(df) if dl_predictor is not None else 50.0
@@ -655,6 +667,7 @@ def select_satellites(kis=None, n=NUM_SATELLITES, verbose=True, gemini_client=No
                      + sector_bonus
                      + frgn_inst_bonus
                      + (bb_discount * 1.5)
+                     + momentum_boost          # 20일 모멘텀 부스트 (한달 20% 목표)
                      - overheated_penalty
                      - stat_arb_penalty
                      + ml_factor_score)

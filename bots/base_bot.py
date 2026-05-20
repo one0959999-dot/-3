@@ -2152,6 +2152,14 @@ class BaseBot:
             if _now_kst().strftime('%H:%M') == "08:00":
                 self._run_threaded(self.refresh_websocket)
 
+        def _kst_morning_prescreen():
+            """KST 08:50 — 9:05 첫 매매 전 위성 사전 스크리닝.
+            스크리닝 소요 ~2분 → 9:05 이전 완료 보장.
+            """
+            if _now_kst().strftime('%H:%M') == "08:50":
+                self.add_log("🔍 [08:50 사전 스크리닝] 9:05 첫 매매 대비 위성 종목 선정 시작")
+                self._run_threaded(self._rescreen_satellites)
+
         def _kst_friday_lstm():
             """KST 금요일 02:00에만 LSTM 훈련 (UTC 서버 대응)."""
             now_kst = _now_kst()
@@ -2162,6 +2170,7 @@ class BaseBot:
         self.scheduler.every(1).minutes.do(_kst_friday_reflection)
         self.scheduler.every(1).minutes.do(_kst_morning_websocket)
         self.scheduler.every(1).minutes.do(_kst_friday_lstm)
+        self.scheduler.every(1).minutes.do(_kst_morning_prescreen)
 
         try:
             self.trading_job()
