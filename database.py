@@ -124,30 +124,31 @@ def verify_user(username, password):
 def update_user_keys(user_id, keys_dict):
     with db_lock:
         conn = get_db_connection()
-        
-        # [C-04 수정] 실전/모의 원금을 현재 모드에 해당하는 컬럼에만 업데이트 (반대 모드 원금은 건드리지 않음)
-        is_mock = keys_dict.get('is_mock', 1)
-        initial_cash = keys_dict.get('initial_cash', 10000000)
-        cash_col = "mock_initial_cash" if is_mock else "real_initial_cash"
+        try:
+            # [C-04 수정] 실전/모의 원금을 현재 모드에 해당하는 컬럼에만 업데이트 (반대 모드 원금은 건드리지 않음)
+            is_mock = keys_dict.get('is_mock', 1)
+            initial_cash = keys_dict.get('initial_cash', 10000000)
+            cash_col = "mock_initial_cash" if is_mock else "real_initial_cash"
 
-        conn.execute(f'''
-            UPDATE users SET real_app_key = ?, real_app_secret = ?, real_account_no = ?,
-                mock_app_key = ?, mock_app_secret = ?, mock_account_no = ?,
-                telegram_token = ?, telegram_chat_id = ?,
-                claude_api_key = ?,
-                core_stocks = ?, is_mock = ?, initial_cash = ?, {cash_col} = ? WHERE id = ?
-        ''', (
-            keys_dict.get('real_app_key'), keys_dict.get('real_app_secret'), keys_dict.get('real_account_no'),
-            keys_dict.get('mock_app_key'), keys_dict.get('mock_app_secret'), keys_dict.get('mock_account_no'),
-            keys_dict.get('telegram_token'), keys_dict.get('telegram_chat_id'),
-            keys_dict.get('claude_api_key'),
-            keys_dict.get('core_stocks'), is_mock,
-            initial_cash,   # initial_cash (공통 legacy 컬럼)
-            initial_cash,   # cash_col (실전 또는 모의 전용 컬럼만 업데이트)
-            user_id
-        ))
-        conn.commit()
-        conn.close()
+            conn.execute(f'''
+                UPDATE users SET real_app_key = ?, real_app_secret = ?, real_account_no = ?,
+                    mock_app_key = ?, mock_app_secret = ?, mock_account_no = ?,
+                    telegram_token = ?, telegram_chat_id = ?,
+                    claude_api_key = ?,
+                    core_stocks = ?, is_mock = ?, initial_cash = ?, {cash_col} = ? WHERE id = ?
+            ''', (
+                keys_dict.get('real_app_key'), keys_dict.get('real_app_secret'), keys_dict.get('real_account_no'),
+                keys_dict.get('mock_app_key'), keys_dict.get('mock_app_secret'), keys_dict.get('mock_account_no'),
+                keys_dict.get('telegram_token'), keys_dict.get('telegram_chat_id'),
+                keys_dict.get('claude_api_key'),
+                keys_dict.get('core_stocks'), is_mock,
+                initial_cash,   # initial_cash (공통 legacy 컬럼)
+                initial_cash,   # cash_col (실전 또는 모의 전용 컬럼만 업데이트)
+                user_id
+            ))
+            conn.commit()
+        finally:
+            conn.close()
 
 def update_bot_status(user_id, is_running, is_mock=None):
     """봇 실행 상태 DB 갱신.
@@ -250,7 +251,7 @@ def load_ai_rules(user_id):
         row = conn.execute('SELECT rule_text FROM ai_rules WHERE user_id = ?', (user_id,)).fetchone()
     finally:
         conn.close()
-    return row['rule_text'] if row else ""
+    return (row['rule_text'] or "") if row else ""
 
 def get_ai_rules_history(user_id, limit: int = 5):
     """최근 N개 규칙 버전 반환. 롤백/비교용."""

@@ -2,7 +2,7 @@ import logging
 import os
 import json
 import threading
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 from flask import Flask, render_template, jsonify, request, redirect, url_for, flash, session
 from flask_login import LoginManager, UserMixin, login_user, logout_user, login_required, current_user
@@ -361,7 +361,7 @@ def ai_chat():
             for ticker, name in target_tickers:
                 try:
                     ohlcv_df = fetch_ohlcv(ticker, days=130, kis=bot.kis) 
-                    today_str = datetime.now().strftime('%Y-%m-%d')
+                    today_str = datetime.now(timezone(timedelta(hours=9))).strftime('%Y-%m-%d')
                     cache_key = f"{ticker}_{today_str}"
                     financial_data = getattr(bot, 'fundamental_cache', {}).get(cache_key, "PER: 10.0배, PBR: 1.0배 (실시간 추정치)")
                     

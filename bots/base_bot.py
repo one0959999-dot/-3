@@ -1702,13 +1702,15 @@ class BaseBot:
             if len(new_info) < n_needed:
                 self.add_log(f"⚠️ 당일 블랙리스트/AI 퇴출로 인해 {n_needed - len(new_info)}개 위성 슬롯 공석 유지")
 
+            # [BUG-FIX] 재스크리닝 도중 삭제된 종목이 keep_tickers에 남아 있으면 KeyError 발생
+            keep_tickers = {t for t in keep_tickers if t in self.satellite_positions}
             for ticker in keep_tickers: freed_cash += self.satellite_positions[ticker].cash; self.satellite_positions[ticker].cash = 0
-            
+
             if freed_cash > 0 and (len(keep_tickers) + len(new_info)) > 0:
                 with self.lock:
                     alloc = freed_cash / (len(keep_tickers) + len(new_info))
                     for t in keep_tickers:
-                        if self.satellite_positions[t].shares == 0: self.satellite_positions[t].cash = alloc
+                        if t in self.satellite_positions and self.satellite_positions[t].shares == 0: self.satellite_positions[t].cash = alloc
                     for c in new_info:
                         self.satellite_positions[c['ticker']] = Position(c['ticker'], c['name'], alloc)
                         self.satellite_strategies[c['ticker']] = c['strategy_name']
@@ -1771,7 +1773,7 @@ class BaseBot:
                    strategy: str, reason: str, profit: float = 0):
         """log_trade_journal 래퍼 — 매매 기록 후 자가학습 트리거 체크.
         모든 self._log_trade(...) 호출 대신 이 메서드를 사용."""
-        self._log_trade(ticker, name, action, price, strategy, reason, profit)
+        log_trade_journal(self.user_id, ticker, name, action, price, strategy, reason, profit)
 
         # ① 누적 거래 카운터: 10건마다 누적 반성
         self._trades_since_reflection += 1
