@@ -221,8 +221,10 @@ def scan_hot_momentum(
                     elapsed_min = (now - first_seen).total_seconds() / 60
                     if elapsed_min > MOMENTUM_MAX_VALID_MIN:
                         del _scan_cache[ticker]
-                        # 캐시 만료 후 이번 스캔에서 신호가 다시 충족됐으면 신규 진입 허용
-                        # (continue 대신 fall-through → 아래 else 블록에서 새 캐시 등록)
+                        # [BUG-12] 캐시 만료 처리 흐름:
+                        # ① 기존 캐시 삭제 후 ② 이번 스캔에서 신호가 여전히 유효하면
+                        # 재등록하여 재진입 허용. continue 를 쓰면 이번 스캔 결과에서
+                        # 해당 종목이 제외되어 만료 직후 신규진입 기회를 놓치는 버그 발생.
                         _scan_cache[ticker] = {'first_seen': now, 'score': score}
                         first_seen = now
                 else:

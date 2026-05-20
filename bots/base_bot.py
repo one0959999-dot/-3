@@ -67,8 +67,8 @@ class BaseBot:
 
         self.core_ticker = "003850"
         self.core_name = "보령"
-        self.core_ratio = 0.30
-        self.satellite_ratio = 0.70
+        self.core_ratio = 0.30        # 코어 30%
+        self.satellite_ratio = 0.40   # 위성 40% (↓ 0.70→0.40, 모멘텀 30% 별도)
         self.core_min_floor_ratio = 0.5
         self.market_indices = [("069500", "KOSPI"), ("229200", "KOSDAQ")]
 
@@ -94,11 +94,16 @@ class BaseBot:
         self.fundamental_cache = {}
 
         # ── 당일 블랙리스트 (날짜가 바뀌면 자동 초기화) ──────────────────
-        # momentum_exits  : 모멘텀 슬롯에서 오늘 청산된 종목 (재진입 금지)
-        # satellite_rejects: 오늘 AI 거절된 위성 종목 {ticker: reason}
-        self._bl_date           = ""          # 마지막 초기화 날짜 (YYYY-MM-DD)
-        self._momentum_exits    : set  = set()
-        self._satellite_rejects : dict = {}
+        # momentum_exit_times : {ticker: exit_timestamp}  30분 재진입 금지
+        # satellite_rejects   : 오늘 AI 거절된 위성 종목 {ticker: reason}
+        self._bl_date               = ""       # 마지막 초기화 날짜 (YYYY-MM-DD)
+        self._momentum_exit_times   : dict = {}  # {ticker: float(epoch)}
+        self._satellite_rejects     : dict = {}
+
+        # ── 종목당 당일 누적 손실 추적 (하루 최대 손실 캡) ──────────────
+        # {ticker: cumulative_loss_krw}  — 손실(-) 누계, 날짜 바뀌면 초기화
+        # 클래스 상수 _MAX_DAILY_LOSS_PER_TICKER 는 하단 클래스 본문에 정의됨
+        self._daily_loss_by_ticker  : dict = {}
 
         # 시장 국면 (BULL / BEAR / NEUTRAL)
         self.market_regime = "NEUTRAL"
@@ -111,7 +116,7 @@ class BaseBot:
         # 위성 5개와 완전히 별개의 단일 포지션.
         # 초고속 진입·이탈이 핵심이므로 AI 심사 없이 즉시 주문.
         self.momentum_positions = [None, None, None]  # 모멘텀 슬롯 3개 독립 관리
-        self.momentum_budget_ratio = 0.05    # 총자산의 5% 를 모멘텀 슬롯에 배정
+        self.momentum_budget_ratio = 0.10    # 슬롯당 10% (3슬롯 × 10% = 총자산의 30%)
         self._last_momentum_scan = 0.0       # 마지막 스캔 타임스탬프
         self._momentum_scan_interval = 60    # 1분마다 스캔
 
@@ -645,19 +650,23 @@ class BaseBot:
                 except Exception as e:
                     logger.warning(f"[{self.mode_name}] 실적 발표 체크 오류 ({ticker}): {e}")
 
+    _MAX_DAILY_LOSS_PER_TICKER = -5_000   # 종목당 하루 최대 허용 손실 (원)
+    _MOMENTUM_COOLDOWN_SEC    = 1_800     # 손절 후 재진입 금지 시간 (30분)
+
     def _refresh_blacklist(self):
         """날짜가 바뀌면 당일 블랙리스트를 초기화합니다. [BUG-M1] 락 내부에서 호출 전제."""
         today = _now_kst().strftime('%Y-%m-%d')
         if self._bl_date != today:
-            self._bl_date           = today
-            self._momentum_exits    = set()
-            self._satellite_rejects = {}
+            self._bl_date              = today
+            self._momentum_exit_times  = {}
+            self._satellite_rejects    = {}
+            self._daily_loss_by_ticker = {}
 
     def _add_momentum_exit(self, ticker: str):
-        """모멘텀 청산 종목을 당일 재진입 금지 목록에 추가합니다."""
+        """모멘텀 청산 종목을 30분 재진입 금지 목록에 추가합니다."""
         with self.lock:
             self._refresh_blacklist()
-            self._momentum_exits.add(ticker)
+            self._momentum_exit_times[ticker] = time.time()
 
     def _add_satellite_reject(self, ticker: str, reason: str):
         """AI 거절 위성 종목을 당일 재편입 금지 목록에 추가합니다."""
@@ -665,10 +674,28 @@ class BaseBot:
             self._refresh_blacklist()
             self._satellite_rejects[ticker] = reason
 
-    def _is_momentum_blacklisted(self, ticker: str) -> bool:
+    def _record_ticker_loss(self, ticker: str, profit: float):
+        """손실 발생 시 종목별 당일 누계 손실을 기록합니다."""
+        if profit >= 0:
+            return
         with self.lock:
             self._refresh_blacklist()
-            return ticker in self._momentum_exits
+            self._daily_loss_by_ticker[ticker] = (
+                self._daily_loss_by_ticker.get(ticker, 0) + profit
+            )
+
+    def _is_momentum_blacklisted(self, ticker: str) -> bool:
+        """30분 쿨다운 또는 당일 손실 캡 초과 시 True."""
+        with self.lock:
+            self._refresh_blacklist()
+            # 30분 쿨다운
+            exit_ts = self._momentum_exit_times.get(ticker, 0)
+            if time.time() - exit_ts < self._MOMENTUM_COOLDOWN_SEC:
+                return True
+            # 하루 최대 손실 캡 (누계 손실이 캡 미만[더 깊은 마이너스]이면 차단)
+            if self._daily_loss_by_ticker.get(ticker, 0) < self._MAX_DAILY_LOSS_PER_TICKER:
+                return True
+            return False
 
     def _is_satellite_blacklisted(self, ticker: str) -> bool:
         with self.lock:
@@ -1468,6 +1495,8 @@ class BaseBot:
                         if bull_score >= 3:
                             entry_ratio, regime_label = 0.80, f"상승강신호({bull_score}개)"
                         elif bull_score >= 1:
+                            # [BUG-11] 이 0.70 은 위성 예산(satellite_ratio=0.40) 내부의 포지션 투입 비율이며,
+                            # satellite_ratio 클래스 변수(0.40)와 무관한 별개 수치임.
                             entry_ratio, regime_label = 0.70, f"상승중신호({bull_score}개)"
                         else:
                             entry_ratio, regime_label = 0.60, "상승장기본진입"
@@ -1548,9 +1577,12 @@ class BaseBot:
                                 self._send_trade_telegram(self._fmt_trade_msg("📉", "AI 매도 승인", ticker, p_nm, price, p_sh, profit=profit, strategy=st_nm, ai_reason=ai_reason))
                                 with self.lock:
                                     self.pnl_this_turn += profit
-                                    if profit > 0 and self.core_positions and pos.cash >= profit * REINVEST_RATIO:
-                                        pos.cash -= profit * REINVEST_RATIO
-                                        for core in self.core_positions: core.cash += (profit * REINVEST_RATIO) / len(self.core_positions)
+                                    # [BUG-6] pos.cash는 매도 직후 ≈0 이므로 잔액 조건 제거.
+                                    # 수익금의 REINVEST_RATIO(50%)를 코어 슬롯에 직접 배분.
+                                    if profit > 0 and self.core_positions:
+                                        reinvest_sat = profit * REINVEST_RATIO
+                                        for core in self.core_positions:
+                                            core.cash += reinvest_sat / len(self.core_positions)
                                 self._record_daily_pnl(profit)
                         else:
                             pos.status = "AI 거절(보유) 🛑"
@@ -1669,6 +1701,7 @@ class BaseBot:
                     ticker, name, price, partial_qty, profit=partial_profit,
                     strategy="모멘텀슬롯", note=f"MA5 이탈 30% 축소 — 잔여 {mp['shares']}주 홀딩"))
                 self._record_daily_pnl(partial_profit)
+                self._record_ticker_loss(ticker, partial_profit)  # [BUG-4] 부분 손실도 종목별 캡에 반영
             return False  # 슬롯 유지 (잔여 70% 포지션 계속 관리)
 
         # ── PARTIAL_EXIT_70: 30% 반납 신호 → 보유량 70% 선익절 (슬롯은 유지) ──────
@@ -1689,6 +1722,7 @@ class BaseBot:
                     ticker, name, price, partial_qty, profit=partial_profit,
                     strategy="모멘텀슬롯", note=f"giveback 30% 반납 — 잔여 {mp['shares']}주 홀딩"))
                 self._record_daily_pnl(partial_profit)
+                self._record_ticker_loss(ticker, partial_profit)  # [BUG-4] 부분 손실도 종목별 캡에 반영
             return False  # 슬롯 유지 (잔여 포지션 계속 관리)
 
         # 모멘텀 슬롯 출구 전략:
@@ -1719,12 +1753,20 @@ class BaseBot:
                 if self.internal_cash is not None:
                     self.internal_cash += price * shares * (1 - _SELL_FEE - _SELL_TAX)
                 self._last_trade_ts = time.time()
+                self.pnl_this_turn += profit  # [BUG-9] 두 번의 락 취득 → 하나로 합침 (레이스 컨디션 방지)
             self._log_trade(ticker, name, 'SELL', price, "모멘텀슬롯", sell_reason, profit=profit)
             self.add_log(f"🏁 모멘텀#{slot_idx+1} 청산 | {name}({ticker}) {shares}주 @ {price:,.0f}원 | {sell_reason} | 손익: {profit:+,.0f}원")
             self._send_trade_telegram(self._fmt_trade_msg("🏁", f"모멘텀#{slot_idx+1} 청산", ticker, name, price, shares, profit=profit, strategy="모멘텀슬롯", note=sell_reason))
-            with self.lock:
-                self.pnl_this_turn += profit
             self._record_daily_pnl(profit)
+            self._record_ticker_loss(ticker, profit)   # 종목별 일일 손실 추적
+            # 수익의 50% → 코어 슬롯 재투자
+            if profit > 0 and self.core_positions:
+                reinvest = profit * 0.50
+                per_core = reinvest / len(self.core_positions)
+                with self.lock:
+                    for core in self.core_positions:
+                        core.cash += per_core
+                self.add_log(f"💰 모멘텀 수익 재투자: {reinvest:,.0f}원 → 코어 {len(self.core_positions)}종목 ({per_core:,.0f}원씩)")
             self._add_momentum_exit(ticker)
             self.momentum_positions[slot_idx] = None
             return True
@@ -1784,9 +1826,16 @@ class BaseBot:
             best = None
             for candidate in hits:
                 ct = candidate['ticker']
-                if ct not in held and ct not in used_tickers and not self._is_momentum_blacklisted(ct):
-                    best = candidate
-                    break
+                if ct in held or ct in used_tickers or self._is_momentum_blacklisted(ct):
+                    continue
+                # ── 당일 +20% 초과 종목 진입 금지 (이미 고점, 손실 가능성 높음) ──
+                # scan_hot_momentum 반환 키: 'price_chg_pct' (hot_momentum_scanner.py 참조)
+                chg = candidate.get('price_chg_pct', 0)
+                if chg > 20.0:
+                    self.add_log(f"⛔ 모멘텀 진입 금지: {candidate.get('name','?')}({ct}) 당일 +{chg:.1f}% 고점 과열")
+                    continue
+                best = candidate
+                break
             if best is None:
                 continue
 
@@ -1794,7 +1843,7 @@ class BaseBot:
             b_name   = best['name']
             b_price  = best['price']
 
-            budget = total_assets * self.momentum_budget_ratio  # 슬롯당 5%
+            budget = total_assets * self.momentum_budget_ratio  # 슬롯당 10% (총 30%)
             if available_cash < budget * 0.5:
                 break  # 현금 부족 → 나머지 슬롯도 포기
 
@@ -1840,7 +1889,12 @@ class BaseBot:
                         f"💰 진입 예정가: {b_price:,.0f}원\n"
                         f"❌ {m_ai_reason[:500]}"
                     )
-                    self._add_momentum_exit(b_ticker)
+                    # [BUG-5] AI 거절은 손절이 아니므로 30분 전체 쿨다운 대신 10분만 차단
+                    # (_add_momentum_exit 는 now - exit_ts < 1800s 로 차단하므로
+                    #  20분 전 타임스탬프를 넣으면 실질 10분만 차단됨)
+                    with self.lock:
+                        self._refresh_blacklist()
+                        self._momentum_exit_times[b_ticker] = time.time() - (self._MOMENTUM_COOLDOWN_SEC - 600)
                     used_tickers.add(b_ticker)
                     continue
                 buy_label  = f"🚀 AI승인 모멘텀#{slot_idx+1}"
@@ -1961,7 +2015,9 @@ class BaseBot:
             if n_needed <= 0: return
 
             # 당일 블랙리스트 종목을 충분히 걸러낼 수 있도록 여유 있게 조회
-            self._refresh_blacklist()
+            # [BUG-7] _refresh_blacklist 는 내부 딕셔너리를 수정하므로 락 필요
+            with self.lock:
+                self._refresh_blacklist()
             raw_info, self.hot_sectors = select_satellites(
                 kis=self.kis, n=self.num_satellites + n_needed + len(self._satellite_rejects) + 3,
                 verbose=False, gemini_client=self.gemini, bear_mode=(self.market_regime == "BEAR"),
