@@ -737,7 +737,7 @@ class BaseBot:
 
     def initialize_portfolio(self, total_cash):
         self.add_log("포트폴리오 초기화 중...")
-        raw_info, self.hot_sectors = select_satellites(kis=self.kis, n=self.num_satellites * 2, verbose=False, gemini_client=self.gemini)
+        raw_info, self.hot_sectors = select_satellites(kis=self.kis, n=self.num_satellites * 2, verbose=False, gemini_client=self.gemini, sector_guide=self.sector_guide)
         # AI 검토: 부적합 종목 제거 후 num_satellites 개수만 사용
         filtered_info = self._ai_filter_satellites(raw_info)
         self.satellite_info = filtered_info[:self.num_satellites]
@@ -1940,7 +1940,8 @@ class BaseBot:
             self._refresh_blacklist()
             raw_info, self.hot_sectors = select_satellites(
                 kis=self.kis, n=self.num_satellites + n_needed + len(self._satellite_rejects) + 3,
-                verbose=False, gemini_client=self.gemini, bear_mode=(self.market_regime == "BEAR")
+                verbose=False, gemini_client=self.gemini, bear_mode=(self.market_regime == "BEAR"),
+                sector_guide=self.sector_guide
             )
             # 이미 보유 중인 종목 + 당일 AI 거절 블랙리스트 종목 모두 제외
             pre_filter = [

@@ -436,7 +436,7 @@ def find_best_strategy(df):
 # ──────────────────────────────────────────────
 # 5. 메인 선정 함수
 # ──────────────────────────────────────────────
-def select_satellites(kis=None, n=NUM_SATELLITES, verbose=True, gemini_client=None, bear_mode=False):
+def select_satellites(kis=None, n=NUM_SATELLITES, verbose=True, gemini_client=None, bear_mode=False, sector_guide: str = ''):
     """
     멀티팩터 위성 종목 선정 (딥러닝 PyTorch 확률 예측 엔진 연동 완료)
     """
@@ -581,7 +581,7 @@ def select_satellites(kis=None, n=NUM_SATELLITES, verbose=True, gemini_client=No
     if gemini_client:
         if verbose:
             print("\n🤖 [AI 자율 매매] Claude AI가 최종 위성 종목과 전략을 선정 중입니다...")
-        ai_result = gemini_client.ai_select_satellites(results, hot_sectors, n)
+        ai_result = gemini_client.ai_select_satellites(results, hot_sectors, n, sector_guide=sector_guide)
         if ai_result:
             selected = ai_result
             if verbose: print("   ✅ AI 텍스트 선정 완료!")
