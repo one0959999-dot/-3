@@ -20,6 +20,10 @@ logger = logging.getLogger('lassi_bot')  # [BUG-FIX] NameError 방지
 _dl_predictor_lock = threading.Lock()
 _dl_predictor_instance = None
 
+# 전체 상장 종목 일별 캐시 (pykrx 전종목 조회 — 하루 1회만 호출)
+_full_ticker_cache: dict = {'date': None, 'tickers': []}
+_full_ticker_lock  = threading.Lock()
+
 from pykrx import stock
 from datetime import datetime, timedelta
 import pandas as pd
@@ -171,11 +175,35 @@ def get_sector_tickers(momentum, top_n_sectors=4):
 # ──────────────────────────────────────────────
 # 3. 거래량 급등 감지
 # ──────────────────────────────────────────────
+def _get_all_listed_tickers() -> list:
+    """KOSPI+KOSDAQ 전체 상장 종목 코드 조회 — 일 1회 캐싱, 매번 랜덤 셔플.
+    pykrx 호출 실패 시 빈 리스트 반환(폴백).
+    """
+    import random
+    today = datetime.today().strftime('%Y%m%d')
+    with _full_ticker_lock:
+        if _full_ticker_cache['date'] == today and _full_ticker_cache['tickers']:
+            return list(_full_ticker_cache['tickers'])
+        try:
+            kospi  = list(stock.get_market_ticker_list(today, market='KOSPI'))
+            kosdaq = list(stock.get_market_ticker_list(today, market='KOSDAQ'))
+            all_t  = [t for t in kospi + kosdaq if isinstance(t, str) and t.isdigit() and len(t) == 6]
+            random.shuffle(all_t)   # 매 캐시 갱신마다 랜덤 순서 → 커버리지 분산
+            _full_ticker_cache['date']    = today
+            _full_ticker_cache['tickers'] = all_t
+            logger.info(f"[스크리너] pykrx 전종목 캐시 갱신: KOSPI {len(kospi)}개 + KOSDAQ {len(kosdaq)}개")
+            return list(all_t)
+        except Exception as e:
+            logger.warning(f"[스크리너] pykrx 전종목 조회 실패 (폴백 유지): {e}")
+            return []
+
+
 def get_candidate_tickers(kis=None, verbose=False):
     """
     KOSPI+KOSDAQ 후보 종목 풀 생성.
-    - 방법1: KIS API 동적 거래량 상위 종목 수집 (Hybrid)
-    - 방법2: 알려진 주요 종목 풀 + 섹터 대표 종목 (Fallback)
+    - 방법1: KIS API 동적 거래량/등락률 상위 종목 수집
+    - 방법2: 알려진 주요 종목 풀 + 섹터 대표 종목
+    - 방법3: pykrx 전체 상장 종목에서 랜덤 보완 (매 실행 200개 — 반복 실행 시 전체 시장 커버)
     """
     # 알려진 주요 종목 풀 (KOSPI 대형주 + KOSDAQ 대형주 + 각 섹터 대표)
     BASE_POOL = [
@@ -232,7 +260,23 @@ def get_candidate_tickers(kis=None, verbose=False):
         if t not in seen and t not in EXCLUDE_TICKERS:
             seen.add(t)
             unique.append(t)
-            
+
+    # 3. pykrx 전체 상장 종목 보완 (최대 200개 랜덤 샘플 — 반복 실행 시 전체 시장 커버)
+    try:
+        all_listed = _get_all_listed_tickers()
+        added = 0
+        for t in all_listed:
+            if added >= 200:
+                break
+            if t not in seen and t not in EXCLUDE_TICKERS:
+                seen.add(t)
+                unique.append(t)
+                added += 1
+        if verbose and added:
+            print(f"   🗂️  pykrx 전체 시장 보완: {added}개 추가 → 총 후보 {len(unique)}개")
+    except Exception as e:
+        logger.warning(f"[스크리너] pykrx 보완 종목 추가 실패: {e}")
+
     return unique
 
 
