@@ -19,10 +19,37 @@ RSI_PERIOD         = 9
 RSI_OVERSOLD       = 30
 RSI_OVERBOUGHT     = 70
 
-# 인버스 ETF (BEAR 국면 자동 편입)
+# 인버스 ETF (하위 호환 유지)
 INVERSE_ETF_TICKER = "114800"   # KODEX 인버스 (KOSPI200 1x)
 INVERSE_ETF_NAME   = "KODEX 인버스"
-INVERSE_BUDGET_RATIO = 0.20     # 총 자산의 20%를 인버스에 배분
+INVERSE_BUDGET_RATIO = 0.15     # 기존 20% → 3종 분산으로 비율 조정
+
+# ── 방어 자산 포트폴리오 (BEAR 국면 자동 편입) ─────────────────────────────
+# 하락장에서 서로 역상관(uncorrelated) 또는 안전자산 특성을 가진 3가지 수단으로 분산.
+# 총 배분: 인버스 15% + 달러선물 10% + 금선물 5% = 30% 헤지 포지션
+DEFENSIVE_ASSETS = [
+    {
+        "ticker": "114800",
+        "name":   "KODEX 인버스",
+        "ratio":  0.15,    # 총자산의 15% — KOSPI200 1배 인버스
+        "type":   "inverse",
+        "emoji":  "📉",
+    },
+    {
+        "ticker": "130730",
+        "name":   "KODEX 달러선물",
+        "ratio":  0.10,    # 총자산의 10% — 원/달러 상승(원화 약세) 수익
+        "type":   "dollar",
+        "emoji":  "💵",
+    },
+    {
+        "ticker": "132030",
+        "name":   "KODEX 골드선물(H)",
+        "ratio":  0.05,    # 총자산의 5% — 금 안전자산 (환헤지)
+        "type":   "gold",
+        "emoji":  "🥇",
+    },
+]
 
 
 def get_market_regime(kis_api) -> str:

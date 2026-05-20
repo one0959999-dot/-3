@@ -21,7 +21,7 @@ def _now_kst():
     return datetime.now(_KST).replace(tzinfo=None)
 
 from telegram_bot import TelegramNotifier
-from strategy import CorePosition, Position, get_rsi_signal, get_signal_by_strategy, REINVEST_RATIO, get_market_regime, get_bear_bounce_signal, get_bear_bottom_score, get_bull_momentum_score, get_neutral_range_score, INVERSE_ETF_TICKER, INVERSE_ETF_NAME, INVERSE_BUDGET_RATIO, check_giveback_stop, check_early_drop_stop
+from strategy import CorePosition, Position, get_rsi_signal, get_signal_by_strategy, REINVEST_RATIO, get_market_regime, get_bear_bounce_signal, get_bear_bottom_score, get_bull_momentum_score, get_neutral_range_score, INVERSE_ETF_TICKER, INVERSE_ETF_NAME, INVERSE_BUDGET_RATIO, DEFENSIVE_ASSETS, check_giveback_stop, check_early_drop_stop
 from stock_screener import select_satellites, generate_daily_market_report
 from hot_momentum_scanner import scan_hot_momentum, clear_expired_cache
 from database import update_bot_status, save_portfolio_state, load_portfolio_state, log_trade_journal, get_recent_trades, save_ai_rules, load_ai_rules, get_user_initial_cash, set_user_initial_cash, add_user_initial_cash
@@ -103,8 +103,8 @@ class BaseBot:
         self.market_regime = "NEUTRAL"
         self.last_regime_check = 0.0
         self._regime_check_interval = 3600  # 1시간마다 재판단
-        self._last_inverse_check = 0.0      # 인버스 ETF 체크 캐시 (5분)
-        self._inverse_sold_ts   = 0.0       # 인버스 ETF 청산 타임스탬프 (재매수 24h 쿨다운)
+        self._last_defensive_check = 0.0     # 방어 자산 체크 캐시 (5분)
+        self._defensive_sold_ts   = {}      # 방어 자산 종목별 청산 타임스탬프 {ticker: ts} (24h 쿨다운)
 
         # ── 🚀 테마·급등주 모멘텀 전용 슬롯 ──────────────────────────
         # 위성 5개와 완전히 별개의 단일 포지션.
@@ -652,72 +652,82 @@ class BaseBot:
             logger.error(f"[{self.mode_name}] 시장 국면 판단 오류: {e}", exc_info=True)
         return self.market_regime
 
-    def _handle_inverse_etf(self, regime: str):
+    def _handle_defensive_assets(self, regime: str):
         """
-        BEAR 국면: KODEX 인버스(114800) 총자산의 20% 자동 매수.
-        BULL/NEUTRAL 국면: 보유 중이면 전량 청산.
-        모의투자도 동일하게 동작.
+        BEAR 국면: DEFENSIVE_ASSETS 3종 자동 매수 (인버스 15%, 달러 10%, 금 5%).
+        BULL/NEUTRAL 국면: 보유 중이면 각 자산 전량 청산.
+        종목별 독립 24h 재매수 쿨다운 (휩쏘 방지).
         5분마다 한 번만 실행 (매분 API 호출 방지).
         """
         if not self.kis:
             return
-        if time.time() - self._last_inverse_check < 300:  # 5분 캐시
+        if time.time() - self._last_defensive_check < 300:  # 5분 캐시
             return
-        self._last_inverse_check = time.time()
+        self._last_defensive_check = time.time()
         try:
             balance = self.kis.get_account_balance()
             if not balance:
                 return
 
-            total_cash  = float(balance.get('total_cash', 0))
-            total_value = float(balance.get('total_value', 0))
+            total_cash   = float(balance.get('total_cash', 0))
+            total_value  = float(balance.get('total_value', 0))
             total_assets = total_cash + total_value
+            stocks       = balance.get('stocks', [])
 
-            stocks = balance.get('stocks', [])
-            inv_holding = next((s for s in stocks if s.get('ticker') == INVERSE_ETF_TICKER), None)
-            has_inverse  = inv_holding and int(inv_holding.get('shares', 0)) > 0
-            inv_shares   = int(inv_holding.get('shares', 0)) if inv_holding else 0
+            for asset in DEFENSIVE_ASSETS:
+                ticker     = asset['ticker']
+                name       = asset['name']
+                ratio      = asset['ratio']
+                emoji      = asset['emoji']
+                cd_key     = f"_def_sold_{ticker}"   # 종목별 쿨다운 키
 
-            if regime == "BEAR" and not has_inverse:
-                # 휩쏘 방지: 인버스 청산 후 24시간 이내 재매수 금지
-                cooldown_remaining = 86400 - (time.time() - self._inverse_sold_ts)
-                if self._inverse_sold_ts > 0 and cooldown_remaining > 0:
-                    self.add_log(f"⏳ 인버스 재매수 쿨다운 중 ({cooldown_remaining/3600:.1f}h 남음) — 휩쏘 방지")
-                    return
-                budget = int(total_assets * INVERSE_BUDGET_RATIO)
-                price  = self.kis.get_current_price(INVERSE_ETF_TICKER)
-                if price and price > 0:
-                    qty = int(budget // price)
-                    if qty > 0 and total_cash >= qty * price * 1.002:
-                        self.kis.buy_market_order(INVERSE_ETF_TICKER, qty)
-                        self.add_log(f"🐻 하락장 인버스 매수 | {INVERSE_ETF_NAME} {qty}주 @ {price:,.0f}원")
-                        self._send_telegram(
-                            f"🐻 <b>인버스 ETF 매수</b>  ·  {self.alert_icon} {self.mode_name}\n"
-                            f"━━━━━━━━━━━━━━━━━━━━\n"
-                            f"📌 <b>{INVERSE_ETF_NAME}</b>  <code>{INVERSE_ETF_TICKER}</code>\n"
-                            f"💰 <b>{price:,.0f}원</b> × <b>{qty}주</b>  =  <b>{qty*price:,.0f}원</b>\n"
-                            f"📋 BEAR 국면  ·  총자산 {INVERSE_BUDGET_RATIO*100:.0f}% 헤지\n"
-                            f"━━━━━━━━━━━━━━━━━━━━\n"
-                            f"⏰ {_now_kst().strftime('%H:%M KST')}"
-                        )
+                holding    = next((s for s in stocks if s.get('ticker') == ticker), None)
+                has_pos    = holding and int(holding.get('shares', 0)) > 0
+                shares_held = int(holding.get('shares', 0)) if holding else 0
 
-            elif regime != "BEAR" and has_inverse and inv_shares > 0:
-                self.kis.sell_market_order(INVERSE_ETF_TICKER, inv_shares)
-                self._inverse_sold_ts = time.time()   # 24h 재매수 쿨다운 시작
-                price = self.kis.get_current_price(INVERSE_ETF_TICKER) or 0
-                self.add_log(f"🐂 국면 전환({regime}) → {INVERSE_ETF_NAME} {inv_shares}주 전량 청산 (24h 재매수 대기)")
-                self._send_telegram(
-                    f"🐂 <b>인버스 ETF 청산</b>  ·  {self.alert_icon} {self.mode_name}\n"
-                    f"━━━━━━━━━━━━━━━━━━━━\n"
-                    f"📌 <b>{INVERSE_ETF_NAME}</b>  <code>{INVERSE_ETF_TICKER}</code>\n"
-                    f"💰 <b>{inv_shares}주</b> 전량 청산\n"
-                    f"📋 국면 전환: BEAR → <b>{regime}</b>  ·  헤지 해제\n"
-                    f"━━━━━━━━━━━━━━━━━━━━\n"
-                    f"⏰ {_now_kst().strftime('%H:%M KST')}"
-                )
+                if regime == "BEAR" and not has_pos:
+                    # 휩쏘 방지: 청산 후 24h 이내 재매수 금지
+                    sold_ts = self._defensive_sold_ts.get(ticker, 0.0)
+                    cooldown_remaining = 86400 - (time.time() - sold_ts)
+                    if sold_ts > 0 and cooldown_remaining > 0:
+                        self.add_log(f"⏳ {name} 재매수 쿨다운 중 ({cooldown_remaining/3600:.1f}h 남음) — 휩쏘 방지")
+                        continue
+
+                    budget = int(total_assets * ratio)
+                    price  = self.kis.get_current_price(ticker)
+                    if price and price > 0:
+                        qty = int(budget // price)
+                        if qty > 0 and total_cash >= qty * price * 1.002:
+                            self.kis.buy_market_order(ticker, qty)
+                            total_cash -= qty * price  # 현금 차감 (다음 종목 계산용)
+                            self.add_log(f"🐻 하락장 방어 매수 | {emoji} {name} {qty}주 @ {price:,.0f}원")
+                            self._send_telegram(
+                                f"🐻 <b>방어 자산 매수</b>  ·  {self.alert_icon} {self.mode_name}\n"
+                                f"━━━━━━━━━━━━━━━━━━━━\n"
+                                f"{emoji} <b>{name}</b>  <code>{ticker}</code>\n"
+                                f"💰 <b>{price:,.0f}원</b> × <b>{qty}주</b>  =  <b>{qty*price:,.0f}원</b>\n"
+                                f"📋 BEAR 국면  ·  총자산 {ratio*100:.0f}% 헤지\n"
+                                f"━━━━━━━━━━━━━━━━━━━━\n"
+                                f"⏰ {_now_kst().strftime('%H:%M KST')}"
+                            )
+
+                elif regime != "BEAR" and has_pos and shares_held > 0:
+                    self.kis.sell_market_order(ticker, shares_held)
+                    self._defensive_sold_ts[ticker] = time.time()  # 종목별 24h 쿨다운 시작
+                    price = self.kis.get_current_price(ticker) or 0
+                    self.add_log(f"🐂 국면 전환({regime}) → {emoji} {name} {shares_held}주 전량 청산 (24h 재매수 대기)")
+                    self._send_telegram(
+                        f"🐂 <b>방어 자산 청산</b>  ·  {self.alert_icon} {self.mode_name}\n"
+                        f"━━━━━━━━━━━━━━━━━━━━\n"
+                        f"{emoji} <b>{name}</b>  <code>{ticker}</code>\n"
+                        f"💰 <b>{shares_held}주</b> 전량 청산\n"
+                        f"📋 국면 전환: BEAR → <b>{regime}</b>  ·  헤지 해제\n"
+                        f"━━━━━━━━━━━━━━━━━━━━\n"
+                        f"⏰ {_now_kst().strftime('%H:%M KST')}"
+                    )
 
         except Exception as e:
-            logger.error(f"[{self.mode_name}] 인버스 ETF 처리 오류: {e}", exc_info=True)
+            logger.error(f"[{self.mode_name}] 방어 자산 처리 오류: {e}", exc_info=True)
 
     def _check_etf_market_positive(self) -> bool:
         """시장 대표 ETF(KOSPI200·KOSDAQ150) 전일 대비율이 모두 -1% 이상이면 매수 허용."""
@@ -926,10 +936,10 @@ class BaseBot:
             if getattr(self, 'is_crisis_mode', False):  # 해제 안 됐으면 조기 종료
                 return
 
-        # 시장 국면 갱신 (1시간 캐시) + 인버스 ETF 자동 관리
+        # 시장 국면 갱신 (1시간 캐시) + 방어 자산(인버스·달러·금 ETF) 자동 관리
         regime = self._update_market_regime()
         if is_golden_hours:
-            self._handle_inverse_etf(regime)
+            self._handle_defensive_assets(regime)
 
         if self.kis:
             try:
