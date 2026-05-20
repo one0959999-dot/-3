@@ -1362,6 +1362,26 @@ class BaseBot:
 
         time_over = enter_t and (now - enter_t).total_seconds() / 60 > 60
 
+        # ── PARTIAL_EXIT_70: 30% 반납 신호 → 보유량 70% 선익절 (슬롯은 유지) ──────
+        if giveback_signal == 'PARTIAL_EXIT_70' and shares > 1:
+            partial_qty = max(1, int(shares * 0.70))
+            if self.kis.sell_market_order(ticker, partial_qty):
+                partial_profit = _net_profit(price, avg_p, partial_qty)
+                with self.lock:
+                    if self.internal_cash is not None:
+                        self.internal_cash += price * partial_qty * (1 - _SELL_FEE - _SELL_TAX)
+                    self._last_trade_ts = time.time()
+                    self.pnl_this_turn += partial_profit
+                mp['shares'] = shares - partial_qty   # 남은 30% 계속 보유
+                log_trade_journal(self.user_id, ticker, name, 'SELL', price, "모멘텀슬롯",
+                                  f"giveback 30% 반납 → 70% 선익절 ({giveback_reason})", profit=partial_profit)
+                self.add_log(f"✂️ 모멘텀#{slot_idx+1} 부분청산 70% | {name} {partial_qty}주 @ {price:,.0f}원 | {giveback_reason} | 손익: {partial_profit:+,.0f}원")
+                self._send_telegram(self._fmt_trade_msg("✂️", f"모멘텀#{slot_idx+1} 70% 부분청산",
+                    ticker, name, price, partial_qty, profit=partial_profit,
+                    strategy="모멘텀슬롯", note=f"giveback 30% 반납 — 잔여 {mp['shares']}주 홀딩"))
+                self._record_daily_pnl(partial_profit)
+            return False  # 슬롯 유지 (잔여 포지션 계속 관리)
+
         sell_reason = None
         if vol_fade:
             sell_reason = "거래량 페이드(고점 대비 50%↓)"
@@ -1381,7 +1401,7 @@ class BaseBot:
             profit = _net_profit(price, avg_p, shares)
             with self.lock:
                 if self.internal_cash is not None:
-                    self.internal_cash += price * shares * (1 - 0.00015)
+                    self.internal_cash += price * shares * (1 - _SELL_FEE - _SELL_TAX)
                 self._last_trade_ts = time.time()
             log_trade_journal(self.user_id, ticker, name, 'SELL', price, "모멘텀슬롯", sell_reason, profit=profit)
             self.add_log(f"🏁 모멘텀#{slot_idx+1} 청산 | {name}({ticker}) {shares}주 @ {price:,.0f}원 | {sell_reason} | 손익: {profit:+,.0f}원")
@@ -1935,6 +1955,8 @@ class BaseBot:
                     momentum_list.append(None)
 
             available_cash = self.internal_cash if self.internal_cash is not None else 0.0
-            return {"is_running": self.is_running, "is_mock": self._is_mock, "has_keys": self.kis is not None, "logs": self.logs[-30:], "hot_sectors": self.hot_sectors, "num_satellites": self.num_satellites, "cores": cores_data, "satellites": satellites, "momentum_list": momentum_list, "mock_total_asset": mock_total_asset, "mock_pnl": mock_pnl, "mock_pnl_rt": mock_pnl_rt, "initial_cash": current_initial_cash, "available_cash": available_cash}
+            # BUG-FIX: deque는 슬라이싱 불가 → list()로 변환 후 슬라이스 (TypeError 방지)
+            recent_logs = list(self.logs)[-30:]
+            return {"is_running": self.is_running, "is_mock": self._is_mock, "has_keys": self.kis is not None, "logs": recent_logs, "hot_sectors": self.hot_sectors, "num_satellites": self.num_satellites, "cores": cores_data, "satellites": satellites, "momentum_list": momentum_list, "mock_total_asset": mock_total_asset, "mock_pnl": mock_pnl, "mock_pnl_rt": mock_pnl_rt, "initial_cash": current_initial_cash, "available_cash": available_cash}
         except Exception as critical_e:
             return {"is_running": False, "is_mock": self._is_mock, "has_keys": False, "logs": [{"time": "Error", "message": f"오류: {str(critical_e)}"}], "hot_sectors": [], "num_satellites": 3, "cores": [], "satellites": [], "momentum_list": [None, None, None], "mock_total_asset": 0, "mock_pnl": 0, "mock_pnl_rt": 0, "initial_cash": 10000000}

@@ -357,10 +357,11 @@ class KisRealApi:
                         rt_cd = data.get('rt_cd', '')
                         print(f"[KIS 실전] 잔고 조회 실패: rt_cd={rt_cd}, msg={msg1}, data={data}")
                         if msg1 in ('EGW00123', 'EGW00121'):
-                            # W-08: 무한재귀 방지 — 토큰 재발급 성공 시에만 1회 재시도
+                            # BUG-FIX: 재귀 호출 → continue로 교체 (mock fix와 동일)
+                            # return self.get_account_balance() 는 무한재귀 유발
                             self.access_token = None
                             if self._ensure_token():
-                                return self.get_account_balance()
+                                continue
                 else:
                     print(f"[KIS 실전] 잔고 조회 통신 오류: status={res.status_code}, text={res.text}")
                 return None

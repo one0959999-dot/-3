@@ -434,10 +434,12 @@ def set_mode():
 
     # DB 업데이트 (화면 전환만, 봇 실행 상태 건드리지 않음)
     conn = get_db_connection()
-    conn.execute('UPDATE users SET is_mock = ? WHERE id = ?', (is_mock, current_user.id))
-    conn.commit()
-    user_data = conn.execute('SELECT * FROM users WHERE id = ?', (current_user.id,)).fetchone()
-    conn.close()
+    try:
+        conn.execute('UPDATE users SET is_mock = ? WHERE id = ?', (is_mock, current_user.id))
+        conn.commit()
+        user_data = conn.execute('SELECT * FROM users WHERE id = ?', (current_user.id,)).fetchone()
+    finally:
+        conn.close()
 
     for k, v in dict(user_data).items():
         current_user.data[k] = v
