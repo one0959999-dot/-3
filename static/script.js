@@ -581,8 +581,18 @@ window.toggleMode = async function () {
     }
 }
 
-window.openSettingsModal = function () {
+window.openSettingsModal = async function () {
     document.getElementById('settingsModal').style.display = 'block';
+    // 저장된 뉴스 API 키 불러오기 (마스킹된 값 표시)
+    try {
+        const res = await fetch('/api/settings/news_keys');
+        if (res.ok) {
+            const keys = await res.json();
+            if (keys.dart_api_key)        document.getElementById('dartApiKey').placeholder        = keys.dart_api_key + ' (저장됨)';
+            if (keys.naver_client_id)     document.getElementById('naverClientId').placeholder     = keys.naver_client_id + ' (저장됨)';
+            if (keys.naver_client_secret) document.getElementById('naverClientSecret').placeholder = keys.naver_client_secret + ' (저장됨)';
+        }
+    } catch (e) { /* 조회 실패 시 무시 */ }
 }
 window.closeSettingsModal = function () {
     document.getElementById('settingsModal').style.display = 'none';
@@ -870,6 +880,32 @@ window.saveAccountSettings = async function () {
             // 저장 후 페이지 새로고침: Claude API 키 등 서버 렌더링 요소 반영
             setTimeout(() => window.location.reload(), 1200);
         } else { showToast('저장 실패', 'error'); }
+    } catch (e) { showToast('서버 통신 오류', 'error'); }
+}
+
+window.saveNewsKeys = async function () {
+    const dartKey    = document.getElementById('dartApiKey').value.trim();
+    const naverId    = document.getElementById('naverClientId').value.trim();
+    const naverSec   = document.getElementById('naverClientSecret').value.trim();
+    // 아무것도 입력 안 했으면 무시
+    if (!dartKey && !naverId && !naverSec) {
+        showToast('저장할 키를 입력해 주세요.', 'error'); return;
+    }
+    try {
+        const res = await fetch('/api/settings/news_keys', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ dart_api_key: dartKey, naver_client_id: naverId, naver_client_secret: naverSec })
+        });
+        const result = await res.json();
+        if (result.status === 'success') {
+            const msg = document.getElementById('newsKeysSavedMsg');
+            msg.style.display = 'block';
+            setTimeout(() => { msg.style.display = 'none'; }, 3000);
+            // placeholder 갱신 (입력창 비우기)
+            if (dartKey)  { document.getElementById('dartApiKey').value = '';        document.getElementById('dartApiKey').placeholder        = dartKey.slice(0,8) + '**** (저장됨)'; }
+            if (naverId)  { document.getElementById('naverClientId').value = '';     document.getElementById('naverClientId').placeholder     = naverId.slice(0,4) + '**** (저장됨)'; }
+            if (naverSec) { document.getElementById('naverClientSecret').value = ''; document.getElementById('naverClientSecret').placeholder = naverSec.slice(0,4) + '**** (저장됨)'; }
+        } else { showToast('뉴스 키 저장 실패', 'error'); }
     } catch (e) { showToast('서버 통신 오류', 'error'); }
 }
 

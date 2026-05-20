@@ -550,6 +550,25 @@
                     placeholder="sk-ant-... 입력 시 AI 비서 활성화">
             </div>
             <button class="btn-save-keys" onclick="saveAccountSettings()" style="background:#10b981;">API 설정 저장</button>
+
+            <hr style="border:0; border-top:1px solid rgba(255,255,255,0.05); margin:1.2rem 0;">
+
+            <div class="settings-group"
+                style="border: 1px solid rgba(99, 102, 241, 0.35); padding: 12px; border-radius: 8px; margin-bottom: 12px;">
+                <h3 style="color: #818cf8; font-size: 0.9rem; margin-bottom: 10px;">📰 뉴스 & 공시 알림 설정 (선택)</h3>
+                <p style="font-size: 0.75rem; color: #94a3b8; margin-bottom: 10px; line-height: 1.5;">
+                    악재 공시 자동 손절 / 실적 발표 전 포지션 축소 / 매수 전 AI 뉴스 심사에 활용됩니다.<br>
+                    미입력 시 해당 기능만 비활성화되고 봇 동작에는 영향 없습니다.
+                </p>
+                <label>DART API Key <span style="font-size:0.72rem; color:#94a3b8;">(opendart.fss.or.kr → 인증키 신청)</span></label>
+                <input type="password" id="dartApiKey" placeholder="40자리 DART 인증키">
+                <label>Naver Client ID <span style="font-size:0.72rem; color:#94a3b8;">(developers.naver.com → 애플리케이션 등록)</span></label>
+                <input type="text" id="naverClientId" placeholder="Naver Client ID">
+                <label>Naver Client Secret</label>
+                <input type="password" id="naverClientSecret" placeholder="Naver Client Secret">
+            </div>
+            <button class="btn-save-keys" onclick="saveNewsKeys()" style="background:#6366f1; margin-bottom: 0.5rem;">뉴스 API 저장</button>
+            <div id="newsKeysSavedMsg" style="font-size:0.78rem; color:#10b981; display:none; margin-top:4px;">✅ 저장 완료 — 봇에 즉시 적용됩니다.</div>
             <div style="margin-top:1.2rem; padding:1rem; background:rgba(245,158,11,0.08); border:1px solid rgba(245,158,11,0.3); border-radius:10px;">
                 <div style="font-size:0.8rem; color:#f59e0b; font-weight:600; margin-bottom:0.6rem;">🧪 주문 API 연결 테스트 (1주)</div>
                 <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap; margin-bottom:6px;">
