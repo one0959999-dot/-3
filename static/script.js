@@ -178,8 +178,8 @@ document.addEventListener('DOMContentLoaded', () => {
                 if (res.status === 'success' && res.data) {
                     const d = res.data;
 
-                    // D+2 예수금 + 주식평가금액 요약
-                    if (kisSummary) kisSummary.textContent = `D+2 예수금: ${(d.total_cash || 0).toLocaleString()}원 | 주식평가: ${(d.total_value || 0).toLocaleString()}원`;
+                    // 예수금 + 주식평가금액 요약
+                    if (kisSummary) kisSummary.textContent = `예수금: ${(d.total_cash || 0).toLocaleString()}원 | 주식평가: ${(d.total_value || 0).toLocaleString()}원`;
 
                     // 총 평가금액 카드: 예수금 + 주식평가
                     const totalAsset = (d.total_cash || 0) + (d.total_value || 0);
@@ -264,7 +264,7 @@ document.addEventListener('DOMContentLoaded', () => {
     function startKisBalancePolling() {
         if (kisBalanceInterval) return;
         fetchKisBalance();
-        kisBalanceInterval = setInterval(fetchKisBalance, 15000);
+        kisBalanceInterval = setInterval(fetchKisBalance, 10000);
     }
 
     function stopKisBalancePolling() {
