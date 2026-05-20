@@ -381,6 +381,14 @@ class BaseBot:
             pos.status = "주문 실패 ❌"
         return False
 
+    def _record_daily_pnl(self, profit: float):
+        """일별 실현 손익을 기록합니다 (PnL 그래프용)."""
+        if profit == 0:
+            return
+        today = _now_kst().strftime('%Y-%m-%d')
+        with self.lock:
+            self.daily_pnl[today] = self.daily_pnl.get(today, 0.0) + profit
+
     def _refresh_blacklist(self):
         """날짜가 바뀌면 당일 블랙리스트를 초기화합니다."""
         today = _now_kst().strftime('%Y-%m-%d')
@@ -881,6 +889,7 @@ class BaseBot:
                     if sellable > 0 and core.avg_price > 0 and self._sell_order(c_tk, sellable, core, c_nm):
                         core_profit = _net_profit(cp, core.avg_price, sellable)
                         with self.lock: core.last_order_time = time.time(); core.status = "체결 대기 ⏳"; self.pnl_this_turn += core_profit
+                        self._record_daily_pnl(core_profit)
                         self.add_log(f"💎 {c_nm} 매도 | {sellable}주 @ {cp:,}원 | 손익: {core_profit:+,.0f}원")
                         self._send_telegram(self._fmt_trade_msg("💎", "코어 매도", c_tk, c_nm, cp, sellable, profit=core_profit, strategy="RSI 코어 장기보유"))
             except Exception as e:
@@ -930,6 +939,7 @@ class BaseBot:
                             log_trade_journal(self.user_id, ticker, p_nm, 'SELL', price, st_nm, "ATR 트레일링 익절", profit=profit)
                             self._send_telegram(self._fmt_trade_msg("🎯", "트레일링 익절", ticker, p_nm, price, p_sh, profit=profit, strategy=st_nm, note="ATR 트레일링 스탑 발동"))
                             with self.lock: self.pnl_this_turn += profit
+                            self._record_daily_pnl(profit)
                         continue
 
                 # I-01: 장 초반(09:00~09:30) 급락 단계별 손절 — check_early_drop_stop 실제 연결
@@ -945,6 +955,7 @@ class BaseBot:
                             log_trade_journal(self.user_id, ticker, p_nm, 'SELL', price, st_nm, f"장초 급락 손절 {_es_pct*100:.0f}% [{_es_reason}]", profit=profit)
                             self._send_telegram(self._fmt_trade_msg("🚨", "장초 급락 손절", ticker, p_nm, price, stop_qty, profit=profit, strategy=st_nm, note=_es_reason))
                             with self.lock: self.pnl_this_turn += profit
+                            self._record_daily_pnl(profit)
                         continue
 
                 if p_sh > 0 and p_avg > 0 and is_cd_passed:
@@ -958,6 +969,7 @@ class BaseBot:
                             log_trade_journal(self.user_id, ticker, p_nm, 'SELL', price, st_nm, "ATR 하드 손절", profit=profit)
                             self._send_telegram(self._fmt_trade_msg("💥", "손절 체결", ticker, p_nm, price, p_sh, profit=profit, strategy=st_nm, note="ATR 하드 손절선 이탈"))
                             with self.lock: self.pnl_this_turn += profit
+                            self._record_daily_pnl(profit)
                         continue
 
                 # ── 분할 익절: +5% 도달 시 보유량 50% 선익절, 나머지는 ATR 트레일링 ──
@@ -972,6 +984,7 @@ class BaseBot:
                         log_trade_journal(self.user_id, ticker, p_nm, 'SELL', price, st_nm, f"1차 분할 익절 +5% ({sell_qty}주)", profit=profit)
                         self._send_telegram(self._fmt_trade_msg("🎯", "1차 분할 익절", ticker, p_nm, price, sell_qty, profit=profit, strategy=st_nm, note=f"나머지 {p_sh - sell_qty}주는 ATR 트레일링 계속 보유"))
                         with self.lock: self.pnl_this_turn += profit
+                        self._record_daily_pnl(profit)
 
                 # ── 피라미딩: +3% 수익 중 & 상승 추세 지속 → 추가 20% 매수 ──
                 if (p_sh > 0 and p_avg > 0 and is_cd_passed
@@ -1151,6 +1164,7 @@ class BaseBot:
                                     if profit > 0 and self.core_positions and pos.cash >= profit * REINVEST_RATIO:
                                         pos.cash -= profit * REINVEST_RATIO
                                         for core in self.core_positions: core.cash += (profit * REINVEST_RATIO) / len(self.core_positions)
+                                self._record_daily_pnl(profit)
                         else:
                             pos.status = "AI 거절(보유) 🛑"
                     else:
@@ -1160,6 +1174,7 @@ class BaseBot:
                             log_trade_journal(self.user_id, ticker, p_nm, 'SELL', price, st_nm, "알고리즘 직통", profit=profit)
                             self._send_telegram(self._fmt_trade_msg("📉", "알고리즘 매도", ticker, p_nm, price, p_sh, profit=profit, strategy=st_nm))
                             with self.lock: self.pnl_this_turn += profit
+                            self._record_daily_pnl(profit)
             except Exception as e:
                 logger.error(f"[{self.mode_name}] 위성 매매 오류 ({ticker}): {e}", exc_info=True)
             time.sleep(0.2)
@@ -1290,6 +1305,7 @@ class BaseBot:
                 self._send_telegram(self._fmt_trade_msg("🏁", "모멘텀 슬롯 청산", ticker, name, price, shares, profit=profit, strategy="모멘텀슬롯", note=sell_reason))
                 with self.lock:
                     self.pnl_this_turn += profit
+                self._record_daily_pnl(profit)
                 # 청산된 종목은 당일 재진입 금지 블랙리스트에 등록
                 self._add_momentum_exit(ticker)
                 self.momentum_position = None
