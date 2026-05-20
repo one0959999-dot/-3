@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import re
 import logging
+import threading
 import requests
 from datetime import datetime, timedelta, timezone
 from functools import lru_cache
@@ -47,6 +48,7 @@ class NewsMonitor:
         self.naver_id      = naver_client_id.strip()
         self.naver_secret  = naver_client_secret.strip()
         self._corp_cache: dict[str, str] = {}   # ticker → corp_code
+        self._corp_cache_lock = threading.Lock()  # [BUG-M3] 멀티스레드 캐시 보호
 
     # ══════════════════════════════════════════════════════════════════
     # DART 공시 조회
@@ -54,8 +56,9 @@ class NewsMonitor:
 
     def get_corp_code(self, ticker: str) -> str | None:
         """종목코드(6자리) → DART 고유번호(8자리) 변환. 결과 캐싱."""
-        if ticker in self._corp_cache:
-            return self._corp_cache[ticker]
+        with self._corp_cache_lock:  # [BUG-M3] 캐시 읽기/쓰기 원자적 처리
+            if ticker in self._corp_cache:
+                return self._corp_cache[ticker]
         try:
             res = requests.get(
                 "https://opendart.fss.or.kr/api/company.json",
@@ -65,7 +68,8 @@ class NewsMonitor:
             data = res.json()
             if data.get('status') == '000':
                 corp_code = data['corp_code']
-                self._corp_cache[ticker] = corp_code
+                with self._corp_cache_lock:  # [BUG-M3]
+                    self._corp_cache[ticker] = corp_code
                 return corp_code
         except Exception as e:
             logger.warning(f"[NewsMonitor] DART corp_code 조회 실패 ({ticker}): {e}")
@@ -169,6 +173,7 @@ class NewsMonitor:
             if not reports:
                 return None
 
+            reports = sorted(reports, key=lambda d: d.get('rcept_dt', ''), reverse=True)  # [BUG-C4] 최신 보고서 기준
             last = reports[0]
             last_date = datetime.strptime(last['rcept_dt'], '%Y%m%d')
             next_expected = last_date + timedelta(days=91)   # 분기 ~3개월

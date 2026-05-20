@@ -127,10 +127,13 @@ class BaseBot:
         self.news_monitor: NewsMonitor | None = None   # DART + Naver 뉴스 모니터
 
         # 뉴스 모니터 주기 제어
-        self._last_dart_check    = 0.0   # 마지막 악재 공시 체크 타임스탬프
-        self._dart_check_interval = 600  # 10분마다 체크
-        self._last_earnings_check = 0.0  # 마지막 실적 발표일 체크
+        self._last_dart_check     = 0.0   # 마지막 악재 공시 체크 타임스탬프
+        self._dart_check_interval = 600   # 10분마다 체크
+        self._last_earnings_check = 0.0   # 마지막 실적 발표일 체크
         self._earnings_check_interval = 3600  # 1시간마다 체크
+        self._news_check_lock      = threading.Lock()  # [BUG-C3] 중복 실행 방지
+        self._notified_disclosures: set  = set()       # [BUG-M5] 중복 알림 방지 {ticker+rcept_no}
+        self._earnings_notified:    dict = {}          # [BUG-C1] 실적 축소 재발동 방지 {ticker: exp_date}
 
         self._init_api(kis_config)
         self._init_news_monitor()  # DB에서 뉴스 API 키 로드
@@ -485,28 +488,56 @@ class BaseBot:
     def _check_news_alerts(self):
         """
         보유 종목별 악재 공시·실적 발표 예정 체크 (10분/1시간 주기).
-        - 악재 공시 발견  → 텔레그램 경보 + AI 손절 검토
-        - 실적 발표 D-7내 → 텔레그램 알림 + 포지션 30% 축소
+        - 악재 공시 발견  → 텔레그램 경보 + AI 손절 검토 (위성만 매도, 코어는 알림만)
+        - 실적 발표 D-7내 → 텔레그램 알림 + 포지션 30% 축소 (1회만)
         """
         if not self.news_monitor:
             return
+
+        # [BUG-C3] 중복 실행 방지 — 이미 실행 중이면 즉시 반환
+        if not self._news_check_lock.acquire(blocking=False):
+            return
+        try:
+            self._check_news_alerts_inner()
+        finally:
+            self._news_check_lock.release()
+
+    def _check_news_alerts_inner(self):
         now_ts = time.time()
 
         # ── 1. 악재 공시 체크 (10분 주기) ─────────────────────────────
-        if now_ts - self._last_dart_check >= self._dart_check_interval:
-            self._last_dart_check = now_ts
-            with self.lock:
-                held = [(c.ticker, c.name, c.shares, c.avg_price) for c in self.core_positions if c.shares > 0]
-                held += [(t, p.name, p.shares, p.avg_price) for t, p in self.satellite_positions.items() if p.shares > 0]
+        # [BUG-C3] 타임스탬프 체크+갱신을 원자적으로 처리
+        with self.lock:
+            dart_due = (now_ts - self._last_dart_check >= self._dart_check_interval)
+            if dart_due:
+                self._last_dart_check = now_ts
+                held_sat = [(t, p.name, p.shares, p.avg_price)
+                            for t, p in self.satellite_positions.items() if p.shares > 0]
+                held_core = [(c.ticker, c.name, c.shares, c.avg_price)
+                             for c in self.core_positions if c.shares > 0]
 
-            for ticker, name, shares, avg_price in held:
+        if dart_due:
+            # [BUG-M4] API rate limit — 종목 간 0.5초 간격
+            for ticker, name, shares, avg_price in held_sat + held_core:
                 try:
+                    time.sleep(0.5)
                     neg = self.news_monitor.check_negative_disclosure(ticker, days=2)
                     if not neg:
                         continue
                     for d in neg:
                         report_nm = d.get('report_nm', '')
                         rcept_dt  = d.get('rcept_dt', '')
+                        rcept_no  = d.get('rcept_no', rcept_dt + report_nm)
+                        disc_key  = f"{ticker}_{rcept_no}"
+
+                        # [BUG-M5] 이미 알림한 공시는 건너뜀
+                        with self.lock:
+                            if disc_key in self._notified_disclosures:
+                                continue
+                            self._notified_disclosures.add(disc_key)
+
+                        is_core = any(c.ticker == ticker for c in self.core_positions)
+                        sell_note = "📌 코어 종목 — 플로어 보호로 자동 매도 없음" if is_core else "🤖 AI 손절 검토 중..."
                         msg = (
                             f"⚠️ <b>악재 공시 감지</b>  ·  {self.alert_icon} {self.mode_name}\n"
                             f"━━━━━━━━━━━━━━━━━━━━\n"
@@ -515,72 +546,91 @@ class BaseBot:
                             f"📅 공시일: {rcept_dt}\n"
                             f"💼 보유: {shares}주 @ {avg_price:,.0f}원\n"
                             f"━━━━━━━━━━━━━━━━━━━━\n"
-                            f"🤖 AI 손절 검토 중..."
+                            f"{sell_note}"
                         )
                         self._send_telegram(msg, 'news')
                         self.add_log(f"⚠️ {name}({ticker}) 악재 공시: {report_nm}")
 
-                        # AI가 있으면 손절 여부 판단 요청
-                        if self.gemini:
-                            try:
-                                context = f"악재 공시 발생: {report_nm} ({rcept_dt})\n보유: {shares}주 @ 평단 {avg_price:,.0f}원"
-                                decision, ai_reason = self.gemini.ai_approve_trade(
-                                    'SELL', name, ticker, avg_price, "공시감지",
-                                    {}, self.hot_sectors,
-                                    get_recent_trades(self.user_id, ticker),
-                                    load_ai_rules(self.user_id), context=context
-                                )
-                                if decision:
-                                    # 위성 포지션이면 즉시 매도
-                                    pos = self.satellite_positions.get(ticker)
-                                    if pos and pos.shares > 0:
-                                        if self._sell_order(ticker, pos.shares, pos, name):
-                                            with self.lock:
-                                                pos.shares = 0; pos.status = "악재공시 손절 🚨"
-                                            self.add_log(f"🚨 {name}({ticker}) 악재 공시 AI 손절 완료")
-                                            self._send_telegram(
-                                                f"🚨 <b>악재공시 손절 완료</b>  {self.alert_icon}\n"
-                                                f"📌 <b>{name}</b> | 🤖 {ai_reason[:100]}",
-                                                'news'
-                                            )
-                            except Exception as ae:
-                                logger.warning(f"[{self.mode_name}] 악재 공시 AI 판단 오류 ({ticker}): {ae}")
+                        # [BUG-N2] 코어 종목은 알림만, 매도 없음
+                        if is_core or not self.gemini:
+                            continue
+
+                        # 위성 포지션 AI 손절 검토
+                        try:
+                            context = f"악재 공시 발생: {report_nm} ({rcept_dt})\n보유: {shares}주 @ 평단 {avg_price:,.0f}원"
+                            decision, ai_reason = self.gemini.ai_approve_trade(
+                                'SELL', name, ticker, avg_price, "공시감지",
+                                {}, self.hot_sectors,
+                                get_recent_trades(self.user_id, ticker),
+                                load_ai_rules(self.user_id), context=context
+                            )
+                            if decision:
+                                pos = self.satellite_positions.get(ticker)
+                                if pos and pos.shares > 0:
+                                    sell_shares = pos.shares
+                                    if self._sell_order(ticker, sell_shares, pos, name):
+                                        with self.lock:
+                                            price_now = self.live_prices.get(ticker) or avg_price
+                                            pos.shares = 0; pos.status = "악재공시 손절 🚨"
+                                            self.pnl_this_turn += _net_profit(price_now, avg_price, sell_shares)
+                                        profit = _net_profit(price_now, avg_price, sell_shares)
+                                        self._log_trade(ticker, name, 'SELL', price_now, "공시감지", f"악재공시 AI 손절: {report_nm}", profit=profit)  # [BUG-C2]
+                                        self._record_daily_pnl(profit)  # [BUG-C2]
+                                        self.add_log(f"🚨 {name}({ticker}) 악재 공시 AI 손절 완료")
+                                        self._send_telegram(
+                                            f"🚨 <b>악재공시 손절 완료</b>  {self.alert_icon}\n"
+                                            f"📌 <b>{name}</b> | 손익: {profit:+,.0f}원\n"
+                                            f"🤖 {ai_reason[:100]}",
+                                            'news'
+                                        )
+                        except Exception as ae:
+                            logger.warning(f"[{self.mode_name}] 악재 공시 AI 판단 오류 ({ticker}): {ae}")
                 except Exception as e:
                     logger.warning(f"[{self.mode_name}] DART 공시 체크 오류 ({ticker}): {e}")
 
         # ── 2. 실적 발표 예정 체크 (1시간 주기) ───────────────────────
-        if now_ts - self._last_earnings_check >= self._earnings_check_interval:
-            self._last_earnings_check = now_ts
-            with self.lock:
+        with self.lock:
+            earnings_due = (now_ts - self._last_earnings_check >= self._earnings_check_interval)
+            if earnings_due:
+                self._last_earnings_check = now_ts
                 sat_items = [(t, p.name, p.shares, p.avg_price)
                              for t, p in self.satellite_positions.items() if p.shares > 0]
 
+        if earnings_due:
             for ticker, name, shares, avg_price in sat_items:
                 try:
+                    time.sleep(0.5)  # [BUG-M4] rate limit
                     earnings = self.news_monitor.get_upcoming_earnings(ticker)
                     if not earnings:
                         continue
                     days_until = earnings['days_until']
                     exp_date   = earnings['expected_date']
 
+                    # [BUG-C1] 이미 이 예정일로 축소한 종목은 재발동 차단
+                    if self._earnings_notified.get(ticker) == exp_date:
+                        continue
+
                     if days_until <= 7 and shares > 1:
-                        # 30% 포지션 축소
                         reduce_qty = max(1, int(shares * 0.30))
                         pos = self.satellite_positions.get(ticker)
                         if pos and pos.shares > 0:
                             if self._sell_order(ticker, reduce_qty, pos, name):
                                 with self.lock:
+                                    price_now = self.live_prices.get(ticker) or avg_price  # [BUG-M1] 락 안에서
                                     pos.shares = max(0, pos.shares - reduce_qty)
                                     pos.status = "실적전 축소 📊"
-                                price_now = self.live_prices.get(ticker) or avg_price
-                                profit = (price_now - avg_price) * reduce_qty * (1 - _SELL_FEE - _SELL_TAX)
+                                    self._earnings_notified[ticker] = exp_date  # [BUG-C1] 재발동 방지
+                                profit = _net_profit(price_now, avg_price, reduce_qty)
                                 self._log_trade(ticker, name, 'SELL', price_now, "실적공시대응", f"실적발표 D-{days_until} 30% 축소", profit=profit)
+                                with self.lock:
+                                    self.pnl_this_turn += profit  # [BUG-C1]
+                                self._record_daily_pnl(profit)    # [BUG-C1]
                                 msg = (
                                     f"📊 <b>실적 발표 전 포지션 축소</b>  ·  {self.alert_icon} {self.mode_name}\n"
                                     f"━━━━━━━━━━━━━━━━━━━━\n"
                                     f"📌 <b>{name}</b>  <code>{ticker}</code>\n"
                                     f"📅 실적 발표 예정: {exp_date} (D-{days_until})\n"
-                                    f"✂️ {reduce_qty}주 (30%) 선익절\n"
+                                    f"✂️ {reduce_qty}주 (30%) 선익절  손익: {profit:+,.0f}원\n"
                                     f"💼 잔여: {pos.shares}주 계속 보유\n"
                                     f"━━━━━━━━━━━━━━━━━━━━\n"
                                     f"⏰ {_now_kst().strftime('%H:%M KST')}"
@@ -1831,12 +1881,17 @@ class BaseBot:
                             shares_now = pos.shares
                         if shares_now > 0:
                             if self.kis: self.kis.sell_market_order(ticker, shares_now, price=int(price))
+                            sell_qty = 0; sell_profit = 0.0  # [BUG-M2] 초기화
                             with self.lock:
                                 # trading_job이 먼저 매도했을 경우 재진입 차단
                                 if pos.shares > 0:
-                                    qty, profit = pos.sell(price)
+                                    sell_qty, sell_profit = pos.sell(price)
                                     freed_cash += pos.cash  # C-05: lock 내부에서 접근
+                                    self.pnl_this_turn += sell_profit  # [BUG-M2]
                                 if ticker in self.satellite_positions: del self.satellite_positions[ticker]
+                            if sell_qty > 0:  # [BUG-M2] 실제 매도 발생 시에만 기록
+                                self._log_trade(ticker, pos.name, 'SELL', price, '위성교체', '재스크리닝 손절', profit=sell_profit)
+                                self._record_daily_pnl(sell_profit)
                         else:
                             with self.lock:
                                 if ticker in self.satellite_positions: del self.satellite_positions[ticker]

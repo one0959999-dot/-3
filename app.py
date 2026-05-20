@@ -514,7 +514,7 @@ def get_news_keys():
     keys = get_news_api_keys(current_user.id)
     return jsonify({
         "dart_api_key":        keys['dart_api_key'][:8] + '****' if keys['dart_api_key'] else '',
-        "naver_client_id":     keys['naver_client_id'],
+        "naver_client_id":     keys['naver_client_id'][:4] + '****' if keys['naver_client_id'] else '',  # [BUG-N5] 마스킹 추가
         "naver_client_secret": keys['naver_client_secret'][:4] + '****' if keys['naver_client_secret'] else '',
     })
 
