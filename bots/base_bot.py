@@ -367,21 +367,17 @@ class BaseBot:
         self.logs.append({"time": t, "message": msg})   # deque(maxlen=100) — 자동 순환
         print(f"[{t}] {msg}")
 
-    # 텔레그램 알림 필터: 'trade'(체결) 와 'reject'(거절)만 발송, 나머지는 조용히 드롭.
-    _NOTIFY_WHITELIST = frozenset({'trade', 'reject'})
-
     def _send_telegram(self, message, msg_type: str = 'misc'):
         if not self.telegram: return
-        if msg_type not in self._NOTIFY_WHITELIST: return
         # 메시지에 이미 모드 정보가 포함되어 있으므로 그대로 전달
         threading.Thread(target=self.telegram.send_message, args=(message,), daemon=True).start()
 
     def _send_trade_telegram(self, message):
-        """거래 체결 알림 전용 — msg_type='trade' 고정."""
+        """거래 체결 알림 전용 헬퍼."""
         self._send_telegram(message, msg_type='trade')
 
     def _send_reject_telegram(self, message):
-        """거래 거절 알림 전용 — msg_type='reject' 고정."""
+        """거래 거절 알림 전용 헬퍼."""
         self._send_telegram(message, msg_type='reject')
 
     def _buy_order(self, ticker: str, qty: int, pos, name: str) -> bool:
