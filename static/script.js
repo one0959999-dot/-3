@@ -224,9 +224,16 @@ document.addEventListener('DOMContentLoaded', () => {
                 const elMonth = document.getElementById('chart-monthly-pnl');
                 const elYear  = document.getElementById('chart-yearly-pnl');
                 const elTotal = document.getElementById('chart-total-pnl');
-                if (elMonth) { elMonth.textContent = `이번달: ${formatPnl(monthlyAcc)}`; elMonth.style.color = colorPnl(monthlyAcc); }
-                if (elYear)  { elYear.textContent  = `올해: ${formatPnl(yearlyAcc)}`;   elYear.style.color  = colorPnl(yearlyAcc);  }
-                if (elTotal) { elTotal.textContent  = `누적: ${formatPnl(totalAcc)}`;    elTotal.style.color  = colorPnl(totalAcc);  }
+                // data-pnl 속성 함께 설정: warm-beige 테마에서 !important CSS 덮어쓰기용
+                const setPnlEl = (el, val, label) => {
+                    if (!el) return;
+                    el.textContent = `${label}: ${formatPnl(val)}`;
+                    el.style.color = colorPnl(val);
+                    el.dataset.pnl = val > 0 ? 'profit' : (val < 0 ? 'loss' : 'neutral');
+                };
+                setPnlEl(elMonth, monthlyAcc, '이번달');
+                setPnlEl(elYear,  yearlyAcc,  '올해');
+                setPnlEl(elTotal, totalAcc,   '누적');
             });
     }
 
@@ -280,8 +287,11 @@ document.addEventListener('DOMContentLoaded', () => {
             if (totalValEl) {
                 totalValEl.textContent = Math.round(data.mock_total_asset).toLocaleString() + '원';
                 // 수익 여부에 따라 색상: 이익 → 빨강, 손실 → 파랑, 중립 → 기본
+                // data-pnl 속성도 함께 설정: warm-beige 테마 CSS 덮어쓰기용 (브라우저가 hex→rgb 정규화해서 [style*=] 방식이 안됨)
                 if (data.mock_pnl !== undefined) {
+                    const pnlState = data.mock_pnl > 0 ? 'profit' : (data.mock_pnl < 0 ? 'loss' : 'neutral');
                     totalValEl.style.color = data.mock_pnl > 0 ? '#f85149' : (data.mock_pnl < 0 ? '#58a6ff' : '');
+                    totalValEl.dataset.pnl = pnlState;
                 }
             }
         }
@@ -289,9 +299,11 @@ document.addEventListener('DOMContentLoaded', () => {
             const pnlEl = document.getElementById('total-pnl');
             if (pnlEl) {
                 const sign = data.mock_pnl >= 0 ? '+' : '';
+                const pnlState = data.mock_pnl > 0 ? 'profit' : (data.mock_pnl < 0 ? 'loss' : 'neutral');
                 const color = data.mock_pnl > 0 ? '#f85149' : (data.mock_pnl < 0 ? '#58a6ff' : '#8b949e');
                 pnlEl.style.color = color;
                 pnlEl.style.fontWeight = '700';
+                pnlEl.dataset.pnl = pnlState;
                 pnlEl.textContent = `수익: ${sign}${Math.round(data.mock_pnl).toLocaleString()}원 (${sign}${data.mock_pnl_rt.toFixed(2)}%)`;
             }
         }

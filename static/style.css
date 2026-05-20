@@ -1304,31 +1304,48 @@ body.theme-warm-beige .sat-table td {
     border-bottom: 1px solid #e2e8f0 !important;
 }
 
-/* 9. 🛠️ 수익(+빨강) / 손실(-파랑) 색상 강제 복구 (가독성 높은 진한 색상으로 매핑) */
+/* 9. 🛠️ 수익(+빨강) / 손실(-파랑) 색상 강제 복구 — data-pnl 속성 기반
+ *
+ * [이전 방식의 문제]
+ * [style*="color:#f85149"] 선택자는 JS가 element.style.color='#f85149' 로 설정해도
+ * 브라우저가 hex를 rgb(248,81,73)으로 정규화해 저장하므로 문자열 매칭이 실패함.
+ *
+ * [수정 방식]
+ * JS에서 data-pnl="profit"|"loss"|"neutral" 속성을 함께 설정하고,
+ * ID 선택자(특이성 1,0,0)를 붙여 .card-subvalue 의 !important(0,2,0)를 확실히 덮어씀.
+ */
 
-/* 자바스크립트가 칠하는 빨간색(수익) 인지 및 복구 */
-body.theme-warm-beige [style*="color: #f85149"],
-body.theme-warm-beige [style*="color:#f85149"] {
+/* 수익(+) → 진한 빨강 */
+body.theme-warm-beige #total-value[data-pnl="profit"],
+body.theme-warm-beige #total-pnl[data-pnl="profit"],
+body.theme-warm-beige #chart-monthly-pnl[data-pnl="profit"],
+body.theme-warm-beige #chart-yearly-pnl[data-pnl="profit"],
+body.theme-warm-beige #chart-total-pnl[data-pnl="profit"] {
     color: #dc2626 !important;
-    /* 베이지 배경에 잘 보이는 찐한 빨강 */
     -webkit-text-fill-color: #dc2626 !important;
     font-weight: 700 !important;
 }
 
-/* 자바스크립트가 칠하는 파란색(손실) 인지 및 복구 */
-body.theme-warm-beige [style*="color: #58a6ff"],
-body.theme-warm-beige [style*="color:#58a6ff"] {
+/* 손실(-) → 진한 파랑 */
+body.theme-warm-beige #total-value[data-pnl="loss"],
+body.theme-warm-beige #total-pnl[data-pnl="loss"],
+body.theme-warm-beige #chart-monthly-pnl[data-pnl="loss"],
+body.theme-warm-beige #chart-yearly-pnl[data-pnl="loss"],
+body.theme-warm-beige #chart-total-pnl[data-pnl="loss"] {
     color: #2563eb !important;
-    /* 베이지 배경에 잘 보이는 찐한 파랑 */
     -webkit-text-fill-color: #2563eb !important;
     font-weight: 700 !important;
 }
 
-/* 자바스크립트가 칠하는 회색(0% 등) 인지 및 복구 */
-body.theme-warm-beige [style*="color: #8b949e"],
-body.theme-warm-beige [style*="color:#8b949e"] {
+/* 보합(0) → 회색 */
+body.theme-warm-beige #total-value[data-pnl="neutral"],
+body.theme-warm-beige #total-pnl[data-pnl="neutral"],
+body.theme-warm-beige #chart-monthly-pnl[data-pnl="neutral"],
+body.theme-warm-beige #chart-yearly-pnl[data-pnl="neutral"],
+body.theme-warm-beige #chart-total-pnl[data-pnl="neutral"] {
     color: #64748b !important;
     -webkit-text-fill-color: #64748b !important;
+    font-weight: 400 !important;
 }
 
 /* 10. 🛠️ 위성 종목 갯수 조절 UI (모의투자 라이트 모드 맞춤형 디자인) */
