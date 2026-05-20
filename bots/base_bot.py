@@ -1330,18 +1330,34 @@ class BaseBot:
                             self._record_daily_pnl(profit)
                         continue
 
-                # ── 분할 익절: +5% 도달 시 보유량 50% 선익절, 나머지는 ATR 트레일링 ──
+                # ── 1차 분할 익절: +10% 도달 시 보유량 50% 익절 (손익비 1:2 확보) ──
                 if (p_sh > 0 and p_avg > 0 and is_cd_passed
                         and not getattr(pos, 'partial_sold', False)
-                        and price >= p_avg * 1.05):
+                        and price >= p_avg * 1.10):
                     sell_qty = max(1, p_sh // 2)
                     if self._sell_order(ticker, sell_qty, pos, p_nm):
                         with self.lock:
                             pos.last_order_time = time.time(); pos.partial_sold = True; pos.status = "1차익절 ✅"
-                            pos.shares = max(0, pos.shares - sell_qty)  # [BUG-M2] 분할 익절 후 잔여주수 반영
+                            pos.shares = max(0, pos.shares - sell_qty)
                         profit = _net_profit(price, p_avg, sell_qty)
-                        self._log_trade(ticker, p_nm, 'SELL', price, st_nm, f"1차 분할 익절 +5% ({sell_qty}주)", profit=profit)
-                        self._send_trade_telegram(self._fmt_trade_msg("🎯", "1차 분할 익절", ticker, p_nm, price, sell_qty, profit=profit, strategy=st_nm, note=f"나머지 {p_sh - sell_qty}주는 ATR 트레일링 계속 보유"))
+                        self._log_trade(ticker, p_nm, 'SELL', price, st_nm, f"1차 분할 익절 +10% ({sell_qty}주)", profit=profit)
+                        self._send_trade_telegram(self._fmt_trade_msg("🎯", "1차 분할 익절", ticker, p_nm, price, sell_qty, profit=profit, strategy=st_nm, note=f"나머지 {p_sh - sell_qty}주는 +20% 목표 ATR 트레일링"))
+                        with self.lock: self.pnl_this_turn += profit
+                        self._record_daily_pnl(profit)
+
+                # ── 2차 분할 익절: +20% 도달 시 나머지 전량 익절 (한달 20% 목표) ──
+                if (p_sh > 0 and p_avg > 0 and is_cd_passed
+                        and getattr(pos, 'partial_sold', False)
+                        and not getattr(pos, 'partial_sold_2', False)
+                        and price >= p_avg * 1.20):
+                    sell_qty = pos.shares  # 나머지 전량
+                    if sell_qty > 0 and self._sell_order(ticker, sell_qty, pos, p_nm):
+                        with self.lock:
+                            pos.last_order_time = time.time(); pos.partial_sold_2 = True; pos.status = "2차익절 ✅"
+                            pos.shares = 0
+                        profit = _net_profit(price, p_avg, sell_qty)
+                        self._log_trade(ticker, p_nm, 'SELL', price, st_nm, f"2차 전량 익절 +20% ({sell_qty}주)", profit=profit)
+                        self._send_trade_telegram(self._fmt_trade_msg("🏆", "2차 전량 익절", ticker, p_nm, price, sell_qty, profit=profit, strategy=st_nm, note="한달 20% 목표 달성"))
                         with self.lock: self.pnl_this_turn += profit
                         self._record_daily_pnl(profit)
 
@@ -1675,15 +1691,22 @@ class BaseBot:
                 self._record_daily_pnl(partial_profit)
             return False  # 슬롯 유지 (잔여 포지션 계속 관리)
 
+        # 모멘텀 슬롯 출구 전략:
+        # - 손절: 고정 -3% (급등 후 진입 특성상 타이트하게, 손익비 1:1.7)
+        # - 익절: +5% 전량 (단타 빠른 수익 실현)
+        # - 60분 초과: 강제 청산
+        MOMENTUM_STOP_PCT  = 0.97   # 진입가 대비 -3%
+        MOMENTUM_TARGET_PCT = 1.05  # 진입가 대비 +5%
+
         sell_reason = None
         if vol_fade:
             sell_reason = "거래량 페이드(고점 대비 50%↓)"
-        elif avg_p > 0 and price >= avg_p * 1.05:
+        elif avg_p > 0 and price >= avg_p * MOMENTUM_TARGET_PCT:
             sell_reason = f"+5% 목표 달성 ({avg_p:,.0f}→{price:,.0f})"
         elif giveback_signal == 'FULL_EXIT':
             sell_reason = f"5분봉 반납률 전량 이탈: {giveback_reason}"
-        elif avg_p > 0 and price <= avg_p - atr:
-            sell_reason = f"ATR 손절 ({avg_p:,.0f}→{price:,.0f})"
+        elif avg_p > 0 and price <= avg_p * MOMENTUM_STOP_PCT:
+            sell_reason = f"고정 -3% 손절 ({avg_p:,.0f}→{price:,.0f}) [손익비 1:1.7]"
         elif time_over:
             sell_reason = "보유 60분 초과 강제 청산"
 
@@ -1854,7 +1877,7 @@ class BaseBot:
                 f"🔥 {best['trigger_reason']}\n"
                 f"📊 모멘텀 점수 <b>{best['momentum_score']:.1f}점</b>\n"
                 f"🤖 {m_ai_reason}\n"
-                f"🛡️ 손절: ATR <b>{atr_val:,.0f}원</b>  ·  🎯 익절: <b>+5%</b>\n"
+                f"🛡️ 손절: ATR <b>{atr_val:,.0f}원</b>  ·  🎯 익절: <b>+10% 1차 / +20% 2차</b>\n"
                 f"━━━━━━━━━━━━━━━━━━━━\n"
                 f"⏰ {now.strftime('%H:%M KST')}"
             )
