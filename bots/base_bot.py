@@ -2280,11 +2280,22 @@ class BaseBot:
             holding_items = [(t, p) for t, p in safe_satellite_items if p.shares > 0]
             empty_items   = [(t, p) for t, p in safe_satellite_items if p.shares == 0]
             capped_items  = (holding_items + empty_items)[:self.num_satellites]
+
+            # [BUG-FIX] tracked_tickers & 평가금액은 ALL 위성 기준으로 계산 (UI 표시 캡과 분리)
+            # capped_items 기준으로만 tracked_tickers를 채우면, 캡 밖의 종목이
+            # cached_balance 루프에서 이중 합산되는 버그 발생.
+            _sat_price_cache: dict = {}
+            for ticker, pos in safe_satellite_items:
+                tracked_tickers.add(ticker)   # 이중 계산 방지 (캡 무관하게 전체 등록)
+                if pos.shares > 0:
+                    sp = float(getattr(pos, '_last_price', 0) or self.live_prices.get(ticker, 0) or getattr(pos, 'kis_current_price', 0) or pos.avg_price or 0)
+                    _sat_price_cache[ticker] = sp
+                    total_realtime_stock_val += float(pos.shares) * sp
+
+            # UI 표시는 capped_items으로만
             for ticker, pos in capped_items:
-                sp = float(getattr(pos, '_last_price', 0) or self.live_prices.get(ticker, 0) or getattr(pos, 'kis_current_price', 0) or pos.avg_price or 0)
+                sp = _sat_price_cache.get(ticker) or float(getattr(pos, '_last_price', 0) or self.live_prices.get(ticker, 0) or getattr(pos, 'kis_current_price', 0) or pos.avg_price or 0)
                 sat_val = float(pos.shares) * sp
-                total_realtime_stock_val += sat_val
-                tracked_tickers.add(ticker)
                 satellites.append({"name": pos.name, "ticker": ticker, "strategy": self.satellite_strategies.get(ticker, '-'), "shares": pos.shares, "price": sp, "value": sat_val, "avg_price": float(getattr(pos, 'avg_price', 0) or 0), "budget": getattr(pos, 'initial_cash', getattr(pos, 'budget', 0)), "status": getattr(pos, 'status', '감시 중 👀'), "status_msg": getattr(pos, 'status_msg', '지표 점검 중...')})
 
             try:
