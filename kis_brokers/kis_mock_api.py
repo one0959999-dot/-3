@@ -825,7 +825,9 @@ class KisMockApi:
                             "close": int(item.get("stck_prpr", 0) or 0),
                             "volume": int(item.get("cntg_vol", 0) or 0),
                         })
-                    return results
+                    # KIS API는 최신봉 먼저(내림차순) 반환 → 역순 정렬해 최신봉이 마지막이 되게 함
+                    # check_giveback_stop/_check_minute_trend_up 등 모든 호출부가 candles[-1]=최신봉 가정
+                    return results[::-1]
             return []
         except Exception as e:
             print(f"[KIS 모의] 분봉조회 오류: {e}")
