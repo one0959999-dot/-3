@@ -230,113 +230,32 @@ document.addEventListener('DOMContentLoaded', () => {
             });
     }
 
-    // ── KIS Balance Fetch ──
-    let kisBalanceInterval = null;
-
-    function fetchKisBalance() {
-        fetch('/api/kis_balance')
-            .then(r => r.json())
-            .then(res => {
-                const kisTbody = document.getElementById('kis-tbody');
-                const kisSummary = document.getElementById('kis-total-summary');
-                if (res.status === 'success' && res.data) {
-                    const d = res.data;
-
-                    // 예수금 + 주식평가금액 요약
-                    if (kisSummary) kisSummary.textContent = `예수금: ${(d.total_cash || 0).toLocaleString()}원 | 주식평가: ${(d.total_value || 0).toLocaleString()}원`;
-
-                    // 총 평가금액 카드: 예수금 + 주식평가
-                    const totalAsset = (d.total_cash || 0) + (d.total_value || 0);
-                    const totalValEl = document.getElementById('total-value');
-                    if (totalValEl) {
-                        totalValEl.textContent = Math.round(totalAsset).toLocaleString() + '원';
-                        // 색상은 /api/status의 mock_pnl 기준으로 이미 적용되므로 여기서는 건드리지 않음
-                    }
-
-                    // 수익률%: 사용자 직접 투입한 원금(USER_INVESTED_CAPITAL) 대비
-                    // 총자산(예수금+주식평가) 기준 — 봇 수익금은 원금에 포함되지 않음
-                    const totalPnl = USER_INVESTED_CAPITAL > 0
-                        ? totalAsset - USER_INVESTED_CAPITAL
-                        : (d.total_value || 0) - (d.total_purchase || 0);
-                    const pnlBase = USER_INVESTED_CAPITAL > 0
-                        ? USER_INVESTED_CAPITAL
-                        : Math.max(d.total_purchase || 0, 1);
-                    const pnlRt = (pnlBase > 0) ? (totalPnl / pnlBase * 100) : 0;
-
-                    const pnlEl = document.getElementById('total-pnl');
-                    if (pnlEl) {
-                        if (USER_INVESTED_CAPITAL > 0) {
-                            const sign = totalPnl >= 0 ? '+' : '';
-                            const color = totalPnl > 0 ? '#f85149' : (totalPnl < 0 ? '#58a6ff' : '#8b949e');
-                            pnlEl.style.color = color;
-                            pnlEl.style.fontWeight = '700';
-                            pnlEl.textContent = `수익: ${sign}${Math.round(totalPnl).toLocaleString()}원 (${sign}${pnlRt.toFixed(2)}%)`;
-                        } else {
-                            pnlEl.style.color = '#8b949e';
-                            pnlEl.textContent = '수익: 원금 계산 대기 중';
-                        }
-                    }
-
-                    // 실제 보유 종목 표시 (보유수량 > 0인 것만)
-                    const realStocks = (d.stocks || []).filter(s => s.shares > 0);
-                    if (kisTbody) {
-                        if (realStocks.length > 0) {
-                            let htmlBuffer = '';
-                            realStocks.forEach(s => {
-                                const profitColor = s.profit_rt > 0 ? '#f85149' : (s.profit_rt < 0 ? '#58a6ff' : '#8b949e');
-                                const profitSign = s.profit_rt > 0 ? '+' : '';
-                                htmlBuffer += `
-                                    <tr>
-                                        <td><b>${s.name}</b> <span style="color:#64748b;font-size:0.78rem;">${s.ticker}</span></td>
-                                        <td>${s.shares.toLocaleString()}주</td>
-                                        <td>${Math.round(s.purchase_price).toLocaleString()}원</td>
-                                        <td>${Math.round(s.current_price).toLocaleString()}원</td>
-                                        <td>${Math.round(s.value).toLocaleString()}원</td>
-                                        <td style="color: ${profitColor}; font-weight: 600;">${profitSign}${s.profit_rt.toFixed(2)}%</td>
-                                    </tr>`;
-                            });
-                            kisTbody.innerHTML = htmlBuffer;
-                        } else {
-                            kisTbody.innerHTML = '<tr><td colspan="6" class="muted-center">보유 중인 주식이 없습니다.</td></tr>';
-                        }
-                    }
-                } else {
-                    const errMsg = res.message || '잔고 조회 실패';
-                    if (kisTbody) kisTbody.innerHTML = `<tr><td colspan="6" class="muted-center">⚠️ ${errMsg}</td></tr>`;
-                    if (kisSummary) kisSummary.textContent = 'API 오류';
-
-                    const totalValEl = document.getElementById('total-value');
-                    if (totalValEl) {
-                        totalValEl.textContent = '연결 실패 (API 키 확인 필요)';
-                    }
-                    const pnlEl = document.getElementById('total-pnl');
-                    if (pnlEl) {
-                        pnlEl.textContent = '수익: 계좌 미연결';
-                        pnlEl.style.color = '#8b949e';
-                        pnlEl.style.fontWeight = 'normal';
-                    }
-                }
-            })
-            .catch(e => {
-                console.error('kis balance fetch error', e);
-                const kisTbody = document.getElementById('kis-tbody');
-                const kisSummary = document.getElementById('kis-total-summary');
-                if (kisTbody) kisTbody.innerHTML = '<tr><td colspan="6" class="muted-center">서버 통신 오류</td></tr>';
-                if (kisSummary) kisSummary.textContent = '통신 오류';
-            });
-    }
-
-    function startKisBalancePolling() {
-        if (kisBalanceInterval) return;
-        fetchKisBalance();
-        kisBalanceInterval = setInterval(fetchKisBalance, 10000);
-    }
-
-    function stopKisBalancePolling() {
-        if (kisBalanceInterval) {
-            clearInterval(kisBalanceInterval);
-            kisBalanceInterval = null;
-        }
+    // ── 모멘텀 슬롯 카드 렌더링 ──
+    function renderMomentumSlots(momentumList) {
+        const slots = momentumList || [null, null, null];
+        slots.forEach((mp, i) => {
+            const el = document.getElementById(`mslot-${i}`);
+            if (!el) return;
+            if (!mp) {
+                el.className = 'momentum-slot-card';
+                el.innerHTML = `
+                    <div class="mslot-label">슬롯 #${i + 1}</div>
+                    <div class="mslot-empty">⏳ 스캔 중...<br>빈 슬롯</div>`;
+            } else {
+                const pnl     = mp.pnl_pct || 0;
+                const pnlSign = pnl >= 0 ? '+' : '';
+                const pnlClr  = pnl > 0 ? '#f85149' : (pnl < 0 ? '#58a6ff' : '#8b949e');
+                el.className  = 'momentum-slot-card occupied' + (pnl > 0 ? ' profit' : pnl < 0 ? ' loss' : '');
+                el.innerHTML  = `
+                    <div class="mslot-label">슬롯 #${i + 1} · 🚀 보유 중</div>
+                    <div class="mslot-name">${mp.name} <span style="color:#64748b;font-size:0.75rem;">${mp.ticker}</span></div>
+                    <div class="mslot-pnl" style="color:${pnlClr}">${pnlSign}${pnl.toFixed(2)}%</div>
+                    <div class="mslot-meta">
+                        ${(mp.shares || 0).toLocaleString()}주 · ${Math.round(mp.value || 0).toLocaleString()}원<br>
+                        ${mp.elapsed || ''} · ${mp.reason || ''}
+                    </div>`;
+            }
+        });
     }
 
     // 🟢 팝업창(모달)을 띄우는 함수
@@ -378,8 +297,6 @@ document.addEventListener('DOMContentLoaded', () => {
         }
 
         const isLive = (data.is_mock === false || data.is_mock === 0);
-        const realSection = document.getElementById('real-account-section');
-        const mockSection = document.getElementById('mock-notice-section');
 
         const cb = document.getElementById('modeSwitch');
         const lblReal = document.getElementById('label-real');
@@ -398,21 +315,8 @@ document.addEventListener('DOMContentLoaded', () => {
             }
         }
 
-        if (realSection && mockSection) {
-            realSection.style.display = 'block';
-            mockSection.style.display = 'none';
-
-            const titleSpan = realSection.querySelector('h2 span:first-child');
-            if (titleSpan) {
-                if (isLive) {
-                    titleSpan.innerHTML = `🏦 실제 한투증권 보유 현황 <span style="font-size:0.7rem; background:#ef4444; color:white; padding:2px 8px; border-radius:10px; margin-left:8px; font-weight:600;">LIVE</span>`;
-                } else {
-                    titleSpan.innerHTML = `🏦 한투증권 모의투자 보유 현황 <span style="font-size:0.7rem; background:#10b981; color:white; padding:2px 8px; border-radius:10px; margin-left:8px; font-weight:600;">MOCK</span>`;
-                }
-            }
-        }
-
-        startKisBalancePolling();
+        // 모멘텀 슬롯 렌더링
+        renderMomentumSlots(data.momentum_list);
 
         if (isLive) {
             document.body.classList.remove('theme-warm-beige');
@@ -555,33 +459,14 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // Expose to outer-scope window.* handlers (saveAccountSettings, saveCoreStocks, toggleMode)
     window.fetchStatus = fetchStatus;
-    window.fetchKisBalance = fetchKisBalance;
-    window.fetchPnl = fetchPnl;
-    window.updateUI = updateUI;
+    window.fetchPnl    = fetchPnl;
+    window.updateUI    = updateUI;
 
     fetchStatus();
     fetchPnl();
     setInterval(fetchStatus, 5000);
     setInterval(fetchPnl, 15000);
 });
-
-window.adjustSat = function (delta) {
-    const el = document.getElementById('sat-num-display');
-    let val = parseInt(el.textContent) + delta;
-    if (val < 1) val = 1;
-    if (val > 15) val = 15;
-    el.textContent = val;
-
-    fetch('/api/settings/satellites', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ count: val })
-    }).then(r => r.json()).then(res => {
-        if (res.status === 'success') {
-            console.log('Satellite count updated to ' + res.num_satellites);
-        }
-    });
-}
 
 window.toggleMode = async function () {
     const cb = document.getElementById('modeSwitch');
@@ -878,7 +763,6 @@ window.saveCoreStocks = async function () {
             closeCoreModal();
             showToast('코어 종목이 변경되었습니다. 시스템에 반영 중입니다.', 'success');
             fetchStatus();
-            fetchKisBalance();
         } else { showToast('저장 실패: ' + (result.message || '오류'), 'error'); }
     } catch (e) { showToast('서버 통신 오류', 'error'); }
 }
