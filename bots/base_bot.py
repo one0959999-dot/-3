@@ -118,9 +118,10 @@ class BaseBot:
         self.lock = threading.RLock()
         self.last_asset_cost = None
         self.pnl_this_turn = 0.0
-            
+        self.initial_capital_captured = False  # W-09: __init__에서 명시 선언
+
         self._init_dummy_cores()
-        self._restore_state()
+        self._init_state_restored = self._restore_state()  # W-06: 결과 저장해 이중 호출 방지
         
         self.live_prices = {}
         self.ws_client = None
@@ -131,7 +132,9 @@ class BaseBot:
                     app_key_token = self.kis.get_approval_key()
                     if app_key_token:
                         def on_price_update(ticker, price):
-                            self.live_prices[ticker] = price
+                            # W-07: live_prices 쓰기를 lock으로 보호
+                            with self.lock:
+                                self.live_prices[ticker] = price
                         self.ws_client = self._create_websocket(app_key_token, on_price_update)
                         if self.ws_client:
                             self.ws_client.start()
@@ -219,12 +222,11 @@ class BaseBot:
                 
                 current_asset_cost = real_cash + real_purchase 
                 if self.last_asset_cost is not None:
-                    if self.pnl_this_turn != 0 and abs(current_asset_cost - self.last_asset_cost) < 100:
-                        pass 
-                    else:
-                        expected_asset_cost = self.last_asset_cost + self.pnl_this_turn
-                        self.pnl_this_turn = 0.0 
-                        deposit_delta = current_asset_cost - expected_asset_cost
+                    # W-10: pnl_this_turn != 0이어도 항상 처리해야 누적 방지
+                    # (이전의 `pass` 분기는 pnl_this_turn을 0으로 리셋하지 않아 누산 버그 유발)
+                    expected_asset_cost = self.last_asset_cost + self.pnl_this_turn
+                    self.pnl_this_turn = 0.0
+                    deposit_delta = current_asset_cost - expected_asset_cost
                         if deposit_delta > 10000 or deposit_delta < -10000: 
                             add_user_initial_cash(self.user_id, deposit_delta, self._is_mock)
                             if deposit_delta > 0: self.add_log(f"💰 {self.mode_name} 계좌 외부 입금 포착: +{deposit_delta:,.0f}원")
@@ -738,24 +740,28 @@ class BaseBot:
                     if "대기" not in core.status and "심사" not in core.status: # 대기/심사 중이 아닐 때만 텍스트 초기화
                         core.status = "감시 중 👀"
                         core.status_msg = "최적 타이밍 스캔 중"
-                        
+
                 for sat in self.satellite_positions.values():
                     if "대기" not in sat.status and "심사" not in sat.status:
                         sat.status = "감시 중 👀"
                         sat.status_msg = "최적 타이밍 스캔 중"
 
-                if getattr(self, 'is_crisis_mode', False):
-                    if self.kis:
-                        main_idx_ticker = self.market_indices[0][0]
-                        idx_cp = self.kis.get_current_price(main_idx_ticker)
-                        if idx_cp:
-                            extended_df = self._get_extended_ohlcv(main_idx_ticker, idx_cp)
-                            if not extended_df.empty and len(extended_df) >= 5:
-                                if idx_cp > extended_df['close'].ewm(span=5, adjust=False).mean().iloc[-1]:
-                                    msg = f"🚀 {self.mode_name} 저점 반등 확인! 관망 모드 해제."
-                                    self.add_log(msg); self._send_telegram(msg)
-                                    self.is_crisis_mode = False; self.peak_total_asset = 0
-                    return
+        # C-01: is_crisis_mode 체크를 else 블록 밖으로 이동
+        # → 장중(golden hours)이 아닐 때도 위기 모드가 유지되며,
+        #   장이 열리면 반등 여부를 체크하고, 그 전까지는 매매 전체 차단
+        if getattr(self, 'is_crisis_mode', False):
+            if is_golden_hours and self.kis:
+                main_idx_ticker = self.market_indices[0][0]
+                idx_cp = self.kis.get_current_price(main_idx_ticker)
+                if idx_cp:
+                    extended_df = self._get_extended_ohlcv(main_idx_ticker, idx_cp)
+                    if not extended_df.empty and len(extended_df) >= 5:
+                        if idx_cp > extended_df['close'].ewm(span=5, adjust=False).mean().iloc[-1]:
+                            msg = f"🚀 {self.mode_name} 저점 반등 확인! 관망 모드 해제."
+                            self.add_log(msg); self._send_telegram(msg)
+                            self.is_crisis_mode = False; self.peak_total_asset = 0
+            if getattr(self, 'is_crisis_mode', False):  # 해제 안 됐으면 조기 종료
+                return
 
         # 시장 국면 갱신 (1시간 캐시) + 인버스 ETF 자동 관리
         regime = self._update_market_regime()
@@ -797,12 +803,17 @@ class BaseBot:
                     qty = int((c_cash * 0.98) // cp)
                     if qty > 0 and self.kis:
                         self.kis.buy_market_order(c_tk, qty)
-                        with self.lock: core.last_order_time = time.time(); core.status = "체결 대기 ⏳"
+                        # W-02: 체결 확인 전 임시로 shares 갱신 → 다음 턴에 중복 매수 방지
+                        with self.lock:
+                            core.last_order_time = time.time()
+                            core.status = "체결 대기 ⏳"
+                            core.shares += qty
                         self.add_log(f"💎 {c_nm} 매수 | {qty}주 @ {cp:,}원")
                         self._send_telegram(self._fmt_trade_msg("💎", "코어 매수", c_tk, c_nm, cp, qty, strategy="RSI 코어 장기보유"))
                 elif c_sig == 'SELL' and c_sh > c_fl and (time.time() - getattr(core, 'last_order_time', 0) > 300):
                     sellable = c_sh - c_fl
-                    if sellable > 0 and self.kis:
+                    # W-03: avg_price가 0이면 수익 계산이 무의미하므로 매도 건너뜀
+                    if sellable > 0 and self.kis and core.avg_price > 0:
                         self.kis.sell_market_order(c_tk, sellable)
                         core_profit = _net_profit(cp, core.avg_price, sellable)
                         with self.lock: core.last_order_time = time.time(); core.status = "체결 대기 ⏳"; self.pnl_this_turn += core_profit
@@ -855,6 +866,21 @@ class BaseBot:
                             profit = _net_profit(price, p_avg, p_sh)
                             log_trade_journal(self.user_id, ticker, p_nm, 'SELL', price, st_nm, "ATR 트레일링 익절", profit=profit)
                             self._send_telegram(self._fmt_trade_msg("🎯", "트레일링 익절", ticker, p_nm, price, p_sh, profit=profit, strategy=st_nm, note="ATR 트레일링 스탑 발동"))
+                            with self.lock: self.pnl_this_turn += profit
+                        continue
+
+                # I-01: 장 초반(09:00~09:30) 급락 단계별 손절 — check_early_drop_stop 실제 연결
+                if p_sh > 0 and p_avg > 0 and is_cd_passed:
+                    early_stop_result = check_early_drop_stop(price, p_avg)
+                    if early_stop_result:
+                        stop_qty = max(1, int(p_sh * early_stop_result))  # 비율만큼 매도
+                        if self.kis:
+                            self.kis.sell_market_order(ticker, stop_qty)
+                            with self.lock:
+                                pos.last_order_time = time.time(); pos.status = "장초 급락 손절 🚨"
+                            profit = _net_profit(price, p_avg, stop_qty)
+                            log_trade_journal(self.user_id, ticker, p_nm, 'SELL', price, st_nm, f"장초 급락 손절 {early_stop_result*100:.0f}%", profit=profit)
+                            self._send_telegram(self._fmt_trade_msg("🚨", "장초 급락 손절", ticker, p_nm, price, stop_qty, profit=profit, strategy=st_nm, note=f"개장 급락 {early_stop_result*100:.0f}% 분할 손절"))
                             with self.lock: self.pnl_this_turn += profit
                         continue
 
@@ -1315,11 +1341,20 @@ class BaseBot:
                     profit_rt = (price / pos.avg_price - 1) * 100
                     if profit_rt > -5: keep_tickers.add(ticker)
                     else:
-                        if self.kis: self.kis.sell_market_order(ticker, pos.shares, price=int(price))
-                        with self.lock: qty, profit = pos.sell(price)
-                        freed_cash += pos.cash
+                        # I-05: trading_job과의 이중 매도 방지 — 락 안에서 shares 확인 후 주문
                         with self.lock:
-                            if ticker in self.satellite_positions: del self.satellite_positions[ticker]
+                            shares_now = pos.shares
+                        if shares_now > 0:
+                            if self.kis: self.kis.sell_market_order(ticker, shares_now, price=int(price))
+                            with self.lock:
+                                # trading_job이 먼저 매도했을 경우 재진입 차단
+                                if pos.shares > 0:
+                                    qty, profit = pos.sell(price)
+                                    freed_cash += pos.cash  # C-05: lock 내부에서 접근
+                                if ticker in self.satellite_positions: del self.satellite_positions[ticker]
+                        else:
+                            with self.lock:
+                                if ticker in self.satellite_positions: del self.satellite_positions[ticker]
 
             n_needed = self.num_satellites - len(keep_tickers)
             if n_needed <= 0: return
@@ -1415,10 +1450,13 @@ class BaseBot:
     def _run_loop(self, total_cash):
         self.scheduler = schedule.Scheduler()
 
-        # initialize_portfolio 실패 시 스레드가 죽지 않도록 보호
+        # W-06: __init__에서 이미 _restore_state()를 호출했으므로 중복 호출 방지
+        # 복원된 상태가 없거나 포지션이 비어 있으면 새로 초기화
         try:
-            if not self._restore_state():
-                self.initialize_portfolio(total_cash)
+            already_restored = getattr(self, '_init_state_restored', False)
+            if not already_restored or not self.core_positions:
+                if not self._restore_state():
+                    self.initialize_portfolio(total_cash)
         except Exception as e:
             logger.error(f"[{self.mode_name}] 포트폴리오 초기화 실패 (기본 코어로 계속 진행): {e}", exc_info=True)
 
@@ -1457,7 +1495,11 @@ class BaseBot:
                 app_key = self.kis.get_approval_key()
                 if app_key:
                     old_subscribed = list(self.ws_client.subscribed_tickers) if self.ws_client else []
-                    self.ws_client = self._create_websocket(app_key, lambda t, p: self.live_prices.update({t: p}))
+                    # W-07: live_prices 쓰기도 lock으로 보호
+                    def _on_price(t, p):
+                        with self.lock:
+                            self.live_prices[t] = p
+                    self.ws_client = self._create_websocket(app_key, _on_price)
                     if self.ws_client:
                         self.ws_client.start()
                         time.sleep(3.0)
@@ -1532,9 +1574,10 @@ class BaseBot:
             momentum_data = None
             if mp:
                 mp_ticker = mp.get('ticker', '')
+                # C-03: 연산자 우선순위 버그 수정 — 삼항연산자가 or보다 낮아 의도와 다르게 파싱됨
                 mp_price = (self.live_prices.get(mp_ticker)
-                            or self.kis.get_current_price(mp_ticker)
-                            if self.kis else 0) or mp.get('avg_price', 0)
+                            or (self.kis.get_current_price(mp_ticker) if self.kis else 0)
+                            or mp.get('avg_price', 0))
                 mp_val = float(mp.get('shares', 0)) * float(mp_price or 0)
                 total_realtime_stock_val += mp_val
                 avg_p = mp.get('avg_price', 0)
