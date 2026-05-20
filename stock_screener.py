@@ -50,8 +50,9 @@ def _last_biz_day(days_back=0):
         d -= timedelta(days=1)
     return d.strftime("%Y%m%d")
 
-_ohlcv_cache = {}  # {(ticker, days): (date_str, DataFrame)}
-_cache_lock = threading.Lock()
+_ohlcv_cache: dict = {}   # {(ticker, days): (date_str, DataFrame)}
+_cache_lock  = threading.Lock()
+_OHLCV_CACHE_MAX = 500    # 최대 캐시 항목 수 — 초과 시 오래된 절반 제거
 
 def fetch_ohlcv(ticker, days=200, kis=None):
     today_str = datetime.today().strftime('%Y%m%d')
@@ -69,6 +70,10 @@ def fetch_ohlcv(ticker, days=200, kis=None):
             if df is not None and not df.empty:
                 result = df.dropna(subset=['close']).tail(days)
                 with _cache_lock:
+                    if len(_ohlcv_cache) >= _OHLCV_CACHE_MAX:
+                        drop_keys = list(_ohlcv_cache.keys())[:_OHLCV_CACHE_MAX // 2]
+                        for k in drop_keys:
+                            del _ohlcv_cache[k]
                     _ohlcv_cache[key] = (today_str, result)
                 return result
 
@@ -84,9 +89,14 @@ def fetch_ohlcv(ticker, days=200, kis=None):
             '종가':'close','거래량':'volume'
         }, inplace=True)
         result = df.dropna(subset=['close']).tail(days)
-        
+
         with _cache_lock:
-            _ohlcv_cache[key] = (today_str, result)  # 오늘 날짜와 함께 캐시
+            # 캐시 크기 상한 초과 시 오래된 절반 제거 (단순 FIFO 방식)
+            if len(_ohlcv_cache) >= _OHLCV_CACHE_MAX:
+                drop_keys = list(_ohlcv_cache.keys())[:_OHLCV_CACHE_MAX // 2]
+                for k in drop_keys:
+                    del _ohlcv_cache[k]
+            _ohlcv_cache[key] = (today_str, result)
         return result
     except Exception:
         return pd.DataFrame()
@@ -318,13 +328,21 @@ def get_volume_surge_tickers(kis=None,
                               surge_ratio=1.8,
                               min_cap_billion=300,
                               max_tickers=150,
+                              max_scan=250,
                               verbose=False):
     """
     거래량 급등 종목 필터.
     - surge_ratio: 최근5일 평균거래량 / 60일 평균거래량 > surge_ratio
+    - max_scan: OHLCV 분석 최대 종목 수 (후보는 중요도순 정렬 — 상위가 핵심)
     Returns: dict { ticker: volume_score }
     """
-    tickers   = get_candidate_tickers(kis=kis, verbose=verbose)
+    tickers = get_candidate_tickers(kis=kis, verbose=verbose)
+    # 중요도 순 정렬 보장 (KIS 실시간 → BASE_POOL → pykrx 등락률 상위)
+    # max_scan 초과분은 서버 부하 방지를 위해 이번 회차에서 제외
+    if len(tickers) > max_scan:
+        tickers = tickers[:max_scan]
+        if verbose:
+            print(f"   ⚡ 서버 부하 방지: 상위 {max_scan}개만 분석 (총 후보에서 중요도순 절단)")
     candidates = {}
 
     if verbose:
