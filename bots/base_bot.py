@@ -4,6 +4,7 @@ import schedule
 import json
 import logging
 import os
+import collections
 import pandas as pd
 import requests
 from bs4 import BeautifulSoup
@@ -56,7 +57,7 @@ class BaseBot:
         self.user_id = user_id
         self.is_running = False
         self.thread = None
-        self.logs = []
+        self.logs = collections.deque(maxlen=100)   # 스레드 안전 + O(1) 순환 버퍼
         self.num_satellites = 3  # 위성 3개 고정
         self._is_mock = is_mock
         
@@ -271,16 +272,22 @@ class BaseBot:
                         if int(sat.shares) > 0: sat.cash = 0.0
                         else: sat.cash = round(total_sat_cash / max(1, empty_sat_count), 2)
 
-                for core in self.core_positions: core.shares = 0
-                for sat in self.satellite_positions.values(): sat.shares = 0
-
+                # 원자적 교체: 먼저 새 값을 모두 수집한 뒤 한 번에 적용
+                # (중간에 예외 발생 시 shares=0으로 남아 재매수 폭주하는 버그 방지)
+                new_shares: dict = {}   # ticker → (shares, avg_price, current_price)
                 for real_stock in real_balance['stocks']:
                     t = real_stock['ticker']
                     q = int(real_stock['shares'])
                     p = float(real_stock['purchase_price'])
-                    c_p = float(real_stock.get('current_price', p)) 
+                    c_p = float(real_stock.get('current_price', p))
                     stock_name = real_stock.get('name', t)
+                    new_shares[t] = (q, p, c_p, stock_name)
 
+                # API 조회 성공 후에만 shares 초기화 → 교체 (원자적)
+                for core in self.core_positions: core.shares = 0
+                for sat in self.satellite_positions.values(): sat.shares = 0
+
+                for t, (q, p, c_p, stock_name) in new_shares.items():
                     is_core = False
                     for core in self.core_positions:
                         if core.ticker == t:
@@ -357,9 +364,8 @@ class BaseBot:
 
     def add_log(self, msg):
         t = _now_kst().strftime("%H:%M:%S")
-        self.logs.append({"time": t, "message": msg})
+        self.logs.append({"time": t, "message": msg})   # deque(maxlen=100) — 자동 순환
         print(f"[{t}] {msg}")
-        if len(self.logs) > 100: self.logs.pop(0)
 
     def _send_telegram(self, message):
         if not self.telegram: return
@@ -406,7 +412,7 @@ class BaseBot:
             if est_price > 0:
                 with self.lock:
                     if self.internal_cash is not None:
-                        self.internal_cash += est_price * qty * (1 - 0.00015)
+                        self.internal_cash += est_price * qty * (1 - _SELL_FEE - _SELL_TAX)
             return True
         err = f"⚠️ [{self.mode_name}] {name}({ticker}) {qty}주 매도 주문 실패 — KIS API 오류"
         self.add_log(err)
@@ -937,12 +943,21 @@ class BaseBot:
                     if getattr(self, 'peak_total_asset', 0) > 0 and ((current_total_asset / self.peak_total_asset) - 1) * 100 <= -10.0:
                         msg = f"💥 [서킷브레이커] {self.mode_name} 계좌 MDD 10% 폭락! 전량 시장가 강제 청산."
                         self.add_log(msg); self._send_telegram(msg)
-                        with self.lock: safe_core_positions = list(self.core_positions); safe_satellite_items = list(self.satellite_positions.items())
+                        # trading_job과의 race condition 방지: 먼저 crisis_mode를 세운 뒤 청산
+                        # (is_crisis_mode=True이면 trading_job이 즉시 return하여 중복 매도 방지)
+                        self.is_crisis_mode = True
+                        with self.lock:
+                            safe_core_positions = list(self.core_positions)
+                            safe_satellite_items = list(self.satellite_positions.items())
                         for core in safe_core_positions:
-                            if core.shares > 0: self.kis.sell_market_order(core.ticker, core.shares); self.add_log(f"🔥 {self.mode_name} 코어 {core.name} 청산")
+                            if core.shares > 0:
+                                self.kis.sell_market_order(core.ticker, core.shares)
+                                self.add_log(f"🔥 {self.mode_name} 코어 {core.name} 청산")
                         for ticker, pos in safe_satellite_items:
-                            if pos.shares > 0: self.kis.sell_market_order(ticker, pos.shares); self.add_log(f"🔥 {self.mode_name} 위성 {pos.name} 청산")
-                        self.is_crisis_mode = True; return
+                            if pos.shares > 0:
+                                self.kis.sell_market_order(ticker, pos.shares)
+                                self.add_log(f"🔥 {self.mode_name} 위성 {pos.name} 청산")
+                        return
             except Exception as e:
                 logger.error(f"[{self.mode_name}] 서킷브레이커 잔고 조회 오류: {e}", exc_info=True)
 
@@ -956,6 +971,8 @@ class BaseBot:
                 ex_df = self._get_extended_ohlcv(c_tk, cp)
                 c_sig, _, c_rsi = get_rsi_signal(c_tk, kis_api=self.kis, df=ex_df)
 
+                # c_cash를 락 안에서 최신값으로 재확인 (스냅샷 후 _sync_internal_balances가 변경 가능)
+                with self.lock: c_cash = core.cash
                 if c_sig == 'BUY' and c_cash >= cp and (time.time() - getattr(core, 'last_order_time', 0) > 300):
                     qty = int((c_cash * 0.98) // cp)
                     if qty > 0 and self._buy_order(c_tk, qty, core, c_nm):

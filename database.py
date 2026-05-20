@@ -25,9 +25,10 @@ def get_db_connection():
 def init_db():
     with db_lock:
         conn = get_db_connection()
-        cursor = conn.cursor()
-        
-        cursor.execute('''
+        try:
+            cursor = conn.cursor()
+
+            cursor.execute('''
         CREATE TABLE IF NOT EXISTS users (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             username TEXT UNIQUE NOT NULL,
@@ -80,9 +81,10 @@ def init_db():
         )
         ''')
         
-        cursor.execute('UPDATE users SET is_running = 0')
-        conn.commit()
-        conn.close()
+            cursor.execute('UPDATE users SET is_running = 0')
+            conn.commit()
+        finally:
+            conn.close()   # 예외 발생 시에도 반드시 커넥션 반환
 
 def add_user(username, password):
     with db_lock:

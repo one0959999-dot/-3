@@ -220,7 +220,10 @@ def scan_hot_momentum(
                     elapsed_min = (now - first_seen).total_seconds() / 60
                     if elapsed_min > MOMENTUM_MAX_VALID_MIN:
                         del _scan_cache[ticker]
-                        continue
+                        # 캐시 만료 후 이번 스캔에서 신호가 다시 충족됐으면 신규 진입 허용
+                        # (continue 대신 fall-through → 아래 else 블록에서 새 캐시 등록)
+                        _scan_cache[ticker] = {'first_seen': now, 'score': score}
+                        first_seen = now
                 else:
                     _scan_cache[ticker] = {
                         'first_seen': now,

@@ -45,7 +45,7 @@ def get_market_regime(kis_api) -> str:
       L1. 20일선 vs 60일선 : 골든크로스(위) +1 / 데드크로스(아래) -1
       L2. 최근 22일(≈1달) 수익률 : >+3% → +1 | <-3% → -1 | 그 외 → 0
 
-    최종 판정:  score ≥ +5 → BULL  |  score ≤ -5 → BEAR  |  그 외 → NEUTRAL
+    최종 판정:  score ≥ +5 → BULL  |  score ≤ -4 → BEAR  |  그 외 → NEUTRAL
     """
     try:
         df = kis_api.get_ohlcv("069500", "D")
@@ -1178,10 +1178,10 @@ def check_giveback_stop(
         total_gain_pct = (peak_price / entry_price - 1) * 100
         if total_gain_pct >= 10 and ma5_broken and (is_heavy_candle or high_lower):
             return 'PARTIAL_EXIT_30', giveback_pct, f'급등주 MA5 첫 이탈 (고점+{total_gain_pct:.1f}%)'
+        if giveback_pct >= 50:
+            return 'FULL_EXIT',        giveback_pct, f'급등주 50% 반납 → 잔여 전량 익절'
         if giveback_pct >= 30:
             return 'PARTIAL_EXIT_70', giveback_pct, f'급등주 30% 반납 → 추가 40% 익절 구간'
-        if giveback_pct >= 50:
-            return 'FULL_EXIT', giveback_pct, f'급등주 50% 반납 → 잔여 전량 익절'
         return 'HOLD', giveback_pct, 'MA5 라이드 추세 유지'
 
     # ── 일반주 ────────────────────────────────────────────
@@ -1356,8 +1356,9 @@ class CorePosition:
         self.avg_price  = round(current_total_investment / self.shares, 2)
         self.cash      -= total_cost
         
-        if self.floor_shares == 0:
-            self.floor_shares = max(1, int(self.shares * CORE_MIN_FLOOR_RATIO))
+        # floor_shares는 최초 매수 시 설정 + 재투자로 보유량이 늘어날 때마다 갱신
+        # (최초 설정값 고정 시 장기 보유 중 보호 물량 비율이 점차 줄어드는 버그 수정)
+        self.floor_shares = max(self.floor_shares, max(1, int(self.shares * CORE_MIN_FLOOR_RATIO)))
             
         self.buy_log.append({
             'time': datetime.now().strftime('%Y-%m-%d %H:%M'),

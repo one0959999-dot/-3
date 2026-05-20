@@ -338,10 +338,10 @@ class KisMockApi:
                         rt_cd = data.get('rt_cd', '')
                         print(f"[KIS 모의] 잔고 조회 실패: rt_cd={rt_cd}, msg={msg1}, data={data}")
                         if msg1 in ('EGW00123', 'EGW00121'):
-                            # W-08: 무한재귀 방지 — 토큰 재발급 성공 시에만 1회 재시도
+                            # 토큰 만료: 재발급 후 retry 루프 continue (재귀 호출 금지 — 무한 스택 방지)
                             self.access_token = None
                             if self._ensure_token():
-                                return self.get_account_balance()
+                                continue   # for retry in range(2) 의 다음 반복으로 재시도
                 else:
                     print(f"[KIS 모의] 잔고 조회 통신 오류: status={res.status_code}, text={res.text}")
                 return None

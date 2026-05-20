@@ -479,13 +479,21 @@ def select_satellites(kis=None, n=NUM_SATELLITES, verbose=True, gemini_client=No
 
     # 🤖 딥러닝 모델 로드 (모듈 레벨 싱글턴 — 매 호출마다 디스크 I/O 방지)
     # W-05: 락으로 멀티스레드 환경에서 중복 생성(레이스컨디션) 방지
-    from dl_model import DeepLearningPredictor
+    # BUG-06 FIX: dl_model 임포트 실패 시 무음 처리되던 것을 명시적 경고로 변경
+    try:
+        from dl_model import DeepLearningPredictor
+    except ImportError as e:
+        logger.warning(f"[스크리너] dl_model 로드 실패 — DL 예측 비활성화: {e}")
+        DeepLearningPredictor = None
     global _dl_predictor_instance
-    if _dl_predictor_instance is None:
+    if DeepLearningPredictor is not None and _dl_predictor_instance is None:
         with _dl_predictor_lock:
             if _dl_predictor_instance is None:  # double-checked locking
-                _dl_predictor_instance = DeepLearningPredictor()
-    dl_predictor = _dl_predictor_instance
+                try:
+                    _dl_predictor_instance = DeepLearningPredictor()
+                except Exception as e:
+                    logger.warning(f"[스크리너] DeepLearningPredictor 초기화 실패: {e}")
+    dl_predictor = _dl_predictor_instance  # None이면 아래에서 폴백 처리
 
     # ── Step 4: 후보별 백테스트 + 종합 점수 ──
     results = []
@@ -523,7 +531,8 @@ def select_satellites(kis=None, n=NUM_SATELLITES, verbose=True, gemini_client=No
             if recent_ret > 30:
                 stat_arb_penalty = (recent_ret - 30) * 0.8  
 
-            ai_up_prob = dl_predictor.predict_up_probability(df)
+            # dl_predictor가 None이면 중립 50.0으로 폴백 (DL 없이도 스크리닝 계속)
+            ai_up_prob = dl_predictor.predict_up_probability(df) if dl_predictor is not None else 50.0
             ml_factor_score = (ai_up_prob - 50.0) * 0.2
 
             score = (best_ret
