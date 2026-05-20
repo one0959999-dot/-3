@@ -1,6 +1,7 @@
 from bots.real_bot import RealBotController
 from bots.mock_bot import MockBotController
 from claude_api import ClaudeApi
+from kis_brokers.kis_real_api import KisRealApi
 
 
 class BotManager:
@@ -32,11 +33,26 @@ class BotManager:
 
         bot = self.bots[bot_key]
 
-        # 모의봇이면 실전봇의 KIS를 real_kis로 주입 — 외인/기관 데이터 조회에 사용
+        # 모의봇이면 실전 KIS를 real_kis로 주입 — 외인/기관 데이터 조회에 사용
+        # 실전봇이 실행 중이면 그 인스턴스 재사용, 없으면 실전 키로 별도 인스턴스 생성
         if is_mock:
             real_bot = self.bots.get((user_id, False))
             if real_bot and real_bot.kis is not None:
                 bot.real_kis = real_bot.kis
+            elif user_data.get('real_app_key') and user_data.get('real_app_secret'):
+                # 실전봇 미실행 상태에서도 외인/기관 조회용 KisRealApi 인스턴스 생성
+                try:
+                    existing = getattr(bot, 'real_kis', None)
+                    app_key = user_data['real_app_key'].strip()
+                    # 키가 바뀌지 않았으면 재생성 안 함
+                    if not existing or getattr(existing, 'app_key', '') != app_key:
+                        bot.real_kis = KisRealApi(
+                            app_key=app_key,
+                            app_secret=user_data['real_app_secret'].strip(),
+                            account_no=(user_data.get('real_account_no') or '').strip()
+                        )
+                except Exception:
+                    pass
 
         # 각 봇은 자체 ClaudeApi 인스턴스를 가짐 — 유저 간 채팅 히스토리 공유 방지
         api_key = (user_data.get('claude_api_key') or '').strip()
