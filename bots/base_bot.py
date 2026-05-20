@@ -1844,33 +1844,44 @@ class BaseBot:
             momentum_list = []
             for mp in self.momentum_positions:
                 if mp:
-                    mp_ticker = mp.get('ticker', '')
-                    mp_price  = (self.live_prices.get(mp_ticker)
-                                 or (self.kis.get_current_price(mp_ticker) if self.kis else 0)
-                                 or mp.get('avg_price', 0))
-                    mp_val  = float(mp.get('shares', 0)) * float(mp_price or 0)
-                    total_realtime_stock_val += mp_val
-                    avg_p   = mp.get('avg_price', 0)
-                    pnl_pct = ((mp_price / avg_p) - 1) * 100 if avg_p > 0 and mp_price else 0
-                    elapsed = ""
-                    et = mp.get('enter_time')
-                    if et:
-                        try:
-                            elapsed = f"{(datetime.now() - et).total_seconds() / 60:.0f}분 보유"
-                        except Exception:
-                            pass
-                    momentum_list.append({
-                        "ticker":    mp_ticker,
-                        "name":      mp.get('name', mp_ticker),
-                        "shares":    mp.get('shares', 0),
-                        "price":     mp_price,
-                        "value":     mp_val,
-                        "avg_price": avg_p,
-                        "pnl_pct":   round(pnl_pct, 2),
-                        "reason":    mp.get('reason', ''),
-                        "elapsed":   elapsed,
-                        "status":    "🚀 보유 중",
-                    })
+                    try:
+                        mp_ticker = mp.get('ticker', '')
+                        # live_prices 우선, 없으면 저장된 avg_price 사용 (KIS API 호출 제거 — get_status는 빠르게)
+                        mp_price = (self.live_prices.get(mp_ticker)
+                                    or float(mp.get('avg_price', 0)))
+                        mp_val  = float(mp.get('shares', 0)) * float(mp_price or 0)
+                        total_realtime_stock_val += mp_val
+                        avg_p   = float(mp.get('avg_price', 0))
+                        pnl_pct = ((mp_price / avg_p) - 1) * 100 if avg_p > 0 and mp_price else 0
+                        elapsed = ""
+                        et = mp.get('enter_time')
+                        if et:
+                            try:
+                                elapsed = f"{(datetime.now() - et).total_seconds() / 60:.0f}분 보유"
+                            except Exception:
+                                pass
+                        momentum_list.append({
+                            "ticker":    mp_ticker,
+                            "name":      mp.get('name', mp_ticker),
+                            "shares":    mp.get('shares', 0),
+                            "price":     mp_price,
+                            "value":     mp_val,
+                            "avg_price": avg_p,
+                            "pnl_pct":   round(pnl_pct, 2),
+                            "reason":    mp.get('reason', ''),
+                            "elapsed":   elapsed,
+                            "status":    "🚀 보유 중",
+                        })
+                    except Exception as slot_err:
+                        logger.warning(f"[{self.mode_name}] 모멘텀 슬롯 status 오류: {slot_err}")
+                        # 오류가 나도 슬롯은 보유 중으로 표시 (avg_price 폴백)
+                        momentum_list.append({
+                            "ticker": mp.get('ticker', '?'), "name": mp.get('name', '?'),
+                            "shares": mp.get('shares', 0), "price": mp.get('avg_price', 0),
+                            "value": 0, "avg_price": mp.get('avg_price', 0),
+                            "pnl_pct": 0, "reason": mp.get('reason', ''),
+                            "elapsed": "조회 중", "status": "🚀 보유 중",
+                        })
                 else:
                     momentum_list.append(None)
 
