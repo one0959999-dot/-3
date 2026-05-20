@@ -103,6 +103,7 @@ class BaseBot:
         self.last_regime_check = 0.0
         self._regime_check_interval = 3600  # 1시간마다 재판단
         self._last_inverse_check = 0.0      # 인버스 ETF 체크 캐시 (5분)
+        self._inverse_sold_ts   = 0.0       # 인버스 ETF 청산 타임스탬프 (재매수 24h 쿨다운)
 
         # ── 🚀 테마·급등주 모멘텀 전용 슬롯 ──────────────────────────
         # 위성 5개와 완전히 별개의 단일 포지션.
@@ -672,6 +673,11 @@ class BaseBot:
             inv_shares   = int(inv_holding.get('shares', 0)) if inv_holding else 0
 
             if regime == "BEAR" and not has_inverse:
+                # 휩쏘 방지: 인버스 청산 후 24시간 이내 재매수 금지
+                cooldown_remaining = 86400 - (time.time() - self._inverse_sold_ts)
+                if self._inverse_sold_ts > 0 and cooldown_remaining > 0:
+                    self.add_log(f"⏳ 인버스 재매수 쿨다운 중 ({cooldown_remaining/3600:.1f}h 남음) — 휩쏘 방지")
+                    return
                 budget = int(total_assets * INVERSE_BUDGET_RATIO)
                 price  = self.kis.get_current_price(INVERSE_ETF_TICKER)
                 if price and price > 0:
@@ -691,8 +697,9 @@ class BaseBot:
 
             elif regime != "BEAR" and has_inverse and inv_shares > 0:
                 self.kis.sell_market_order(INVERSE_ETF_TICKER, inv_shares)
+                self._inverse_sold_ts = time.time()   # 24h 재매수 쿨다운 시작
                 price = self.kis.get_current_price(INVERSE_ETF_TICKER) or 0
-                self.add_log(f"🐂 국면 전환({regime}) → {INVERSE_ETF_NAME} {inv_shares}주 전량 청산")
+                self.add_log(f"🐂 국면 전환({regime}) → {INVERSE_ETF_NAME} {inv_shares}주 전량 청산 (24h 재매수 대기)")
                 self._send_telegram(
                     f"🐂 <b>인버스 ETF 청산</b>  ·  {self.alert_icon} {self.mode_name}\n"
                     f"━━━━━━━━━━━━━━━━━━━━\n"

@@ -85,7 +85,7 @@ def get_market_regime(kis_api) -> str:
         elif ret22 < -3.0: score -= 1
 
         if score >= 5:  return "BULL"
-        if score <= -5: return "BEAR"
+        if score <= -4: return "BEAR"   # -5→-4: 하락 초입 선제 감지 (60일선 데드크로스 전에 반응)
         return "NEUTRAL"
     except Exception:
         return "NEUTRAL"
