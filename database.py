@@ -165,26 +165,30 @@ def update_bot_status(user_id, is_running, is_mock=None):
             except Exception:
                 pass
         val = 1 if is_running else 0
-        # 레거시 단일 컬럼 항상 갱신 (UI 호환)
-        conn.execute('UPDATE users SET is_running = ? WHERE id = ?', (val, user_id))
-        # 모드별 컬럼 갱신
-        if is_mock is True:
-            conn.execute('UPDATE users SET mock_running = ? WHERE id = ?', (val, user_id))
-        elif is_mock is False:
-            conn.execute('UPDATE users SET real_running = ? WHERE id = ?', (val, user_id))
-        conn.commit()
-        conn.close()
+        try:
+            # 레거시 단일 컬럼 항상 갱신 (UI 호환)
+            conn.execute('UPDATE users SET is_running = ? WHERE id = ?', (val, user_id))
+            # 모드별 컬럼 갱신
+            if is_mock is True:
+                conn.execute('UPDATE users SET mock_running = ? WHERE id = ?', (val, user_id))
+            elif is_mock is False:
+                conn.execute('UPDATE users SET real_running = ? WHERE id = ?', (val, user_id))
+            conn.commit()
+        finally:
+            conn.close()  # [BUG-C6] 예외 시에도 커넥션 반드시 반환
 
 def save_portfolio_state(user_id, state, is_mock):
     with db_lock:
         mode = 1 if is_mock else 0
         conn = get_db_connection()
-        conn.execute('''
-            INSERT OR REPLACE INTO bot_states (user_id, is_mock, state_json, last_updated) 
-            VALUES (?, ?, ?, ?)
-        ''', (user_id, mode, json.dumps(state, ensure_ascii=False), datetime.now()))
-        conn.commit()
-        conn.close()
+        try:
+            conn.execute('''
+                INSERT OR REPLACE INTO bot_states (user_id, is_mock, state_json, last_updated)
+                VALUES (?, ?, ?, ?)
+            ''', (user_id, mode, json.dumps(state, ensure_ascii=False), datetime.now()))
+            conn.commit()
+        finally:
+            conn.close()  # [BUG-C6]
 
 def load_portfolio_state(user_id, is_mock):
     mode = 1 if is_mock else 0
@@ -200,12 +204,14 @@ def load_portfolio_state(user_id, is_mock):
 def log_trade_journal(user_id, ticker, stock_name, action, price, strategy, ai_reason, profit=0):
     with db_lock:
         conn = get_db_connection()
-        conn.execute('''
-            INSERT INTO trade_journal (user_id, ticker, stock_name, action, price, strategy, ai_reason, profit)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-        ''', (user_id, ticker, stock_name, action, price, strategy, ai_reason, profit))
-        conn.commit()
-        conn.close()
+        try:
+            conn.execute('''
+                INSERT INTO trade_journal (user_id, ticker, stock_name, action, price, strategy, ai_reason, profit)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            ''', (user_id, ticker, stock_name, action, price, strategy, ai_reason, profit))
+            conn.commit()
+        finally:
+            conn.close()  # [BUG-C6]
 
 def get_recent_trades(user_id, ticker, limit=5):
     conn = get_db_connection()
@@ -223,27 +229,29 @@ def save_ai_rules(user_id, rule_text, trigger_type: str = 'manual'):
     """ai_rules 저장 + 자동으로 히스토리에 버전 기록 (최근 10개 유지)."""
     with db_lock:
         conn = get_db_connection()
-        # 현재 규칙 → 히스토리에 백업 (덮어쓰기 전에 저장)
-        current = conn.execute('SELECT rule_text FROM ai_rules WHERE user_id = ?', (user_id,)).fetchone()
-        if current and current['rule_text']:
+        try:
+            # 현재 규칙 → 히스토리에 백업 (덮어쓰기 전에 저장)
+            current = conn.execute('SELECT rule_text FROM ai_rules WHERE user_id = ?', (user_id,)).fetchone()
+            if current and current['rule_text']:
+                conn.execute('''
+                    INSERT INTO ai_rules_history (user_id, rule_text, trigger_type)
+                    VALUES (?, ?, ?)
+                ''', (user_id, current['rule_text'], trigger_type))
+                # 히스토리 최대 10개 유지 (오래된 것 삭제)
+                conn.execute('''
+                    DELETE FROM ai_rules_history
+                    WHERE user_id = ? AND id NOT IN (
+                        SELECT id FROM ai_rules_history
+                        WHERE user_id = ? ORDER BY created_at DESC LIMIT 10
+                    )
+                ''', (user_id, user_id))
             conn.execute('''
-                INSERT INTO ai_rules_history (user_id, rule_text, trigger_type)
-                VALUES (?, ?, ?)
-            ''', (user_id, current['rule_text'], trigger_type))
-            # 히스토리 최대 10개 유지 (오래된 것 삭제)
-            conn.execute('''
-                DELETE FROM ai_rules_history
-                WHERE user_id = ? AND id NOT IN (
-                    SELECT id FROM ai_rules_history
-                    WHERE user_id = ? ORDER BY created_at DESC LIMIT 10
-                )
-            ''', (user_id, user_id))
-        conn.execute('''
-            INSERT OR REPLACE INTO ai_rules (user_id, rule_text, updated_at)
-            VALUES (?, ?, CURRENT_TIMESTAMP)
-        ''', (user_id, rule_text))
-        conn.commit()
-        conn.close()
+                INSERT OR REPLACE INTO ai_rules (user_id, rule_text, updated_at)
+                VALUES (?, ?, CURRENT_TIMESTAMP)
+            ''', (user_id, rule_text))
+            conn.commit()
+        finally:
+            conn.close()  # [BUG-C6]
 
 def load_ai_rules(user_id):
     conn = get_db_connection()
@@ -282,18 +290,22 @@ def set_user_initial_cash(user_id, pure_principal, is_mock):
     with db_lock:
         conn = get_db_connection()
         cash_col = "mock_initial_cash" if is_mock else "real_initial_cash"
-        conn.execute(f'UPDATE users SET {cash_col} = ? WHERE id = ?', (pure_principal, user_id))
-        conn.commit()
-        conn.close()
+        try:
+            conn.execute(f'UPDATE users SET {cash_col} = ? WHERE id = ?', (pure_principal, user_id))
+            conn.commit()
+        finally:
+            conn.close()  # [BUG-C6]
 
 def add_user_initial_cash(user_id, deposit_delta, is_mock):
     """외부 입출금 발생 시 해당 모드의 장부 원금을 깔끔하게 증감시킵니다."""
     with db_lock:
         conn = get_db_connection()
         cash_col = "mock_initial_cash" if is_mock else "real_initial_cash"
-        conn.execute(f'UPDATE users SET {cash_col} = {cash_col} + ? WHERE id = ?', (deposit_delta, user_id))
-        conn.commit()
-        conn.close()
+        try:
+            conn.execute(f'UPDATE users SET {cash_col} = {cash_col} + ? WHERE id = ?', (deposit_delta, user_id))
+            conn.commit()
+        finally:
+            conn.close()  # [BUG-C6]
 
 def init_default_ai_rules(user_id: int):
     """

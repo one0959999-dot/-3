@@ -106,8 +106,15 @@ def login():
 @app.route('/register', methods=['GET', 'POST'])
 def register():
     if request.method == 'POST':
-        username = request.form.get('username')
-        password = request.form.get('password')
+        username = (request.form.get('username') or '').strip()
+        password = request.form.get('password') or ''
+        # [BUG-N4] 아이디·비밀번호 최소 길이 검증 — 빈 값 또는 너무 짧은 비밀번호 차단
+        if len(username) < 3:
+            flash('아이디는 3자 이상이어야 합니다.')
+            return render_template('register.html')
+        if len(password) < 6:
+            flash('비밀번호는 6자 이상이어야 합니다.')
+            return render_template('register.html')
         if add_user(username, password):
             flash('회원가입이 완료되었습니다.')
             return redirect(url_for('login'))
@@ -434,7 +441,12 @@ def ai_chat():
 def set_mode():
     """실전/모의 투자 모드 전환 API — 화면만 전환, 각 봇의 실행 상태는 독립 유지"""
     data = request.json or {}
-    is_mock = int(data.get('is_mock', 1))
+    try:
+        is_mock = int(data.get('is_mock', 1))
+        if is_mock not in (0, 1):  # [BUG-M6] 0(실전)/1(모의) 외 비정상값 차단
+            return jsonify({"status": "error", "message": "is_mock은 0 또는 1이어야 합니다."}), 400
+    except (TypeError, ValueError):
+        is_mock = 1
 
     # DB 업데이트 (화면 전환만, 봇 실행 상태 건드리지 않음)
     conn = get_db_connection()

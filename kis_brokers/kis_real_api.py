@@ -464,7 +464,7 @@ class KisRealApi:
             "tr_id": "FHKST03010100"
         }
         
-        end_dt = datetime.now()
+        end_dt = datetime.now(tz=timezone(timedelta(hours=9))).replace(tzinfo=None)  # [BUG-N1] KST 날짜 기준
         start_dt = end_dt - timedelta(days=180)
         
         params = {

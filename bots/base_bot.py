@@ -449,7 +449,7 @@ class BaseBot:
             self.daily_pnl[today] = self.daily_pnl.get(today, 0.0) + profit
 
     def _refresh_blacklist(self):
-        """날짜가 바뀌면 당일 블랙리스트를 초기화합니다."""
+        """날짜가 바뀌면 당일 블랙리스트를 초기화합니다. [BUG-M1] 락 내부에서 호출 전제."""
         today = _now_kst().strftime('%Y-%m-%d')
         if self._bl_date != today:
             self._bl_date           = today
@@ -458,21 +458,25 @@ class BaseBot:
 
     def _add_momentum_exit(self, ticker: str):
         """모멘텀 청산 종목을 당일 재진입 금지 목록에 추가합니다."""
-        self._refresh_blacklist()
-        self._momentum_exits.add(ticker)
+        with self.lock:
+            self._refresh_blacklist()
+            self._momentum_exits.add(ticker)
 
     def _add_satellite_reject(self, ticker: str, reason: str):
         """AI 거절 위성 종목을 당일 재편입 금지 목록에 추가합니다."""
-        self._refresh_blacklist()
-        self._satellite_rejects[ticker] = reason
+        with self.lock:
+            self._refresh_blacklist()
+            self._satellite_rejects[ticker] = reason
 
     def _is_momentum_blacklisted(self, ticker: str) -> bool:
-        self._refresh_blacklist()
-        return ticker in self._momentum_exits
+        with self.lock:
+            self._refresh_blacklist()
+            return ticker in self._momentum_exits
 
     def _is_satellite_blacklisted(self, ticker: str) -> bool:
-        self._refresh_blacklist()
-        return ticker in self._satellite_rejects
+        with self.lock:
+            self._refresh_blacklist()
+            return ticker in self._satellite_rejects
 
     def _fmt_trade_msg(self, action_emoji, action_name, ticker, name, price, qty,
                        profit=None, strategy=None, ai_reason=None, note=None):
@@ -912,7 +916,8 @@ class BaseBot:
         if now.weekday() >= 5: return
         current_time_str = now.strftime('%H:%M')
         today_str        = now.strftime('%Y-%m-%d')
-        is_golden_hours = ("09:01" <= current_time_str <= "19:50")
+        # [BUG-N2] NXT 애프터마켓 종료(20:00)에 맞게 확장 — 15:30~20:00 구간도 매매 허용
+        is_golden_hours = ("09:01" <= current_time_str <= "20:00")
 
         # ── KST 기준 일일 리포트 발행 (시스템 타임존 무관) ──────────────
         # 리포트가 아직 생성 안 됐고 Claude API 설정 있을 때만 실행
@@ -1070,7 +1075,9 @@ class BaseBot:
                         with self.lock: pos.max_price = price; p_max = price
                     if p_max >= p_avg + (trail_trigger * atr_14) and price <= p_max - (trail_mult * atr_14):
                         if self._sell_order(ticker, p_sh, pos, p_nm):
-                            with self.lock: pos.last_order_time = time.time(); pos.max_price = 0; pos.status = "체결 대기 ⏳"
+                            with self.lock:
+                                pos.last_order_time = time.time(); pos.max_price = 0; pos.status = "체결 대기 ⏳"
+                                pos.shares = 0  # [BUG-C1] 트레일링 익절 전량 매도 후 잔여주수 초기화
                             profit = _net_profit(price, p_avg, p_sh)
                             self._log_trade(ticker, p_nm, 'SELL', price, st_nm, "ATR 트레일링 익절", profit=profit)
                             self._send_trade_telegram(self._fmt_trade_msg("🎯", "트레일링 익절", ticker, p_nm, price, p_sh, profit=profit, strategy=st_nm, note="ATR 트레일링 스탑 발동"))
@@ -1138,6 +1145,11 @@ class BaseBot:
                     if pyramid_qty > 0 and self._buy_order(ticker, pyramid_qty, pos, p_nm):
                         with self.lock:
                             pos.last_order_time = time.time(); pos.pyramid_done = True; pos.status = "피라미딩 📈"
+                            # [BUG-C4] 피라미딩 후 평단가·보유주수 즉시 갱신 (KIS 동기화 전 손절 방지)
+                            new_shares = pos.shares + pyramid_qty
+                            if new_shares > 0:
+                                pos.avg_price = round((pos.avg_price * pos.shares + price * pyramid_qty) / new_shares, 2)
+                            pos.shares = new_shares
                         self._log_trade(ticker, p_nm, 'BUY', price, st_nm, f"피라미딩 +3% 추세 지속 ({pyramid_qty}주)")
                         self._send_trade_telegram(self._fmt_trade_msg("📈", "피라미딩 추가 매수", ticker, p_nm, price, pyramid_qty, strategy=st_nm, note="+3% 돌파 · 상승 추세 지속 확인"))
 
@@ -1153,6 +1165,11 @@ class BaseBot:
                         with self.lock:
                             pos.last_order_time = time.time(); pos.second_buy_done = True
                             pos.second_buy_cash = 0; pos.status = "2차매수 ✅"
+                            # [BUG-C5] 2차 매수 후 평단가·보유주수 즉시 갱신 (KIS 동기화 전 손절 방지)
+                            new_shares = pos.shares + sq
+                            if new_shares > 0:
+                                pos.avg_price = round((pos.avg_price * pos.shares + price * sq) / new_shares, 2)
+                            pos.shares = new_shares
                         self._log_trade(ticker, p_nm, 'BUY', price, st_nm, f"2차 분할 매수 눌림목 ({sq}주)")
                         self._send_trade_telegram(self._fmt_trade_msg("🛒", "2차 분할 매수", ticker, p_nm, price, sq, strategy=st_nm, note="-2% 눌림목 포착"))
 
@@ -1295,7 +1312,9 @@ class BaseBot:
                         decision, ai_reason = self.gemini.ai_approve_trade(sig, p_nm, ticker, price, st_nm, ind_val, self.hot_sectors, get_recent_trades(self.user_id, ticker), load_ai_rules(self.user_id) + "\n" + getattr(self, 'current_ai_market_view', ''), context=trade_ctx)
                         if decision:
                             if self._sell_order(ticker, p_sh, pos, p_nm):
-                                with self.lock: pos.last_order_time = time.time(); pos.status = "체결 대기 ⏳"
+                                with self.lock:
+                                    pos.last_order_time = time.time(); pos.status = "체결 대기 ⏳"
+                                    pos.shares = 0  # [BUG-C2] AI 승인 매도 후 잔여주수 초기화
                                 profit = _net_profit(price, p_avg, p_sh)
                                 self._log_trade(ticker, p_nm, 'SELL', price, st_nm, f"AI 승인 ({ai_reason})", profit=profit)
                                 self._send_trade_telegram(self._fmt_trade_msg("📉", "AI 매도 승인", ticker, p_nm, price, p_sh, profit=profit, strategy=st_nm, ai_reason=ai_reason))
@@ -1309,7 +1328,9 @@ class BaseBot:
                             pos.status = "AI 거절(보유) 🛑"
                     else:
                         if self._sell_order(ticker, p_sh, pos, p_nm):
-                            with self.lock: pos.last_order_time = time.time(); pos.status = "체결 대기 ⏳"
+                            with self.lock:
+                                pos.last_order_time = time.time(); pos.status = "체결 대기 ⏳"
+                                pos.shares = 0  # [BUG-C2] 알고리즘 직통 매도 후 잔여주수 초기화
                             profit = _net_profit(price, p_avg, p_sh)
                             self._log_trade(ticker, p_nm, 'SELL', price, st_nm, "알고리즘 직통", profit=profit)
                             self._send_trade_telegram(self._fmt_trade_msg("📉", "알고리즘 매도", ticker, p_nm, price, p_sh, profit=profit, strategy=st_nm))
@@ -1630,7 +1651,7 @@ class BaseBot:
     def _rescreen_satellites(self):
         try:
             now = _now_kst()
-            if not ("09:00" <= now.strftime('%H:%M') <= "19:50") or now.weekday() >= 5: return
+            if not ("09:01" <= now.strftime('%H:%M') <= "20:00") or now.weekday() >= 5: return  # [BUG-M4] trading_job과 시간 가드 통일
             self.add_log(f"🦅 {self.mode_name} 위성 실시간 교체 탐색 중...")
             keep_tickers = set(); freed_cash = 0
             with self.lock: sat_items = list(self.satellite_positions.items())

@@ -18,7 +18,7 @@ from __future__ import annotations  # I-04: Python 3.8 이하에서 list[dict] �
 import time
 import threading
 import logging
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 import pandas as pd
 import numpy as np
@@ -112,7 +112,8 @@ def scan_hot_momentum(
     """
     from pykrx import stock as pykrx_stock
 
-    now = datetime.now()
+    _KST = timezone(timedelta(hours=9))
+    now = datetime.now(_KST).replace(tzinfo=None)  # [BUG-M5] EC2(UTC)에서 KST 날짜 기준으로 조회
     results = []
 
     # ── 후보 풀 구성 ────────────────────────────────────────────────
@@ -275,7 +276,7 @@ def scan_hot_momentum(
 
 def clear_expired_cache():
     """30분 초과된 캐시 항목 제거 (주기적으로 호출)."""
-    now = datetime.now()
+    now = datetime.now(timezone(timedelta(hours=9))).replace(tzinfo=None)  # [BUG-M5] KST 기준
     with _cache_lock:
         expired = [t for t, v in _scan_cache.items()
                    if (now - v['first_seen']).total_seconds() / 60 > MOMENTUM_MAX_VALID_MIN]
