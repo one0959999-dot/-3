@@ -2,6 +2,27 @@ import json
 import time
 import threading
 import websocket
+from datetime import datetime, timezone, timedelta
+
+_KST = timezone(timedelta(hours=9))
+
+def _is_market_hours() -> bool:
+    """KST 기준 평일 08:20~18:10 사이인지 확인 (웹소켓 유효 시간)."""
+    now = datetime.now(_KST)
+    if now.weekday() >= 5:
+        return False
+    t = now.hour * 60 + now.minute
+    return 8 * 60 + 20 <= t <= 18 * 60 + 10
+
+def _secs_until_market_open() -> int:
+    """다음 장 시작(08:20 KST)까지 남은 초."""
+    now = datetime.now(_KST)
+    target = now.replace(hour=8, minute=20, second=0, microsecond=0)
+    if now >= target:
+        target = target + timedelta(days=1)
+    while target.weekday() >= 5:
+        target = target + timedelta(days=1)
+    return max(60, int((target - now).total_seconds()))
 
 class KisMockWebSocket:
     """모의투자 전용 웹소켓 클라이언트"""
@@ -32,9 +53,19 @@ class KisMockWebSocket:
 
     def _run_loop(self):
         while self.is_running:
+            # ── 장외 시간: 연결 시도 자제, 개장까지 대기 ──────────────────
+            if not _is_market_hours():
+                wait = _secs_until_market_open()
+                print(f"[WebSocket 모의] 장외 시간 — {wait//60}분 후 개장 시 재연결 예정 (불필요한 연결 차단)")
+                for _ in range(wait // 60):
+                    if not self.is_running:
+                        return
+                    time.sleep(60)
+                continue
+
             try:
                 print(f"[WebSocket 모의] 증권사 통신 허브({self.url}) 연결을 수립합니다.")
-                
+
                 self.ws = websocket.WebSocketApp(
                     self.url,
                     on_open=self._on_open,
@@ -42,15 +73,18 @@ class KisMockWebSocket:
                     on_error=self._on_error,
                     on_close=self._on_close
                 )
-                
+
                 self.ws.run_forever(ping_interval=30, ping_timeout=10)
-                
+
             except Exception as e:
                 print(f"[WebSocket 모의] 네트워크 소켓 런타임 예외 발생: {e}")
-                
+
             if self.is_running:
-                print("[WebSocket 모의] 세션 흐름이 중단되었습니다. 5초 후 백그라운드 자동 복구를 개시합니다...")
-                time.sleep(5)
+                if _is_market_hours():
+                    print("[WebSocket 모의] 세션 흐름이 중단되었습니다. 5초 후 백그라운드 자동 복구를 개시합니다...")
+                    time.sleep(5)
+                else:
+                    print("[WebSocket 모의] 장 마감 — 재연결 대기 모드로 전환합니다.")
 
     def _on_open(self, ws):
         print("[WebSocket 모의] 한투증권 모의투자 실시간 웹소켓 서버 연결 성공!")
