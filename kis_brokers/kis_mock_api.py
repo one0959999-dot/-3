@@ -83,15 +83,17 @@ class KisMockApi:
         return None
 
     def _order_headers(self, tr_id: str, hashkey: str) -> dict:
-        return {
+        h = {
             "content-type": "application/json; charset=utf-8",
             "authorization": f"Bearer {self.access_token}",
             "appkey": self.app_key,
             "appsecret": self.app_secret,
             "tr_id": tr_id,
             "custtype": "P",
-            "hashkey": hashkey
         }
+        if hashkey:  # [BUG-FIX] None이면 헤더에서 제외 (kis_real_api와 동일 처리)
+            h["hashkey"] = hashkey
+        return h
         
     def get_current_price(self, stock_code: str):
         if not self._ensure_token():

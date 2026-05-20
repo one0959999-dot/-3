@@ -204,10 +204,15 @@ class BaseBot:
                                 if idx_ticker not in current_tickers:
                                     current_tickers.append(idx_ticker)
 
+                        # [BUG-FIX] subscribed_tickers는 ws_client 내부 set — 반복 중 수정 방지용 스냅샷
+                        try:
+                            current_subscribed = set(self.ws_client.subscribed_tickers)
+                        except Exception:
+                            current_subscribed = set()
                         for t2 in current_tickers:
-                            if t2 not in self.ws_client.subscribed_tickers:
+                            if t2 not in current_subscribed:
                                 self.ws_client.subscribe(t2)
-                        for t2 in list(self.ws_client.subscribed_tickers):
+                        for t2 in current_subscribed:
                             if t2 not in current_tickers:
                                 self.ws_client.unsubscribe(t2)
             except Exception as e:
@@ -712,35 +717,38 @@ class BaseBot:
                     if price and price > 0:
                         qty = int(budget // price)
                         if qty > 0 and total_cash >= qty * price * 1.002:
-                            self.kis.buy_market_order(ticker, qty)
-                            total_cash -= qty * price  # 현금 차감 (다음 종목 계산용)
-                            self.add_log(f"🐻 하락장 방어 매수 | {emoji} {name} {qty}주 @ {price:,.0f}원")
-                            self._send_telegram(
-                                f"🐻 <b>방어 자산 매수</b>  ·  {self.alert_icon} {self.mode_name}\n"
-                                f"━━━━━━━━━━━━━━━━━━━━\n"
-                                f"{emoji} <b>{name}</b>  <code>{ticker}</code>\n"
-                                f"💰 <b>{price:,.0f}원</b> × <b>{qty}주</b>  =  <b>{qty*price:,.0f}원</b>\n"
-                                f"📋 BEAR 국면  ·  총자산 {ratio*100:.0f}% 헤지\n"
-                                f"━━━━━━━━━━━━━━━━━━━━\n"
-                                f"⏰ {_now_kst().strftime('%H:%M KST')}",
-                                msg_type='trade'
-                            )
+                            if self.kis.buy_market_order(ticker, qty):  # [BUG-FIX] 반환값 확인
+                                total_cash -= qty * price  # 현금 차감 (다음 종목 계산용)
+                                self.add_log(f"🐻 하락장 방어 매수 | {emoji} {name} {qty}주 @ {price:,.0f}원")
+                                self._log_trade(ticker, name, 'BUY', price, "방어자산", f"BEAR 국면 {ratio*100:.0f}% 헤지")
+                                self._send_telegram(
+                                    f"🐻 <b>방어 자산 매수</b>  ·  {self.alert_icon} {self.mode_name}\n"
+                                    f"━━━━━━━━━━━━━━━━━━━━\n"
+                                    f"{emoji} <b>{name}</b>  <code>{ticker}</code>\n"
+                                    f"💰 <b>{price:,.0f}원</b> × <b>{qty}주</b>  =  <b>{qty*price:,.0f}원</b>\n"
+                                    f"📋 BEAR 국면  ·  총자산 {ratio*100:.0f}% 헤지\n"
+                                    f"━━━━━━━━━━━━━━━━━━━━\n"
+                                    f"⏰ {_now_kst().strftime('%H:%M KST')}",
+                                    msg_type='trade'
+                                )
 
                 elif regime != "BEAR" and has_pos and shares_held > 0:
-                    self.kis.sell_market_order(ticker, shares_held)
-                    self._defensive_sold_ts[ticker] = time.time()  # 종목별 24h 쿨다운 시작
-                    price = self.kis.get_current_price(ticker) or 0
-                    self.add_log(f"🐂 국면 전환({regime}) → {emoji} {name} {shares_held}주 전량 청산 (24h 재매수 대기)")
-                    self._send_telegram(
-                        f"🐂 <b>방어 자산 청산</b>  ·  {self.alert_icon} {self.mode_name}\n"
-                        f"━━━━━━━━━━━━━━━━━━━━\n"
-                        f"{emoji} <b>{name}</b>  <code>{ticker}</code>\n"
-                        f"💰 <b>{shares_held}주</b> 전량 청산\n"
-                        f"📋 국면 전환: BEAR → <b>{regime}</b>  ·  헤지 해제\n"
-                        f"━━━━━━━━━━━━━━━━━━━━\n"
-                        f"⏰ {_now_kst().strftime('%H:%M KST')}",
-                        msg_type='trade'
-                    )
+                    if self.kis.sell_market_order(ticker, shares_held):  # [BUG-FIX] 반환값 확인
+                        self._defensive_sold_ts[ticker] = time.time()  # 종목별 24h 쿨다운 시작
+                        price = self.kis.get_current_price(ticker) or 0
+                        def_profit = _net_profit(price, float(holding.get('purchase_price', price)), shares_held) if holding else 0
+                        self.add_log(f"🐂 국면 전환({regime}) → {emoji} {name} {shares_held}주 전량 청산 (24h 재매수 대기)")
+                        self._log_trade(ticker, name, 'SELL', price, "방어자산", f"국면 전환 BEAR→{regime}", profit=def_profit)
+                        self._send_telegram(
+                            f"🐂 <b>방어 자산 청산</b>  ·  {self.alert_icon} {self.mode_name}\n"
+                            f"━━━━━━━━━━━━━━━━━━━━\n"
+                            f"{emoji} <b>{name}</b>  <code>{ticker}</code>\n"
+                            f"💰 <b>{shares_held}주</b> 전량 청산\n"
+                            f"📋 국면 전환: BEAR → <b>{regime}</b>  ·  헤지 해제\n"
+                            f"━━━━━━━━━━━━━━━━━━━━\n"
+                            f"⏰ {_now_kst().strftime('%H:%M KST')}",
+                            msg_type='trade'
+                        )
 
         except Exception as e:
             logger.error(f"[{self.mode_name}] 방어 자산 처리 오류: {e}", exc_info=True)
@@ -1008,6 +1016,7 @@ class BaseBot:
                             core.status = "체결 대기 ⏳"
                             core.shares += qty
                         self.add_log(f"💎 {c_nm} 매수 | {qty}주 @ {cp:,}원")
+                        self._log_trade(c_tk, c_nm, 'BUY', cp, "RSI 코어 장기보유", "RSI 골든크로스")
                         self._send_trade_telegram(self._fmt_trade_msg("💎", "코어 매수", c_tk, c_nm, cp, qty, strategy="RSI 코어 장기보유"))
                 elif c_sig == 'SELL' and c_sh > c_fl and (time.time() - getattr(core, 'last_order_time', 0) > 300):
                     sellable = c_sh - c_fl
@@ -1017,6 +1026,7 @@ class BaseBot:
                         with self.lock: core.last_order_time = time.time(); core.status = "체결 대기 ⏳"; self.pnl_this_turn += core_profit
                         self._record_daily_pnl(core_profit)
                         self.add_log(f"💎 {c_nm} 매도 | {sellable}주 @ {cp:,}원 | 손익: {core_profit:+,.0f}원")
+                        self._log_trade(c_tk, c_nm, 'SELL', cp, "RSI 코어 장기보유", "RSI 데드크로스", profit=core_profit)
                         self._send_trade_telegram(self._fmt_trade_msg("💎", "코어 매도", c_tk, c_nm, cp, sellable, profit=core_profit, strategy="RSI 코어 장기보유"))
             except Exception as e:
                 logger.error(f"[{self.mode_name}] 코어 매매 오류 ({c_tk}): {e}", exc_info=True)
