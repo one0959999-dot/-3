@@ -458,17 +458,14 @@
             </table>
         </div>
 
-        <!-- 모멘텀 슬롯 3개 섹션 -->
+        <!-- 모멘텀 슬롯 섹션: 보유 중인 종목만 표시 -->
         <div class="satellite-card glass-card" id="momentum-section">
             <h2 style="display:flex; align-items:center; gap:10px;">
                 🚀 단타 모멘텀 슬롯
-                <span style="font-size:0.72rem; background:rgba(245,158,11,0.2); color:#fcd34d; border:1px solid rgba(245,158,11,0.4); padding:2px 8px; border-radius:8px;">3 SLOTS</span>
+                <span id="momentum-slot-badge" style="font-size:0.72rem; background:rgba(245,158,11,0.2); color:#fcd34d; border:1px solid rgba(245,158,11,0.4); padding:2px 8px; border-radius:8px;">0 / 3</span>
             </h2>
-            <div id="momentum-slots" style="display:grid; grid-template-columns: repeat(3, 1fr); gap:12px; margin-top:10px;">
-                <div class="momentum-slot-card" id="mslot-0" data-idx="0"></div>
-                <div class="momentum-slot-card" id="mslot-1" data-idx="1"></div>
-                <div class="momentum-slot-card" id="mslot-2" data-idx="2"></div>
-            </div>
+            <!-- 카드는 JS가 동적으로 생성 (보유 중인 슬롯만) -->
+            <div id="momentum-slots" style="display:grid; grid-template-columns: repeat(3, 1fr); gap:12px; margin-top:10px;"></div>
         </div>
 
         <div class="chart-card glass-card">

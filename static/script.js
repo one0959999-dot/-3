@@ -237,36 +237,48 @@ document.addEventListener('DOMContentLoaded', () => {
             });
     }
 
-    // ── 모멘텀 슬롯 카드 렌더링 ──
+    // ── 모멘텀 슬롯 카드 렌더링: 보유 중인 종목만 동적 생성 ──
     function renderMomentumSlots(momentumList) {
-        const slots = momentumList || [null, null, null];
-        slots.forEach((mp, i) => {
-            const el = document.getElementById(`mslot-${i}`);
-            if (!el) return;
-            if (!mp) {
-                el.className = 'momentum-slot-card';
-                el.innerHTML = `
-                    <div class="mslot-label">슬롯 #${i + 1}</div>
-                    <div class="mslot-empty">⏳ 스캔 중...<br>빈 슬롯</div>`;
-            } else {
-                const pnl     = mp.pnl_pct || 0;
-                const pnlSign = pnl >= 0 ? '+' : '';
-                const pnlClr  = pnl > 0 ? '#f85149' : (pnl < 0 ? '#58a6ff' : '#8b949e');
-                const avgPStr = mp.avg_price > 0 ? Math.round(mp.avg_price).toLocaleString() : '-';
-                const curPStr = mp.price > 0 ? Math.round(mp.price).toLocaleString() : '-';
-                el.className  = 'momentum-slot-card occupied' + (pnl > 0 ? ' profit' : pnl < 0 ? ' loss' : '');
-                el.innerHTML  = `
-                    <div class="mslot-label">슬롯 #${i + 1} · 🚀 보유 중</div>
-                    <div class="mslot-name">${mp.name} <span style="color:#64748b;font-size:0.75rem;">${mp.ticker}</span></div>
-                    <div class="mslot-pnl pnl-rate" data-pnl="${pnl > 0 ? 'profit' : pnl < 0 ? 'loss' : 'neutral'}" style="color:${pnlClr}">${pnlSign}${pnl.toFixed(2)}%
-                        <span style="font-size:0.75rem;font-weight:400;color:#94a3b8;margin-left:6px;">${Math.round(mp.value || 0).toLocaleString()}원</span>
-                    </div>
-                    <div class="mslot-meta">
-                        ${(mp.shares || 0).toLocaleString()}주 · 단가 ${avgPStr}원 → 현재 ${curPStr}원<br>
-                        ${mp.elapsed || ''} · ${mp.reason || ''}
-                    </div>`;
-            }
-        });
+        const container = document.getElementById('momentum-slots');
+        const badge     = document.getElementById('momentum-slot-badge');
+        if (!container) return;
+
+        const occupied = (momentumList || []).filter(mp => mp && mp.ticker);
+
+        // 배지 업데이트
+        if (badge) badge.textContent = `${occupied.length} / 3`;
+
+        // 보유 없으면 안내 메시지만 표시
+        if (occupied.length === 0) {
+            container.style.display = 'block';
+            container.innerHTML = `<div style="color:#6b7280;font-size:0.84rem;padding:14px 4px;text-align:center;">현재 보유 중인 모멘텀 종목 없음 — 스캔 대기 중</div>`;
+            return;
+        }
+
+        // 보유 수에 따라 그리드 열 수 조정 (1~3개)
+        const cols = Math.min(occupied.length, 3);
+        container.style.display = 'grid';
+        container.style.gridTemplateColumns = `repeat(${cols}, 1fr)`;
+
+        container.innerHTML = occupied.map((mp, i) => {
+            const pnl     = mp.pnl_pct || 0;
+            const pnlSign = pnl >= 0 ? '+' : '';
+            const pnlClr  = pnl > 0 ? '#f85149' : (pnl < 0 ? '#58a6ff' : '#8b949e');
+            const avgPStr = mp.avg_price > 0 ? Math.round(mp.avg_price).toLocaleString() : '-';
+            const curPStr = mp.price > 0 ? Math.round(mp.price).toLocaleString() : '-';
+            const cls     = 'momentum-slot-card occupied' + (pnl > 0 ? ' profit' : pnl < 0 ? ' loss' : '');
+            return `<div class="${cls}">
+                <div class="mslot-label">슬롯 #${i + 1} · 🚀 보유 중</div>
+                <div class="mslot-name">${mp.name} <span style="color:#64748b;font-size:0.75rem;">${mp.ticker}</span></div>
+                <div class="mslot-pnl pnl-rate" data-pnl="${pnl > 0 ? 'profit' : pnl < 0 ? 'loss' : 'neutral'}" style="color:${pnlClr}">${pnlSign}${pnl.toFixed(2)}%
+                    <span style="font-size:0.75rem;font-weight:400;color:#94a3b8;margin-left:6px;">${Math.round(mp.value || 0).toLocaleString()}원</span>
+                </div>
+                <div class="mslot-meta">
+                    ${(mp.shares || 0).toLocaleString()}주 · 단가 ${avgPStr}원 → 현재 ${curPStr}원<br>
+                    ${mp.elapsed || ''} · ${mp.reason || ''}
+                </div>
+            </div>`;
+        }).join('');
     }
 
     // 🟢 팝업창(모달)을 띄우는 함수
