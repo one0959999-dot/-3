@@ -88,15 +88,17 @@ class KisMockWebSocket:
 
     def _on_open(self, ws):
         print("[WebSocket 모의] 한투증권 모의투자 실시간 웹소켓 서버 연결 성공!")
-        
+
         with self.lock:
             re_subscribe_list = list(self.subscribed_tickers)
-            
+
         if re_subscribe_list:
             print(f"[WebSocket 모의] 시스템 재연결로 인해 기존 감시망에 있던 {len(re_subscribe_list)}개 종목을 실시간 재등록합니다.")
+            # 소켓 핸드셰이크 안정화 대기 (너무 빨리 패킷 보내면 Broken Pipe 발생)
+            time.sleep(0.5)
             for ticker in re_subscribe_list:
                 self._send_subscription_packet(ticker, tr_type="1")
-                time.sleep(0.15)
+                time.sleep(0.3)  # 0.15 → 0.3 (rate limit + 소켓 안정화)
 
     def _on_message(self, ws, message):
         try:

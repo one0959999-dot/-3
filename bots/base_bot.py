@@ -342,9 +342,17 @@ class BaseBot:
                         core.cash = new_cash
 
                     target_sat_pool = total_equity * self.satellite_ratio
-                        
+
                     current_sat_stock_val = sum([float(s.get('value', 0)) for s in real_balance['stocks'] if s['ticker'] in self.satellite_positions])
-                    total_sat_cash = max(0.0, target_sat_pool - current_sat_stock_val)
+                    # [BUG-FIX] 위성 예산 상한을 실제 주문가능현금으로 캡 적용.
+                    # total_equity 기반 목표치가 코어 투자분 포함 총 자산에서 계산되므로
+                    # 실제 현금 < 위성 예산 → "주문가능금액 초과" 주문 실패 방지.
+                    core_reserved = sum(getattr(c, 'cash', 0.0) for c in self.core_positions)
+                    avail_for_sat = max(0.0, real_cash - core_reserved)
+                    total_sat_cash = min(
+                        max(0.0, target_sat_pool - current_sat_stock_val),
+                        avail_for_sat
+                    )
                     empty_sat_count = sum(1 for sat in self.satellite_positions.values() if int(sat.shares) == 0)
                     for t, sat in self.satellite_positions.items():
                         if int(sat.shares) > 0: sat.cash = 0.0
@@ -501,6 +509,10 @@ class BaseBot:
         with self.lock:
             pos.status = "주문 실패 ❌"
             pos.status_msg = "KIS API 오류 — 서버 로그 확인 필요"
+            # [BUG-FIX] 주문 실패 시 pos.cash 즉시 초기화.
+            # 초기화하지 않으면 다음 사이클에도 동일 금액으로 재시도 → 반복 실패.
+            # _sync_internal_balances 가 30초 후 실제 잔고 기준으로 재배정함.
+            pos.cash = 0.0
         return False
 
     def _sell_order(self, ticker: str, qty: int, pos, name: str, price: int = 0) -> bool:

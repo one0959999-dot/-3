@@ -95,9 +95,10 @@ class KisRealWebSocket:
             
         if re_subscribe_list:
             print(f"[WebSocket 실전] 시스템 재연결로 인해 기존 감시망에 있던 {len(re_subscribe_list)}개 종목을 실시간 재등록합니다.")
+            time.sleep(0.5)  # 소켓 안정화 대기
             for ticker in re_subscribe_list:
                 self._send_subscription_packet(ticker, tr_type="1")
-                time.sleep(0.08)
+                time.sleep(0.2)  # 0.08 → 0.2 (rate limit 방지)
 
     def _on_message(self, ws, message):
         try:
