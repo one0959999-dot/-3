@@ -362,6 +362,14 @@ class KisRealApi:
 
                         # ord_psbl_cash(주문가능현금): 매수 주문 즉시 차감
                         # prvs_rcdl_excc_amt(전일주문가능금액) / dnca_tot_amt(예탁금총액): 실시간 미반영
+                        _ord  = summary.get('ord_psbl_cash', '0') or '0'
+                        _prvs = summary.get('prvs_rcdl_excc_amt', '0') or '0'
+                        _dnca = summary.get('dnca_tot_amt', '0') or '0'
+                        _nxdy = summary.get('nxdy_excc_amt', '0') or '0'
+                        print(f"[KIS 실전 잔고 진단] ord_psbl_cash={_ord} "
+                              f"prvs_rcdl_excc_amt={_prvs} "
+                              f"nxdy_excc_amt={_nxdy} "
+                              f"dnca_tot_amt={_dnca}")
                         return {
                             "stocks": parsed_stocks,
                             "total_cash": (_safe_parse('ord_psbl_cash', 'prvs_rcdl_excc_amt')
