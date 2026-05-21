@@ -936,6 +936,35 @@ window.saveNewsKeys = async function () {
     } catch (e) { showToast('서버 통신 오류', 'error'); }
 }
 
+// 섹터 가이드 파일 업로드: .md/.txt 파일을 복수 선택하면 내용을 textarea에 자동 추가
+window.appendSectorGuideFiles = function (input) {
+    const files = Array.from(input.files);
+    if (!files.length) return;
+    const ta = document.getElementById('sectorGuideText');
+    const msg = document.getElementById('sectorGuideFileMsg');
+    let remaining = files.length;
+    files.forEach(file => {
+        const reader = new FileReader();
+        reader.onload = function (e) {
+            const separator = '\n\n---\n<!-- 파일: ' + file.name + ' -->\n';
+            ta.value = (ta.value.trimEnd() ? ta.value.trimEnd() + separator : '') + e.target.result.trimEnd();
+            remaining--;
+            if (remaining === 0) {
+                msg.textContent = '✅ ' + files.length + '개 파일 추가 완료 — 저장 버튼을 눌러주세요.';
+                msg.style.display = 'inline';
+                setTimeout(() => { msg.style.display = 'none'; }, 5000);
+            }
+        };
+        reader.onerror = function () {
+            remaining--;
+            showToast(file.name + ' 읽기 실패', 'error');
+        };
+        reader.readAsText(file, 'UTF-8');
+    });
+    // 같은 파일 재선택 가능하도록 value 초기화
+    input.value = '';
+}
+
 window.saveSectorGuide = async function () {
     const guide = document.getElementById('sectorGuideText').value.trim();
     try {
