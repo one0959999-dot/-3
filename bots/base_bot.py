@@ -311,13 +311,30 @@ class BaseBot:
                     self.last_asset_cost = current_asset_cost
                 
                 if total_equity >= 0:
-                    target_core_pool = total_equity * self.core_ratio
+                    # [BUG-FIX] 코어 예산: total_equity 기반 재계산 → 기하급수적 감소 버그
+                    # ─ 구 로직: target_core_pool = total_equity * core_ratio
+                    #   매수 후 현금이 줄면 total_equity도 감소(T+2 랙 시) → 목표 풀도 축소 → 또 매수
+                    #   예) 1000만 → 300만 매수 → 잔금 700만에서 다시 30% = 210만 배정 → 반복
+                    # ─ 수정: 초기 원금(DB 고정값) * core_ratio 로 목표 풀 고정.
+                    #   매수 후 5분간 sync가 core.cash를 덮어쓰지 않음 (T+2 랙 방어).
+                    #   API 미반영 시 in-memory 평가액(shares × avg_price) 을 하한으로 사용.
+                    initial_cap = get_user_initial_cash(self.user_id, self._is_mock)
+                    target_core_per = (initial_cap * self.core_ratio) / max(1, len(self.core_positions))
+                    _SETTLE_GUARD = 300  # 매수 직후 T+2 랙 방어 윈도우 (초)
+                    for core in self.core_positions:
+                        # 최근 주문 체결 대기 중이면 cash 갱신 보류 (T+2 랙 중복매수 방지)
+                        if time.time() - getattr(core, 'last_order_time', 0) < _SETTLE_GUARD:
+                            continue
+                        api_val = next(
+                            (float(s.get('value', 0)) for s in real_balance['stocks'] if s['ticker'] == core.ticker),
+                            0.0
+                        )
+                        # API 미반영(T+2 랙) 시 in-memory 평가액을 하한값으로 사용
+                        mem_val = float(core.shares) * float(core.avg_price) if core.shares > 0 and core.avg_price > 0 else 0.0
+                        effective_val = max(api_val, mem_val)
+                        core.cash = round(max(0.0, target_core_per - effective_val), 2)
+
                     target_sat_pool = total_equity * self.satellite_ratio
-                    
-                    # [W-09] 'value' 키 없으면 KeyError → .get() 으로 방어
-                    current_core_stock_val = sum([float(s.get('value', 0)) for s in real_balance['stocks'] if any(c.ticker == s['ticker'] for c in self.core_positions)])
-                    per_core_cash = max(0.0, (target_core_pool - current_core_stock_val) / max(1, len(self.core_positions)))
-                    for core in self.core_positions: core.cash = round(per_core_cash, 2)
                         
                     current_sat_stock_val = sum([float(s.get('value', 0)) for s in real_balance['stocks'] if s['ticker'] in self.satellite_positions])
                     total_sat_cash = max(0.0, target_sat_pool - current_sat_stock_val)
@@ -1272,6 +1289,10 @@ class BaseBot:
                             core.last_order_time = time.time()
                             core.status = "체결 대기 ⏳"
                             core.shares += qty
+                            # [BUG-FIX] T+2 랙 대비: 매수 즉시 cash 차감.
+                            # _sync_internal_balances가 30초마다 재계산하기 전에
+                            # core.cash를 0으로 낮춰두어 중복 매수를 원천 차단.
+                            core.cash = max(0.0, core.cash - int(cp * qty))
                         self.add_log(f"💎 {c_nm} 매수 | {qty}주 @ {cp:,}원")
                         self._log_trade(c_tk, c_nm, 'BUY', cp, "RSI 코어 장기보유", "RSI 골든크로스")
                         self._send_trade_telegram(self._fmt_trade_msg("💎", "코어 매수", c_tk, c_nm, cp, qty, strategy="RSI 코어 장기보유"))
