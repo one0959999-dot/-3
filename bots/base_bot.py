@@ -311,27 +311,27 @@ class BaseBot:
                     self.last_asset_cost = current_asset_cost
                 
                 if total_equity >= 0:
-                    # [BUG-FIX] 코어 예산: total_equity 기반 재계산 → 기하급수적 감소 버그
+                    # [BUG-FIX v2] 코어 예산: total_equity 기반 재계산 → 기하급수적 감소 버그
                     # ─ 구 로직: target_core_pool = total_equity * core_ratio
-                    #   매수 후 현금이 줄면 total_equity도 감소(T+2 랙 시) → 목표 풀도 축소 → 또 매수
-                    #   예) 1000만 → 300만 매수 → 잔금 700만에서 다시 30% = 210만 배정 → 반복
-                    # ─ 수정: 초기 원금(DB 고정값) * core_ratio 로 목표 풀 고정.
-                    #   매수 후 5분간 sync가 core.cash를 덮어쓰지 않음 (T+2 랙 방어).
-                    #   API 미반영 시 in-memory 평가액(shares × avg_price) 을 하한으로 사용.
+                    #   매수 후 현금이 줄면 total_equity도 감소 → 목표 풀도 축소 → 또 매수 반복
+                    # ─ v1 수정(last_order_time 가드)의 한계:
+                    #   core.shares가 30초마다 원자적 0 리셋 → 5분 후 가드 해제 시 mem_val=0 → 재발
+                    # ─ v2 수정: core._bought_val 필드로 "매수 확약액" 영속 추적.
+                    #   - 매수 시 += cp*qty, API 반영 확인 시 자동 해제
+                    #   - shares 리셋과 독립적으로 유지 → T+2 랙에 완전 면역
                     initial_cap = get_user_initial_cash(self.user_id, self._is_mock)
                     target_core_per = (initial_cap * self.core_ratio) / max(1, len(self.core_positions))
-                    _SETTLE_GUARD = 300  # 매수 직후 T+2 랙 방어 윈도우 (초)
                     for core in self.core_positions:
-                        # 최근 주문 체결 대기 중이면 cash 갱신 보류 (T+2 랙 중복매수 방지)
-                        if time.time() - getattr(core, 'last_order_time', 0) < _SETTLE_GUARD:
-                            continue
                         api_val = next(
                             (float(s.get('value', 0)) for s in real_balance['stocks'] if s['ticker'] == core.ticker),
                             0.0
                         )
-                        # API 미반영(T+2 랙) 시 in-memory 평가액을 하한값으로 사용
-                        mem_val = float(core.shares) * float(core.avg_price) if core.shares > 0 and core.avg_price > 0 else 0.0
-                        effective_val = max(api_val, mem_val)
+                        bought_val = getattr(core, '_bought_val', 0.0)
+                        # API가 보유 주식을 반영했으면 _bought_val 해제 (API 데이터로 전환)
+                        if api_val > 0:
+                            core._bought_val = 0.0
+                            bought_val = 0.0
+                        effective_val = max(api_val, bought_val)
                         core.cash = round(max(0.0, target_core_per - effective_val), 2)
 
                     target_sat_pool = total_equity * self.satellite_ratio
@@ -1289,9 +1289,10 @@ class BaseBot:
                             core.last_order_time = time.time()
                             core.status = "체결 대기 ⏳"
                             core.shares += qty
-                            # [BUG-FIX] T+2 랙 대비: 매수 즉시 cash 차감.
-                            # _sync_internal_balances가 30초마다 재계산하기 전에
-                            # core.cash를 0으로 낮춰두어 중복 매수를 원천 차단.
+                            # [BUG-FIX v2] _bought_val에 매수 확약액 누적.
+                            # core.shares는 30초마다 0으로 리셋되지만 _bought_val은 유지됨.
+                            # API가 보유 주식을 반영할 때까지 core.cash 재배정을 원천 차단.
+                            core._bought_val = getattr(core, '_bought_val', 0.0) + int(cp * qty)
                             core.cash = max(0.0, core.cash - int(cp * qty))
                         self.add_log(f"💎 {c_nm} 매수 | {qty}주 @ {cp:,}원")
                         self._log_trade(c_tk, c_nm, 'BUY', cp, "RSI 코어 장기보유", "RSI 골든크로스")
@@ -1304,6 +1305,8 @@ class BaseBot:
                         with self.lock:
                             core.last_order_time = time.time(); core.status = "체결 대기 ⏳"
                             core.shares = max(0, core.shares - sellable)  # [C-NEW-02] 매도 후 잔여주수 반영
+                            # 매도 시 _bought_val도 차감 → 다음 sync에서 core.cash 복구
+                            core._bought_val = max(0.0, getattr(core, '_bought_val', 0.0) - int(cp * sellable))
                             self.pnl_this_turn += core_profit
                         self._record_daily_pnl(core_profit)
                         self.add_log(f"💎 {c_nm} 매도 | {sellable}주 @ {cp:,}원 | 손익: {core_profit:+,.0f}원")
