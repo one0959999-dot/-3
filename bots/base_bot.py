@@ -332,7 +332,14 @@ class BaseBot:
                             core._bought_val = 0.0
                             bought_val = 0.0
                         effective_val = max(api_val, bought_val)
-                        core.cash = round(max(0.0, target_core_per - effective_val), 2)
+                        new_cash = round(max(0.0, target_core_per - effective_val), 2)
+                        # 진단 로그: cash가 크게 변할 때만 출력 (중복매수 방지 확인용)
+                        if abs(new_cash - core.cash) > 10000:
+                            logger.info(f"[{self.mode_name}] 코어 예산 sync | {core.ticker} | "
+                                        f"원금={initial_cap:,.0f} 슬롯목표={target_core_per:,.0f} "
+                                        f"api_val={api_val:,.0f} bought_val={bought_val:,.0f} "
+                                        f"→ cash {core.cash:,.0f} → {new_cash:,.0f}")
+                        core.cash = new_cash
 
                     target_sat_pool = total_equity * self.satellite_ratio
                         
@@ -382,6 +389,25 @@ class BaseBot:
                                     self.satellite_info.append({'ticker': t, 'name': stock_name, 'strategy_name': 'RSI(9) 30/70', 'return_pct': 0.0, 'sector': '-'})
                             else:
                                 logger.warning(f"[{self.mode_name}] 위성 한도({self.num_satellites}) 초과 — '{stock_name}'({t}) 자동 편입 생략")
+
+                # ── 체결 확인: API 반영 후 "체결 대기 ⏳" 상태 자동 해제 ──────────
+                # 트레이딩 루프에서는 "대기" 포함 상태를 갱신하지 않아 영구 고착되는 버그 수정.
+                # API에서 shares > 0 이 확인되면 → "보유 중" 으로 전환.
+                # 1분 경과 후에도 shares == 0 이면 → "미체결" 경고로 전환.
+                _now = time.time()
+                for core in self.core_positions:
+                    if "대기" in getattr(core, 'status', ''):
+                        if core.shares > 0:
+                            core.status = "보유 중 💎"
+                        elif _now - getattr(core, 'last_order_time', 0) > 60:
+                            core.status = "미체결 ⚠️"
+                for sat in self.satellite_positions.values():
+                    if "대기" in getattr(sat, 'status', ''):
+                        if sat.shares > 0:
+                            sat.status = "보유 중 ✅"
+                        elif _now - getattr(sat, 'last_order_time', 0) > 60:
+                            sat.status = "미체결 ⚠️"
+
             except Exception as e:
                 logger.error(f"[{self.mode_name}] 장부 동기화 중 오류: {e}", exc_info=True)
 
