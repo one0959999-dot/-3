@@ -55,7 +55,7 @@ def fetch_recent_news(stock_name):
 
 
 class KRBotController:
-    """KR 실전 매매 봇 — KIS 국내주식 API (BaseBot 통합본)"""
+    """KR 실전 매매 봇 — KIS 국내주식 API"""
     def __init__(self, user_id, kis_config=None, telegram_config=None, core_stocks=None):
         self.user_id = user_id
         self.is_running = False

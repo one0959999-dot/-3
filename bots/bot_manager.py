@@ -1,5 +1,5 @@
-from bots.base_bot import KRBotController     # KR 실전 봇
-from bots.us_bot import USBotController       # US 페이퍼 트레이딩 봇
+from bots.kr_bot import KRBotController   # KR 실전 봇
+from bots.us_bot import USBotController   # US 실전 매매 봇
 from claude_api import ClaudeApi
 from kis_brokers.kis_real_api import KisRealApi
 

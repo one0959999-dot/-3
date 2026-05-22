@@ -225,13 +225,17 @@ def test_order():
             user_data = dict(current_user.data)
             user_data['is_mock'] = 1 if is_mock else 0
             target_bot = manager.get_bot(current_user.id, user_data)
-        # US 봇(is_mock=True)은 KIS API 없음 — 테스트 주문 불가
-        if not target_bot or not target_bot.kis or not hasattr(target_bot.kis, 'buy_market_order'):
-            return jsonify({"status": "error", "message": f"{mode_label} KIS API 미설정 — API 키 확인"})
+        if not target_bot:
+            return jsonify({"status": "error", "message": "봇 인스턴스를 찾을 수 없습니다."})
+
+        # KR 봇: target_bot.kis  /  US 봇: target_bot.kis_overseas
+        api = getattr(target_bot, 'kis_overseas', None) or getattr(target_bot, 'kis', None)
+        if not api or not hasattr(api, 'buy_market_order'):
+            return jsonify({"status": "error", "message": f"KIS API 미설정 — API 키를 확인하세요"})
         if side == 'BUY':
-            ok = target_bot.kis.buy_market_order(ticker, 1)
+            ok = api.buy_market_order(ticker, 1)
         else:
-            ok = target_bot.kis.sell_market_order(ticker, 1)
+            ok = api.sell_market_order(ticker, 1)
         if ok:
             return jsonify({"status": "success", "message": f"[{mode_label}] {ticker} 1주 {side} 주문 접수 완료"})
         return jsonify({"status": "error", "message": "주문 접수 실패 — 서버 로그 확인"})
