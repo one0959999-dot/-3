@@ -750,12 +750,6 @@ window.openSettingsModal = async function () {
     document.getElementById('settingsModal').style.display = 'block';
     switchSettingsTab(1);   // 항상 탭1 부터 열기
 
-    // 모드에 따라 API 섹션 전환
-    const isUS = window.isUS === true;
-    const krSection = document.getElementById('kr-api-section');
-    const usSection = document.getElementById('us-api-section');
-    if (krSection) krSection.style.display = isUS ? 'none' : '';
-    if (usSection) usSection.style.display = isUS ? '' : 'none';
     // 저장된 뉴스 API 키 불러오기 (마스킹된 값 표시)
     try {
         const res = await fetch('/api/settings/news_keys');
