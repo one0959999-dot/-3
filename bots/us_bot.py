@@ -32,6 +32,8 @@ from database import (
     add_user_initial_cash,
     get_sector_guide,
 )
+# bot_manager는 순환 임포트 방지를 위해 런타임에 참조
+import importlib
 
 logger = logging.getLogger('lassi_bot')
 
@@ -583,11 +585,13 @@ class USBotController:
         if self.kis_overseas:
             self._sync_balance_from_kis()
 
-        _save_interval = 300
-        _bal_interval  = 300
-        _REPORT_SLOT   = "16:10"   # ET 장 마감 10분 후
-        _last_save_ts  = 0.0
-        _last_bal_ts   = 0.0
+        _save_interval    = 300
+        _bal_interval     = 300
+        _regime_interval  = 3600   # 1시간마다 시장 국면 갱신
+        _REPORT_SLOT      = "16:10"
+        _last_save_ts     = 0.0
+        _last_bal_ts      = 0.0
+        _last_regime_ts   = 0.0
 
         while self.is_running:
             try:
@@ -616,6 +620,11 @@ class USBotController:
                 if time.time() - _last_bal_ts >= _bal_interval:
                     self._sync_balance_from_kis()
                     _last_bal_ts = time.time()
+
+                # ── 시장 국면 갱신 (1시간마다) ───────────────────────
+                if time.time() - _last_regime_ts >= _regime_interval:
+                    self._run_threaded(self._update_market_regime)
+                    _last_regime_ts = time.time()
 
                 # ── 일일 리포트 (16:10 ET) ────────────────────────────
                 if cur_time_str == _REPORT_SLOT:
@@ -651,11 +660,66 @@ class USBotController:
         self.add_log("⏹️ US 봇 루프 종료")
 
     # ─────────────────────────────────────────────────────────────────
+    # 시장 국면 판단 (SPY/QQQ 기반)
+    # ─────────────────────────────────────────────────────────────────
+
+    def _update_market_regime(self):
+        """SPY/QQQ 기반 미국 시장 국면 판단 (BULL / BEAR / NEUTRAL)"""
+        try:
+            import pandas as pd
+            df = yf.download("SPY", period="60d", interval="1d",
+                             progress=False, auto_adjust=True)
+            if isinstance(df.columns, pd.MultiIndex):
+                df.columns = df.columns.get_level_values(0)
+            df = df.dropna(subset=["Close"])
+            if len(df) < 50:
+                return
+            close  = df["Close"]
+            cur    = float(close.iloc[-1])
+            sma20  = float(close.rolling(20).mean().iloc[-1])
+            sma50  = float(close.rolling(50).mean().iloc[-1])
+            if cur > sma20 > sma50:
+                regime = "BULL"
+            elif cur < sma20 < sma50:
+                regime = "BEAR"
+            else:
+                regime = "NEUTRAL"
+            if regime != self.market_regime:
+                self.add_log(f"📊 US 시장 국면 변경: {self.market_regime} → {regime}")
+                self.market_regime = regime
+        except Exception as e:
+            logger.debug(f"[US봇] 시장 국면 판단 실패: {e}")
+
+    # ─────────────────────────────────────────────────────────────────
+    # US 뉴스 수집 (yfinance 무료 — API 키 불필요)
+    # ─────────────────────────────────────────────────────────────────
+
+    def _fetch_us_news(self, tickers: list = None) -> str:
+        """보유/후보 종목의 최신 뉴스 헤드라인 수집 (Yahoo Finance, 무료)"""
+        if not tickers:
+            tickers = (
+                [t for t, p in self.satellite_positions.items() if p.shares > 0]
+                + [i["ticker"] for i in self.satellite_info]
+            )
+        tickers = list(dict.fromkeys(tickers))[:5]  # 중복 제거, 최대 5개
+        lines = []
+        for ticker in tickers:
+            try:
+                news_items = yf.Ticker(ticker).news or []
+                for item in news_items[:2]:
+                    title = item.get("title", "")
+                    if title:
+                        lines.append(f"- [{ticker}] {title}")
+            except Exception:
+                pass
+        return "\n".join(lines) if lines else ""
+
+    # ─────────────────────────────────────────────────────────────────
     # 일일 리포트
     # ─────────────────────────────────────────────────────────────────
 
     def generate_daily_report(self, time_slot: str = "16:10"):
-        """ET 16:10 US 일일 리포트 생성 (백그라운드 스레드에서 호출)"""
+        """ET 16:10 US 일일 리포트 생성 — KR 컨텍스트 + 뉴스 포함"""
         try:
             today_str = _now_et().strftime("%Y-%m-%d")
             if (isinstance(self.daily_report, dict)
@@ -664,17 +728,41 @@ class USBotController:
                 return
 
             self.add_log(f"📝 US 일일 리포트 생성 중… ({time_slot} ET)")
+
+            # ── 시장 국면 최신화 ──────────────────────────────────────
+            self._update_market_regime()
+
+            # ── US 뉴스 수집 ──────────────────────────────────────────
+            news_context = self._fetch_us_news()
+
+            # ── KR 봇 컨텍스트 (KR 시장이 오늘 어땠는지) ─────────────
+            kr_context = ""
+            try:
+                bm = importlib.import_module("bots.bot_manager")
+                kr_ctx = bm.manager.get_peer_context(self.user_id, want_us=False)
+                if kr_ctx:
+                    kr_context = (
+                        f"한국 시장 국면: {kr_ctx['market_regime']}"
+                        + (f" / 주도 섹터: {', '.join(kr_ctx['hot_sectors'])}" if kr_ctx['hot_sectors'] else "")
+                        + (f" / KR봇 {'운행 중' if kr_ctx['is_running'] else '정지'}")
+                    )
+            except Exception:
+                pass
+
             result = generate_us_daily_report(
                 gemini_client  = self.gemini,
                 positions      = dict(self.satellite_positions),
                 satellite_info = list(self.satellite_info),
+                news_context   = news_context,
+                kr_context     = kr_context,
+                market_regime  = self.market_regime,
             )
             if result:
                 if not isinstance(self.daily_report, dict) or self.daily_report.get("date") != today_str:
                     self.daily_report = {"date": today_str, "16:10": None}
                 self.daily_report[time_slot] = result.get("report_markdown", "")
                 self._save_state()
-                self.add_log(f"✅ US 리포트 발간 완료 ({time_slot} ET)")
+                self.add_log(f"✅ US 리포트 발간 완료 ({time_slot} ET) — 국면: {self.market_regime}")
                 self._tg(f"📝 [US 리포트 {time_slot} ET]\n\n{self.daily_report[time_slot][:3000]}")
         except Exception as e:
             logger.error(f"[US봇] 리포트 생성 오류: {e}", exc_info=True)

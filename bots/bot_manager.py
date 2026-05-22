@@ -79,6 +79,40 @@ class BotManager:
 
         return bot
 
+    def get_peer_context(self, user_id: int, want_us: bool = True) -> dict | None:
+        """
+        두 봇 간 시장 컨텍스트 공유 인터페이스.
+        want_us=True  → US 봇 컨텍스트 반환 (KR 봇이 소비)
+        want_us=False → KR 봇 컨텍스트 반환 (US 봇이 소비)
+        """
+        peer = self.bots.get((user_id, want_us))
+        if not peer:
+            return None
+
+        if want_us:
+            # US → KR: 미국장 국면 + 주도 섹터 + 보유 위성 성과
+            sat_summary = []
+            for t, p in getattr(peer, 'satellite_positions', {}).items():
+                if p.shares > 0 and p.avg_price_usd > 0:
+                    price = getattr(peer, '_price_cache', {}).get(t, p.avg_price_usd)
+                    pnl_pct = (price / p.avg_price_usd - 1) * 100
+                    sat_summary.append(
+                        f"{p.name}({t}): {pnl_pct:+.1f}%"
+                    )
+            return {
+                "market_regime":  getattr(peer, 'market_regime', 'NEUTRAL'),
+                "hot_sectors":    getattr(peer, 'hot_sectors', []),
+                "satellite_perf": sat_summary,
+                "is_running":     getattr(peer, 'is_running', False),
+            }
+        else:
+            # KR → US: 한국장 국면 + 주도 섹터
+            return {
+                "market_regime": getattr(peer, 'market_regime', 'NEUTRAL'),
+                "hot_sectors":   getattr(peer, 'hot_sectors', []),
+                "is_running":    getattr(peer, 'is_running', False),
+            }
+
     def stop_all(self):
         for bot in self.bots.values():
             bot.stop()

@@ -260,11 +260,17 @@ def get_us_prices_batch(tickers) -> dict[str, float]:
 
 
 def generate_us_daily_report(gemini_client=None, positions: dict = None,
-                              satellite_info: list = None) -> dict:
+                              satellite_info: list = None,
+                              news_context: str = None,
+                              kr_context: dict = None,
+                              market_regime: str = "NEUTRAL") -> dict:
     """
     미국장 일일 리포트 생성.
     - 주요 지수(SPY·QQQ·DIA) + 섹터 ETF 흐름 수집 (yfinance)
     - 보유 위성 포지션 손익 요약 포함
+    - news_context: yfinance 뉴스 헤드라인 텍스트 (선택)
+    - kr_context: KR 봇 피어 컨텍스트 dict (선택)
+    - market_regime: "BULL" | "BEAR" | "NEUTRAL"
     - gemini_client 제공 시 Claude AI 분석, 없으면 룰 기반 리포트
     """
     from datetime import datetime, timezone, timedelta
@@ -273,6 +279,10 @@ def generate_us_daily_report(gemini_client=None, positions: dict = None,
     today_key  = datetime.now(_ET).strftime('%Y-%m-%d')
 
     lines: list[str] = [f"날짜: {today_str} (ET 기준)"]
+
+    # ── 0. 시장 국면 ──────────────────────────────────────────────────
+    regime_label = {"BULL": "🟢 강세장", "BEAR": "🔴 약세장", "NEUTRAL": "🟡 중립"}.get(market_regime, market_regime)
+    lines.append(f"\n[현재 시장 국면] {regime_label} ({market_regime})")
 
     # ── 1. 주요 지수 ──────────────────────────────────────────────────
     indices = {
@@ -363,15 +373,39 @@ def generate_us_daily_report(gemini_client=None, positions: dict = None,
                 f"섹터: {info['sector']}  점수: {info['score']:.0f}"
             )
 
+    # ── 5. 미국 뉴스 헤드라인 ─────────────────────────────────────────
+    if news_context:
+        lines.append("\n[오늘의 주요 뉴스 헤드라인]")
+        lines.append(news_context)
+
+    # ── 6. KR 봇 교차 시장 컨텍스트 ─────────────────────────────────
+    if kr_context:
+        lines.append("\n[한국 시장 현황 (KR 봇)]")
+        kr_regime = kr_context.get("market_regime", "N/A")
+        kr_sectors = kr_context.get("hot_sectors", [])
+        kr_running = kr_context.get("is_running", False)
+        lines.append(f"- 한국장 국면: {kr_regime}")
+        if kr_sectors:
+            lines.append(f"- 주도 섹터: {', '.join(kr_sectors)}")
+        lines.append(f"- KR 봇 상태: {'실행중' if kr_running else '정지'}")
+
     market_data_text = "\n".join(lines)
 
     # ── 5. AI 분석 or 룰 기반 리포트 ─────────────────────────────────
     if gemini_client:
+        kr_note = ""
+        if kr_context:
+            kr_note = (
+                f"\n참고로 현재 한국 시장은 '{kr_context.get('market_regime', 'N/A')}' 국면이며, "
+                f"주도 섹터는 {kr_context.get('hot_sectors', [])}입니다. "
+                f"글로벌 자금 흐름 관점에서 한국-미국 교차 시장 인사이트도 간략히 포함해주세요."
+            )
         prompt = (
             f"당신은 미국 주식 시장 전문 애널리스트입니다.\n"
             f"아래 데이터를 바탕으로 한국어로 오늘의 미국 시장 분석 리포트를 작성해주세요.\n"
             f"형식: 마크다운 (제목/소제목/불릿 포인트 사용)\n"
-            f"포함 내용: ① 전체 시장 방향성 ② 주목 섹터 ③ 보유 포지션 의견 ④ 오늘의 전략 제안\n\n"
+            f"포함 내용: ① 전체 시장 방향성 (현재 국면: {market_regime}) "
+            f"② 주목 섹터 ③ 보유 포지션 의견 ④ 오늘의 전략 제안 ⑤ 주요 뉴스 시사점{kr_note}\n\n"
             f"{market_data_text}"
         )
         try:
