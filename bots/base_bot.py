@@ -117,8 +117,8 @@ class BaseBot:
         # ── 🚀 테마·급등주 모멘텀 전용 슬롯 ──────────────────────────
         # 위성 5개와 완전히 별개의 단일 포지션.
         # 초고속 진입·이탈이 핵심이므로 AI 심사 없이 즉시 주문.
-        self.momentum_positions = [None]      # 모멘텀 슬롯 1개 (총자산의 20%)
-        self.momentum_budget_ratio = 0.20    # 슬롯당 20%
+        self.momentum_positions = [None]      # 모멘텀 슬롯 1개 (총자산의 10%)
+        self.momentum_budget_ratio = 0.10    # 총자산의 10% (단일 슬롯)
         self._last_momentum_scan = 0.0       # 마지막 스캔 타임스탬프
         self._momentum_scan_interval = 60    # 1분마다 스캔
 
@@ -2156,7 +2156,7 @@ class BaseBot:
             b_name   = best['name']
             b_price  = best['price']
 
-            budget = total_assets * self.momentum_budget_ratio  # 슬롯당 10% (총 30%)
+            budget = total_assets * self.momentum_budget_ratio  # 총자산의 10%
             if available_cash < budget * 0.5:
                 break  # 현금 부족 → 나머지 슬롯도 포기
 
