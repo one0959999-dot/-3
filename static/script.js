@@ -1,3 +1,45 @@
+// ══════════════════════════════════════════════════════════════
+// 💱 통화 전환 (₩ KRW ↔ $ USD)
+// ══════════════════════════════════════════════════════════════
+window.FX = { mode: 'KRW', rate: 1 };   // rate: USD/KRW 환율 (e.g. 1516)
+
+/** KRW 값을 현재 통화 모드에 맞게 포맷 */
+window.fmtMoney = function(krw, { sign = false, unit = true } = {}) {
+    const v = (FX.mode === 'USD' && FX.rate > 1) ? krw / FX.rate : Math.round(krw);
+    const isUsd = FX.mode === 'USD' && FX.rate > 1;
+    const prefix = sign ? (krw >= 0 ? '+' : '') : '';
+    if (isUsd) {
+        const formatted = Math.abs(v).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+        return prefix + (krw < 0 ? '-' : '') + '$' + formatted;
+    }
+    return prefix + v.toLocaleString() + (unit ? '원' : '');
+};
+
+/** 단가(주당 가격) 포맷 — 소수점 없이 */
+window.fmtPrice = function(krw) {
+    if (FX.mode === 'USD' && FX.rate > 1) {
+        return '$' + (krw / FX.rate).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    }
+    return Math.round(krw).toLocaleString() + '원';
+};
+
+/** 통화 모드 전환 + 버튼 스타일 + UI 전체 재렌더 */
+window.setCurrency = function(mode) {
+    FX.mode = mode;
+    const btnKrw = document.getElementById('btn-currency-krw');
+    const btnUsd = document.getElementById('btn-currency-usd');
+    if (btnKrw && btnUsd) {
+        const activeStyle  = 'background:rgba(255,255,255,0.18);color:#f1f5f9;';
+        const inactiveStyle = 'background:rgba(255,255,255,0.04);color:#94a3b8;';
+        btnKrw.style.cssText = btnKrw.style.cssText.replace(/background:[^;]+;color:[^;]+;/, mode === 'KRW' ? activeStyle : inactiveStyle);
+        btnUsd.style.cssText = btnUsd.style.cssText.replace(/background:[^;]+;color:[^;]+;/, mode === 'USD' ? activeStyle : inactiveStyle);
+    }
+    // 마지막으로 받은 status 데이터로 UI 즉시 재렌더
+    if (window._lastStatusData) updateUI(window._lastStatusData);
+    // P&L 차트 Y축 단위 재렌더
+    if (window._refreshPnlChart) window._refreshPnlChart();
+};
+
 // ── Toast 알림 ──
 function showToast(message, type = 'success', duration = 3000) {
     let container = document.getElementById('toast-container');
@@ -97,7 +139,7 @@ document.addEventListener('DOMContentLoaded', () => {
                             title: items => items[0]?.raw?.x || '',
                             label: item => {
                                 const v = item.raw.y;
-                                return ` ${v >= 0 ? '+' : ''}${v.toLocaleString()}원`;
+                                return ' ' + fmtMoney(v, {sign: true});
                             }
                         },
                         backgroundColor: 'rgba(22,27,34,0.95)',
@@ -120,7 +162,7 @@ document.addEventListener('DOMContentLoaded', () => {
                         grid: { color: 'rgba(255,255,255,0.05)' },
                         ticks: {
                             color: '#8b949e', font: { size: 11 },
-                            callback: v => (v >= 0 ? '+' : '') + v.toLocaleString() + '원'
+                            callback: v => fmtMoney(v, {sign: true})
                         }
                     }
                 }
@@ -202,7 +244,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 const seg = data[activePnlTab] || { labels: data.labels || [], values: data.values || [] };
                 renderPnlChart(seg.labels, seg.values, activePnlTab);
 
-                const formatPnl = v => (v >= 0 ? '+' : '') + v.toLocaleString() + '원';
+                const formatPnl = v => fmtMoney(v, {sign: true});
                 const colorPnl  = v => v >= 0 ? '#f85149' : '#58a6ff';
 
                 // 월별·연별·누적 요약
@@ -270,8 +312,8 @@ document.addEventListener('DOMContentLoaded', () => {
 
         container.innerHTML = defensiveList.map(asset => {
             const holding  = asset.shares > 0;
-            const priceStr = asset.price > 0 ? Math.round(asset.price).toLocaleString() + '원' : '조회 중';
-            const valueStr = holding ? Math.round(asset.value).toLocaleString() + '원' : '-';
+            const priceStr = asset.price > 0 ? fmtPrice(asset.price) : '조회 중';
+            const valueStr = holding ? fmtMoney(asset.value) : '-';
             const ratioStr = (asset.ratio * 100).toFixed(0) + '% 배정';
 
             let borderColor, bgColor, statusText, statusColor;
@@ -325,17 +367,17 @@ document.addEventListener('DOMContentLoaded', () => {
             const pnl     = mp.pnl_pct || 0;
             const pnlSign = pnl >= 0 ? '+' : '';
             const pnlClr  = pnl > 0 ? '#f85149' : (pnl < 0 ? '#58a6ff' : '#8b949e');
-            const avgPStr = mp.avg_price > 0 ? Math.round(mp.avg_price).toLocaleString() : '-';
-            const curPStr = mp.price > 0 ? Math.round(mp.price).toLocaleString() : '-';
+            const avgPStr = mp.avg_price > 0 ? fmtPrice(mp.avg_price) : '-';
+            const curPStr = mp.price > 0 ? fmtPrice(mp.price) : '-';
             const cls     = 'momentum-slot-card occupied' + (pnl > 0 ? ' profit' : pnl < 0 ? ' loss' : '');
             return `<div class="${cls}">
                 <div class="mslot-label">슬롯 #${i + 1} · 🚀 보유 중</div>
                 <div class="mslot-name">${mp.name} <span style="color:#64748b;font-size:0.75rem;">${mp.ticker}</span></div>
                 <div class="mslot-pnl pnl-rate" data-pnl="${pnl > 0 ? 'profit' : pnl < 0 ? 'loss' : 'neutral'}" style="color:${pnlClr}">${pnlSign}${pnl.toFixed(2)}%
-                    <span style="font-size:0.75rem;font-weight:400;color:#94a3b8;margin-left:6px;">${Math.round(mp.value || 0).toLocaleString()}원</span>
+                    <span style="font-size:0.75rem;font-weight:400;color:#94a3b8;margin-left:6px;">${fmtMoney(mp.value || 0)}</span>
                 </div>
                 <div class="mslot-meta">
-                    ${(mp.shares || 0).toLocaleString()}주 · 단가 ${avgPStr}원 → 현재 ${curPStr}원<br>
+                    ${(mp.shares || 0).toLocaleString()}주 · 단가 ${avgPStr} → 현재 ${curPStr}<br>
                     ${mp.elapsed || ''} · ${mp.reason || ''}
                 </div>
             </div>`;
@@ -351,6 +393,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // ── Main UI Update ──
     function updateUI(data) {
+        window._lastStatusData = data;   // 통화 전환 시 재렌더링용 스냅샷
         if (data.initial_cash !== undefined) {
             USER_INVESTED_CAPITAL = data.initial_cash;
             const inputEl = document.getElementById('initialCash');
@@ -362,7 +405,7 @@ document.addEventListener('DOMContentLoaded', () => {
         if (data.mock_total_asset !== undefined) {
             const totalValEl = document.getElementById('total-value');
             if (totalValEl) {
-                totalValEl.textContent = Math.round(data.mock_total_asset).toLocaleString() + '원';
+                totalValEl.textContent = fmtMoney(data.mock_total_asset);
                 // 수익 여부에 따라 색상: 이익 → 빨강, 손실 → 파랑, 중립 → 기본
                 // data-pnl 속성도 함께 설정: warm-beige 테마 CSS 덮어쓰기용 (브라우저가 hex→rgb 정규화해서 [style*=] 방식이 안됨)
                 if (data.mock_pnl !== undefined) {
@@ -381,7 +424,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 pnlEl.style.color = color;
                 pnlEl.style.fontWeight = '700';
                 pnlEl.dataset.pnl = pnlState;
-                pnlEl.textContent = `수익: ${sign}${Math.round(data.mock_pnl).toLocaleString()}원 (${sign}${data.mock_pnl_rt.toFixed(2)}%)`;
+                pnlEl.textContent = `수익: ${fmtMoney(data.mock_pnl, {sign: true})} (${sign}${data.mock_pnl_rt.toFixed(2)}%)`;
             }
         }
 
@@ -389,7 +432,7 @@ document.addEventListener('DOMContentLoaded', () => {
         if (data.available_cash !== undefined) {
             const cashValEl = document.getElementById('available-cash-val');
             if (cashValEl) {
-                cashValEl.textContent = Math.round(data.available_cash).toLocaleString() + '원';
+                cashValEl.textContent = fmtMoney(data.available_cash);
             }
         }
 
@@ -526,8 +569,8 @@ document.addEventListener('DOMContentLoaded', () => {
                 </div>
                 <div class="card-value highlight">${(core.shares || 0).toLocaleString()} 주</div>
                 <div class="card-subvalue">
-                    평가금액 ${Math.round(core.value || 0).toLocaleString()}원<br>
-                    <span style="color:#64748b;font-size:0.8rem;">(배정 예산: ${(core.budget || 0).toLocaleString()}원)</span>
+                    평가금액 ${fmtMoney(core.value || 0)}<br>
+                    <span style="color:#64748b;font-size:0.8rem;">(배정 예산: ${fmtMoney(core.budget || 0)})</span>
                 </div>
                 ${corePnlHtml}
                 <div class="card-subvalue" style="color:#f59e0b;font-size:0.8rem;margin-top:4px">🔒 floor: ${core.floor}주 보호</div>
@@ -557,7 +600,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
                 // 평가금액: 실시간 live_prices 기반 (3초 폴링)
                 const valueCell = isHolding
-                    ? `<span style="font-weight:600;">${Math.round(s.value || 0).toLocaleString()}원</span>`
+                    ? `<span style="font-weight:600;">${fmtMoney(s.value || 0)}</span>`
                     : `<span style="color:#64748b">-</span>`;
 
                 // 수익률: avg_price 기반 계산 (고점 갱신대기 대체)
@@ -604,6 +647,13 @@ document.addEventListener('DOMContentLoaded', () => {
             miniLog.scrollTop = miniLog.scrollHeight;
         }
     }
+
+    // 통화 전환 시 차트 재렌더링 (setCurrency에서 호출)
+    window._refreshPnlChart = function() {
+        if (!pnlDataCache) return;
+        const seg = pnlDataCache[activePnlTab] || { labels: pnlDataCache.labels || [], values: pnlDataCache.values || [] };
+        renderPnlChart(seg.labels, seg.values, activePnlTab);
+    };
 
     // Expose to outer-scope window.* handlers (saveAccountSettings, saveCoreStocks, toggleMode)
     window.fetchStatus = fetchStatus;

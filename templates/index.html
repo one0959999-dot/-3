@@ -455,7 +455,13 @@
 
         <div class="grid-container" id="top-cards-container">
             <div class="info-card glass-card">
-                <h3>📊 총 평가금액</h3>
+                <h3>📊 총 평가금액
+                    <span id="currency-toggle-wrap" style="float:right; margin-top:-2px;">
+                        <button id="btn-currency-krw" onclick="setCurrency('KRW')"
+                            style="font-size:0.7rem;padding:2px 7px;border-radius:4px 0 0 4px;border:1px solid rgba(255,255,255,0.18);background:rgba(255,255,255,0.12);color:#f1f5f9;cursor:pointer;font-weight:700;">₩</button><button id="btn-currency-usd" onclick="setCurrency('USD')"
+                            style="font-size:0.7rem;padding:2px 7px;border-radius:0 4px 4px 0;border:1px solid rgba(255,255,255,0.18);border-left:none;background:rgba(255,255,255,0.04);color:#94a3b8;cursor:pointer;font-weight:700;">$</button>
+                    </span>
+                </h3>
                 <div class="card-value highlight" id="total-value">-</div>
                 <div id="available-cash-row" style="font-size:0.78rem; color:#8b949e; margin:4px 0 2px; letter-spacing:0.3px;">
                     예수금 <span id="available-cash-val" style="color:#94a3b8; font-weight:600;">-</span>
@@ -770,6 +776,8 @@
                     document.getElementById('fx-change').className = 'fx-flat';
                     return;
                 }
+                // 환율 저장 (통화 변환에 사용)
+                window.FX.rate = d.rate;
                 // 환율 표시: 소수점 2자리
                 document.getElementById('fx-rate').textContent =
                     d.rate.toLocaleString('ko-KR', {minimumFractionDigits: 2, maximumFractionDigits: 2}) + '원';
