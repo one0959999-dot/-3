@@ -94,11 +94,13 @@ class BaseBot:
         self.fundamental_cache = {}
 
         # ── 당일 블랙리스트 (날짜가 바뀌면 자동 초기화) ──────────────────
-        # momentum_exit_times : {ticker: exit_timestamp}  30분 재진입 금지
-        # satellite_rejects   : 오늘 AI 거절된 위성 종목 {ticker: reason}
+        # momentum_exit_times  : {ticker: exit_timestamp}  30분 재진입 금지
+        # satellite_rejects    : 오늘 AI 거절된 위성 종목 {ticker: reason}
+        # momentum_ai_rejects  : {ticker: 거절횟수}  3회 거절 시 당일 블랙리스트
         self._bl_date               = ""       # 마지막 초기화 날짜 (YYYY-MM-DD)
         self._momentum_exit_times   : dict = {}  # {ticker: float(epoch)}
         self._satellite_rejects     : dict = {}
+        self._momentum_ai_rejects   : dict = {}  # {ticker: int}  당일 AI 거절 횟수
 
         # ── 종목당 당일 누적 손실 추적 (하루 최대 손실 캡) ──────────────
         # {ticker: cumulative_loss_krw}  — 손실(-) 누계, 날짜 바뀌면 초기화
@@ -729,6 +731,7 @@ class BaseBot:
             self._bl_date              = today
             self._momentum_exit_times  = {}
             self._satellite_rejects    = {}
+            self._momentum_ai_rejects  = {}
             self._daily_loss_by_ticker = {}
 
     def _add_momentum_exit(self, ticker: str):
@@ -2003,20 +2006,38 @@ class BaseBot:
                     context=trade_ctx
                 )
                 if not m_decision:
-                    self.add_log(f"🛑 모멘텀#{slot_idx+1} AI 거절: {b_name} — {m_ai_reason}")
-                    self._send_reject_telegram(
-                        f"🛑 <b>모멘텀#{slot_idx+1} 진입 거절</b>  ·  {self.alert_icon} {self.mode_name}\n"
-                        f"━━━━━━━━━━━━━━━━━━━━\n"
-                        f"📌 <b>{b_name}</b>  <code>{b_ticker}</code>\n"
-                        f"💰 진입 예정가: {b_price:,.0f}원\n"
-                        f"❌ {m_ai_reason[:500]}"
-                    )
-                    # [BUG-5] AI 거절은 손절이 아니므로 30분 전체 쿨다운 대신 10분만 차단
-                    # (_add_momentum_exit 는 now - exit_ts < 1800s 로 차단하므로
-                    #  20분 전 타임스탬프를 넣으면 실질 10분만 차단됨)
+                    # 당일 AI 거절 횟수 카운트
                     with self.lock:
                         self._refresh_blacklist()
-                        self._momentum_exit_times[b_ticker] = time.time() - (self._MOMENTUM_COOLDOWN_SEC - 600)
+                        reject_count = self._momentum_ai_rejects.get(b_ticker, 0) + 1
+                        self._momentum_ai_rejects[b_ticker] = reject_count
+
+                    if reject_count >= 3:
+                        # 3회 거절 → 당일 블랙리스트 (오늘 더 이상 심사 없음)
+                        self.add_log(f"🚫 모멘텀#{slot_idx+1} 당일 블랙리스트: {b_name} (AI {reject_count}회 거절)")
+                        self._send_reject_telegram(
+                            f"🚫 <b>모멘텀#{slot_idx+1} 당일 차단</b>  ·  {self.alert_icon} {self.mode_name}\n"
+                            f"━━━━━━━━━━━━━━━━━━━━\n"
+                            f"📌 <b>{b_name}</b>  <code>{b_ticker}</code>\n"
+                            f"💰 {b_price:,.0f}원\n"
+                            f"🔒 AI {reject_count}회 거절 — 오늘 하루 진입 차단"
+                        )
+                        with self.lock:
+                            # exit_ts를 현재 시각으로 → 하루 종일 차단 (장 마감 후 _refresh_blacklist 초기화)
+                            self._momentum_exit_times[b_ticker] = time.time() + 86400
+                    else:
+                        # 1~2회 거절 → 30분 쿨다운 후 재심사 가능
+                        self.add_log(f"🛑 모멘텀#{slot_idx+1} AI 거절({reject_count}/3): {b_name} — {m_ai_reason}")
+                        self._send_reject_telegram(
+                            f"🛑 <b>모멘텀#{slot_idx+1} 진입 거절 ({reject_count}/3)</b>  ·  {self.alert_icon} {self.mode_name}\n"
+                            f"━━━━━━━━━━━━━━━━━━━━\n"
+                            f"📌 <b>{b_name}</b>  <code>{b_ticker}</code>\n"
+                            f"💰 진입 예정가: {b_price:,.0f}원\n"
+                            f"❌ {m_ai_reason[:300]}"
+                        )
+                        with self.lock:
+                            self._refresh_blacklist()
+                            self._momentum_exit_times[b_ticker] = time.time() - (self._MOMENTUM_COOLDOWN_SEC - 600)
                     used_tickers.add(b_ticker)
                     continue
                 buy_label  = f"🚀 AI승인 모멘텀#{slot_idx+1}"
