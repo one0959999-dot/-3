@@ -934,8 +934,9 @@
             priceEl.textContent = item.price;
             chgEl.textContent   = _chgText(item.c1h, item.c5d);
             const col = _chgColor(item.c1h);
-            chgEl.style.color = col;
-            chgEl.style.webkitTextFillColor = col;
+            // setProperty + 'important' → theme-warm-beige span !important 규칙을 이김
+            chgEl.style.setProperty('color', col, 'important');
+            chgEl.style.setProperty('-webkit-text-fill-color', col, 'important');
             if (animate) {
                 ticker.classList.remove('fut-anim-out');
                 ticker.classList.add('fut-anim-in');
