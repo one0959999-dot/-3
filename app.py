@@ -139,7 +139,7 @@ def status():
     is_mock = bool(current_user.data.get('is_mock', 1))
     other_bot = manager.bots.get((current_user.id, not is_mock))
     result['other_mode_running'] = bool(other_bot and other_bot.is_running)
-    result['other_mode_label'] = '실전' if is_mock else '모의'
+    result['other_mode_label'] = 'KR' if is_mock else 'US'
 
     return jsonify(result)
 
