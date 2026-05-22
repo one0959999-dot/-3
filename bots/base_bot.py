@@ -1322,19 +1322,23 @@ class BaseBot:
         except Exception:
             pass
 
-        # ── 5. 외인/기관 수급 (위성 스크리닝 캐시 활용) ─────────────
+        # ── 5. 외국계 순매수 실시간 조회 [국내주식-164] ──────────────
         frgn_inst_str = "N/A"
         try:
-            # satellite_info에 스크리닝 시 계산된 frgn_inst 플래그가 있음
-            sat_info = next((c for c in self.satellite_info if c['ticker'] == ticker), None)
-            if sat_info is not None:
-                if sat_info.get('frgn_inst'):
-                    frgn_inst_str = "✅ 외인/기관 순매수 종목 (오늘 스크리닝 기준)"
-                else:
-                    frgn_inst_str = "❌ 외인/기관 순매수 상위 미포함"
+            if self.kis and hasattr(self.kis, 'get_foreign_buy_by_ticker'):
+                fi = self.kis.get_foreign_buy_by_ticker(ticker)
+                if fi is not None:
+                    net  = fi["frgn_net"]
+                    buy  = fi["frgn_buy"]
+                    sell = fi["frgn_sell"]
+                    tag  = "✅ 순매수" if net > 0 else ("❌ 순매도" if net < 0 else "➖ 중립")
+                    frgn_inst_str = (
+                        f"{tag}  순매수 {net:+,}주  "
+                        f"(매수 {buy:,}주 / 매도 {sell:,}주)"
+                    )
         except Exception:
             pass
-        lines.append(f"[외인/기관 수급] {frgn_inst_str}")
+        lines.append(f"[외국계 수급] {frgn_inst_str}")
 
         # ── 6. KOSPI / KOSDAQ 대비 상대강도 ─────────────────────────
         market_rs_str = "N/A"

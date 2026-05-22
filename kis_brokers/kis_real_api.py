@@ -888,6 +888,48 @@ class KisRealApi:
             print(f"[KIS 실전] 기관외국인 조회 오류: {e}")
             return []
 
+    def get_foreign_buy_by_ticker(self, stock_code: str):
+        """종목별 외국계 순매수추이 조회 [국내주식-164] (실전 전용)
+        특정 종목의 당일 외국계 매수/매도/순매수 수량을 직접 조회합니다.
+        Returns: dict { frgn_buy: 매수량, frgn_sell: 매도량, frgn_net: 순매수량 } 또는 None
+        """
+        if not self._ensure_token():
+            return None
+        headers = {
+            "content-type": "application/json; charset=utf-8",
+            "authorization": f"Bearer {self.access_token}",
+            "appkey": self.app_key,
+            "appsecret": self.app_secret,
+            "tr_id": "FHKST644400C0",
+            "custtype": "P",
+        }
+        params = {
+            "FID_INPUT_ISCD":        stock_code,
+            "FID_INPUT_ISCD_2":      "99999",   # 외국계 전체
+            "FID_COND_MRKT_DIV_CODE": "J",
+        }
+        try:
+            res = requests.get(
+                f"{self.base_url}/uapi/domestic-stock/v1/quotations/frgnmem-pchs-trend",
+                headers=headers, params=params, timeout=5,
+            )
+            if res.status_code == 200:
+                data = res.json()
+                if data.get("rt_cd") == "0":
+                    output = data.get("output", [])
+                    if output:
+                        # output[0] = 가장 최근 집계 시점
+                        latest = output[0]
+                        return {
+                            "frgn_buy":  int(latest.get("frgn_shnu_vol", 0) or 0),
+                            "frgn_sell": int(latest.get("frgn_seln_vol",  0) or 0),
+                            "frgn_net":  int(latest.get("glob_ntby_qty",  0) or 0),
+                        }
+            return None
+        except Exception as e:
+            print(f"[KIS 실전] 종목별 외국계 순매수 조회 오류: {e}")
+            return None
+
     def get_orderbook(self, stock_code: str, market: str = "J"):
         """주식현재가 호가_예상체결 조회 — askp1(최우선 매도호가), bidp1(최우선 매수호가) 반환"""
         if not self._ensure_token():

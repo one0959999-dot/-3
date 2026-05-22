@@ -848,6 +848,10 @@ class KisMockApi:
         """모의투자 미지원 — 빈 리스트 반환"""
         return []
 
+    def get_foreign_buy_by_ticker(self, stock_code: str):
+        """모의투자 미지원 — None 반환"""
+        return None
+
     def get_etf_price(self, etf_code: str):
         """모의투자 미지원 — 항상 None 반환"""
         return None
