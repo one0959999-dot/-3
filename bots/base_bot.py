@@ -844,7 +844,8 @@ class BaseBot:
 
         core_budget = total_cash * self.core_ratio
         sat_budget  = total_cash * self.satellite_ratio
-        per_sat     = sat_budget / self.num_satellites if self.num_satellites > 0 else 0
+        n_sat       = len(self.satellite_info) if self.satellite_info else self.num_satellites
+        per_sat     = sat_budget / n_sat if n_sat > 0 else 0
 
         self.core_positions = []
         if self.user_core_stocks:
