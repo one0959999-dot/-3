@@ -470,10 +470,17 @@ document.addEventListener('DOMContentLoaded', () => {
             }
         }
 
-        // 방어자산 렌더링
+        // 방어자산 렌더링 (KR 전용)
         renderDefensiveAssets(data.defensive_list, data.market_regime);
-        // 모멘텀 슬롯 렌더링
-        renderMomentumSlots(data.momentum_list);
+
+        // 단타 모멘텀 섹션: KR 모드에서만 표시, US 모드에서는 숨김
+        const momentumSection = document.getElementById('momentum-section');
+        if (momentumSection) {
+            momentumSection.style.display = isUS ? 'none' : '';
+        }
+        if (!isUS) {
+            renderMomentumSlots(data.momentum_list);
+        }
 
         if (isLive) {
             document.body.classList.remove('theme-warm-beige');

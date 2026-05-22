@@ -1,6 +1,5 @@
-from bots.real_bot import RealBotController
-from bots.mock_bot import MockBotController   # 한국 모의투자 (향후 참고용)
-from bots.us_bot import USBotController       # 미국장 페이퍼 트레이딩
+from bots.real_bot import RealBotController   # KR 실전 봇
+from bots.us_bot import USBotController       # US 페이퍼 트레이딩 봇
 from claude_api import ClaudeApi
 from kis_brokers.kis_real_api import KisRealApi
 

@@ -732,7 +732,7 @@ class USBotController:
                 "num_satellites":   self.num_satellites,
                 "cores":            cores_data,
                 "satellites":       satellites,
-                "momentum_list":    [None],
+                "momentum_list":    [],   # US 모드 = 단타 모멘텀 없음
                 "defensive_list":   [],
                 "market_regime":    self.market_regime,
                 "mock_total_asset": total_krw,
@@ -753,7 +753,7 @@ class USBotController:
                 "num_satellites": self.num_satellites,
                 "cores": [],
                 "satellites": [],
-                "momentum_list": [None],
+                "momentum_list": [],
                 "defensive_list": [],
                 "market_regime": "NEUTRAL",
                 "mock_total_asset": 0,
