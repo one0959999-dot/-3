@@ -894,6 +894,12 @@ class BaseBot:
             self.add_log(f"🔥 강세 섹터: {', '.join(self.hot_sectors[:4])}")
         else:
             self.add_log("⚠️ 강세 섹터 없음 — 상대 강세 기준 후보 선정")
+        # 모멘텀 슬롯 종목은 위성 편입 금지
+        momentum_tickers = {
+            mp['ticker'] for mp in self.momentum_positions
+            if mp is not None and isinstance(mp, dict) and mp.get('ticker')
+        }
+        raw_info = [c for c in raw_info if c['ticker'] not in momentum_tickers]
         # AI 검토: 부적합 종목 제거 후 num_satellites 개수만 사용
         filtered_info = self._ai_filter_satellites(raw_info)
         self.satellite_info = filtered_info[:self.num_satellites]
@@ -2387,10 +2393,17 @@ class BaseBot:
                 self.add_log(f"🔥 강세 섹터 감지: {', '.join(self.hot_sectors[:4])}")
             else:
                 self.add_log("⚠️ 강세 섹터 없음 (전 섹터 하락 — 상대 강세 기준으로 후보 선정)")
-            # 이미 보유 중인 종목 + 당일 AI 거절 블랙리스트 종목 모두 제외
+            # 현재 모멘텀 슬롯에 있는 종목 — 성격/전략이 다르므로 위성 편입 금지
+            with self.lock:
+                momentum_tickers = {
+                    mp['ticker'] for mp in self.momentum_positions
+                    if mp is not None and isinstance(mp, dict) and mp.get('ticker')
+                }
+            # 이미 보유 중인 종목 + 당일 AI 거절 블랙리스트 + 모멘텀 슬롯 종목 모두 제외
             pre_filter = [
                 c for c in raw_info
                 if c['ticker'] not in keep_tickers
+                and c['ticker'] not in momentum_tickers
                 and not self._is_satellite_blacklisted(c['ticker'])
             ]
             # AI 종목·전략 검토 (여유분 포함해서 검토 후 필요 개수만큼 잘라냄)

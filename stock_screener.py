@@ -113,19 +113,22 @@ def fetch_ohlcv(ticker, days=200, kis=None):
 # 2. 섹터/테마 강세 탐지 (종목 수익률 기반)
 # ──────────────────────────────────────────────
 # 섹터별 대표 종목 목록 (pykrx 지수 API 불안정으로 직접 정의)
+# 섹터별 대표 종목 — 섹터 강세 측정용 (6→10개로 확대, 다양한 시총 혼합)
+# 대형주만 있으면 대형주 악재에 섹터 전체가 흔들리므로 중·소형 대표주도 포함
 SECTOR_STOCKS = {
-    "반도체":    ["005930","000660","042700","091990","336370","000990"],
-    "2차전지":   ["373220","006400","051910","247540","096770","011790"],
-    "바이오/제약":["068270","207940","000120","003850","128940","326030"],
-    "자동차":    ["005380","000270","012330","204320","009150","073240"],
-    "IT/소프트웨어":["035420","035720","259960","112040","047050","293490"],
-    "방산/우주":  ["012450","047810","004830","272210","079550","013890"],
-    "조선/중공업":["009540","010140","042660","329180","267270","138040"],
-    "금융/보험":  ["055550","105560","086790","000810","316140","175330"],
-    "에너지/화학":["010950","011170","096770","267250","078930","001570"],
-    "건설/부동산":["000720","047040","028260","034020","006360","294870"],
-    "유통/소비":  ["139480","023530","004170","282330","016360","069960"],
-    "AI/로봇":   ["017670","042700","079550","108860","285490","950130"],
+    "반도체":      ["005930","000660","042700","091990","336370","000990","357780","240810","029460","058470"],
+    "2차전지":     ["373220","006400","051910","247540","096770","011790","003670","066970","277070","382800"],
+    "바이오/제약":  ["068270","207940","000120","003850","128940","326030","196170","145020","302440","263750"],
+    "자동차":      ["005380","000270","012330","204320","009150","073240","241560","015260","064350","018880"],
+    "IT/소프트웨어":["035420","035720","259960","112040","047050","293490","251270","036570","263750","095660"],
+    "방산/우주":    ["012450","047810","004830","272210","079550","013890","064350","071970","298040","000880"],
+    "조선/중공업":  ["009540","010140","042660","329180","267270","138040","034020","005440","003670","241560"],
+    "금융/보험":    ["055550","105560","086790","000810","316140","175330","024110","032830","003450","139130"],
+    "에너지/화학":  ["010950","011170","096770","267250","078930","001570","010060","006360","161390","011790"],
+    "건설/부동산":  ["000720","047040","028260","034020","006360","294870","047050","000840","003450","012630"],
+    "유통/소비":    ["139480","023530","004170","282330","016360","069960","011780","007070","088350","084680"],
+    "AI/로봇":     ["017670","042700","079550","108860","285490","950130","336260","377300","348370","438900"],
+    "전력/전기":    ["015760","267260","010120","298040","009470","117580","053080","175330","298020","064760"],
 }
 
 def get_sector_momentum(lookback=20, verbose=False):
@@ -197,15 +200,12 @@ def get_sector_tickers(momentum, top_n_sectors=4):
     """
     sorted_sectors = sorted(momentum.items(), key=lambda x: x[1], reverse=True)
 
-    positive = [(k, v) for k, v in sorted_sectors if v > 0]
-    if len(positive) >= 2:
-        # 정상 상승장: 양수 섹터 중 상위 N개
-        hot_sector_items = positive[:top_n_sectors]
-    else:
-        # 하락/횡보장: -10% 이상 섹터 중 상대 강세 상위 N개 (v > 0 조건 제거)
-        hot_sector_items = [(k, v) for k, v in sorted_sectors if v > -10.0][:top_n_sectors]
-
+    # ▶ 순수 상대 강세 기준: 항상 상위 top_n_sectors개 선택 (절대 수익률 무관)
+    # 단, 섹터 보너스는 실제 수익률 품질에 따라 caller(select_satellites)에서 차등 적용
+    hot_sector_items = sorted_sectors[:top_n_sectors]
     hot_sectors = [k for k, v in hot_sector_items]
+    # 섹터 수익률 맵 (보너스 차등화용으로 반환)
+    hot_sector_returns = {k: v for k, v in hot_sector_items}
 
     sector_tickers    = set()
     ticker_to_sector  = {}
@@ -221,7 +221,7 @@ def get_sector_tickers(momentum, top_n_sectors=4):
                 ticker_sector_rank[t] = rank
                 seen.add(t)
 
-    return sector_tickers, ticker_to_sector, hot_sectors, ticker_sector_rank
+    return sector_tickers, ticker_to_sector, hot_sectors, ticker_sector_rank, hot_sector_returns
 
 
 # ──────────────────────────────────────────────
@@ -598,18 +598,19 @@ def select_satellites(kis=None, n=NUM_SATELLITES, verbose=True, gemini_client=No
         print("="*60)
 
     sector_momentum = get_sector_momentum(lookback=20, verbose=verbose)
-    sector_tickers, ticker_to_sector, hot_sectors, ticker_sector_rank = get_sector_tickers(sector_momentum, top_n_sectors=4)
+    sector_tickers, ticker_to_sector, hot_sectors, ticker_sector_rank, hot_sector_returns = get_sector_tickers(sector_momentum, top_n_sectors=4)
 
     if verbose:
         if hot_sectors:
             sector_labels = []
             for sec in hot_sectors:
                 ret = sector_momentum.get(sec, 0)
-                label = f"{sec}({ret:+.1f}%)"
+                quality = "🟢" if ret > 0 else ("🟡" if ret > -5 else "🔴")
+                label = f"{quality}{sec}({ret:+.1f}%)"
                 sector_labels.append(label)
-            print(f"\n🔥 현재 강세 섹터 TOP4: {', '.join(sector_labels)}")
+            print(f"\n🔥 상대 강세 섹터 TOP4: {', '.join(sector_labels)}")
         else:
-            print("\n⚠️  강세 섹터 없음 (전 섹터 -10% 이하 하락 중)")
+            print("\n⚠️  섹터 데이터 없음")
 
     volume_surges = get_volume_surge_tickers(
         kis=kis, market_list=("KOSPI", "KOSDAQ"),
@@ -698,11 +699,21 @@ def select_satellites(kis=None, n=NUM_SATELLITES, verbose=True, gemini_client=No
             best_strat, best_ret = find_best_strategy(df)
 
             vol_score = volume_surges.get(ticker, 1.0)
-            # 섹터 보너스: 1위 섹터 +22, 2위 +18, 3위 +14, 4위 +10
-            # (기존 고정 +10에서 → 순위 기반으로 확대, 상대 강세 섹터도 보너스 적용)
+            # 섹터 보너스: 순위 기반 × 품질 보정
+            # - 순위 보너스: 1위 +22, 2위 +18, 3위 +14, 4위 +10
+            # - 품질 보정: 섹터 수익률 양수(+1.0) / -5%까지(+0.6) / 그 이하(+0.3)
+            #   → 하락장에서 덜 빠진 섹터는 절반 이하 보너스만 받음
             if ticker in sector_tickers:
-                _rank = ticker_sector_rank.get(ticker, 3)  # 0-indexed
-                sector_bonus = max(22 - _rank * 4, 10)
+                _rank    = ticker_sector_rank.get(ticker, 3)
+                _sec_ret = hot_sector_returns.get(ticker_to_sector.get(ticker, ""), 0)
+                _base    = max(22 - _rank * 4, 10)
+                if _sec_ret > 0:
+                    _quality = 1.0    # 절대 강세 — 전액 보너스
+                elif _sec_ret > -5:
+                    _quality = 0.6    # 약보합 — 60% 보너스
+                else:
+                    _quality = 0.3    # 하락장 상대강세 — 30% 보너스
+                sector_bonus = int(_base * _quality)
             else:
                 sector_bonus = 0
             # 외인/기관 보너스: 037(기관+외인) +8 / 161(외국계 전용) 추가 +5 = 최대 +13
