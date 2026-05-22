@@ -1969,22 +1969,31 @@ class BaseBot:
         giveback_signal = 'HOLD'
         giveback_reason = ''
         try:
-            candles = self.kis.get_minute_candles(ticker, count=10)
-            if candles and len(candles) >= 3:
-                peak_vol   = mp.get('peak_volume', 0)
-                recent_vol = float(candles[-1].get('volume', 0))
-                if recent_vol > peak_vol:
-                    mp['peak_volume'] = recent_vol
-                    peak_vol = recent_vol
-                if peak_vol > 0:
-                    if is_upper_limit:
-                        pass  # 상한가 구간: 페이드 체크 스킵
-                    elif is_post_upper:
-                        if recent_vol < peak_vol * 0.30:
-                            vol_fade = True
-                    else:
-                        if recent_vol < peak_vol * 0.5:
-                            vol_fade = True
+            # 5분봉 집계: 1분봉 25개 조회 후 5개씩 묶어 5분봉 거래량 산출
+            candles = self.kis.get_minute_candles(ticker, count=25)
+            if candles and len(candles) >= 5:
+                # 5분봉 단위 거래량 집계 (5개씩 묶음, 최신봉이 마지막)
+                five_min_vols = []
+                chunk_count = len(candles) // 5
+                for i in range(chunk_count):
+                    chunk = candles[i*5:(i+1)*5]
+                    five_min_vols.append(sum(float(c.get('volume', 0)) for c in chunk))
+                # 잔여 1분봉(최신 미완성 5분봉)은 제외 → 완성된 5분봉만 사용
+                if len(five_min_vols) >= 2:
+                    peak_vol   = mp.get('peak_volume', 0)
+                    recent_vol = five_min_vols[-1]          # 가장 최근 완성 5분봉 거래량
+                    if recent_vol > peak_vol:
+                        mp['peak_volume'] = recent_vol
+                        peak_vol = recent_vol
+                    if peak_vol > 0:
+                        if is_upper_limit:
+                            pass  # 상한가 구간: 페이드 체크 스킵
+                        elif is_post_upper:
+                            if recent_vol <= peak_vol * 0.30:
+                                vol_fade = True
+                        else:
+                            if recent_vol <= peak_vol * 0.5:   # 이하(≤)
+                                vol_fade = True
                 is_ride = (peak_p / avg_p - 1) * 100 >= 10 if avg_p > 0 else False
                 giveback_signal, _gpct, giveback_reason = check_giveback_stop(
                     candles, avg_p, peak_p, is_momentum_ride=is_ride
@@ -2045,7 +2054,7 @@ class BaseBot:
 
         sell_reason = None
         if vol_fade:
-            sell_reason = "거래량 페이드(고점 대비 50%↓)"
+            sell_reason = "거래량 페이드(5분봉 고점 대비 50% 이하)"
         elif avg_p > 0 and price >= avg_p * MOMENTUM_TARGET_PCT:
             sell_reason = f"+5% 목표 달성 ({avg_p:,.0f}→{price:,.0f})"
         elif giveback_signal == 'FULL_EXIT':
