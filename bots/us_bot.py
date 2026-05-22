@@ -165,6 +165,14 @@ class USBotController:
         self._restore_state()
         self.add_log("🇺🇸 미국장 페이퍼 트레이딩 봇 초기화 완료")
 
+        # ── 백그라운드 가격 갱신 루프 (UI 응답 속도 분리) ────────────
+        # get_status()에서 yfinance를 직접 호출하지 않도록
+        # 별도 데몬 스레드에서 60초마다 가격을 캐시에 미리 채워둠
+        self._sync_thread = threading.Thread(
+            target=self._perpetual_price_sync, daemon=True
+        )
+        self._sync_thread.start()
+
     # ─────────────────────────────────────────────────────────────────
     # 로그 / 텔레그램
     # ─────────────────────────────────────────────────────────────────
@@ -202,10 +210,17 @@ class USBotController:
             self._last_price_ts = time.time()
         return new_prices
 
+    def _perpetual_price_sync(self):
+        """백그라운드 가격 갱신 루프 — 60초마다 캐시를 채워둠."""
+        while True:
+            try:
+                self._refresh_prices()
+            except Exception as e:
+                logger.debug(f"[US봇] 가격 동기화 오류: {e}")
+            time.sleep(60)
+
     def _price(self, ticker: str) -> float:
-        """캐시된 가격 반환 (TTL 초과 시 재조회)"""
-        if time.time() - self._last_price_ts > self._price_ttl:
-            self._refresh_prices()
+        """캐시된 가격 반환 (캐시에 없으면 0 반환 — 블로킹 없음)"""
         return self._price_cache.get(ticker, 0.0)
 
     # ─────────────────────────────────────────────────────────────────
@@ -467,7 +482,8 @@ class USBotController:
                     time.sleep(300)
                     continue
 
-                # ── 가격 갱신 ───────────────────────────────────────
+                # ── 가격 갱신 (트레이딩 루프: 최신 가격 확보) ────────
+                # 백그라운드 sync와 타이밍이 겹칠 수 있지만 무해함
                 self._refresh_prices()
 
                 # ── 위성 스크리닝 (하루 1회) ────────────────────────
@@ -631,10 +647,8 @@ class USBotController:
         """BaseBot.get_status()와 동일한 JSON 형식 반환 (KRW 환산)"""
         try:
             fx = _get_fx_rate()
-
-            # 가격 갱신 (TTL 초과 시)
-            if time.time() - self._last_price_ts > self._price_ttl:
-                self._refresh_prices()
+            # 가격은 백그라운드 루프(_perpetual_price_sync)가 60초마다 갱신.
+            # get_status()는 캐시를 그대로 읽음 → 블로킹 없이 즉시 반환
 
             # ── 코어 ─────────────────────────────────────────────
             cp_usd      = self._price_cache.get(self.core_ticker, 0.0)
