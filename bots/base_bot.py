@@ -1254,6 +1254,39 @@ class BaseBot:
                 except Exception:
                     pass
 
+            # 전일 종가 & 당일 등락률
+            prev_close_str = "N/A"
+            day_chg_str    = "N/A"
+            if len(close) >= 2:
+                try:
+                    prev_close  = float(close.iloc[-2])
+                    day_chg_pct = (price / prev_close - 1) * 100
+                    prev_close_str = f"{prev_close:,.0f}원"
+                    recov_tag  = "✅ 전일 종가 위" if price >= prev_close else "❌ 전일 종가 미회복"
+                    day_chg_str = f"{day_chg_pct:+.1f}% ({recov_tag})"
+                except Exception:
+                    pass
+
+            # 5일선 위치
+            sma5_str = "N/A"
+            if len(close) >= 6:
+                try:
+                    sma5    = float(close.rolling(5).mean().iloc[-1])
+                    rel_sma5 = (price / sma5 - 1) * 100
+                    sma5_str = f"{sma5:,.0f}원 ({rel_sma5:+.1f}% {'위↑' if rel_sma5 >= 0 else '아래↓'})"
+                except Exception:
+                    pass
+
+            # 20일선 위치
+            sma20_str = "N/A"
+            if len(close) >= 22:
+                try:
+                    sma20    = float(close.rolling(20).mean().iloc[-1])
+                    rel_sma20 = (price / sma20 - 1) * 100
+                    sma20_str = f"{sma20:,.0f}원 ({rel_sma20:+.1f}% {'위↑' if rel_sma20 >= 0 else '아래↓'})"
+                except Exception:
+                    pass
+
             # 120일선 위치
             sma120_str = "N/A"
             if len(close) >= 60:
@@ -1267,6 +1300,12 @@ class BaseBot:
             lines.append(
                 f"[기술 지표] RSI(14): {rsi_val if rsi_val is not None else 'N/A'} | {macd_str} | "
                 f"볼린저밴드: {bb_str} | 거래량: {vol_str} | 120일선: {sma120_str}"
+            )
+            lines.append(
+                f"[이동평균] 5일선: {sma5_str} | 20일선: {sma20_str}"
+            )
+            lines.append(
+                f"[전일종가] {prev_close_str} | 당일 등락: {day_chg_str}"
             )
             if price_hist:
                 lines.append(f"[최근 5일 종가] {price_hist}")
