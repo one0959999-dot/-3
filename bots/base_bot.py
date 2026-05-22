@@ -485,11 +485,20 @@ class BaseBot:
         """거래 거절 알림 전용 헬퍼."""
         self._send_telegram(message, msg_type='reject')
 
-    def _buy_order(self, ticker: str, qty: int, pos, name: str) -> bool:
-        """매수 주문 실행 + KIS 응답 체크. 성공 True, 실패 False (봇 로그에 에러 기록)."""
+    def _buy_order(self, ticker: str, qty: int, pos, name: str, limit_price: int = 0) -> bool:
+        """매수 주문 실행 + KIS 응답 체크. 성공 True, 실패 False (봇 로그에 에러 기록).
+        limit_price = 0 → 현재가 +0.3% 지정가 자동 계산 (슬리피지 제한)
+        limit_price = -1 → 강제 시장가 (모멘텀 전용)"""
         if not self.kis:
             return False
-        result = self.kis.buy_market_order(ticker, qty)
+        if limit_price == 0:
+            # 코어·위성: 현재가 +0.3% 지정가 → 빠른 체결 + 슬리피지 제한
+            cp = self.live_prices.get(ticker, 0)
+            if cp > 0:
+                limit_price = int(cp * 1.003)
+        elif limit_price == -1:
+            limit_price = 0  # 시장가
+        result = self.kis.buy_market_order(ticker, qty, price=limit_price)
         if result:
             # 내부 현금 즉시 차감 — KIS 모의 API 반영 지연 보정
             # _last_trade_ts는 est_price 여부와 무관하게 항상 갱신:
