@@ -2474,11 +2474,25 @@ class BaseBot:
         try:
             news_lines = []
             with self.lock: target_stocks = list(dict.fromkeys([(c.name, c.ticker) for c in self.core_positions] + [(pos.name, t) for t, pos in self.satellite_positions.items()]))
-            for name, ticker in target_stocks: news_lines.append(f"- {name}: {fetch_recent_news(name)}"); time.sleep(0.1)
-            news_context = "\n".join(news_lines) if news_lines else "뉴스 없음"
+            for name, ticker in target_stocks:
+                try:
+                    raw = fetch_recent_news(name)
+                    # 조회 실패 메시지는 컨텍스트에서 제외 (AI가 "판단 불가" 섹션 만드는 것 방지)
+                    _fail_keywords = ("실패", "오류", "없음", "error", "fail", "N/A")
+                    if raw and not any(k in raw for k in _fail_keywords):
+                        news_lines.append(f"- {name}: {raw}")
+                except Exception:
+                    pass
+                time.sleep(0.1)
+            news_context = "\n".join(news_lines) if news_lines else ""
             
             flow_context = "\n\n".join(getattr(self, 'market_flow_history', []))
-            combined_context = f"[뉴스]\n{news_context}\n\n[실시간 AI 추적]\n{flow_context}"
+            parts = []
+            if news_context:
+                parts.append(f"[포트폴리오 주요 뉴스]\n{news_context}")
+            if flow_context:
+                parts.append(f"[실시간 AI 추적]\n{flow_context}")
+            combined_context = "\n\n".join(parts) if parts else ""
             
             report_data = generate_daily_market_report(gemini_client=self.gemini, verbose=False, news_context=combined_context, kis=self.kis)
             if report_data:
