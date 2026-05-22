@@ -495,7 +495,7 @@ class USBotController:
         _bal_interval   = 300   # 5분마다 KIS 잔고 동기화
         _last_save_ts   = 0.0
         _last_bal_ts    = 0.0
-        _REPORT_SLOTS   = ("09:45", "12:00", "15:45")  # ET 리포트 발간 시각
+        _REPORT_SLOTS   = ("16:10",)   # ET 리포트 발간 시각 (장 마감 10분 후)
 
         while self.is_running:
             try:
@@ -646,7 +646,7 @@ class USBotController:
             )
             if result:
                 if not isinstance(self.daily_report, dict) or self.daily_report.get("date") != today_str:
-                    self.daily_report = {"date": today_str, "09:45": None, "12:00": None, "15:45": None}
+                    self.daily_report = {"date": today_str, "16:10": None}
                 self.daily_report[time_slot] = result.get("report_markdown", "")
                 self._save_state()
                 self.add_log(f"✅ US 리포트 발간 완료 ({time_slot} ET)")

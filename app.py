@@ -317,7 +317,7 @@ def get_daily_report():
     is_us = bool(current_user.data.get('is_mock', 1))
 
     if is_us:
-        # ── US 봇: ET 기준 날짜 / 슬롯 (09:45 / 12:00 / 15:45) ──────
+        # ── US 봇: ET 기준 날짜 / 슬롯 (16:10 ET, 장 마감 10분 후) ────
         from datetime import timezone, timedelta as _td
         _et = timezone(_td(hours=-4))
         today_str = datetime.now(_et).strftime('%Y-%m-%d')
@@ -336,12 +336,12 @@ def get_daily_report():
 
         return jsonify({"status": "success", "data": {
             "date": today_str,
-            "09:45": None, "12:00": None, "15:45": None,
-            "report_markdown": "아직 지정된 시간(09:45 / 12:00 / 15:45 ET)의 리포트가 생성되지 않았습니다. 시간이 되면 자동으로 발간됩니다."
+            "16:10": None,
+            "report_markdown": "아직 오늘의 리포트가 생성되지 않았습니다. 16:10 ET (장 마감 후) 자동으로 발간됩니다."
         }})
 
     else:
-        # ── KR 봇: KST 기준 날짜 / 슬롯 (11:00 / 15:30 / 20:00) ──────
+        # ── KR 봇: KST 기준 날짜 / 슬롯 (15:40 KST, 장 마감 10분 후) ──
         # [BUG-FIX] datetime.today()는 시스템 로컬 시간 기준 → EC2(UTC) 서버에서 KST 날짜와 불일치.
         # bot.daily_report['date']는 _now_kst() 기준(KST)으로 저장되므로 비교도 KST 기준으로 통일.
         from datetime import timezone, timedelta as _td
@@ -362,8 +362,8 @@ def get_daily_report():
 
         return jsonify({"status": "success", "data": {
             "date": today_str,
-            "11:00": None, "15:30": None, "20:00": None,
-            "report_markdown": "아직 지정된 시간(11:00, 15:30, 20:00)의 리포트가 생성되지 않았습니다. 시간이 되면 자동으로 발간됩니다."
+            "15:40": None,
+            "report_markdown": "아직 오늘의 리포트가 생성되지 않았습니다. 15:40 KST (장 마감 후) 자동으로 발간됩니다."
         }})
 
 @app.route('/api/ai_chat', methods=['POST'])

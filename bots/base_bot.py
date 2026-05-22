@@ -1534,7 +1534,7 @@ class BaseBot:
         # ── KST 기준 일일 리포트 발행 (시스템 타임존 무관) ──────────────
         # 리포트가 아직 생성 안 됐고 Claude API 설정 있을 때만 실행
         if self.gemini:
-            for slot_time in ['11:00', '15:30', '20:00']:
+            for slot_time in ['15:40']:
                 if current_time_str == slot_time:
                     dr = self.daily_report
                     already = (isinstance(dr, dict) and dr.get('date') == today_str
@@ -2706,7 +2706,7 @@ class BaseBot:
             report_data = generate_daily_market_report(gemini_client=self.gemini, verbose=False, news_context=combined_context, kis=self.kis)
             if report_data:
                 today_str = _now_kst().strftime('%Y-%m-%d')
-                if not isinstance(self.daily_report, dict) or self.daily_report.get('date') != today_str: self.daily_report = {'date': today_str, '11:00': None, '15:30': None, '20:00': None}
+                if not isinstance(self.daily_report, dict) or self.daily_report.get('date') != today_str: self.daily_report = {'date': today_str, '15:40': None}
                 content = report_data.get('report_markdown') if isinstance(report_data, dict) else str(report_data)
                 self.daily_report[time_slot] = content
                 self._save_state()
