@@ -396,10 +396,6 @@ document.addEventListener('DOMContentLoaded', () => {
         window._lastStatusData = data;   // 통화 전환 시 재렌더링용 스냅샷
         if (data.initial_cash !== undefined) {
             USER_INVESTED_CAPITAL = data.initial_cash;
-            const inputEl = document.getElementById('initialCash');
-            if (inputEl && document.activeElement !== inputEl) {
-                inputEl.value = data.initial_cash;
-            }
         }
 
         if (data.mock_total_asset !== undefined) {
@@ -1008,7 +1004,6 @@ window.saveCoreStocks = async function () {
         claude_api_key: document.getElementById('claudeApiKey').value,
         core_stocks: coreJsonStr,
         is_mock: isMock,
-        initial_cash: document.getElementById('initialCash').value
     };
     try {
         const res = await fetch('/api/settings/keys', {
