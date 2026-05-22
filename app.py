@@ -209,7 +209,7 @@ def kis_balance():
 @app.route('/api/test_order', methods=['POST'])
 @login_required
 def test_order():
-    """KIS 모의투자 주문 API 검증용 — 항상 모의 봇으로 실행"""
+    """KIS 해외주식 주문 API 연결 테스트 — US 봇으로 실행"""
     data = request.get_json() or {}
     ticker = data.get('ticker', '').strip()
     side   = data.get('side', 'BUY').upper()
@@ -513,12 +513,12 @@ def set_mode():
     # 새 모드 봇 인스턴스만 미리 생성(실행 X) — 이후 toggle로 개별 제어
     manager.get_bot(current_user.id, current_user.data)
 
-    mock_bot = manager.bots.get((current_user.id, True))
+    us_bot  = manager.bots.get((current_user.id, True))
     real_bot = manager.bots.get((current_user.id, False))
     logger.info(
-        f"[mode switch] user={current_user.id} 화면=({'모의' if is_mock else '실전'}) "
-        f"| 모의봇={'실행중' if mock_bot and mock_bot.is_running else '정지'} "
-        f"| 실전봇={'실행중' if real_bot and real_bot.is_running else '정지'}"
+        f"[mode switch] user={current_user.id} 화면=({'US' if is_mock else 'KR'}) "
+        f"| US봇={'실행중' if us_bot and us_bot.is_running else '정지'} "
+        f"| KR봇={'실행중' if real_bot and real_bot.is_running else '정지'}"
     )
 
     return jsonify({"status": "success", "is_mock": is_mock})
