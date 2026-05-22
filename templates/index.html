@@ -412,13 +412,13 @@
 
         <div class="nav-user">
             <div class="mode-toggle">
-                <span id="label-real" class="{% if user.data.is_mock == 0 %}mode-active{% endif %}">실전</span>
+                <span id="label-real" class="{% if user.data.is_mock == 0 %}mode-active{% endif %}">🇰🇷 KR</span>
                 <label class="switch">
                     <input type="checkbox" id="modeSwitch" onchange="toggleMode()" {% if user.data.is_mock !=0
                         %}checked{% endif %}>
                     <span class="slider"></span>
                 </label>
-                <span id="label-mock" class="{% if user.data.is_mock != 0 %}mode-active{% endif %}">모의</span>
+                <span id="label-mock" class="{% if user.data.is_mock != 0 %}mode-active{% endif %}">🇺🇸 US</span>
             </div>
             <span style="font-size: 0.9rem; font-weight: 600; margin-right: 10px;">👤 {{ user.username }}</span>
             <button class="btn-settings" onclick="openReportModal()" style="margin-right: 8px;">📜 오늘의 리포트</button>
@@ -560,7 +560,7 @@
                 <div id="stab-panel-1">
                     <div class="settings-group"
                         style="border:1px solid rgba(239,68,68,0.3); padding:10px; border-radius:8px; margin-bottom:14px;">
-                        <h3 style="color:#ef4444; font-size:0.9rem; margin-bottom:10px;">🔴 실전투자 API 설정</h3>
+                        <h3 style="color:#ef4444; font-size:0.9rem; margin-bottom:10px;">🇰🇷 KR (한국장) API 설정</h3>
                         <label>App Key</label>
                         <input type="text" id="realAppKey" value="{{ user.data.real_app_key or '' }}">
                         <label>App Secret</label>
@@ -571,7 +571,7 @@
 
                     <div class="settings-group"
                         style="border:1px solid rgba(16,185,129,0.3); padding:10px; border-radius:8px; margin-bottom:14px;">
-                        <h3 style="color:#10b981; font-size:0.9rem; margin-bottom:10px;">🟢 모의투자 API 설정</h3>
+                        <h3 style="color:#10b981; font-size:0.9rem; margin-bottom:10px;">🇺🇸 US (미국장) API 설정</h3>
                         <label>App Key</label>
                         <input type="text" id="mockAppKey" value="{{ user.data.mock_app_key or '' }}">
                         <label>App Secret</label>
@@ -593,8 +593,8 @@
                         <div style="font-size:0.8rem; color:#f59e0b; font-weight:600; margin-bottom:0.6rem;">🧪 주문 API 연결 테스트 (1주)</div>
                         <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap; margin-bottom:6px;">
                             <label style="font-size:0.78rem; color:#94a3b8;">모드:</label>
-                            <label style="font-size:0.82rem; color:#94a3b8; cursor:pointer;"><input type="radio" name="testMode" value="mock" checked onchange="updateTestModeLabel()"> 모의</label>
-                            <label style="font-size:0.82rem; color:#f85149; cursor:pointer;"><input type="radio" name="testMode" value="real" onchange="updateTestModeLabel()"> 실전 ⚠️</label>
+                            <label style="font-size:0.82rem; color:#94a3b8; cursor:pointer;"><input type="radio" name="testMode" value="mock" checked onchange="updateTestModeLabel()"> 🇺🇸 US</label>
+                            <label style="font-size:0.82rem; color:#f85149; cursor:pointer;"><input type="radio" name="testMode" value="real" onchange="updateTestModeLabel()"> 🇰🇷 KR ⚠️</label>
                         </div>
                         <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
                             <input type="text" id="testOrderTicker" placeholder="종목코드 (예: 005930)" style="flex:1; min-width:140px; padding:6px 10px; border-radius:8px; border:1px solid rgba(255,255,255,0.15); background:rgba(255,255,255,0.05); color:white; font-size:0.85rem;">

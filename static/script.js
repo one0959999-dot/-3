@@ -425,7 +425,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
         const pnlTitle = document.getElementById('pnl-title');
         if (pnlTitle && data.is_mock !== undefined) {
-            pnlTitle.textContent = data.is_mock ? '모의투자 수익률' : '실전투자 수익률';
+            pnlTitle.textContent = data.is_mock ? '🇺🇸 US 수익률' : '🇰🇷 KR 수익률';
         }
 
         const running = data.is_running;
@@ -639,7 +639,7 @@ window.toggleMode = async function () {
         });
         const result = await res.json();
         if (result.status === 'success') {
-            showToast(isMock ? '모의투자 모드로 전환됨' : '실전투자 모드로 전환됨', 'info');
+            showToast(isMock ? '🇺🇸 US 미국장 모드로 전환됨' : '🇰🇷 KR 한국장 모드로 전환됨', 'info');
             fetch('/api/status').then(r => r.json()).then(data => {
                 updateUI(data);
                 fetchPnl();
