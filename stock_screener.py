@@ -826,7 +826,12 @@ if __name__ == '__main__':
     print("섹터 강세 분석만 먼저 테스트:")
     m = get_sector_momentum(verbose=True)
     print("\n전체 스크리닝 시작 (약 3~5분 소요):")
-    result = select_satellites(n=5, verbose=True)
+    # M-02: select_satellites()는 (candidates, hot_sectors) 2-tuple 반환
+    selected_candidates, hot_sectors_list = select_satellites(n=5, verbose=True)
+    print(f"\n강세 섹터: {hot_sectors_list}")
+    print(f"선정 종목 {len(selected_candidates)}개:")
+    for c in selected_candidates:
+        print(f"  {c['name']}({c['ticker']}) | 점수 {c.get('score',0)} | 수익률 {c.get('return_pct',0):+.1f}%")
 
 # ──────────────────────────────────────────────
 # 6. AI 코어 장기 우량주 자동 선정 (듀얼 코어용)

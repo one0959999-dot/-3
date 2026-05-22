@@ -168,8 +168,7 @@ def scan_hot_momentum(
                     raise ValueError("컬럼 없음")
                 df = df.dropna(subset=['close']).tail(30)
             else:
-                end   = now
-                start = end - timedelta(days=60)
+                # M-04: end/start 변수 제거 (fetch_ohlcv에서 사용 안 함 — 데드코드였음)
                 from stock_screener import fetch_ohlcv
                 df = fetch_ohlcv(ticker, days=30, kis=None)
 

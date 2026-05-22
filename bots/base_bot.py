@@ -952,7 +952,7 @@ class BaseBot:
         try:
             state = {
                 "cores": [{"ticker": c.ticker, "name": c.name, "shares": int(c.shares), "floor_shares": int(c.floor_shares), "cash": float(c.cash), "initial_cash": float(c.initial_cash), "avg_price": float(c.avg_price)} for c in self.core_positions],
-                "satellites": {ticker: {"name": pos.name, "shares": int(pos.shares), "cash": float(pos.cash), "initial_cash": float(pos.initial_cash), "avg_price": float(pos.avg_price), "partial_sold": bool(getattr(pos, 'partial_sold', False)), "partial_sold_2": bool(getattr(pos, 'partial_sold_2', False)), "second_buy_done": bool(getattr(pos, 'second_buy_done', False)), "pyramid_done": bool(getattr(pos, 'pyramid_done', False)), "second_buy_price": float(getattr(pos, 'second_buy_price', 0)), "second_buy_cash": float(getattr(pos, 'second_buy_cash', 0))} for ticker, pos in self.satellite_positions.items()},
+                "satellites": {ticker: {"name": pos.name, "shares": int(pos.shares), "cash": float(pos.cash), "initial_cash": float(pos.initial_cash), "avg_price": float(pos.avg_price), "partial_sold": bool(getattr(pos, 'partial_sold', False)), "partial_sold_2": bool(getattr(pos, 'partial_sold_2', False)), "second_buy_done": bool(getattr(pos, 'second_buy_done', False)), "pyramid_done": bool(getattr(pos, 'pyramid_done', False)), "second_buy_price": float(getattr(pos, 'second_buy_price', 0)), "second_buy_cash": float(getattr(pos, 'second_buy_cash', 0)), "max_price": float(getattr(pos, 'max_price', 0))} for ticker, pos in self.satellite_positions.items()},
                 "satellite_info": self.satellite_info, "satellite_strategies": self.satellite_strategies, "hot_sectors": self.hot_sectors, "num_satellites": self.num_satellites,
                 "last_screen_month": getattr(self, 'last_screen_month', None), "last_screen_date": self.last_screen_date.strftime('%Y-%m-%d') if getattr(self, 'last_screen_date', None) else None,
                 "daily_pnl": self.daily_pnl, "daily_report": self.daily_report,
@@ -985,6 +985,7 @@ class BaseBot:
                 pos.pyramid_done     = bool(s.get("pyramid_done",     False))
                 pos.second_buy_price = float(s.get("second_buy_price", 0))
                 pos.second_buy_cash  = float(s.get("second_buy_cash",  0))
+                pos.max_price        = float(s.get("max_price",        0))  # W-04: 트레일링 스탑 기준가 복원
                 self.satellite_positions[ticker] = pos
 
             self.satellite_info = state.get("satellite_info", [])
@@ -1040,12 +1041,13 @@ class BaseBot:
             self.last_regime_check = time.time()
             if self.market_regime != prev:
                 icons = {"BULL": "🐂", "BEAR": "🐻", "NEUTRAL": "😐"}
-                regime_desc = {'BEAR': '📉 위성 신규 매수 중단, 인버스 ETF 진입', 'BULL': '📈 정상 매매 재개', 'NEUTRAL': '📊 혼조 — 기존 전략 유지'}
+                # M-05: log용과 TG용 설명 분리 (동일 변수 이중 정의 제거)
+                log_regime_desc = {'BEAR': '📉 위성 신규 매수 중단, 인버스 ETF 진입', 'BULL': '📈 정상 매매 재개', 'NEUTRAL': '📊 혼조 — 기존 전략 유지'}
+                tg_regime_desc  = {'BEAR': '위성 신규 매수 중단\n인버스 ETF 자동 진입', 'BULL': '정상 매매 모드 재개', 'NEUTRAL': '혼조장 — 기존 전략 유지'}
                 msg = (f"{icons.get(self.market_regime,'📊')} [{self.mode_name}] "
-                       f"시장 국면 변경: {prev} → {self.market_regime}  {regime_desc.get(self.market_regime,'')}")
+                       f"시장 국면 변경: {prev} → {self.market_regime}  {log_regime_desc.get(self.market_regime,'')}")
                 self.add_log(msg)
-                icons = {"BULL": "🐂", "BEAR": "🐻", "NEUTRAL": "😐"}
-                regime_desc = {'BEAR': '위성 신규 매수 중단\n인버스 ETF 자동 진입', 'BULL': '정상 매매 모드 재개', 'NEUTRAL': '혼조장 — 기존 전략 유지'}
+                regime_desc = tg_regime_desc
                 self._send_telegram(
                     f"{icons.get(self.market_regime,'📊')} <b>시장 국면 변경</b>  ·  {self.alert_icon} {self.mode_name}\n"
                     f"━━━━━━━━━━━━━━━━━━━━\n"
@@ -1418,6 +1420,7 @@ class BaseBot:
             with self.lock:
                 for core in self.core_positions: core.status = "휴식 중 💤"; core.status_msg = "정규 장 및 대체거래소 마감"
                 for sat in self.satellite_positions.values(): sat.status = "휴식 중 💤"; sat.status_msg = "정규 장 및 대체거래소 마감"
+            return  # W-08: 장외 시간엔 나머지 로직 스킵 (불필요한 API 호출 방지)
         else:
             self.add_log(f"--- 🎯 {self.mode_name} 실시간 점검 ({current_time_str}) ---")
             with self.lock:
@@ -1942,6 +1945,10 @@ class BaseBot:
 
     def _check_momentum_exit_one(self, slot_idx: int, mp: dict, now) -> bool:
         """슬롯 idx의 모멘텀 포지션 청산 조건 체크. 청산 시 True 반환."""
+        # C-01: kis가 None이면 체크 불가 → 청산 없이 리턴 (멀티스레드 재시작 타이밍 안전)
+        if not self.kis:
+            return False
+
         ticker  = mp['ticker']
         name    = mp['name']
         shares  = mp.get('shares', 0)
@@ -2001,7 +2008,11 @@ class BaseBot:
         except Exception:
             pass
 
-        time_over = enter_t and (now - enter_t).total_seconds() / 60 > 60
+        # W-06: enter_t가 None(역직렬화 실패)이면 timeout 체크 비활성화
+        try:
+            time_over = enter_t is not None and (now - enter_t).total_seconds() / 60 > 60
+        except Exception:
+            time_over = False
 
         # ── PARTIAL_EXIT_30: MA5 이탈+고점미달 → 보유량 30% 축소 (슬롯 유지) ─────
         if giveback_signal == 'PARTIAL_EXIT_30' and shares > 1:
@@ -2153,8 +2164,9 @@ class BaseBot:
                 chg = candidate.get('price_chg_pct', 0)
                 if chg > 20.0:
                     self.add_log(f"⛔ 모멘텀 진입 금지: {candidate.get('name','?')}({ct}) 당일 +{chg:.1f}% 고점 과열")
-                    # 고점 과열 종목은 30분 쿨다운 — 매 사이클 반복 로그 방지
-                    self._momentum_exit_times[ct] = time.time() + 1800
+                    # C-02: 락 안에서 공유 dict 수정 (레이스컨디션 방지)
+                    with self.lock:
+                        self._momentum_exit_times[ct] = time.time() + self._MOMENTUM_COOLDOWN_SEC
                     continue
                 best = candidate
                 break
@@ -2243,11 +2255,13 @@ class BaseBot:
                             # exit_ts를 현재 시각으로 → 하루 종일 차단 (장 마감 후 _refresh_blacklist 초기화)
                             self._momentum_exit_times[b_ticker] = time.time() + 86400
                     else:
-                        # 1~2회 거절 → 30분 쿨다운 후 재심사 가능 (텔레그램 알림 없음 — 로그만 기록)
+                        # 1~2회 거절 → 10분 쿨다운 후 재심사 (손절 30분보다 짧게, 모멘텀 창 유지)
+                        # C-03: COOLDOWN_SEC=1800에서 600초 남김 → 실제 10분 후 재진입 가능
+                        _AI_REJECT_COOLDOWN = 600  # 10분
                         self.add_log(f"🛑 모멘텀#{slot_idx+1} AI 거절({reject_count}/3): {b_name} — {m_ai_reason}")
                         with self.lock:
                             self._refresh_blacklist()
-                            self._momentum_exit_times[b_ticker] = time.time() - (self._MOMENTUM_COOLDOWN_SEC - 600)
+                            self._momentum_exit_times[b_ticker] = time.time() - (self._MOMENTUM_COOLDOWN_SEC - _AI_REJECT_COOLDOWN)
                     used_tickers.add(b_ticker)
                     continue
                 buy_label  = f"🚀 AI승인 모멘텀#{slot_idx+1}"
