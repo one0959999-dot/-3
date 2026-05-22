@@ -971,7 +971,7 @@ class BaseBot:
             self.satellite_info = state.get("satellite_info", [])
             self.satellite_strategies = state.get("satellite_strategies", {})
             self.hot_sectors = state.get("hot_sectors", [])
-            self.num_satellites = 3  # 위성 3개 고정
+            self.num_satellites = state.get("num_satellites", 3)  # 저장된 값 복원
             self.last_screen_month = state.get("last_screen_month")
             lsd_str = state.get("last_screen_date")
             self.last_screen_date = datetime.strptime(lsd_str, '%Y-%m-%d').date() if lsd_str else None
@@ -2728,4 +2728,4 @@ class BaseBot:
             recent_logs = list(self.logs)[-30:]
             return {"is_running": self.is_running, "is_mock": self._is_mock, "has_keys": self.kis is not None, "logs": recent_logs, "hot_sectors": self.hot_sectors, "num_satellites": self.num_satellites, "cores": cores_data, "satellites": satellites, "momentum_list": momentum_list, "mock_total_asset": mock_total_asset, "mock_pnl": mock_pnl, "mock_pnl_rt": mock_pnl_rt, "initial_cash": current_initial_cash, "available_cash": available_cash}
         except Exception as critical_e:
-            return {"is_running": False, "is_mock": self._is_mock, "has_keys": False, "logs": [{"time": "Error", "message": f"오류: {str(critical_e)}"}], "hot_sectors": [], "num_satellites": 3, "cores": [], "satellites": [], "momentum_list": [None], "mock_total_asset": 0, "mock_pnl": 0, "mock_pnl_rt": 0, "initial_cash": 10000000}
+            return {"is_running": False, "is_mock": self._is_mock, "has_keys": False, "logs": [{"time": "Error", "message": f"오류: {str(critical_e)}"}], "hot_sectors": [], "num_satellites": self.num_satellites, "cores": [], "satellites": [], "momentum_list": [None] * len(self.momentum_positions), "mock_total_asset": 0, "mock_pnl": 0, "mock_pnl_rt": 0, "initial_cash": 10000000}

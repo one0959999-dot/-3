@@ -1289,6 +1289,7 @@ class Position:
 
         # 분할 익절: 1차 50% 선익절 후 나머지 ATR 트레일링
         self.partial_sold     = False # 1차 익절 완료 여부
+        self.partial_sold_2   = False # 2차 익절 완료 여부
 
         # 한국 금융시장 표준 수수료 및 거래세율 정의
         self.fee_rate = 0.00015      # 실전 및 모의 온라인 매매 수수료 기본율 (0.015%)
