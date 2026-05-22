@@ -34,7 +34,7 @@ def init_db():
             username TEXT UNIQUE NOT NULL,
             password_hash TEXT NOT NULL,
             real_app_key TEXT, real_app_secret TEXT, real_account_no TEXT,
-            mock_app_key TEXT, mock_app_secret TEXT, mock_account_no TEXT,
+            us_app_key TEXT, us_app_secret TEXT, us_account_no TEXT,
             kis_app_key TEXT, kis_app_secret TEXT, kis_account_no TEXT,
             telegram_token TEXT, telegram_chat_id TEXT, gemini_api_key TEXT,
             initial_cash REAL DEFAULT 10000000, is_running INTEGER DEFAULT 0,
@@ -44,11 +44,11 @@ def init_db():
 
             new_columns = [
                 ('real_app_key', 'TEXT'), ('real_app_secret', 'TEXT'), ('real_account_no', 'TEXT'),
-                ('mock_app_key', 'TEXT'), ('mock_app_secret', 'TEXT'), ('mock_account_no', 'TEXT'),
+                ('us_app_key', 'TEXT'), ('us_app_secret', 'TEXT'), ('us_account_no', 'TEXT'),
                 ('gemini_api_key', 'TEXT'), ('claude_api_key', 'TEXT'),
                 ('is_running', 'INTEGER DEFAULT 0'),
                 ('core_stocks', 'TEXT'), ('is_mock', 'INTEGER DEFAULT 1'),
-                ('real_initial_cash', 'REAL DEFAULT 10000000'), ('mock_initial_cash', 'REAL DEFAULT 10000000'),
+                ('real_initial_cash', 'REAL DEFAULT 10000000'), ('us_initial_cash', 'REAL DEFAULT 10000000'),
                 # 뉴스 모니터 API 키
                 ('dart_api_key', 'TEXT'), ('naver_client_id', 'TEXT'), ('naver_client_secret', 'TEXT'),
                 # 섹터 가이드 (사용자가 직접 입력하는 MD 형식 전략 메모)
@@ -132,17 +132,17 @@ def update_user_keys(user_id, keys_dict):
             # [C-04 수정] 실전/모의 원금을 현재 모드에 해당하는 컬럼에만 업데이트 (반대 모드 원금은 건드리지 않음)
             is_mock = keys_dict.get('is_mock', 1)
             initial_cash = keys_dict.get('initial_cash', 10000000)
-            cash_col = "mock_initial_cash" if is_mock else "real_initial_cash"
+            cash_col = "us_initial_cash" if is_mock else "real_initial_cash"
 
             conn.execute(f'''
                 UPDATE users SET real_app_key = ?, real_app_secret = ?, real_account_no = ?,
-                    mock_app_key = ?, mock_app_secret = ?, mock_account_no = ?,
+                    us_app_key = ?, us_app_secret = ?, us_account_no = ?,
                     telegram_token = ?, telegram_chat_id = ?,
                     claude_api_key = ?,
                     core_stocks = ?, is_mock = ?, initial_cash = ?, {cash_col} = ? WHERE id = ?
             ''', (
                 keys_dict.get('real_app_key'), keys_dict.get('real_app_secret'), keys_dict.get('real_account_no'),
-                keys_dict.get('mock_app_key'), keys_dict.get('mock_app_secret'), keys_dict.get('mock_account_no'),
+                keys_dict.get('us_app_key'), keys_dict.get('us_app_secret'), keys_dict.get('us_account_no'),
                 keys_dict.get('telegram_token'), keys_dict.get('telegram_chat_id'),
                 keys_dict.get('claude_api_key'),
                 keys_dict.get('core_stocks'), is_mock,
@@ -157,7 +157,7 @@ def update_user_keys(user_id, keys_dict):
 def update_bot_status(user_id, is_running, is_mock=None):
     """봇 실행 상태 DB 갱신.
     is_mock=None  → 레거시 단일 is_running 컬럼만 업데이트 (하위 호환)
-    is_mock=True  → mock_running 컬럼 업데이트 (없으면 자동 생성)
+    is_mock=True  → us_running 컬럼 업데이트 (없으면 자동 생성)
     is_mock=False → real_running 컬럼 업데이트
     """
     with db_lock:
@@ -165,7 +165,7 @@ def update_bot_status(user_id, is_running, is_mock=None):
         # 모드별 전용 컬럼 확보 (없으면 추가)
         # [W-06] ALTER TABLE은 암묵적 트랜잭션 안에서 실행될 수 있어
         # 이후 예외 시 롤백될 가능성 있음. 컬럼 추가 후 바로 커밋.
-        for col in [('mock_running', 'INTEGER DEFAULT 0'), ('real_running', 'INTEGER DEFAULT 0')]:
+        for col in [('us_running', 'INTEGER DEFAULT 0'), ('real_running', 'INTEGER DEFAULT 0')]:
             try:
                 conn.execute(f'ALTER TABLE users ADD COLUMN {col[0]} {col[1]}')
                 conn.commit()
@@ -177,7 +177,7 @@ def update_bot_status(user_id, is_running, is_mock=None):
             conn.execute('UPDATE users SET is_running = ? WHERE id = ?', (val, user_id))
             # 모드별 컬럼 갱신
             if is_mock is True:
-                conn.execute('UPDATE users SET mock_running = ? WHERE id = ?', (val, user_id))
+                conn.execute('UPDATE users SET us_running = ? WHERE id = ?', (val, user_id))
             elif is_mock is False:
                 conn.execute('UPDATE users SET real_running = ? WHERE id = ?', (val, user_id))
             conn.commit()
@@ -285,7 +285,7 @@ def get_ai_rules_history(user_id, limit: int = 5):
 def get_user_initial_cash(user_id, is_mock):
     """현재 모드(실전/모의)에 맞는 원금 장부를 조회합니다."""
     conn = get_db_connection()
-    cash_col = "mock_initial_cash" if is_mock else "real_initial_cash"
+    cash_col = "us_initial_cash" if is_mock else "real_initial_cash"
     try:
         row = conn.execute(f'SELECT {cash_col} FROM users WHERE id = ?', (user_id,)).fetchone()
     finally:
@@ -296,7 +296,7 @@ def set_user_initial_cash(user_id, pure_principal, is_mock):
     """최초 투자 원금을 세팅하여 장부를 잠급니다."""
     with db_lock:
         conn = get_db_connection()
-        cash_col = "mock_initial_cash" if is_mock else "real_initial_cash"
+        cash_col = "us_initial_cash" if is_mock else "real_initial_cash"
         try:
             conn.execute(f'UPDATE users SET {cash_col} = ? WHERE id = ?', (pure_principal, user_id))
             conn.commit()
@@ -307,7 +307,7 @@ def add_user_initial_cash(user_id, deposit_delta, is_mock):
     """외부 입출금 발생 시 해당 모드의 장부 원금을 깔끔하게 증감시킵니다."""
     with db_lock:
         conn = get_db_connection()
-        cash_col = "mock_initial_cash" if is_mock else "real_initial_cash"
+        cash_col = "us_initial_cash" if is_mock else "real_initial_cash"
         try:
             conn.execute(f'UPDATE users SET {cash_col} = {cash_col} + ? WHERE id = ?', (deposit_delta, user_id))
             conn.commit()

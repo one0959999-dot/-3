@@ -23,9 +23,9 @@ class BotManager:
             if is_mock:
                 # ── US 모드 (is_mock=True) → 미국장 실전 매매 봇 (KIS 해외주식) ──
                 us_kis_config = {
-                    "app_key":    user_data.get('mock_app_key'),
-                    "app_secret": user_data.get('mock_app_secret'),
-                    "account_no": user_data.get('mock_account_no'),
+                    "app_key":    user_data.get('us_app_key'),
+                    "app_secret": user_data.get('us_app_secret'),
+                    "account_no": user_data.get('us_account_no'),
                 }
                 self.bots[bot_key] = USBotController(
                     user_id,

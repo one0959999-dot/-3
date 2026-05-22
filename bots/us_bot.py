@@ -1017,9 +1017,9 @@ class USBotController:
                 "momentum_list":    [],
                 "defensive_list":   [],
                 "market_regime":    self.market_regime,
-                "mock_total_asset": total_krw,
-                "mock_pnl":         pnl_krw,
-                "mock_pnl_rt":      round(pnl_rt, 2),
+                "us_total_asset": total_krw,
+                "us_pnl":         pnl_krw,
+                "us_pnl_rt":      round(pnl_rt, 2),
                 "initial_cash":     initial_krw,
                 "available_cash":   round(self.cash_usd * fx),
             }
@@ -1030,6 +1030,6 @@ class USBotController:
                 "is_running": self.is_running, "is_mock": True, "has_keys": False,
                 "logs": list(self.logs)[-30:], "hot_sectors": [], "num_satellites": self.num_satellites,
                 "cores": [], "satellites": [], "momentum_list": [], "defensive_list": [],
-                "market_regime": "NEUTRAL", "mock_total_asset": 0, "mock_pnl": 0,
-                "mock_pnl_rt": 0, "initial_cash": 10_000_000, "available_cash": 0,
+                "market_regime": "NEUTRAL", "us_total_asset": 0, "us_pnl": 0,
+                "us_pnl_rt": 0, "initial_cash": 10_000_000, "available_cash": 0,
             }

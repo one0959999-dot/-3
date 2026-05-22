@@ -489,7 +489,7 @@
                         %}checked{% endif %}>
                     <span class="slider"></span>
                 </label>
-                <span id="label-mock" class="{% if user.data.is_mock != 0 %}mode-active{% endif %}">US</span>
+                <span id="label-us" class="{% if user.data.is_mock != 0 %}mode-active{% endif %}">US</span>
             </div>
             <span style="font-size: 0.9rem; font-weight: 600; margin-right: 10px;">👤 {{ user.username }}</span>
             <button class="btn-settings" onclick="openReportModal()" style="margin-right: 8px;">📜 오늘의 리포트</button>
@@ -657,11 +657,11 @@
                             KR 봇과 동일한 키를 사용하거나, 해외주식 전용 키를 별도 발급할 수 있습니다.
                         </p>
                         <label>App Key</label>
-                        <input type="text" id="mockAppKey" value="{{ user.data.mock_app_key or '' }}">
+                        <input type="text" id="usAppKey" value="{{ user.data.us_app_key or '' }}">
                         <label>App Secret</label>
-                        <input type="password" id="mockAppSecret" value="{{ user.data.mock_app_secret or '' }}">
+                        <input type="password" id="usAppSecret" value="{{ user.data.us_app_secret or '' }}">
                         <label>해외주식 계좌번호</label>
-                        <input type="text" id="mockAccountNo" value="{{ user.data.mock_account_no or '' }}" placeholder="예: 50123456-01">
+                        <input type="text" id="usAccountNo" value="{{ user.data.us_account_no or '' }}" placeholder="예: 50123456-01">
                     </div>
 
                     <button class="btn-save-keys" onclick="saveAccountSettings()" style="background:#10b981;">설정 저장</button>
@@ -670,7 +670,7 @@
                         <div style="font-size:0.8rem; color:#f59e0b; font-weight:600; margin-bottom:0.6rem;">🧪 주문 API 연결 테스트 (1주)</div>
                         <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap; margin-bottom:6px;">
                             <label style="font-size:0.78rem; color:#94a3b8;">모드:</label>
-                            <label style="font-size:0.82rem; color:#94a3b8; cursor:pointer;"><input type="radio" name="testMode" value="mock" checked onchange="updateTestModeLabel()"> US</label>
+                            <label style="font-size:0.82rem; color:#94a3b8; cursor:pointer;"><input type="radio" name="testMode" value="us" checked onchange="updateTestModeLabel()"> US</label>
                             <label style="font-size:0.82rem; color:#f85149; cursor:pointer;"><input type="radio" name="testMode" value="real" onchange="updateTestModeLabel()"> KR ⚠️</label>
                         </div>
                         <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">

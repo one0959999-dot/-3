@@ -218,7 +218,7 @@ def test_order():
     try:
         use_real = data.get('use_real', False)
         is_mock = not use_real
-        mode_label = "실전" if use_real else "모의"
+        mode_label = "KR실전" if use_real else "US실전"
 
         target_bot = manager.bots.get((current_user.id, is_mock))
         if not target_bot:
@@ -251,7 +251,7 @@ def toggle_bot():
         return jsonify({"status": "stopped"})
     else:
         is_mock = current_user.data.get('is_mock', 1)
-        cash_key = 'mock_initial_cash' if is_mock else 'real_initial_cash'
+        cash_key = 'us_initial_cash' if is_mock else 'real_initial_cash'
         user_cash = current_user.data.get(cash_key, current_user.data.get('initial_cash', 10000000))
         
         success = bot.start(total_cash=user_cash)
@@ -619,9 +619,9 @@ def set_keys():
         'real_app_key': data.get('real_app_key'),
         'real_app_secret': data.get('real_app_secret'),
         'real_account_no': data.get('real_account_no'),
-        'mock_app_key': data.get('mock_app_key'),
-        'mock_app_secret': data.get('mock_app_secret'),
-        'mock_account_no': data.get('mock_account_no'),
+        'us_app_key': data.get('us_app_key'),
+        'us_app_secret': data.get('us_app_secret'),
+        'us_account_no': data.get('us_account_no'),
         'telegram_token': data.get('telegram_token'),
         'telegram_chat_id': data.get('telegram_chat_id'),
         'claude_api_key': data.get('claude_api_key'),
@@ -636,7 +636,7 @@ def set_keys():
         current_user.data[k] = v
 
     is_mock = update_data['is_mock']
-    prefix = 'mock_' if is_mock else 'real_'
+    prefix = 'us_' if is_mock else 'real_'
     
     bot = get_current_bot()
     if bot:
@@ -655,7 +655,7 @@ def set_keys():
         )
 
     other_mock = not bool(is_mock)
-    other_prefix = 'mock_' if other_mock else 'real_'
+    other_prefix = 'us_' if other_mock else 'real_'
     other_bot = manager.bots.get((current_user.id, other_mock))
     if other_bot:
         other_bot.reload_api_keys(

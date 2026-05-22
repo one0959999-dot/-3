@@ -398,29 +398,33 @@ document.addEventListener('DOMContentLoaded', () => {
             USER_INVESTED_CAPITAL = data.initial_cash;
         }
 
-        if (data.mock_total_asset !== undefined) {
+        // US 봇: us_total_asset / KR 봇(base_bot 레거시): mock_total_asset
+        const _totalAsset = data.us_total_asset ?? data.mock_total_asset;
+        const _pnl        = data.us_pnl        ?? data.mock_pnl;
+        const _pnlRt      = data.us_pnl_rt     ?? data.mock_pnl_rt;
+        if (_totalAsset !== undefined) {
             const totalValEl = document.getElementById('total-value');
             if (totalValEl) {
-                totalValEl.textContent = fmtMoney(data.mock_total_asset);
+                totalValEl.textContent = fmtMoney(_totalAsset);
                 // 수익 여부에 따라 색상: 이익 → 빨강, 손실 → 파랑, 중립 → 기본
-                // data-pnl 속성도 함께 설정: warm-beige 테마 CSS 덮어쓰기용 (브라우저가 hex→rgb 정규화해서 [style*=] 방식이 안됨)
-                if (data.mock_pnl !== undefined) {
-                    const pnlState = data.mock_pnl > 0 ? 'profit' : (data.mock_pnl < 0 ? 'loss' : 'neutral');
-                    totalValEl.style.color = data.mock_pnl > 0 ? '#f85149' : (data.mock_pnl < 0 ? '#58a6ff' : '');
+                // data-pnl 속성도 함께 설정: theme-us CSS 덮어쓰기용
+                if (_pnl !== undefined) {
+                    const pnlState = _pnl > 0 ? 'profit' : (_pnl < 0 ? 'loss' : 'neutral');
+                    totalValEl.style.color = _pnl > 0 ? '#f85149' : (_pnl < 0 ? '#58a6ff' : '');
                     totalValEl.dataset.pnl = pnlState;
                 }
             }
         }
-        if (data.mock_pnl !== undefined && data.mock_pnl_rt !== undefined) {
+        if (_pnl !== undefined && _pnlRt !== undefined) {
             const pnlEl = document.getElementById('total-pnl');
             if (pnlEl) {
-                const sign = data.mock_pnl >= 0 ? '+' : '';
-                const pnlState = data.mock_pnl > 0 ? 'profit' : (data.mock_pnl < 0 ? 'loss' : 'neutral');
-                const color = data.mock_pnl > 0 ? '#f85149' : (data.mock_pnl < 0 ? '#58a6ff' : '#8b949e');
+                const sign = _pnl >= 0 ? '+' : '';
+                const pnlState = _pnl > 0 ? 'profit' : (_pnl < 0 ? 'loss' : 'neutral');
+                const color = _pnl > 0 ? '#f85149' : (_pnl < 0 ? '#58a6ff' : '#8b949e');
                 pnlEl.style.color = color;
                 pnlEl.style.fontWeight = '700';
                 pnlEl.dataset.pnl = pnlState;
-                pnlEl.textContent = `수익: ${fmtMoney(data.mock_pnl, {sign: true})} (${sign}${data.mock_pnl_rt.toFixed(2)}%)`;
+                pnlEl.textContent = `수익: ${fmtMoney(_pnl, {sign: true})} (${sign}${_pnlRt.toFixed(2)}%)`;
             }
         }
 
@@ -451,17 +455,17 @@ document.addEventListener('DOMContentLoaded', () => {
 
         const cb = document.getElementById('modeSwitch');
         const lblReal = document.getElementById('label-real');
-        const lblMock = document.getElementById('label-mock');
+        const lblUs = document.getElementById('label-us');
 
         if (cb && data.is_mock !== undefined) {
             cb.checked = !!data.is_mock;
-            if (lblReal && lblMock) {
+            if (lblReal && lblUs) {
                 if (data.is_mock) {
-                    lblMock.classList.add('mode-active');
+                    lblUs.classList.add('mode-active');
                     lblReal.classList.remove('mode-active');
                 } else {
                     lblReal.classList.add('mode-active');
-                    lblMock.classList.remove('mode-active');
+                    lblUs.classList.remove('mode-active');
                 }
             }
         }
@@ -693,13 +697,13 @@ window.toggleMode = async function () {
     cb.disabled = true;
 
     const lblReal = document.getElementById('label-real');
-    const lblMock = document.getElementById('label-mock');
+    const lblUs = document.getElementById('label-us');
     if (isMock) {
-        lblMock.classList.add('mode-active');
+        lblUs.classList.add('mode-active');
         lblReal.classList.remove('mode-active');
     } else {
         lblReal.classList.add('mode-active');
-        lblMock.classList.remove('mode-active');
+        lblUs.classList.remove('mode-active');
     }
 
     try {
@@ -998,9 +1002,9 @@ window.saveCoreStocks = async function () {
         real_app_key: document.getElementById('realAppKey').value,
         real_app_secret: document.getElementById('realAppSecret').value,
         real_account_no: document.getElementById('realAccountNo').value,
-        mock_app_key: document.getElementById('mockAppKey').value,
-        mock_app_secret: document.getElementById('mockAppSecret').value,
-        mock_account_no: document.getElementById('mockAccountNo').value,
+        us_app_key: document.getElementById('usAppKey').value,
+        us_app_secret: document.getElementById('usAppSecret').value,
+        us_account_no: document.getElementById('usAccountNo').value,
 
         telegram_token: document.getElementById('teleToken').value,
         telegram_chat_id: document.getElementById('teleChatId').value,
@@ -1031,9 +1035,9 @@ window.saveAccountSettings = async function () {
         real_app_key: document.getElementById('realAppKey').value,
         real_app_secret: document.getElementById('realAppSecret').value,
         real_account_no: document.getElementById('realAccountNo').value,
-        mock_app_key: document.getElementById('mockAppKey').value,
-        mock_app_secret: document.getElementById('mockAppSecret').value,
-        mock_account_no: document.getElementById('mockAccountNo').value,
+        us_app_key: document.getElementById('usAppKey').value,
+        us_app_secret: document.getElementById('usAppSecret').value,
+        us_account_no: document.getElementById('usAccountNo').value,
 
         telegram_token: document.getElementById('teleToken').value,
         telegram_chat_id: document.getElementById('teleChatId').value,
