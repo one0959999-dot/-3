@@ -885,12 +885,11 @@
 
     // 모드에 따라 선물 위젯 show/hide
     window.applyFuturesVisibility = function(isUS) {
-        // NQ: 항상 표시
         const nqEl  = document.getElementById('fut-nq');
         const ewyEl = document.getElementById('fut-ewy');
         const esEl  = document.getElementById('fut-es');
-        if (nqEl)  nqEl.style.display  = '';
-        if (ewyEl) ewyEl.style.display = isUS ? 'none' : '';   // KR 전용
+        if (nqEl)  nqEl.style.display  = isUS ? ''     : 'none'; // US 전용
+        if (ewyEl) ewyEl.style.display = isUS ? 'none' : '';     // KR 전용
         if (esEl)  esEl.style.display  = isUS ? ''     : 'none'; // US 전용
     };
 
