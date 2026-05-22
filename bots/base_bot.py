@@ -1322,7 +1322,40 @@ class BaseBot:
         except Exception:
             pass
 
-        # ── 5. 시장 국면 & 전략 ──────────────────────────────────
+        # ── 5. 외인/기관 수급 (위성 스크리닝 캐시 활용) ─────────────
+        frgn_inst_str = "N/A"
+        try:
+            # satellite_info에 스크리닝 시 계산된 frgn_inst 플래그가 있음
+            sat_info = next((c for c in self.satellite_info if c['ticker'] == ticker), None)
+            if sat_info is not None:
+                if sat_info.get('frgn_inst'):
+                    frgn_inst_str = "✅ 외인/기관 순매수 종목 (오늘 스크리닝 기준)"
+                else:
+                    frgn_inst_str = "❌ 외인/기관 순매수 상위 미포함"
+        except Exception:
+            pass
+        lines.append(f"[외인/기관 수급] {frgn_inst_str}")
+
+        # ── 6. KOSDAQ 대비 상대강도 ───────────────────────────────
+        market_rs_str = "N/A"
+        try:
+            if self.kis and ex_df is not None and not ex_df.empty and 'close' in ex_df.columns:
+                close_s = ex_df['close'].dropna()
+                if len(close_s) >= 2:
+                    _kosdaq = self.kis.get_etf_price("229200")  # KODEX KOSDAQ150
+                    if _kosdaq and "prdy_ctrt" in _kosdaq:
+                        kosdaq_chg = float(_kosdaq["prdy_ctrt"])
+                        stock_chg  = (float(price) / float(close_s.iloc[-2]) - 1) * 100
+                        rs = stock_chg - kosdaq_chg
+                        market_rs_str = (
+                            f"종목 {stock_chg:+.1f}% vs KOSDAQ {kosdaq_chg:+.1f}%"
+                            f" → 상대강도 {rs:+.1f}% ({'↑ 아웃퍼폼' if rs > 0 else '↓ 언더퍼폼'})"
+                        )
+        except Exception:
+            pass
+        lines.append(f"[KOSDAQ 상대강도] {market_rs_str}")
+
+        # ── 7. 시장 국면 & 전략 ──────────────────────────────────
         lines.append(f"[시장 국면] {regime} | 적용 전략: {strategy}")
         if self.hot_sectors:
             lines.append(f"[강세 섹터] {', '.join(self.hot_sectors[:5])}")
