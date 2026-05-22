@@ -451,6 +451,102 @@ def calc_rsi(s, p=14):
     l = (-d.clip(upper=0)).rolling(p).mean()
     return 100 - 100 / (1 + g / (l + 1e-10))
 
+
+def calc_signal_readiness(df: 'pd.DataFrame', strategy_name: str) -> float:
+    """선정된 전략 기준으로 현재 BUY 신호까지의 '거리'를 점수화.
+
+    - 신호 임박(5포인트 이내) : +20점
+    - 신호 접근 중(~15포인트)  : +12점
+    - 신호 멀지만 진행 중      :  +5점
+    - 이미 크로스/신호 통과    :  -8점  (다음 신호까지 오래 기다려야 함)
+    - 계산 실패               :   0점 (중립)
+    """
+    try:
+        c = df['close']
+        if len(c) < 30:
+            return 0.0
+
+        if 'RSI' in strategy_name:
+            threshold = 40 if '40/60' in strategy_name else 30
+            period    = 9  if 'RSI(9)' in strategy_name else 14
+            rsi_cur   = float(calc_rsi(c, period).iloc[-1])
+            rsi_prev  = float(calc_rsi(c, period).iloc[-2])
+            gap = rsi_cur - threshold
+            trending_down = rsi_cur < rsi_prev  # RSI 하락 중이면 신호 임박 가능성↑
+            if gap <= 5:
+                return 20.0
+            elif gap <= 15:
+                return 14.0 if trending_down else 10.0
+            elif gap <= 30:
+                return 6.0  if trending_down else 3.0
+            else:
+                return -8.0  # RSI 60 이상 — 한참 기다려야
+
+        elif strategy_name in ('EMA 5/20 크로스', 'SMA 5/20 크로스',
+                               'EMA 3/10 크로스', 'SMA 3/10 크로스', 'SMA 3/20 크로스'):
+            use_ema = strategy_name.startswith('EMA')
+            parts   = strategy_name.split()[1].split('/')
+            fp, sp  = int(parts[0]), int(parts[1])
+            if use_ema:
+                fast = c.ewm(span=fp, adjust=False).mean()
+                slow = c.ewm(span=sp, adjust=False).mean()
+            else:
+                fast = c.rolling(fp).mean()
+                slow = c.rolling(sp).mean()
+            f_cur, s_cur = float(fast.iloc[-1]), float(slow.iloc[-1])
+            f_prv, s_prv = float(fast.iloc[-2]), float(slow.iloc[-2])
+            if s_cur <= 0:
+                return 0.0
+            gap_pct = (s_cur - f_cur) / s_cur * 100  # 양수 = fast 아직 아래 = 크로스 대기
+            gap_shrinking = (s_prv - f_prv) > (s_cur - f_cur)  # 갭 좁아지는 중?
+            if gap_pct > 0:
+                # 아직 데드크로스 상태 → 골든크로스 기대
+                if gap_pct <= 1.0:
+                    return 20.0
+                elif gap_pct <= 3.0:
+                    return 14.0 if gap_shrinking else 10.0
+                elif gap_pct <= 6.0:
+                    return 6.0  if gap_shrinking else 2.0
+                else:
+                    return -5.0  # 갭 너무 큼
+            else:
+                # 이미 골든크로스 완료 — 다음 사이클까지 신호 없음
+                return -8.0
+
+        elif strategy_name == 'MACD 크로스':
+            macd_line, sig_line = calc_macd(c)
+            hist_cur  = float((macd_line - sig_line).iloc[-1])
+            hist_prev = float((macd_line - sig_line).iloc[-2])
+            if hist_cur < 0:
+                # 데드크로스 상태: 히스토그램 축소 중이면 골든크로스 임박
+                shrinking = hist_cur > hist_prev
+                if hist_cur > -50:
+                    return 18.0 if shrinking else 8.0
+                elif hist_cur > -200:
+                    return 8.0  if shrinking else 2.0
+                else:
+                    return -5.0
+            else:
+                # 이미 골든크로스
+                return -8.0
+
+        elif strategy_name == '볼린저밴드 반전':
+            bb_up, bb_mid, bb_low = calc_bb(c)
+            bb_1sig = bb_mid - (bb_mid - bb_low) * 0.5  # -1σ 근사
+            p = float(c.iloc[-1])
+            if p <= float(bb_low.iloc[-1]) * 1.02:
+                return 20.0   # 하단 터치 임박/돌파
+            elif p <= float(bb_1sig.iloc[-1]):
+                return 10.0   # -1σ 아래
+            elif p <= float(bb_mid.iloc[-1]):
+                return 3.0    # 중간선 아래
+            else:
+                return -8.0   # 중간선 위 — 하단 한참 멀었음
+
+    except Exception:
+        pass
+    return 0.0
+
 def calc_macd(s, f=12, sl=26, sig=9):
     m = ema(s, f) - ema(s, sl)
     return m, ema(m, sig)
@@ -767,6 +863,12 @@ def select_satellites(kis=None, n=NUM_SATELLITES, verbose=True, gemini_client=No
             ai_up_prob = dl_predictor.predict_up_probability(df) if dl_predictor is not None else 50.0
             ml_factor_score = (ai_up_prob - 50.0) * 0.2
 
+            # ── 신호 준비도 점수 ───────────────────────────────────────────
+            # 선정된 전략 기준으로 현재 지표가 BUY 신호에 얼마나 가까운지 계산.
+            # 이미 크로스/RSI 통과한 종목은 패널티(다음 신호까지 대기 시간 ↑).
+            # 신호 임박 종목은 보너스 → 선정 후 실제 매수로 이어질 가능성 ↑.
+            signal_readiness = calc_signal_readiness(df, best_strat)
+
             score = (best_ret
                      + (vol_score - 1) * 6
                      + sector_bonus
@@ -776,7 +878,8 @@ def select_satellites(kis=None, n=NUM_SATELLITES, verbose=True, gemini_client=No
                      + pos_52w_score           # 52주 위치 점수 (백테스트 분석 반영)
                      - overheated_penalty
                      - stat_arb_penalty
-                     + ml_factor_score)
+                     + ml_factor_score
+                     + signal_readiness)       # 신호 준비도 (임박 +20, 이미 통과 -8)
 
             # RSI(14) 현재값 계산 — AI 전략 검수 프롬프트에 활용
             try:
@@ -795,10 +898,11 @@ def select_satellites(kis=None, n=NUM_SATELLITES, verbose=True, gemini_client=No
                 'sector':        ticker_to_sector.get(ticker, '-'),
                 'momentum_20d':  float(round(recent_ret, 2)),
                 'pos_52w':       float(round(pos_52w, 1)) if pos_52w is not None else None,  # 52주 위치
-                'dl_prob':       float(round(ai_up_prob, 1)),
-                'frgn_inst':     ticker in frgn_inst_tickers,
-                'frgn_only':     ticker in frgn_only_tickers,  # 161: 외국계 전용 순매수
-                'score':         float(round(score, 2)),
+                'dl_prob':          float(round(ai_up_prob, 1)),
+                'frgn_inst':        ticker in frgn_inst_tickers,
+                'frgn_only':        ticker in frgn_only_tickers,  # 161: 외국계 전용 순매수
+                'signal_readiness': float(round(signal_readiness, 1)),
+                'score':            float(round(score, 2)),
             })
             processed += 1
 
@@ -836,10 +940,14 @@ def select_satellites(kis=None, n=NUM_SATELLITES, verbose=True, gemini_client=No
             ai_tag = f" 🤖[AI 선정: {c.get('ai_reason', '')}]" if c.get('ai_selected') else ""
             
             pos_tag = f"52주{c['pos_52w']:.0f}%" if c.get('pos_52w') is not None else ""
+            sr = c.get('signal_readiness', 0)
+            sr_tag = (f"🟢신호임박({sr:+.0f})" if sr >= 10
+                      else f"🟡신호접근({sr:+.0f})" if sr >= 0
+                      else f"🔴신호대기({sr:+.0f})")
             print(f"\n  {rank}위. [{c['name']}] ({c['ticker']}){dl_tag}{ai_tag}")
             print(f"       전략: {c['strategy_name']}  /  6개월 수익: {c.get('return_pct', 0):+.1f}%")
             print(f"       20일 모멘텀: {c.get('momentum_20d', 0):+.1f}%  {pos_tag}  {vol_tag}  {sec_tag}  {fi_tag}")
-            print(f"       종합점수: {c.get('score', 0):.1f}점")
+            print(f"       종합점수: {c.get('score', 0):.1f}점  {sr_tag}")
         print(f"{'='*60}\n")
 
     return selected, hot_sectors
