@@ -437,6 +437,21 @@ document.addEventListener('DOMContentLoaded', () => {
         }
 
         const isLive = (data.is_mock === false || data.is_mock === 0);
+        const isUS   = !!data.is_mock;   // true = US 모드
+
+        // ── 통화 토글 버튼: US 모드에서만 표시 ──────────────────────────────
+        const currencyWrap = document.getElementById('currency-toggle-wrap');
+        if (currencyWrap) {
+            currencyWrap.style.display = isUS ? 'inline-block' : 'none';
+        }
+        // KR 모드로 전환되면 항상 원화로 리셋 (달러 표시 잔류 방지)
+        if (!isUS && FX.mode !== 'KRW') {
+            FX.mode = 'KRW';
+            const btnKrw = document.getElementById('btn-currency-krw');
+            const btnUsd = document.getElementById('btn-currency-usd');
+            if (btnKrw) btnKrw.style.cssText = btnKrw.style.cssText.replace(/background:[^;]+;color:[^;]+;/, 'background:rgba(255,255,255,0.18);color:#f1f5f9;');
+            if (btnUsd) btnUsd.style.cssText = btnUsd.style.cssText.replace(/background:[^;]+;color:[^;]+;/, 'background:rgba(255,255,255,0.04);color:#94a3b8;');
+        }
 
         const cb = document.getElementById('modeSwitch');
         const lblReal = document.getElementById('label-real');
