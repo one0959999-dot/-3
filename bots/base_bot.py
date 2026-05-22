@@ -745,6 +745,11 @@ class BaseBot:
         with self.lock:
             self._refresh_blacklist()
             self._satellite_rejects[ticker] = reason
+        # 재시작 후에도 블랙리스트가 유지되도록 즉시 상태 저장
+        try:
+            self._save_state()
+        except Exception:
+            pass
 
     def _record_ticker_loss(self, ticker: str, profit: float):
         """손실 발생 시 종목별 당일 누계 손실을 기록합니다."""
@@ -885,6 +890,10 @@ class BaseBot:
     def initialize_portfolio(self, total_cash):
         self.add_log("포트폴리오 초기화 중...")
         raw_info, self.hot_sectors = select_satellites(kis=self.kis, n=self.num_satellites * 2, verbose=False, gemini_client=self.gemini, sector_guide=self.sector_guide, real_kis=self.real_kis)
+        if self.hot_sectors:
+            self.add_log(f"🔥 강세 섹터: {', '.join(self.hot_sectors[:4])}")
+        else:
+            self.add_log("⚠️ 강세 섹터 없음 — 상대 강세 기준 후보 선정")
         # AI 검토: 부적합 종목 제거 후 num_satellites 개수만 사용
         filtered_info = self._ai_filter_satellites(raw_info)
         self.satellite_info = filtered_info[:self.num_satellites]
@@ -942,6 +951,10 @@ class BaseBot:
                 "last_screen_month": getattr(self, 'last_screen_month', None), "last_screen_date": self.last_screen_date.strftime('%Y-%m-%d') if getattr(self, 'last_screen_date', None) else None,
                 "daily_pnl": self.daily_pnl, "daily_report": self.daily_report,
                 "momentum_positions": [self._serialize_one_momentum(mp) for mp in self.momentum_positions],
+                # 당일 블랙리스트 — 재시작 후에도 AI 거절 종목이 재심사 요청되지 않도록 저장
+                "bl_date":              self._bl_date,
+                "satellite_rejects":    dict(self._satellite_rejects),
+                "momentum_ai_rejects":  dict(self._momentum_ai_rejects),
             }
             save_portfolio_state(self.user_id, state, self._is_mock)
         except Exception as e: logger.error(f"[{self.mode_name}] 상태 저장 실패: {e}", exc_info=True)
@@ -977,6 +990,16 @@ class BaseBot:
             self.last_screen_date = datetime.strptime(lsd_str, '%Y-%m-%d').date() if lsd_str else None
             self.daily_pnl = state.get("daily_pnl", {})
             self.daily_report = state.get("daily_report", None)
+            # 당일 블랙리스트 복원 — 저장된 날짜와 오늘이 같을 때만 적용 (자정 넘기면 무효)
+            saved_bl_date = state.get("bl_date", "")
+            today_str     = _now_kst().strftime('%Y-%m-%d')
+            if saved_bl_date == today_str:
+                self._bl_date             = saved_bl_date
+                self._satellite_rejects   = state.get("satellite_rejects",   {})
+                self._momentum_ai_rejects = state.get("momentum_ai_rejects", {})
+                n_rej = len(self._satellite_rejects)
+                if n_rej:
+                    self.add_log(f"🚫 당일 AI 거절 블랙리스트 복원: {n_rej}개 종목 재심사 제외")
             # 모멘텀 슬롯 복원 (구버전 단일 포지션 호환)
             # __init__ 에서 설정한 슬롯 수를 먼저 저장 (덮어쓰기 전)
             target_slots = len(self.momentum_positions)
@@ -2279,6 +2302,10 @@ class BaseBot:
                 verbose=False, gemini_client=self.gemini, bear_mode=(self.market_regime == "BEAR"),
                 sector_guide=self.sector_guide, real_kis=self.real_kis
             )
+            if self.hot_sectors:
+                self.add_log(f"🔥 강세 섹터 감지: {', '.join(self.hot_sectors[:4])}")
+            else:
+                self.add_log("⚠️ 강세 섹터 없음 (전 섹터 하락 — 상대 강세 기준으로 후보 선정)")
             # 이미 보유 중인 종목 + 당일 AI 거절 블랙리스트 종목 모두 제외
             pre_filter = [
                 c for c in raw_info

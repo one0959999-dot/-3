@@ -131,14 +131,21 @@ SECTOR_STOCKS = {
 def get_sector_momentum(lookback=20, verbose=False):
     """
     섹터별 대표 종목 수익률 평균으로 강세 섹터 탐지.
-    Returns: dict { sector_name: avg_return_pct }  (내림차순 정렬)
+
+    ▶ 개선: 20일(중기) + 5일(단기) 듀얼 모멘텀 합산.
+      - 20일 모멘텀 70% 가중 + 5일 모멘텀 30% 가중.
+      - 하락장에서 최근 반등 중인 섹터를 5일 모멘텀이 끌어올려 잡아냄.
+
+    Returns: dict { sector_name: blended_return_pct }  (내림차순 정렬)
     """
     results = {}
     end   = datetime.today()
+    # 20일 조회를 위해 +30일 여유 확보 (공휴일 제외)
     start = end - timedelta(days=lookback + 30)
 
     for sector_name, tickers in SECTOR_STOCKS.items():
-        rets = []
+        rets_long  = []  # 20일 수익률
+        rets_short = []  # 5일 수익률
         for t in tickers:
             if not t.isdigit() or len(t) != 6:
                 continue
@@ -151,16 +158,24 @@ def get_sector_momentum(lookback=20, verbose=False):
                 col = '종가' if '종가' in df.columns else df.columns[3]
                 series = df[col].dropna()
                 if len(series) >= 5:
-                    ret = (series.iloc[-1] / series.iloc[-min(lookback, len(series)-1)] - 1) * 100
-                    rets.append(float(ret))
+                    # 20일 (중기) 모멘텀
+                    ret_long = (series.iloc[-1] / series.iloc[-min(lookback, len(series)-1)] - 1) * 100
+                    rets_long.append(float(ret_long))
+                    # 5일 (단기) 모멘텀 — 최근 반등 포착
+                    ret_short = (series.iloc[-1] / series.iloc[-min(5, len(series)-1)] - 1) * 100
+                    rets_short.append(float(ret_short))
             except Exception:
                 continue
-        if rets:
-            results[sector_name] = round(float(np.mean(rets)), 2)
+        if rets_long:
+            avg_long  = float(np.mean(rets_long))
+            avg_short = float(np.mean(rets_short)) if rets_short else avg_long
+            # 듀얼 모멘텀: 20일 70% + 5일 30% 가중 평균
+            blended = avg_long * 0.70 + avg_short * 0.30
+            results[sector_name] = round(blended, 2)
 
     sorted_results = dict(sorted(results.items(), key=lambda x: x[1], reverse=True))
     if verbose:
-        print("\n📊 현재 섹터/테마 강세 분석 (최근 20일 평균 수익률)")
+        print("\n📊 현재 섹터/테마 강세 분석 (20일×0.7 + 5일×0.3 블렌디드 수익률)")
         for name, ret in sorted_results.items():
             bar = "▲" if ret > 0 else "▼"
             print(f"   {bar} {name:<18} {ret:+.1f}%")
@@ -171,23 +186,42 @@ def get_sector_tickers(momentum, top_n_sectors=4):
     """
     강세 섹터 상위 N개 → 해당 섹터 대표 종목 반환.
     같은 종목이 여러 섹터에 중복 등록된 경우 먼저 등장한 섹터에만 할당 (점수 중복 방지).
-    Returns: set of tickers, dict of ticker→sector_name, list of hot sector names
-    """
-    hot_sectors = [k for k, v in momentum.items() if v > 0][:top_n_sectors]
 
-    sector_tickers   = set()
-    ticker_to_sector = {}
+    ▶ 개선: 절대 수익률 양수 조건(v > 0) 제거 →  상대 강세 기준으로 변경.
+      - 양수 섹터가 2개 이상이면 양수 섹터 중 상위 N개 우선 선택.
+      - 전반적 하락장(양수 섹터 1개 이하)이면 -10% 이상인 섹터 중 상위 N개 선택
+        (절대 수익률이 낮아도 상대적으로 덜 빠진 섹터 = 상대 강세).
+    ▶ 반환값에 ticker_sector_rank 추가 (0=1위 섹터, 1=2위 섹터, ...)
+       → select_satellites()에서 1위 섹터 보너스를 더 높게 책정하는 데 사용.
+    Returns: set of tickers, dict of ticker→sector_name, list of hot sector names, dict of ticker→rank
+    """
+    sorted_sectors = sorted(momentum.items(), key=lambda x: x[1], reverse=True)
+
+    positive = [(k, v) for k, v in sorted_sectors if v > 0]
+    if len(positive) >= 2:
+        # 정상 상승장: 양수 섹터 중 상위 N개
+        hot_sector_items = positive[:top_n_sectors]
+    else:
+        # 하락/횡보장: -10% 이상 섹터 중 상대 강세 상위 N개 (v > 0 조건 제거)
+        hot_sector_items = [(k, v) for k, v in sorted_sectors if v > -10.0][:top_n_sectors]
+
+    hot_sectors = [k for k, v in hot_sector_items]
+
+    sector_tickers    = set()
+    ticker_to_sector  = {}
+    ticker_sector_rank = {}  # 섹터 순위 (0=최강세)
     seen = set()  # 중복 종목 방지
 
-    for sec_name in hot_sectors:
+    for rank, sec_name in enumerate(hot_sectors):
         tickers = SECTOR_STOCKS.get(sec_name, [])
         for t in tickers:
             if t.isdigit() and len(t) == 6 and t not in EXCLUDE_TICKERS and t not in seen:
                 sector_tickers.add(t)
                 ticker_to_sector[t] = sec_name
+                ticker_sector_rank[t] = rank
                 seen.add(t)
 
-    return sector_tickers, ticker_to_sector, hot_sectors
+    return sector_tickers, ticker_to_sector, hot_sectors, ticker_sector_rank
 
 
 # ──────────────────────────────────────────────
@@ -564,10 +598,18 @@ def select_satellites(kis=None, n=NUM_SATELLITES, verbose=True, gemini_client=No
         print("="*60)
 
     sector_momentum = get_sector_momentum(lookback=20, verbose=verbose)
-    sector_tickers, ticker_to_sector, hot_sectors = get_sector_tickers(sector_momentum, top_n_sectors=4)
+    sector_tickers, ticker_to_sector, hot_sectors, ticker_sector_rank = get_sector_tickers(sector_momentum, top_n_sectors=4)
 
-    if verbose and hot_sectors:
-        print(f"\n🔥 현재 강세 섹터 TOP4: {', '.join(hot_sectors)}")
+    if verbose:
+        if hot_sectors:
+            sector_labels = []
+            for sec in hot_sectors:
+                ret = sector_momentum.get(sec, 0)
+                label = f"{sec}({ret:+.1f}%)"
+                sector_labels.append(label)
+            print(f"\n🔥 현재 강세 섹터 TOP4: {', '.join(sector_labels)}")
+        else:
+            print("\n⚠️  강세 섹터 없음 (전 섹터 -10% 이하 하락 중)")
 
     volume_surges = get_volume_surge_tickers(
         kis=kis, market_list=("KOSPI", "KOSDAQ"),
@@ -639,8 +681,14 @@ def select_satellites(kis=None, n=NUM_SATELLITES, verbose=True, gemini_client=No
 
             best_strat, best_ret = find_best_strategy(df)
 
-            vol_score    = volume_surges.get(ticker, 1.0)
-            sector_bonus = 10 if ticker in sector_tickers else 0
+            vol_score = volume_surges.get(ticker, 1.0)
+            # 섹터 보너스: 1위 섹터 +22, 2위 +18, 3위 +14, 4위 +10
+            # (기존 고정 +10에서 → 순위 기반으로 확대, 상대 강세 섹터도 보너스 적용)
+            if ticker in sector_tickers:
+                _rank = ticker_sector_rank.get(ticker, 3)  # 0-indexed
+                sector_bonus = max(22 - _rank * 4, 10)
+            else:
+                sector_bonus = 0
             frgn_inst_bonus = 8 if ticker in frgn_inst_tickers else 0
 
             # 20일 모멘텀 부스트 — 이미 오르고 있는 종목 우대 (한달 20% 목표)
