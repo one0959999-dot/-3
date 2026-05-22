@@ -14,46 +14,50 @@
             display: flex;
             justify-content: space-between;
             align-items: center;
-            padding: 1.2rem 2.5rem;
+            padding: 1rem clamp(1rem, 2.5vw, 2.5rem);
             background: rgba(15, 23, 42, 0.4);
             backdrop-filter: blur(12px);
             border-bottom: 1px solid rgba(255, 255, 255, 0.05);
             margin-bottom: 1.5rem;
+            min-width: 0;          /* flex 자식이 줄어들 수 있게 */
         }
 
-        /* 환율 위젯 */
+        /* 환율·선물 위젯 공통 — clamp로 뷰포트에 비례 축소 */
         .nav-fx {
             display: flex;
             align-items: center;
-            gap: 8px;
+            gap: clamp(4px, 0.5vw, 8px);
             background: rgba(255, 255, 255, 0.05);
             border: 1px solid rgba(255, 255, 255, 0.1);
-            padding: 6px 14px;
+            padding: clamp(4px, 0.4vw, 6px) clamp(8px, 1vw, 14px);
             border-radius: 20px;
-            font-size: 0.82rem;
+            font-size: clamp(0.62rem, 1vw, 0.82rem);
             white-space: nowrap;
             cursor: default;
             transition: background 0.2s;
         }
         .nav-fx:hover { background: rgba(255, 255, 255, 0.09); }
-        .fx-label { color: #94a3b8; font-size: 0.75rem; }
-        .fx-rate  { color: #f1f5f9; font-weight: 700; letter-spacing: 0.3px; }
+        .fx-label { color: #94a3b8; font-size: clamp(0.58rem, 0.85vw, 0.75rem); }
+        .fx-rate  { color: #f1f5f9; font-weight: 700; letter-spacing: 0.3px;
+                    font-size: clamp(0.62rem, 1vw, 0.82rem); }
         /* ID 기반 선택자로 명시도 높임 → 테마 !important 규칙 극복 */
-        #fx-change.fx-up   { color: #f87171 !important; -webkit-text-fill-color: #f87171 !important; font-size: 0.78rem; }
-        #fx-change.fx-down { color: #60a5fa !important; -webkit-text-fill-color: #60a5fa !important; font-size: 0.78rem; }
-        #fx-change.fx-flat { color: #94a3b8 !important; -webkit-text-fill-color: #94a3b8 !important; font-size: 0.78rem; }
+        #fx-change.fx-up   { color: #f87171 !important; -webkit-text-fill-color: #f87171 !important; font-size: clamp(0.58rem, 0.85vw, 0.78rem); }
+        #fx-change.fx-down { color: #60a5fa !important; -webkit-text-fill-color: #60a5fa !important; font-size: clamp(0.58rem, 0.85vw, 0.78rem); }
+        #fx-change.fx-flat { color: #94a3b8 !important; -webkit-text-fill-color: #94a3b8 !important; font-size: clamp(0.58rem, 0.85vw, 0.78rem); }
 
-        /* 선물 위젯 변동색 (선물은 상승=초록, 하락=빨강 — 주식 컨벤션) */
-        .fut-up   { color: #4ade80 !important; -webkit-text-fill-color: #4ade80 !important; font-size: 0.78rem; }
-        .fut-down { color: #f87171 !important; -webkit-text-fill-color: #f87171 !important; font-size: 0.78rem; }
-        .fut-flat { color: #94a3b8 !important; -webkit-text-fill-color: #94a3b8 !important; font-size: 0.78rem; }
-        /* 중앙 위젯 그룹 래퍼 */
-        .nav-center { display: flex; align-items: center; gap: 8px; flex-wrap: nowrap; }
+        /* 선물 위젯 변동색 */
+        .fut-up   { color: #4ade80 !important; -webkit-text-fill-color: #4ade80 !important; font-size: clamp(0.58rem, 0.85vw, 0.78rem); }
+        .fut-down { color: #f87171 !important; -webkit-text-fill-color: #f87171 !important; font-size: clamp(0.58rem, 0.85vw, 0.78rem); }
+        .fut-flat { color: #94a3b8 !important; -webkit-text-fill-color: #94a3b8 !important; font-size: clamp(0.58rem, 0.85vw, 0.78rem); }
+
+        /* 중앙 위젯 그룹 — 간격도 비례 축소 */
+        .nav-center { display: flex; align-items: center; gap: clamp(4px, 0.6vw, 8px); flex-wrap: nowrap; min-width: 0; }
 
         .nav-user {
             display: flex;
             align-items: center;
-            gap: 1.5rem;
+            gap: clamp(0.6rem, 1.2vw, 1.5rem);
+            flex-shrink: 0;        /* 오른쪽 메뉴는 고정 */
         }
 
         .btn-settings {
