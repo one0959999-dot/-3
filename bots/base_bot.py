@@ -1238,15 +1238,34 @@ class BaseBot:
         else:
             self.add_log(f"--- 🎯 {self.mode_name} 실시간 점검 ({current_time_str}) ---")
             with self.lock:
+                _regime_now = getattr(self, 'market_regime', 'NEUTRAL')
+                _regime_label = {"BULL": "상승장 🚀", "BEAR": "하락장 🐻", "NEUTRAL": "횡보장 ➡️"}.get(_regime_now, "분석 중")
                 for core in self.core_positions:
-                    if "대기" not in core.status and "심사" not in core.status: # 대기/심사 중이 아닐 때만 텍스트 초기화
-                        core.status = "감시 중 👀"
-                        core.status_msg = "최적 타이밍 스캔 중"
+                    if "대기" not in core.status and "심사" not in core.status:
+                        if core.shares > 0:
+                            _pnl = ((core.kis_current_price - core.avg_price) / core.avg_price * 100) if core.avg_price > 0 and core.kis_current_price > 0 else 0
+                            core.status = "보유 중 💎"
+                            core.status_msg = f"{core.shares}주 보유 중 | 평단 {core.avg_price:,.0f}원 | 수익률 {_pnl:+.1f}% | {_regime_label}"
+                        elif core.cash > 0:
+                            core.status = "감시 중 👀"
+                            core.status_msg = f"매수 신호 대기 중 | 가용 예산 {core.cash:,.0f}원 | 시장: {_regime_label}"
+                        else:
+                            core.status = "감시 중 👀"
+                            core.status_msg = f"예산 소진 — 다음 잔고 동기화 대기 중 | 시장: {_regime_label}"
 
                 for sat in self.satellite_positions.values():
                     if "대기" not in sat.status and "심사" not in sat.status:
-                        sat.status = "감시 중 👀"
-                        sat.status_msg = "최적 타이밍 스캔 중"
+                        if sat.shares > 0:
+                            _pnl = ((sat.kis_current_price - sat.avg_price) / sat.avg_price * 100) if sat.avg_price > 0 and sat.kis_current_price > 0 else 0
+                            sat.status = "보유 중 ✅"
+                            sat.status_msg = f"{sat.shares}주 보유 중 | 평단 {sat.avg_price:,.0f}원 | 수익률 {_pnl:+.1f}% | {_regime_label}"
+                        elif sat.cash > 0:
+                            _st = getattr(sat, 'strategy', self.satellite_strategies.get(sat.ticker, '-'))
+                            sat.status = "감시 중 👀"
+                            sat.status_msg = f"전략 [{_st}] 신호 대기 | 예산 {sat.cash:,.0f}원 | 시장: {_regime_label}"
+                        else:
+                            sat.status = "감시 중 👀"
+                            sat.status_msg = f"예산 소진 — 다음 종목 교체 대기 | 시장: {_regime_label}"
 
         # ── 📡 뉴스 모니터: 악재 공시 감지 + 실적 발표 예정 체크 ───────────
         if self.news_monitor and is_golden_hours:
