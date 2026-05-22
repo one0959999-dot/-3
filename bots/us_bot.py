@@ -24,7 +24,6 @@ from database import (
     load_portfolio_state,
     get_user_initial_cash,
     set_user_initial_cash,
-    log_trade_journal,
     get_sector_guide,
 )
 from telegram_bot import TelegramNotifier
@@ -260,11 +259,7 @@ class USBotController:
     def _record_pnl(self, usd_pnl: float):
         today = _now_et().strftime("%Y-%m-%d")
         self.daily_pnl[today] = self.daily_pnl.get(today, 0.0) + usd_pnl
-        try:
-            fx = _get_fx_rate()
-            log_trade_journal(self.user_id, today, round(usd_pnl * fx))
-        except Exception:
-            pass
+        # log_trade_journal 은 페이퍼 트레이딩에서 미사용 (US 봇은 DB 거래일지 불필요)
 
     # ─────────────────────────────────────────────────────────────────
     # 초기 자금 설정
@@ -579,6 +574,20 @@ class USBotController:
     # 공개 인터페이스 (BaseBot 호환)
     # ─────────────────────────────────────────────────────────────────
 
+    def reload_api_keys(self, kis_config, telegram_config, gemini_config, core_stocks):
+        """BaseBot 호환 인터페이스 — US 봇은 KIS API 불필요, 텔레그램만 갱신."""
+        if telegram_config and telegram_config.get("token"):
+            try:
+                self.telegram = TelegramNotifier(
+                    token=telegram_config["token"].strip(),
+                    chat_id=(telegram_config.get("chat_id") or "").strip(),
+                )
+            except Exception:
+                self.telegram = None
+        else:
+            self.telegram = None
+        self.add_log("🔑 US 봇 설정 갱신 완료 (페이퍼 트레이딩 — KIS API 불필요)")
+
     def start(self, total_cash: float = 10_000_000) -> bool:
         if self.is_running:
             return False
@@ -730,7 +739,7 @@ class USBotController:
                 "logs":             list(self.logs)[-30:],
                 "hot_sectors":      self.hot_sectors,
                 "num_satellites":   self.num_satellites,
-                "cores":            cores_data,
+                "cores":            [],        # US 모드 = 코어 카드 숨김
                 "satellites":       satellites,
                 "momentum_list":    [],   # US 모드 = 단타 모멘텀 없음
                 "defensive_list":   [],

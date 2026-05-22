@@ -576,17 +576,6 @@
                     </div>
 
                     <div class="settings-group"
-                        style="border:1px solid rgba(16,185,129,0.3); padding:10px; border-radius:8px; margin-bottom:14px;">
-                        <h3 style="color:#10b981; font-size:0.9rem; margin-bottom:10px;">US API 설정</h3>
-                        <label>App Key</label>
-                        <input type="text" id="mockAppKey" value="{{ user.data.mock_app_key or '' }}">
-                        <label>App Secret</label>
-                        <input type="password" id="mockAppSecret" value="{{ user.data.mock_app_secret or '' }}">
-                        <label>계좌번호</label>
-                        <input type="text" id="mockAccountNo" value="{{ user.data.mock_account_no or '' }}">
-                    </div>
-
-                    <div class="settings-group"
                         style="background:rgba(59,130,246,0.1); border:1px solid rgba(59,130,246,0.3); padding:10px; border-radius:8px; margin-bottom:14px;">
                         <label style="color:#60a5fa;">💰 총 투자 원금 (누적 입금액)</label>
                         <input type="number" id="initialCash" value="{{ user.data.initial_cash or 10000000 }}" placeholder="예: 25000000">
