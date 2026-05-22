@@ -233,14 +233,28 @@ def scan_hot_momentum(
                     }
                     first_seen = now
 
+            elapsed_min = (now - first_seen).total_seconds() / 60
+
+            # ── 신선도 보너스: 최초 감지 후 경과 시간이 짧을수록 우선 진입 ──
+            # 늦게 진입할수록 고점 리스크 상승 → 오래된 신호는 점수 억제
+            if elapsed_min <= 5:
+                freshness_bonus = 8.0    # 방금 발견 — 최우선 진입
+            elif elapsed_min <= 10:
+                freshness_bonus = 5.0    # 초기 구간 — 여전히 신선
+            elif elapsed_min <= 20:
+                freshness_bonus = 1.0    # 진행 중 — 중립
+            else:
+                freshness_bonus = -5.0   # 20분↑ — 진입 억제 (고점 리스크)
+
+            score += freshness_bonus
+
             # 트리거 사유 문자열
             reasons = [f"거래량 {vol_ratio:.1f}x↑", f"상승 +{price_chg:.1f}%"]
             if theme_name:
                 reasons.append(f"테마:{theme_name}")
             if rsi >= 60:
                 reasons.append(f"RSI {rsi:.0f} 강세")
-
-            elapsed_min = (now - first_seen).total_seconds() / 60
+            reasons.append(f"감지+{elapsed_min:.0f}분")  # 신선도 표시
 
             results.append({
                 'ticker':         ticker,
