@@ -612,9 +612,10 @@ def select_satellites(kis=None, n=NUM_SATELLITES, verbose=True, gemini_client=No
         else:
             print("\n⚠️  섹터 데이터 없음")
 
+    # 거래량 임계치 1.3x — 한국 급등주 백테스트 분석 결과 평균 1.33x (기존 1.5에서 완화)
     volume_surges = get_volume_surge_tickers(
         kis=kis, market_list=("KOSPI", "KOSDAQ"),
-        surge_ratio=1.5, min_cap_billion=300, max_tickers=150, verbose=verbose
+        surge_ratio=1.3, min_cap_billion=300, max_tickers=150, verbose=verbose
     )
 
     # 외인/기관 순매수 팩터 수집
@@ -731,9 +732,32 @@ def select_satellites(kis=None, n=NUM_SATELLITES, verbose=True, gemini_client=No
             if 3.0 <= recent_ret <= 20.0:
                 momentum_boost = recent_ret * 0.8   # 3%→+2.4점, 10%→+8점, 20%→+16점
 
+            # ── 52주 위치 점수 (한국 급등주 백테스트 분석 반영) ──────────────
+            # 분석 결과: 한국 급등주 급등 직전 평균 52주 위치 79% (테마 진행 중)
+            # 40~80%: 스윗스팟 → 보너스 / 15~40%: 저점 탈출 초기 → 소보너스
+            # 92% 초과: 극단적 과열 → 소패널티
+            pos_52w = None
+            pos_52w_score = 0.0
+            if 'high' in df.columns and 'low' in df.columns and len(df) >= 60:
+                _n52 = min(252, len(df))
+                high_52 = df['high'].tail(_n52).max()
+                low_52  = df['low'].tail(_n52).min()
+                pos_52w = float((current_price - low_52) / (high_52 - low_52 + 1e-9) * 100)
+                if 40 <= pos_52w <= 80:
+                    pos_52w_score = 5.0    # 스윗스팟: 테마 진행 중
+                elif 15 <= pos_52w < 40:
+                    pos_52w_score = 3.0    # 저점 탈출 초기
+                elif pos_52w > 92:
+                    pos_52w_score = -2.0   # 극단적 과열 소패널티
+
+            # ── 과열 패널티 (테마 수혜 시 완화) ──────────────────────────────
+            # 한국 분석: HLB·알테오젠 등 강한 테마 수혜주는 RSI 80~90에서도 추가 급등
+            # → 섹터 보너스 10점 이상(강한 테마)이면 패널티 50% 감면
             overheated_penalty = 0
             if recent_ret > 15 and vol_score < 2.0:
-                overheated_penalty = (recent_ret - 15) * 1.5
+                base_penalty   = (recent_ret - 15) * 1.5
+                theme_discount = 0.5 if sector_bonus >= 10 else 1.0
+                overheated_penalty = base_penalty * theme_discount
 
             stat_arb_penalty = 0
             if recent_ret > 30:
@@ -749,6 +773,7 @@ def select_satellites(kis=None, n=NUM_SATELLITES, verbose=True, gemini_client=No
                      + frgn_inst_bonus
                      + (bb_discount * 1.5)
                      + momentum_boost          # 20일 모멘텀 부스트 (한달 20% 목표)
+                     + pos_52w_score           # 52주 위치 점수 (백테스트 분석 반영)
                      - overheated_penalty
                      - stat_arb_penalty
                      + ml_factor_score)
@@ -769,6 +794,7 @@ def select_satellites(kis=None, n=NUM_SATELLITES, verbose=True, gemini_client=No
                 'rsi':           rsi_val,                      # review_satellite_candidates 프롬프트용
                 'sector':        ticker_to_sector.get(ticker, '-'),
                 'momentum_20d':  float(round(recent_ret, 2)),
+                'pos_52w':       float(round(pos_52w, 1)) if pos_52w is not None else None,  # 52주 위치
                 'dl_prob':       float(round(ai_up_prob, 1)),
                 'frgn_inst':     ticker in frgn_inst_tickers,
                 'frgn_only':     ticker in frgn_only_tickers,  # 161: 외국계 전용 순매수
@@ -809,9 +835,10 @@ def select_satellites(kis=None, n=NUM_SATELLITES, verbose=True, gemini_client=No
             dl_tag = f" 🧠[상승확률: {c.get('dl_prob', 0):.1f}%]" if c.get('dl_prob', 0) > 0 else ""
             ai_tag = f" 🤖[AI 선정: {c.get('ai_reason', '')}]" if c.get('ai_selected') else ""
             
+            pos_tag = f"52주{c['pos_52w']:.0f}%" if c.get('pos_52w') is not None else ""
             print(f"\n  {rank}위. [{c['name']}] ({c['ticker']}){dl_tag}{ai_tag}")
             print(f"       전략: {c['strategy_name']}  /  6개월 수익: {c.get('return_pct', 0):+.1f}%")
-            print(f"       20일 모멘텀: {c.get('momentum_20d', 0):+.1f}%  {vol_tag}  {sec_tag}  {fi_tag}")
+            print(f"       20일 모멘텀: {c.get('momentum_20d', 0):+.1f}%  {pos_tag}  {vol_tag}  {sec_tag}  {fi_tag}")
             print(f"       종합점수: {c.get('score', 0):.1f}점")
         print(f"{'='*60}\n")
 
