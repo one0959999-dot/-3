@@ -21,6 +21,27 @@
             margin-bottom: 1.5rem;
         }
 
+        /* 환율 위젯 */
+        .nav-fx {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            background: rgba(255, 255, 255, 0.05);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            padding: 6px 14px;
+            border-radius: 20px;
+            font-size: 0.82rem;
+            white-space: nowrap;
+            cursor: default;
+            transition: background 0.2s;
+        }
+        .nav-fx:hover { background: rgba(255, 255, 255, 0.09); }
+        .fx-label { color: #94a3b8; font-size: 0.75rem; }
+        .fx-rate  { color: #f1f5f9; font-weight: 700; letter-spacing: 0.3px; }
+        .fx-up    { color: #f87171; font-size: 0.78rem; }   /* 원화 약세 = 빨강 */
+        .fx-down  { color: #60a5fa; font-size: 0.78rem; }   /* 원화 강세 = 파랑 */
+        .fx-flat  { color: #94a3b8; font-size: 0.78rem; }
+
         .nav-user {
             display: flex;
             align-items: center;
@@ -381,6 +402,14 @@
                 style="font-family: 'Outfit', sans-serif; font-size: 1.5rem; font-weight: 700; background: linear-gradient(135deg, #60a5fa, #3b82f6); -webkit-background-clip: text; -webkit-text-fill-color: transparent;">Trading
                 Bot</span>
         </div>
+
+        <!-- 환율 위젯 (중앙) -->
+        <div class="nav-fx" title="USD/KRW 실시간 환율 (1분 캐시)">
+            <span class="fx-label">💵 USD/KRW</span>
+            <span class="fx-rate" id="fx-rate">로딩중…</span>
+            <span id="fx-change" class="fx-flat">—</span>
+        </div>
+
         <div class="nav-user">
             <div class="mode-toggle">
                 <span id="label-real" class="{% if user.data.is_mock == 0 %}mode-active{% endif %}">실전</span>
@@ -728,6 +757,41 @@
     </div>
 
     <script src="{{ url_for('static', filename='script.js') }}?v=15"></script>
+
+    <script>
+    // ── USD/KRW 환율 위젯 ────────────────────────────────────────────────
+    function updateExchangeRate() {
+        fetch('/api/exchange_rate')
+            .then(r => r.json())
+            .then(d => {
+                if (d.error) {
+                    document.getElementById('fx-rate').textContent = '—';
+                    document.getElementById('fx-change').textContent = d.error;
+                    document.getElementById('fx-change').className = 'fx-flat';
+                    return;
+                }
+                // 환율 표시: 소수점 2자리
+                document.getElementById('fx-rate').textContent =
+                    d.rate.toLocaleString('ko-KR', {minimumFractionDigits: 2, maximumFractionDigits: 2}) + '원';
+
+                // 등락폭 표시 (USD/KRW 오름 = 원화 약세 = 빨강)
+                const chgEl = document.getElementById('fx-change');
+                const up = d.change > 0.005;
+                const dn = d.change < -0.005;
+                const arrow = up ? '▲' : (dn ? '▼' : '—');
+                const absChg = Math.abs(d.change).toFixed(2);
+                const pct = (d.change >= 0 ? '+' : '') + d.change_pct.toFixed(2) + '%';
+                chgEl.textContent = `${arrow} ${absChg} (${pct})`;
+                chgEl.className = up ? 'fx-up' : (dn ? 'fx-down' : 'fx-flat');
+            })
+            .catch(() => {
+                document.getElementById('fx-rate').textContent = '오류';
+                document.getElementById('fx-change').textContent = '';
+            });
+    }
+    updateExchangeRate();                       // 페이지 로드 시 즉시 실행
+    setInterval(updateExchangeRate, 60000);     // 이후 1분마다 갱신
+    </script>
 
     {% if gemini_enabled %}
     <button id="ai-chat-fab" onclick="toggleAiChat()" title="라씨 AI와 대화하기">

@@ -1232,6 +1232,153 @@ def check_giveback_stop(
     return 'HOLD', giveback_pct, f'반납률 {giveback_pct:.0f}% — 보유 유지'
 
 
+def check_theme_overextension_exit(df, current_price: float, sector_bonus: int = 0) -> tuple:
+    """
+    테마주 과열 청산 신호 — 급락 패턴 역공학 분석 반영.
+
+    분석 결과 요약:
+      - 에코프로·HLB·알테오젠·레인보우로보틱스·SMCI 급락 전 공통 패턴
+      - 60일 이동평균 이격 평균 +45% (가장 신뢰도 높은 단일 신호)
+      - RSI 다이버전스 + 거래량 소멸 복합 조건 = 강력 청산
+
+    Parameters
+    ----------
+    df            : OHLCV DataFrame (close/high/low/volume 컬럼)
+    current_price : 현재가
+    sector_bonus  : 섹터 보너스 점수 (테마 강도 — 10 이상이면 강한 테마)
+
+    Returns
+    -------
+    (signal, score, reason)
+      signal : 'HOLD' | 'PARTIAL_EXIT_30' | 'PARTIAL_EXIT_60' | 'FULL_EXIT'
+      score  : 감지된 위험 신호 수 (0~4)
+      reason : 사유 문자열
+    """
+    if df is None or df.empty or len(df) < 40 or 'close' not in df.columns:
+        return 'HOLD', 0, '데이터 부족'
+
+    close  = df['close'].dropna()
+    volume = df['volume'].dropna() if 'volume' in df.columns else None
+    price  = float(current_price)
+
+    risk_signals = []
+
+    # ── ① 60일선 이격도 (핵심 신호 — 분석 평균 +45% 초과 시 급락) ─────
+    if len(close) >= 60:
+        ma60 = float(close.rolling(60).mean().iloc[-1])
+        if ma60 > 0:
+            gap60 = (price - ma60) / ma60 * 100
+            if gap60 >= 50:
+                risk_signals.append(f"60일선 극이격 +{gap60:.0f}%")
+            elif gap60 >= 30:
+                risk_signals.append(f"60일선 이격 +{gap60:.0f}%")
+
+    # ── ② 20일선 이격도 ────────────────────────────────────────────────
+    if len(close) >= 20:
+        ma20 = float(close.rolling(20).mean().iloc[-1])
+        if ma20 > 0:
+            gap20 = (price - ma20) / ma20 * 100
+            if gap20 >= 30:
+                risk_signals.append(f"20일선 이격 +{gap20:.0f}%")
+
+    # ── ③ RSI 베어리시 다이버전스 ────────────────────────────────────
+    if len(close) >= 40:
+        d   = close.diff()
+        g   = d.clip(lower=0).rolling(14).mean()
+        lo  = (-d.clip(upper=0)).rolling(14).mean()
+        rsi = 100 - 100 / (1 + g / (lo + 1e-10))
+
+        w1_rsi_max   = float(rsi.iloc[-20:].max())   # 최근 20일 RSI 최고
+        w2_rsi_max   = float(rsi.iloc[-40:-20].max())  # 이전 20일 RSI 최고
+        w1_price_max = float(close.iloc[-20:].max())
+        w2_price_max = float(close.iloc[-40:-20].max())
+
+        price_new_high = w1_price_max > w2_price_max          # 가격 신고점
+        rsi_lower      = w1_rsi_max < w2_rsi_max - 5          # RSI 약화 (5점 이상)
+        if price_new_high and rsi_lower:
+            risk_signals.append(f"RSI 베어다이버전스 ({w2_rsi_max:.0f}→{w1_rsi_max:.0f})")
+
+    # ── ④ 거래량 소멸 ────────────────────────────────────────────────
+    if volume is not None and len(volume) >= 40:
+        vol_w1 = float(volume.iloc[-20:].mean())   # 최근 20일 거래량
+        vol_w2 = float(volume.iloc[-40:-20].mean())  # 이전 20일 거래량
+        if vol_w2 > 0:
+            vol_fade = vol_w1 / vol_w2
+            if vol_fade < 0.7:
+                risk_signals.append(f"거래량 소멸 {vol_fade:.2f}x")
+            elif vol_fade < 0.85:
+                risk_signals.append(f"거래량 감소 {vol_fade:.2f}x")
+
+    # ── 신호 수 → 청산 등급 결정 ────────────────────────────────────
+    n = len(risk_signals)
+    reason = " | ".join(risk_signals) if risk_signals else "이상 없음"
+
+    # 강한 테마 수혜주는 임계값을 1단계 높임 (한국 분석: 테마 수혜 시 더 달림)
+    threshold_adjust = 1 if sector_bonus >= 10 else 0
+
+    if n == 0:
+        return 'HOLD', 0, reason
+    elif n == 1:
+        # 단일 신호 → 30% 익절
+        if n > threshold_adjust:
+            return 'PARTIAL_EXIT_30', n, reason
+        return 'HOLD', n, f"[테마완화] {reason}"
+    elif n == 2:
+        # 2개 신호 → 60% 익절
+        if n > threshold_adjust:
+            return 'PARTIAL_EXIT_60', n, reason
+        return 'PARTIAL_EXIT_30', n, f"[테마완화 -1단계] {reason}"
+    else:
+        # 3개 이상 → 전량 청산
+        if n > threshold_adjust:
+            return 'FULL_EXIT', n, reason
+        return 'PARTIAL_EXIT_60', n, f"[테마완화 -1단계] {reason}"
+
+
+def check_rsi_progressive_exit(df, current_price: float, avg_price: float) -> tuple:
+    """
+    RSI 구간별 점진적 익절 — 테마주 급락 분석 반영.
+
+    분석 근거:
+      HLB: 고점 RSI 71 후 -56% / NVDA 조정: RSI 80 후 -14%
+      RSI 75 이상 구간부터 단계적 익절로 고점 물리는 리스크 감소
+
+    Parameters
+    ----------
+    df            : OHLCV DataFrame
+    current_price : 현재가
+    avg_price     : 보유 평균 단가
+
+    Returns
+    -------
+    (signal, rsi_val, reason)
+      signal : 'HOLD' | 'PARTIAL_EXIT_30' | 'PARTIAL_EXIT_60' | 'FULL_EXIT'
+    """
+    if df is None or df.empty or len(df) < 20 or 'close' not in df.columns:
+        return 'HOLD', 0.0, '데이터 부족'
+
+    # 수익 중일 때만 RSI 익절 적용 (손실 구간에서 RSI로 청산 방지)
+    profit_pct = (current_price / avg_price - 1) * 100 if avg_price > 0 else 0
+    if profit_pct < 5.0:
+        return 'HOLD', 0.0, f'수익률 {profit_pct:.1f}% — RSI 익절 대기 (5% 이상 시 발동)'
+
+    close = df['close'].dropna()
+    d  = close.diff()
+    g  = d.clip(lower=0).rolling(14).mean()
+    lo = (-d.clip(upper=0)).rolling(14).mean()
+    rsi_series = 100 - 100 / (1 + g / (lo + 1e-10))
+    rsi = float(rsi_series.iloc[-1])
+
+    if rsi >= 90:
+        return 'FULL_EXIT',        rsi, f'RSI {rsi:.0f} — 극과매수, 전량 익절 준비'
+    elif rsi >= 85:
+        return 'PARTIAL_EXIT_60',  rsi, f'RSI {rsi:.0f} — 강한 과매수, 60% 익절'
+    elif rsi >= 75:
+        return 'PARTIAL_EXIT_30',  rsi, f'RSI {rsi:.0f} — 과매수 진입, 30% 선익절'
+    else:
+        return 'HOLD',             rsi, f'RSI {rsi:.0f} — 정상 범위'
+
+
 def check_early_drop_stop(current_price: float, entry_price: float) -> tuple:
     """
     장초 09:00~09:10 급락 분기 원칙 (02_intraday_operating_rules.md).

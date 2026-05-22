@@ -260,6 +260,38 @@ def get_pnl():
     bot = get_current_bot()
     return jsonify(bot.get_pnl_data())
 
+# ── USD/KRW 환율 (60초 캐시) ───────────────────────────────────────────────
+import time as _time_module
+_fx_cache: dict = {'data': None, 'ts': 0.0}
+
+@app.route('/api/exchange_rate')
+@login_required
+def get_exchange_rate():
+    """USD/KRW 현재 환율 + 전일 대비 등락 반환 (yfinance, 60초 캐시)."""
+    global _fx_cache
+    now_ts = _time_module.time()
+    if _fx_cache['data'] and now_ts - _fx_cache['ts'] < 60:
+        return jsonify(_fx_cache['data'])
+    try:
+        import yfinance as yf
+        ticker = yf.Ticker('USDKRW=X')
+        hist = ticker.history(period='5d')
+        if hist is None or hist.empty:
+            return jsonify({'error': '데이터 없음'})
+        hist = hist.dropna(subset=['Close'])
+        curr = float(hist['Close'].iloc[-1])
+        if len(hist) >= 2:
+            prev  = float(hist['Close'].iloc[-2])
+            chg   = round(curr - prev, 2)
+            chg_p = round((curr - prev) / prev * 100, 2)
+        else:
+            chg, chg_p = 0.0, 0.0
+        data = {'rate': round(curr, 2), 'change': chg, 'change_pct': chg_p}
+        _fx_cache = {'data': data, 'ts': now_ts}
+        return jsonify(data)
+    except Exception as e:
+        return jsonify({'error': str(e)})
+
 @app.route('/api/reset_initial_cash', methods=['POST'])
 @login_required
 def reset_initial_cash():

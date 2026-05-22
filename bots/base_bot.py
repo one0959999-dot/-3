@@ -21,7 +21,7 @@ def _now_kst():
     return datetime.now(_KST).replace(tzinfo=None)
 
 from telegram_bot import TelegramNotifier
-from strategy import CorePosition, Position, get_rsi_signal, get_signal_by_strategy, REINVEST_RATIO, get_market_regime, get_bear_bounce_signal, get_bear_bottom_score, get_bull_momentum_score, get_neutral_range_score, INVERSE_ETF_TICKER, INVERSE_ETF_NAME, INVERSE_BUDGET_RATIO, DEFENSIVE_ASSETS, check_giveback_stop, check_early_drop_stop
+from strategy import CorePosition, Position, get_rsi_signal, get_signal_by_strategy, REINVEST_RATIO, get_market_regime, get_bear_bounce_signal, get_bear_bottom_score, get_bull_momentum_score, get_neutral_range_score, INVERSE_ETF_TICKER, INVERSE_ETF_NAME, INVERSE_BUDGET_RATIO, DEFENSIVE_ASSETS, check_giveback_stop, check_early_drop_stop, check_theme_overextension_exit, check_rsi_progressive_exit
 from stock_screener import select_satellites, generate_daily_market_report
 from hot_momentum_scanner import scan_hot_momentum, clear_expired_cache
 from database import update_bot_status, save_portfolio_state, load_portfolio_state, log_trade_journal, get_recent_trades, save_ai_rules, load_ai_rules, get_ai_rules_history, get_user_initial_cash, set_user_initial_cash, add_user_initial_cash, get_news_api_keys, get_sector_guide
@@ -1778,6 +1778,70 @@ class BaseBot:
                             with self.lock: self.pnl_this_turn += profit
                             self._record_daily_pnl(profit)
                         continue
+
+                # ── 🔥 테마주 과열 청산 & RSI 점진적 익절 ─────────────────────────────
+                # crash_pattern_analysis.py 분석 반영:
+                # 60일선 이격 평균 +45%, RSI 베어다이버전스, 거래량 소멸 = 급락 전 공통 패턴
+                # sector_bonus≥10(핫섹터) 종목은 1단계 완화 적용 (테마주 조기 청산 방지)
+                if p_sh > 0 and p_avg > 0 and is_cd_passed and not ex_df.empty:
+                    _sat_info_m   = next((s for s in self.satellite_info if s['ticker'] == ticker), None)
+                    _sector       = _sat_info_m.get('sector', '') if _sat_info_m else ''
+                    _sector_bonus = 10 if (_sector and _sector in self.hot_sectors) else 0
+
+                    _oe_sig,  _oe_score,  _oe_reason  = check_theme_overextension_exit(ex_df, price, _sector_bonus)
+                    _rsi_sig, _rsi_val,   _rsi_reason = check_rsi_progressive_exit(ex_df, price, p_avg)
+
+                    # 두 신호 중 더 강한 것 우선 (FULL > PARTIAL_60 > PARTIAL_30 > HOLD)
+                    _sig_rank = {'HOLD': 0, 'PARTIAL_EXIT_30': 1, 'PARTIAL_EXIT_60': 2, 'FULL_EXIT': 3}
+                    if _sig_rank.get(_oe_sig, 0) >= _sig_rank.get(_rsi_sig, 0):
+                        _fe_sig, _fe_reason = _oe_sig, _oe_reason
+                    else:
+                        _fe_sig, _fe_reason = _rsi_sig, _rsi_reason
+
+                    if _fe_sig == 'FULL_EXIT':
+                        _full_qty = p_sh   # 매도 전 주수 보존 (락 안에서 p_sh 갱신 전)
+                        if _full_qty > 0 and self._sell_order(ticker, _full_qty, pos, p_nm):
+                            with self.lock:
+                                pos.last_order_time = time.time(); pos.status = "과열 전량청산 🚨"
+                                pos.shares = 0; pos.partial_sold = False; pos.partial_sold_2 = False
+                                p_sh = 0   # 이후 로직에서 0주로 인식
+                            profit = _net_profit(price, p_avg, _full_qty)
+                            self._log_trade(ticker, p_nm, 'SELL', price, st_nm, f"과열 전량청산 [{_fe_reason}]", profit=profit)
+                            self._send_trade_telegram(self._fmt_trade_msg("🚨", "과열 전량청산", ticker, p_nm, price, _full_qty, profit=profit, strategy=st_nm, note=_fe_reason))
+                            with self.lock:
+                                self.pnl_this_turn += profit
+                                if profit > 0 and self.core_positions:
+                                    reinvest_sat = profit * REINVEST_RATIO
+                                    for core in self.core_positions:
+                                        core.cash += reinvest_sat / len(self.core_positions)
+                            self._record_daily_pnl(profit)
+                        continue
+
+                    elif _fe_sig == 'PARTIAL_EXIT_60' and p_sh > 1:
+                        _q60 = max(1, int(p_sh * 0.60))
+                        if self._sell_order(ticker, _q60, pos, p_nm):
+                            with self.lock:
+                                pos.last_order_time = time.time(); pos.status = "과열 선익절 60% ✂️"
+                                pos.shares = max(0, pos.shares - _q60)
+                                p_sh = pos.shares   # 로컬 스냅샷 갱신 → 이후 익절 로직 정합성 유지
+                            profit = _net_profit(price, p_avg, _q60)
+                            self._log_trade(ticker, p_nm, 'SELL', price, st_nm, f"과열청산 60% [{_fe_reason}]", profit=profit)
+                            self._send_trade_telegram(self._fmt_trade_msg("✂️", "과열 선익절 60%", ticker, p_nm, price, _q60, profit=profit, strategy=st_nm, note=_fe_reason))
+                            with self.lock: self.pnl_this_turn += profit
+                            self._record_daily_pnl(profit)
+
+                    elif _fe_sig == 'PARTIAL_EXIT_30' and p_sh > 1:
+                        _q30 = max(1, int(p_sh * 0.30))
+                        if self._sell_order(ticker, _q30, pos, p_nm):
+                            with self.lock:
+                                pos.last_order_time = time.time(); pos.status = "과열 선익절 30% ✂️"
+                                pos.shares = max(0, pos.shares - _q30)
+                                p_sh = pos.shares   # 로컬 스냅샷 갱신
+                            profit = _net_profit(price, p_avg, _q30)
+                            self._log_trade(ticker, p_nm, 'SELL', price, st_nm, f"과열청산 30% [{_fe_reason}]", profit=profit)
+                            self._send_trade_telegram(self._fmt_trade_msg("✂️", "과열 선익절 30%", ticker, p_nm, price, _q30, profit=profit, strategy=st_nm, note=_fe_reason))
+                            with self.lock: self.pnl_this_turn += profit
+                            self._record_daily_pnl(profit)
 
                 # ── 부분 익절: +10% 도달 시 보유량 50% 익절 (손익비 1:2 확보) ──
                 if (p_sh > 0 and p_avg > 0 and is_cd_passed
