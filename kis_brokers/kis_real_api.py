@@ -888,6 +888,58 @@ class KisRealApi:
             print(f"[KIS 실전] 기관외국인 조회 오류: {e}")
             return []
 
+    def get_foreign_buy_rank(self, market_div: str = "0000", sort_by: str = "0", limit: int = 50):
+        """외국계 매매종목 가집계 [국내주식-161] (실전 전용)
+        외국계 증권사 순매수 상위 종목 리스트를 반환합니다.
+        market_div: '0000'=전체, '1001'=코스피, '2001'=코스닥
+        sort_by: '0'=금액순, '1'=수량순
+        Returns: list of dict { ticker, name, frgn_net_qty, frgn_buy_qty, frgn_sell_qty }
+        """
+        if not self._ensure_token():
+            return []
+        headers = {
+            "content-type": "application/json; charset=utf-8",
+            "authorization": f"Bearer {self.access_token}",
+            "appkey": self.app_key,
+            "appsecret": self.app_secret,
+            "tr_id": "FHKST644100C0",
+            "custtype": "P",
+        }
+        params = {
+            "FID_COND_MRKT_DIV_CODE":   "J",
+            "FID_COND_SCR_DIV_CODE":    "16441",
+            "FID_INPUT_ISCD":           market_div,
+            "FID_RANK_SORT_CLS_CODE":   sort_by,    # 0=금액순, 1=수량순
+            "FID_RANK_SORT_CLS_CODE_2": "0",        # 0=매수순
+        }
+        try:
+            res = requests.get(
+                f"{self.base_url}/uapi/domestic-stock/v1/quotations/frgnmem-trade-estimate",
+                headers=headers, params=params, timeout=5,
+            )
+            if res.status_code == 200:
+                data = res.json()
+                if data.get("rt_cd") == "0":
+                    results = []
+                    for item in data.get("output", [])[:limit]:
+                        t = item.get("stck_shrn_iscd", "")
+                        if not t:
+                            continue
+                        results.append({
+                            "ticker":        t,
+                            "name":          item.get("hts_kor_isnm", ""),
+                            "frgn_net_qty":  int(item.get("glob_ntsl_qty",       0) or 0),
+                            "frgn_buy_qty":  int(item.get("glob_total_shnu_qty", 0) or 0),
+                            "frgn_sell_qty": int(item.get("glob_total_seln_qty", 0) or 0),
+                            "price":         int(item.get("stck_prpr", 0) or 0),
+                            "prdy_ctrt":     float(item.get("prdy_ctrt", 0) or 0),
+                        })
+                    return results
+            return []
+        except Exception as e:
+            print(f"[KIS 실전] 외국계 가집계 조회 오류: {e}")
+            return []
+
     def get_foreign_buy_by_ticker(self, stock_code: str):
         """종목별 외국계 순매수추이 조회 [국내주식-164] (실전 전용)
         특정 종목의 당일 외국계 매수/매도/순매수 수량을 직접 조회합니다.

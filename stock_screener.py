@@ -620,18 +620,34 @@ def select_satellites(kis=None, n=NUM_SATELLITES, verbose=True, gemini_client=No
     # real_kis가 주입된 경우(모의봇) 실전 API로 데이터 조회, 없으면 kis 자체 사용
     _fi_kis = real_kis or kis
     frgn_inst_tickers = set()
+    frgn_only_tickers = set()   # 161번: 외국계 전용 순매수 (037과 구분해 보너스 차별화)
     if _fi_kis is not None:
+        # ① 037: 국내기관+외국인 합산 순매수 상위
         try:
-            fi_kospi = _fi_kis.get_foreign_institution_rank(market_div="J", limit=30)
+            fi_kospi  = _fi_kis.get_foreign_institution_rank(market_div="J", limit=30)
             fi_kosdaq = _fi_kis.get_foreign_institution_rank(market_div="Q", limit=30)
             for item in fi_kospi + fi_kosdaq:
                 if (item.get("frgn_ntby_qty", 0) > 0 or item.get("orgn_ntby_qty", 0) > 0):
                     frgn_inst_tickers.add(item["ticker"])
-            if verbose:
-                src = "(실전 API)" if real_kis else ""
-                print(f"   💼 외인/기관 순매수 종목: {len(frgn_inst_tickers)}개 {src}")
         except Exception:
             pass
+
+        # ② 161: 외국계 증권사 전용 순매수 상위 (전체시장 기준, 금액순)
+        try:
+            if hasattr(_fi_kis, 'get_foreign_buy_rank'):
+                fi_frgn = _fi_kis.get_foreign_buy_rank(market_div="0000", sort_by="0", limit=50)
+                for item in fi_frgn:
+                    if item.get("frgn_net_qty", 0) > 0:
+                        t = item["ticker"]
+                        frgn_only_tickers.add(t)
+                        frgn_inst_tickers.add(t)   # 후보 풀에도 포함
+        except Exception:
+            pass
+
+        if verbose:
+            src = "(실전 API)" if real_kis else ""
+            print(f"   💼 외인/기관 순매수(037): {len(frgn_inst_tickers) - len(frgn_only_tickers - frgn_inst_tickers)}개  "
+                  f"외국계 전용(161): {len(frgn_only_tickers)}개 {src}")
 
     candidate_pool = set(volume_surges.keys()) | sector_tickers | frgn_inst_tickers
     candidate_pool -= EXCLUDE_TICKERS
@@ -689,7 +705,13 @@ def select_satellites(kis=None, n=NUM_SATELLITES, verbose=True, gemini_client=No
                 sector_bonus = max(22 - _rank * 4, 10)
             else:
                 sector_bonus = 0
-            frgn_inst_bonus = 8 if ticker in frgn_inst_tickers else 0
+            # 외인/기관 보너스: 037(기관+외인) +8 / 161(외국계 전용) 추가 +5 = 최대 +13
+            if ticker in frgn_only_tickers:
+                frgn_inst_bonus = 13   # 외국계 전용 순매수 — 더 강한 신호
+            elif ticker in frgn_inst_tickers:
+                frgn_inst_bonus = 8    # 기관+외인 합산 순매수
+            else:
+                frgn_inst_bonus = 0
 
             # 20일 모멘텀 부스트 — 이미 오르고 있는 종목 우대 (한달 20% 목표)
             # 3~20% 범위: 적당한 상승 추세 → 최대 +16점 보너스
@@ -738,6 +760,7 @@ def select_satellites(kis=None, n=NUM_SATELLITES, verbose=True, gemini_client=No
                 'momentum_20d':  float(round(recent_ret, 2)),
                 'dl_prob':       float(round(ai_up_prob, 1)),
                 'frgn_inst':     ticker in frgn_inst_tickers,
+                'frgn_only':     ticker in frgn_only_tickers,  # 161: 외국계 전용 순매수
                 'score':         float(round(score, 2)),
             })
             processed += 1
@@ -771,7 +794,7 @@ def select_satellites(kis=None, n=NUM_SATELLITES, verbose=True, gemini_client=No
         for rank, c in enumerate(selected, 1):
             vol_tag = f"📈거래량{c.get('volume_surge', 1.0):.1f}x" if c.get('volume_surge', 1.0) > 1.5 else ""
             sec_tag = f"🔥{c.get('sector', '-')}" if c.get('sector', '-') != '-' else ""
-            fi_tag = "💼외인기관" if c.get('frgn_inst') else ""
+            fi_tag = ("🌍외국계전용" if c.get('frgn_only') else "💼외인기관") if c.get('frgn_inst') else ""
             dl_tag = f" 🧠[상승확률: {c.get('dl_prob', 0):.1f}%]" if c.get('dl_prob', 0) > 0 else ""
             ai_tag = f" 🤖[AI 선정: {c.get('ai_reason', '')}]" if c.get('ai_selected') else ""
             

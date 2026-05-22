@@ -848,6 +848,10 @@ class KisMockApi:
         """모의투자 미지원 — 빈 리스트 반환"""
         return []
 
+    def get_foreign_buy_rank(self, market_div: str = "0000", sort_by: str = "0", limit: int = 50):
+        """모의투자 미지원 — 빈 리스트 반환"""
+        return []
+
     def get_foreign_buy_by_ticker(self, stock_code: str):
         """모의투자 미지원 — None 반환"""
         return None
