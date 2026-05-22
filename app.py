@@ -225,7 +225,8 @@ def test_order():
             user_data = dict(current_user.data)
             user_data['is_mock'] = 1 if is_mock else 0
             target_bot = manager.get_bot(current_user.id, user_data)
-        if not target_bot or not target_bot.kis:
+        # US 봇(is_mock=True)은 KIS API 없음 — 테스트 주문 불가
+        if not target_bot or not target_bot.kis or not hasattr(target_bot.kis, 'buy_market_order'):
             return jsonify({"status": "error", "message": f"{mode_label} KIS API 미설정 — API 키 확인"})
         if side == 'BUY':
             ok = target_bot.kis.buy_market_order(ticker, 1)
@@ -312,6 +313,9 @@ def get_daily_report():
     bot = get_current_bot()
     if not bot or not bot.gemini:
         return jsonify({"status": "error", "message": "AI 설정이 필요합니다."})
+    # US 봇은 KR 전용 일일 리포트 미지원
+    if bool(current_user.data.get('is_mock', 1)):
+        return jsonify({"status": "success", "data": {"date": "", "report_markdown": "### 📢 US 모드\n\n일일 리포트는 KR 봇 전용 기능입니다."}})
         
     # [BUG-FIX] datetime.today()는 시스템 로컬 시간 기준 → EC2(UTC) 서버에서 KST 날짜와 불일치.
     # bot.daily_report['date']는 _now_kst() 기준(KST)으로 저장되므로 비교도 KST 기준으로 통일.
@@ -362,26 +366,29 @@ def ai_chat():
         return jsonify({"status": "error", "reply": "AI API 키를 등록해주세요."})
 
     stock_analysis_context = ""
+    is_us_mode = bool(current_user.data.get('is_mock', 1))
 
     try:
-        from pykrx import stock as krx_stock
-        from stock_screener import fetch_ohlcv, calc_rsi
-        
-        macro_lines = []
-        for m_ticker, m_name in [("069500", "KOSPI 대용(KODEX 200)"), ("229200", "KOSDAQ 대용(KODEX 코스닥150)")]:
-            m_df = fetch_ohlcv(m_ticker, days=40, kis=bot.kis)
-            if not m_df.empty:
-                m_close = m_df['close']
-                m_price = m_close.iloc[-1]
-                m_sma20 = m_close.rolling(window=20, min_periods=1).mean().iloc[-1]
-                m_status = "20일선 위에 위치 (대세 상승/안정장)" if m_price >= m_sma20 else "20일선 아래 붕괴 (대세 하락장)"
-                macro_lines.append(f"- {m_name}: 현재가 {int(m_price):,}원 | 20일 이평선 {int(m_sma20):,}원 ({m_status})")
-        
-        if macro_lines:
-            stock_analysis_context += "[🌍 실시간 시장 지수 및 20일선 트렌드 파악]\n" + "\n".join(macro_lines) + "\n\n"
-        
+        # ── KR 봇 전용 컨텍스트 (pykrx / fetch_ohlcv 는 KR 전용) ──────
+        if not is_us_mode:
+            from pykrx import stock as krx_stock
+            from stock_screener import fetch_ohlcv, calc_rsi
+
+            macro_lines = []
+            for m_ticker, m_name in [("069500", "KOSPI 대용(KODEX 200)"), ("229200", "KOSDAQ 대용(KODEX 코스닥150)")]:
+                m_df = fetch_ohlcv(m_ticker, days=40, kis=bot.kis)
+                if not m_df.empty:
+                    m_close = m_df['close']
+                    m_price = m_close.iloc[-1]
+                    m_sma20 = m_close.rolling(window=20, min_periods=1).mean().iloc[-1]
+                    m_status = "20일선 위에 위치 (대세 상승/안정장)" if m_price >= m_sma20 else "20일선 아래 붕괴 (대세 하락장)"
+                    macro_lines.append(f"- {m_name}: 현재가 {int(m_price):,}원 | 20일 이평선 {int(m_sma20):,}원 ({m_status})")
+
+            if macro_lines:
+                stock_analysis_context += "[🌍 실시간 시장 지수 및 20일선 트렌드 파악]\n" + "\n".join(macro_lines) + "\n\n"
+
         target_tickers = []
-        
+
         for core in bot.core_positions:
             if core.name in user_message: target_tickers.append((core.ticker, core.name))
         for ticker, pos in bot.satellite_positions.items():
@@ -395,29 +402,30 @@ def ai_chat():
 
         target_tickers = list(dict.fromkeys(target_tickers))[:5]
 
-        if target_tickers:
+        if target_tickers and not is_us_mode:
+            # KR 봇 전용: pykrx OHLCV 기반 종목 분석 컨텍스트
             context_lines = ["[📈 회원님이 궁금해하시는 종목의 실시간 데이터 분석 장부]"]
             for ticker, name in target_tickers:
                 try:
-                    ohlcv_df = fetch_ohlcv(ticker, days=130, kis=bot.kis) 
+                    ohlcv_df = fetch_ohlcv(ticker, days=130, kis=bot.kis)
                     today_str = datetime.now(timezone(timedelta(hours=9))).strftime('%Y-%m-%d')
                     cache_key = f"{ticker}_{today_str}"
                     financial_data = getattr(bot, 'fundamental_cache', {}).get(cache_key, "PER: 10.0배, PBR: 1.0배 (실시간 추정치)")
-                    
+
                     if not ohlcv_df.empty:
                         close_series = ohlcv_df['close']
                         vol_series = ohlcv_df['volume']
-                        
+
                         rsi_14 = calc_rsi(close_series, 14).iloc[-1] if not close_series.empty else 50
                         sma_120 = close_series.rolling(window=120, min_periods=1).mean().iloc[-1]
-                        
+
                         current_price = bot.live_prices.get(ticker) or close_series.iloc[-1]
                         status_120 = "120일선 위에 안착함 (상승 추세 진행중)" if current_price >= sma_120 else "120일선 아래에 위치함 (역배열 하락 추세)"
-                        
+
                         vol_today = vol_series.iloc[-1] if not vol_series.empty else 0
                         vol_20_avg = vol_series.rolling(window=20, min_periods=1).mean().iloc[-2] if len(vol_series) > 1 else 1
                         vol_ratio = (vol_today / vol_20_avg * 100) if vol_20_avg > 0 else 100
-                        
+
                         context_lines.append(
                             f"- {name}({ticker}): 현재 주가 {int(current_price):,}원 | 120일 이동평균선 위치: {int(sma_120):,}원 ({status_120}) | "
                             f"실시간 RSI(14) 지표: {rsi_14:.1f} | 마감 거래량: 평소 대비 {vol_ratio:.0f}% 수준 | 가치 지표: {financial_data}"
@@ -429,7 +437,7 @@ def ai_chat():
                         )
                 except Exception as ex:
                     print(f"⚠️ {name} 데이터 바인딩 중 소규모 에러: {ex}")
-            
+
             if len(context_lines) > 1:
                 stock_analysis_context += "\n".join(context_lines)
         

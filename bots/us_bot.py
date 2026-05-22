@@ -153,12 +153,17 @@ class USBotController:
                 pass
 
         # ── BaseBot 호환 필드 ─────────────────────────────────────
-        self.kis             = True    # 페이퍼 트레이딩 = 항상 준비됨
+        # kis=None: US 봇은 KIS API 없음 → app.py 의 `if bot.kis:` 분기가 False → KIS 기능 skip
+        self.kis             = None
         self.cached_balance  = None
         self.live_prices     = {}
         self.market_regime   = "NEUTRAL"
         self.gemini          = None
         self.sector_guide    = get_sector_guide(user_id) or ""
+        # BaseBot 호환 속성 — app.py 공통 라우트에서 참조
+        self.daily_report    = None
+        self.core_positions  = []    # US봇은 별도 core 관리, ai_chat 호환용 빈 리스트
+        self.fundamental_cache: dict = {}
 
         # 상태 복원
         self._restore_state()
@@ -588,6 +593,10 @@ class USBotController:
             self.telegram = None
         self.add_log("🔑 US 봇 설정 갱신 완료 (페이퍼 트레이딩 — KIS API 불필요)")
 
+    def reload_news_monitor(self, dart_key: str, naver_id: str, naver_secret: str):
+        """BaseBot 호환 인터페이스 — US 봇은 한국 뉴스 모니터 미사용."""
+        pass
+
     def start(self, total_cash: float = 10_000_000) -> bool:
         if self.is_running:
             return False
@@ -613,9 +622,6 @@ class USBotController:
         fx = _get_fx_rate()
         krw_pnl = {d: round(v * fx) for d, v in self.daily_pnl.items()}
         sorted_days = sorted(krw_pnl.keys())
-
-        def _agg(keys):
-            return [round(sum(krw_pnl.get(d, 0) for d in sorted_days if d.startswith(k))) for k in keys]
 
         # 일별
         daily_labels = sorted_days[-30:]
@@ -659,26 +665,9 @@ class USBotController:
             # 가격은 백그라운드 루프(_perpetual_price_sync)가 60초마다 갱신.
             # get_status()는 캐시를 그대로 읽음 → 블로킹 없이 즉시 반환
 
-            # ── 코어 ─────────────────────────────────────────────
-            cp_usd      = self._price_cache.get(self.core_ticker, 0.0)
-            core_val_usd= self.core_shares * cp_usd
-            cores_data  = [{
-                "name":       self.core_name,
-                "ticker":     self.core_ticker,
-                "shares":     int(self.core_shares),
-                "floor":      0,
-                "price":      round(cp_usd * fx),
-                "value":      round(core_val_usd * fx),
-                "avg_price":  round(self.core_avg_usd * fx),
-                "budget":     round(self.core_budget_usd * fx),
-                "strategy":   "S&P 500 장기 보유",
-                "status":     self.core_status,
-                "status_msg": (
-                    f"SPY ${cp_usd:.2f}"
-                    f" | {int(self.core_shares)}주 보유"
-                    f" | PnL {((cp_usd/self.core_avg_usd-1)*100) if self.core_avg_usd>0 else 0:+.1f}%"
-                ),
-            }]
+            # ── 코어 가치 (총 자산 계산에만 사용, UI 카드 미출력) ────
+            cp_usd       = self._price_cache.get(self.core_ticker, 0.0)
+            core_val_usd = self.core_shares * cp_usd
 
             # ── 위성 ─────────────────────────────────────────────
             total_sat_usd = 0.0
