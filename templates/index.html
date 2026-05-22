@@ -48,13 +48,18 @@
         /* 중앙 위젯 그룹 */
         .nav-center { display: flex; align-items: center; gap: clamp(6px, 0.8vw, 10px); flex-wrap: nowrap; }
 
-        /* 선물 사이클링 ticker 애니메이션 */
+        /* 선물 사이클링 ticker — pill은 고정, 내부 텍스트만 슬라이드 */
+        #nav-fut-ticker {
+            width: clamp(160px,18vw,240px) !important;  /* 고정 너비 → USD pill 밀림 방지 */
+            overflow: hidden;
+        }
+        #fut-inner { display:flex; align-items:center; gap:clamp(4px,0.5vw,8px); width:100%; }
         @keyframes fut-in  { from { opacity:0; transform:translateY(-6px); } to { opacity:1; transform:translateY(0); } }
         @keyframes fut-out { from { opacity:1; transform:translateY(0);    } to { opacity:0; transform:translateY(6px); } }
-        .fut-anim-in  { animation: fut-in  0.28s ease forwards; }
-        .fut-anim-out { animation: fut-out 0.22s ease forwards; }
+        #fut-inner.fut-anim-in  { animation: fut-in  0.28s ease forwards; }
+        #fut-inner.fut-anim-out { animation: fut-out 0.22s ease forwards; }
 
-        /* 선물 팝업 */
+        /* 선물 팝업 — 다크 기본 */
         #fut-popup {
             position: fixed;
             z-index: 9000;
@@ -65,10 +70,12 @@
             box-shadow: 0 8px 32px rgba(0,0,0,0.5);
             backdrop-filter: blur(16px);
             display: none;
+            max-width: calc(100vw - 20px);
         }
         #fut-popup-cards {
             display: flex;
             gap: 10px;
+            flex-wrap: nowrap;
         }
         .fut-card {
             background: rgba(255,255,255,0.05);
@@ -90,10 +97,39 @@
             padding: 1px 6px;
             border-radius: 20px;
             font-weight: 700;
+            border: 1px solid currentColor;
         }
         .fut-card-price { color: #f1f5f9; font-size: 0.92rem; font-weight: 700; margin-bottom: 3px; }
         .fut-card-chg   { font-size: 0.75rem; margin-bottom: 8px; }
         .fut-card-desc  { color: #64748b; font-size: 0.68rem; line-height: 1.4; border-top: 1px solid rgba(255,255,255,0.07); padding-top: 7px; }
+
+        /* US 모드: nav-fx pill 테두리 + 배경 */
+        body.theme-us .nav-fx {
+            background: rgba(255,255,255,0.85) !important;
+            border: 1px solid rgba(0,0,0,0.22) !important;
+        }
+        body.theme-us .nav-fx:hover { background: rgba(255,255,255,0.97) !important; }
+        body.theme-us .fx-label { color: #475569 !important; -webkit-text-fill-color: #475569 !important; }
+        body.theme-us .fx-rate  { color: #0f172a !important; -webkit-text-fill-color: #0f172a !important; }
+        /* US 모드: 선물 팝업 — 흰색 배경 + 검은 글씨 */
+        body.theme-us #fut-popup {
+            background: #ffffff !important;
+            border: 1px solid rgba(0,0,0,0.18) !important;
+            box-shadow: 0 8px 32px rgba(0,0,0,0.15) !important;
+        }
+        body.theme-us .fut-card {
+            background: #f8fafc !important;
+            border: 1px solid rgba(0,0,0,0.15) !important;
+        }
+        body.theme-us .fut-card-label { color: #475569 !important; }
+        body.theme-us .fut-card-price { color: #0f172a !important; }
+        body.theme-us .fut-card-desc  { color: #64748b !important; border-top-color: rgba(0,0,0,0.1) !important; }
+        /* US 모드: 주문 테스트 input */
+        body.theme-us #testOrderTicker {
+            border: 1px solid rgba(0,0,0,0.25) !important;
+            background: #ffffff !important;
+            color: #0f172a !important;
+        }
 
         .nav-user {
             display: flex;
@@ -469,11 +505,13 @@
 
             <!-- 선물 사이클링 ticker (클릭 시 전체 팝업) -->
             <div class="nav-fx" id="nav-fut-ticker"
-                 style="display:none; min-width:clamp(160px,18vw,240px); cursor:pointer;"
+                 style="display:none; cursor:pointer;"
                  onclick="toggleFutPopup(event)" title="클릭하면 전체 선물 지표 보기">
-                <span class="fx-label" id="fut-lbl">—</span>
-                <span class="fx-rate"  id="fut-price">—</span>
-                <span id="fut-chg" style="font-size:clamp(0.58rem,0.85vw,0.78rem); color:#94a3b8;">—</span>
+                <span id="fut-inner" style="display:flex;align-items:center;gap:clamp(4px,0.5vw,8px);width:100%;">
+                    <span class="fx-label" id="fut-lbl">—</span>
+                    <span class="fx-rate"  id="fut-price">—</span>
+                    <span id="fut-chg" style="font-size:clamp(0.58rem,0.85vw,0.78rem); color:#94a3b8;">—</span>
+                </span>
             </div>
 
             <!-- 선물 지표 팝업 -->
@@ -892,15 +930,15 @@
         return n.toLocaleString('en-US', {minimumFractionDigits:d, maximumFractionDigits:d});
     }
 
-    // KR·US 공통으로 3개 전부 순환
+    // KR·US 공통으로 3개 전부 순환 (NQ→ES→EWY 순서, 가격 0이어도 포함)
     function _buildFutItems() {
         _futItems = [];
-        ['ewy','nq','es'].forEach(k => {
+        ['nq','es','ewy'].forEach(k => {
             const raw  = _futData[k] || {};
             const meta = _futMeta[k];
-            if (raw.price) _futItems.push({
+            _futItems.push({
                 lbl: meta.lbl,
-                price: meta.priceFmt(raw.price),
+                price: raw.price ? meta.priceFmt(raw.price) : '—',
                 c1h: raw.change_1h || 0,
                 c5d: raw.change_5d || 0,
                 trend: raw.trend || 'NEUTRAL',
@@ -910,7 +948,8 @@
     }
 
     function _chgColor(c1h) {
-        return c1h >  0.01 ? '#4ade80' : (c1h < -0.01 ? '#f87171' : '#94a3b8');
+        // 한국 관례: 상승=빨강(red), 하락=파랑(blue)
+        return c1h >  0.01 ? '#f87171' : (c1h < -0.01 ? '#60a5fa' : '#94a3b8');
     }
     function _chgText(c1h, c5d) {
         const arrow = c1h > 0.01 ? '▲' : (c1h < -0.01 ? '▼' : '—');
@@ -918,13 +957,15 @@
         return `${arrow}${Math.abs(c1h).toFixed(2)}% (5일:${sign5}${c5d.toFixed(1)}%)`;
     }
     function _trendLabel(trend) {
-        if (trend === 'UPTREND')   return { text:'상승추세', bg:'rgba(74,222,128,0.15)', color:'#4ade80' };
-        if (trend === 'DOWNTREND') return { text:'하락추세', bg:'rgba(248,113,113,0.15)', color:'#f87171' };
+        // 한국 관례: 상승=빨강(red), 하락=파랑(blue)
+        if (trend === 'UPTREND')   return { text:'상승추세', bg:'rgba(248,113,113,0.15)', color:'#f87171' };
+        if (trend === 'DOWNTREND') return { text:'하락추세', bg:'rgba(96,165,250,0.15)',  color:'#60a5fa' };
         return { text:'중립', bg:'rgba(148,163,184,0.15)', color:'#94a3b8' };
     }
 
     function _paintTicker(item, animate) {
         const ticker  = document.getElementById('nav-fut-ticker');
+        const inner   = document.getElementById('fut-inner');  // 애니메이션 대상 (pill 고정, 내부만 슬라이드)
         const lblEl   = document.getElementById('fut-lbl');
         const priceEl = document.getElementById('fut-price');
         const chgEl   = document.getElementById('fut-chg');
@@ -937,15 +978,15 @@
             // setProperty + 'important' → theme-us span !important 규칙을 이김
             chgEl.style.setProperty('color', col, 'important');
             chgEl.style.setProperty('-webkit-text-fill-color', col, 'important');
-            if (animate) {
-                ticker.classList.remove('fut-anim-out');
-                ticker.classList.add('fut-anim-in');
-                setTimeout(() => ticker.classList.remove('fut-anim-in'), 300);
+            if (animate && inner) {
+                inner.classList.remove('fut-anim-out');
+                inner.classList.add('fut-anim-in');
+                setTimeout(() => inner.classList.remove('fut-anim-in'), 300);
             }
         };
-        if (animate) {
-            ticker.classList.add('fut-anim-out');
-            setTimeout(() => { ticker.classList.remove('fut-anim-out'); doWrite(); }, 230);
+        if (animate && inner) {
+            inner.classList.add('fut-anim-out');
+            setTimeout(() => { inner.classList.remove('fut-anim-out'); doWrite(); }, 230);
         } else {
             doWrite();
         }
@@ -998,11 +1039,21 @@
         _futPopupOpen = !_futPopupOpen;
         if (_futPopupOpen) {
             _buildPopup();
-            // 팝업 위치: ticker pill 바로 아래
-            const rect = ticker.getBoundingClientRect();
-            popup.style.top  = (rect.bottom + 8) + 'px';
-            popup.style.left = rect.left + 'px';
+            // 팝업 위치: ticker pill 바로 아래, 오른쪽 화면 밖으로 벗어나지 않도록 보정
+            const rect      = ticker.getBoundingClientRect();
+            const margin    = 10;
+            popup.style.top     = (rect.bottom + 8) + 'px';
+            popup.style.left    = rect.left + 'px';
+            popup.style.right   = 'auto';
             popup.style.display = 'block';
+            // 렌더된 뒤 오른쪽 넘침 체크
+            requestAnimationFrame(() => {
+                const pRect = popup.getBoundingClientRect();
+                if (pRect.right > window.innerWidth - margin) {
+                    popup.style.left = 'auto';
+                    popup.style.right = margin + 'px';
+                }
+            });
         } else {
             popup.style.display = 'none';
         }
