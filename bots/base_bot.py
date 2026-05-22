@@ -1336,24 +1336,29 @@ class BaseBot:
             pass
         lines.append(f"[외인/기관 수급] {frgn_inst_str}")
 
-        # ── 6. KOSDAQ 대비 상대강도 ───────────────────────────────
+        # ── 6. KOSPI / KOSDAQ 대비 상대강도 ─────────────────────────
         market_rs_str = "N/A"
         try:
             if self.kis and ex_df is not None and not ex_df.empty and 'close' in ex_df.columns:
                 close_s = ex_df['close'].dropna()
                 if len(close_s) >= 2:
-                    _kosdaq = self.kis.get_etf_price("229200")  # KODEX KOSDAQ150
-                    if _kosdaq and "prdy_ctrt" in _kosdaq:
-                        kosdaq_chg = float(_kosdaq["prdy_ctrt"])
-                        stock_chg  = (float(price) / float(close_s.iloc[-2]) - 1) * 100
-                        rs = stock_chg - kosdaq_chg
-                        market_rs_str = (
-                            f"종목 {stock_chg:+.1f}% vs KOSDAQ {kosdaq_chg:+.1f}%"
-                            f" → 상대강도 {rs:+.1f}% ({'↑ 아웃퍼폼' if rs > 0 else '↓ 언더퍼폼'})"
-                        )
+                    stock_chg = (float(price) / float(close_s.iloc[-2]) - 1) * 100
+                    parts = []
+                    for etf_code, idx_name in [("069500", "KOSPI"), ("229200", "KOSDAQ")]:
+                        try:
+                            _etf = self.kis.get_etf_price(etf_code)
+                            if _etf and "prdy_ctrt" in _etf:
+                                idx_chg = float(_etf["prdy_ctrt"])
+                                rs = stock_chg - idx_chg
+                                tag = "↑ 아웃퍼폼" if rs > 0 else "↓ 언더퍼폼"
+                                parts.append(f"{idx_name} {idx_chg:+.1f}% (RS {rs:+.1f}% {tag})")
+                        except Exception:
+                            pass
+                    if parts:
+                        market_rs_str = f"종목 {stock_chg:+.1f}% | " + " / ".join(parts)
         except Exception:
             pass
-        lines.append(f"[KOSDAQ 상대강도] {market_rs_str}")
+        lines.append(f"[시장 상대강도] {market_rs_str}")
 
         # ── 7. 시장 국면 & 전략 ──────────────────────────────────
         lines.append(f"[시장 국면] {regime} | 적용 전략: {strategy}")
