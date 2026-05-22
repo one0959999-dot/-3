@@ -469,6 +469,9 @@ document.addEventListener('DOMContentLoaded', () => {
         // 방어자산 렌더링 (KR 전용)
         renderDefensiveAssets(data.defensive_list, data.market_regime);
 
+        // 선물 위젯 가시성 (모드별 다름)
+        if (window.applyFuturesVisibility) window.applyFuturesVisibility(isUS);
+
         // 단타 모멘텀 섹션: KR 모드에서만 표시, US 모드에서는 숨김
         const momentumSection = document.getElementById('momentum-section');
         if (momentumSection) {

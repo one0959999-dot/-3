@@ -43,6 +43,13 @@
         #fx-change.fx-down { color: #60a5fa !important; -webkit-text-fill-color: #60a5fa !important; font-size: 0.78rem; }
         #fx-change.fx-flat { color: #94a3b8 !important; -webkit-text-fill-color: #94a3b8 !important; font-size: 0.78rem; }
 
+        /* 선물 위젯 변동색 (선물은 상승=초록, 하락=빨강 — 주식 컨벤션) */
+        .fut-up   { color: #4ade80 !important; -webkit-text-fill-color: #4ade80 !important; font-size: 0.78rem; }
+        .fut-down { color: #f87171 !important; -webkit-text-fill-color: #f87171 !important; font-size: 0.78rem; }
+        .fut-flat { color: #94a3b8 !important; -webkit-text-fill-color: #94a3b8 !important; font-size: 0.78rem; }
+        /* 중앙 위젯 그룹 래퍼 */
+        .nav-center { display: flex; align-items: center; gap: 8px; flex-wrap: nowrap; }
+
         .nav-user {
             display: flex;
             align-items: center;
@@ -404,11 +411,40 @@
                 Bot</span>
         </div>
 
-        <!-- 환율 위젯 (중앙) -->
-        <div class="nav-fx" title="USD/KRW 실시간 환율 (1분 캐시)">
-            <span class="fx-label">💵 USD/KRW</span>
-            <span class="fx-rate" id="fx-rate">로딩중…</span>
-            <span id="fx-change" class="fx-flat">—</span>
+        <!-- 중앙 위젯 그룹: 환율 + 선물 지표 -->
+        <div class="nav-center">
+
+            <!-- USD/KRW (항상 표시) -->
+            <div class="nav-fx" title="USD/KRW 실시간 환율 (1분 캐시)">
+                <span class="fx-label">💵 USD/KRW</span>
+                <span class="fx-rate" id="fx-rate">로딩중…</span>
+                <span id="fx-change" class="fx-flat">—</span>
+            </div>
+
+            <!-- NQ선물 (항상 표시 — 나스닥100 방향성) -->
+            <div class="nav-fx" id="fut-nq" style="display:none;"
+                 title="NASDAQ 100 선물 (NQ=F) — 미국 기술주 방향성 선행지표">
+                <span class="fx-label">📈 NQ선물</span>
+                <span class="fx-rate" id="fut-nq-price">—</span>
+                <span id="fut-nq-change" class="fut-flat">—</span>
+            </div>
+
+            <!-- EWY: KR 모드 전용 — 코스피 야간 프록시 -->
+            <div class="nav-fx" id="fut-ewy" style="display:none;"
+                 title="iShares MSCI 한국 ETF (EWY) — 코스피 야간선물 프록시">
+                <span class="fx-label">🇰🇷 EWY</span>
+                <span class="fx-rate" id="fut-ewy-price">—</span>
+                <span id="fut-ewy-change" class="fut-flat">—</span>
+            </div>
+
+            <!-- ES선물: US 모드 전용 — S&P500 선물 -->
+            <div class="nav-fx" id="fut-es" style="display:none;"
+                 title="S&P 500 선물 (ES=F) — 미국 전체 시장 방향성">
+                <span class="fx-label">📊 ES선물</span>
+                <span class="fx-rate" id="fut-es-price">—</span>
+                <span id="fut-es-change" class="fut-flat">—</span>
+            </div>
+
         </div>
 
         <div class="nav-user">
@@ -800,6 +836,66 @@
     }
     updateExchangeRate();                       // 페이지 로드 시 즉시 실행
     setInterval(updateExchangeRate, 60000);     // 이후 1분마다 갱신
+
+    // ── 선물 위젯 ────────────────────────────────────────────────────
+    function applyFutChange(elId, change1h, change5d, trend) {
+        const el = document.getElementById(elId);
+        if (!el) return;
+        const up   = change1h >  0.01;
+        const dn   = change1h < -0.01;
+        const arrow = up ? '▲' : (dn ? '▼' : '—');
+        const abs1h = Math.abs(change1h).toFixed(2);
+        const sign5d = change5d >= 0 ? '+' : '';
+        el.textContent = `${arrow}${abs1h}% (5일:${sign5d}${change5d.toFixed(1)}%)`;
+        el.className = up ? 'fut-up' : (dn ? 'fut-down' : 'fut-flat');
+    }
+
+    function updateFuturesWidgets() {
+        fetch('/api/futures_snapshot')
+            .then(r => r.json())
+            .then(d => {
+                if (d.error) return;
+
+                // NQ선물
+                const nq = d.nq || {};
+                if (nq.price) {
+                    document.getElementById('fut-nq-price').textContent =
+                        nq.price.toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2});
+                    applyFutChange('fut-nq-change', nq.change_1h || 0, nq.change_5d || 0, nq.trend);
+                }
+
+                // EWY (코스피 프록시)
+                const ewy = d.ewy || {};
+                if (ewy.price) {
+                    document.getElementById('fut-ewy-price').textContent =
+                        '$' + ewy.price.toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2});
+                    applyFutChange('fut-ewy-change', ewy.change_1h || 0, ewy.change_5d || 0, ewy.trend);
+                }
+
+                // ES선물
+                const es = d.es || {};
+                if (es.price) {
+                    document.getElementById('fut-es-price').textContent =
+                        es.price.toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2});
+                    applyFutChange('fut-es-change', es.change_1h || 0, es.change_5d || 0, es.trend);
+                }
+            })
+            .catch(() => {});
+    }
+
+    // 모드에 따라 선물 위젯 show/hide
+    window.applyFuturesVisibility = function(isUS) {
+        // NQ: 항상 표시
+        const nqEl  = document.getElementById('fut-nq');
+        const ewyEl = document.getElementById('fut-ewy');
+        const esEl  = document.getElementById('fut-es');
+        if (nqEl)  nqEl.style.display  = '';
+        if (ewyEl) ewyEl.style.display = isUS ? 'none' : '';   // KR 전용
+        if (esEl)  esEl.style.display  = isUS ? ''     : 'none'; // US 전용
+    };
+
+    updateFuturesWidgets();
+    setInterval(updateFuturesWidgets, 300000);  // 5분마다 갱신
     </script>
 
     {% if gemini_enabled %}

@@ -267,7 +267,8 @@ def get_pnl():
 
 # ── USD/KRW 환율 (60초 캐시) ───────────────────────────────────────────────
 import time as _time_module
-_fx_cache: dict = {'data': None, 'ts': 0.0}
+_fx_cache: dict      = {'data': None, 'ts': 0.0}
+_futures_cache: dict = {'data': None, 'ts': 0.0}   # 선물 스냅샷 캐시 (300초)
 
 @app.route('/api/exchange_rate')
 @login_required
@@ -296,6 +297,24 @@ def get_exchange_rate():
         return jsonify(data)
     except Exception as e:
         return jsonify({'error': str(e)})
+
+@app.route('/api/futures_snapshot')
+@login_required
+def get_futures_snapshot_api():
+    """야간선물 스냅샷 — NQ=F / ES=F / EWY (5분 캐시)"""
+    global _futures_cache
+    now_ts = _time_module.time()
+    if _futures_cache['data'] and now_ts - _futures_cache['ts'] < 300:
+        return jsonify(_futures_cache['data'])
+    try:
+        from us_screener import get_futures_snapshot
+        data = get_futures_snapshot()
+        _futures_cache = {'data': data, 'ts': now_ts}
+        return jsonify(data)
+    except Exception as e:
+        logger.warning(f"futures_snapshot API 오류: {e}")
+        return jsonify({'error': str(e)})
+
 
 @app.route('/api/reset_initial_cash', methods=['POST'])
 @login_required
