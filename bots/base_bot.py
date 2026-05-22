@@ -84,6 +84,7 @@ class BaseBot:
         self.daily_pnl = {}
         self.last_screen_month = None
         self.last_screen_date = None
+        self.last_core_rebalance_date = None   # AI 코어 마지막 재선정 날짜 (매주 월요일 갱신)
         self.hot_sectors = []
         self.daily_report = None
 
@@ -422,13 +423,21 @@ class BaseBot:
                 logger.error(f"[{self.mode_name}] 장부 동기화 중 오류: {e}", exc_info=True)
 
     def _init_dummy_cores(self):
+        """
+        봇 초기화 시 임시 코어 포지션 생성 (initialize_portfolio 전 플레이스홀더).
+        구조: 사용자 지정 1개(선택) + AI 플레이스홀더 2개 = 최대 3개
+        """
         self.core_positions = []
+        # 슬롯 0: 사용자 지정 (첫 번째만 사용)
         if self.user_core_stocks:
-            for c in self.user_core_stocks:
-                self.core_positions.append(CorePosition(c['ticker'], c['name'], initial_cash=0))
-        else:
-            self.core_positions.append(CorePosition(self.core_ticker, self.core_name, initial_cash=0))
-            self.core_positions.append(CorePosition("047040", "대우건설", initial_cash=0))
+            c = self.user_core_stocks[0]
+            self.core_positions.append(CorePosition(c['ticker'], c['name'], initial_cash=0))
+        # AI 슬롯 플레이스홀더 (initialize_portfolio 호출 시 실제 AI 선정으로 교체됨)
+        ai_needed = 3 - len(self.core_positions)   # 사용자가 1개 지정하면 2개, 없으면 3개
+        _placeholders = [("003850", "보령"), ("047040", "대우건설"), ("005930", "삼성전자")]
+        for i in range(min(ai_needed, len(_placeholders))):
+            t, n = _placeholders[i]
+            self.core_positions.append(CorePosition(t, n, initial_cash=0))
             
         if self.kis:
             def _async_init_balance():
@@ -443,6 +452,90 @@ class BaseBot:
                 except Exception as e:
                     logger.warning(f"[{self.mode_name}] 초기 잔고 조회 실패: {e}")
             threading.Thread(target=_async_init_balance, daemon=True).start()
+
+    def _rebalance_ai_cores(self):
+        """
+        AI 코어 슬롯 재선정 (매주 월요일 자동 호출).
+        - 사용자 지정 슬롯(user_core_stocks[0])은 유지
+        - AI 슬롯 중 보유 주식이 없는(shares==0) 슬롯만 교체
+        - 보유 중인 AI 코어는 자연 청산 신호가 날 때까지 유지
+        """
+        from stock_screener import select_ai_core_stock
+        now = _now_kst()
+
+        # 마지막 재선정으로부터 7일 미만이면 스킵
+        if self.last_core_rebalance_date:
+            diff = (now.date() - self.last_core_rebalance_date).days
+            if diff < 7:
+                return
+
+        self.add_log("📅 [주간 AI 코어 재선정] 월요일 — AI 코어 슬롯 재검토 시작")
+
+        # 사용자 지정 티커 파악
+        user_tickers: set = set()
+        if self.user_core_stocks:
+            user_tickers.add(self.user_core_stocks[0]['ticker'])
+
+        # 현재 코어 중 AI 슬롯(사용자 아닌 것) 파악
+        with self.lock:
+            ai_cores_snapshot = [
+                (i, c) for i, c in enumerate(self.core_positions)
+                if c.ticker not in user_tickers
+            ]
+
+        # 교체 가능한 슬롯: AI 코어 중 보유 주식 없는 것
+        empty_ai_slots = [(i, c) for i, c in ai_cores_snapshot if c.shares == 0]
+        if not empty_ai_slots:
+            self.add_log("   ℹ️ 모든 AI 코어 보유 중 — 교체 없음 (자연 청산 대기)")
+            self.last_core_rebalance_date = now.date()
+            self._save_state()
+            return
+
+        # 현재 모든 코어 티커 제외하고 새 AI 후보 선정
+        all_current_tickers = {c.ticker for c in self.core_positions}
+        n_needed = len(empty_ai_slots)
+        new_ai_list = select_ai_core_stock(
+            n=n_needed,
+            exclude_tickers=all_current_tickers,
+            verbose=False
+        )
+
+        if not new_ai_list:
+            self.add_log("   ⚠️ AI 코어 신규 후보 없음 (정배열 조건 미충족) — 기존 유지")
+            self.last_core_rebalance_date = now.date()
+            self._save_state()
+            return
+
+        # 초기 원금 기준으로 예산 계산
+        try:
+            from database import get_user_initial_cash
+            initial_cap = get_user_initial_cash(self.user_id, self._is_mock)
+            per_core_budget = (initial_cap * self.core_ratio) / max(1, len(self.core_positions))
+        except Exception:
+            per_core_budget = 0
+
+        changed = []
+        with self.lock:
+            for (slot_idx, old_core), new_core_info in zip(empty_ai_slots, new_ai_list):
+                old_name = old_core.name
+                new_pos = CorePosition(new_core_info['ticker'], new_core_info['name'], initial_cash=per_core_budget)
+                new_pos.cash = per_core_budget
+                self.core_positions[slot_idx] = new_pos
+                changed.append(f"{old_name} → {new_core_info['name']}({new_core_info['ticker']}) [{new_core_info.get('sector','-')}]")
+
+        self.last_core_rebalance_date = now.date()
+        self._save_state()
+
+        # 알림
+        change_lines = "\n".join([f"   · {c}" for c in changed])
+        self.add_log(f"✅ [AI 코어 재선정] 교체 완료:\n{change_lines}")
+        self._send_telegram(
+            f"🔄 AI 코어 주간 재선정  ·  {self.alert_icon} {self.mode_name}\n"
+            f"━━━━━━━━━━━━━━━━━━━━\n"
+            f"{chr(10).join(['· ' + c for c in changed])}\n"
+            f"━━━━━━━━━━━━━━━━━━━━\n"
+            f"⏰ {now.strftime('%H:%M KST')}"
+        )
 
     def _get_cached_base_ohlcv(self, ticker):
         today_str = _now_kst().strftime('%Y-%m-%d')
@@ -921,15 +1014,46 @@ class BaseBot:
         n_sat       = len(self.satellite_info) if self.satellite_info else self.num_satellites
         per_sat     = sat_budget / n_sat if n_sat > 0 else 0
 
+        # ── 코어 구성: 사용자 지정 1개(선택) + AI 자동 선정 2개 = 최대 3개 ──
         self.core_positions = []
+        user_tickers: set = set()
+
+        # 슬롯 0: 사용자 지정 (user_core_stocks 첫 번째만 사용)
         if self.user_core_stocks:
-            per_core_budget = core_budget / len(self.user_core_stocks)
-            for c in self.user_core_stocks: self.core_positions.append(CorePosition(c['ticker'], c['name'], initial_cash=per_core_budget))
-        else:
-            half_core_budget = core_budget / 2
-            self.core_positions.append(CorePosition(self.core_ticker, self.core_name, initial_cash=half_core_budget))
-            ai_core_info = select_ai_core_stock(verbose=False)
-            if ai_core_info: self.core_positions.append(CorePosition(ai_core_info['ticker'], ai_core_info['name'], initial_cash=half_core_budget))
+            user_pick = self.user_core_stocks[0]
+            self.core_positions.append(CorePosition(user_pick['ticker'], user_pick['name'], initial_cash=0))
+            user_tickers.add(user_pick['ticker'])
+
+        # AI 슬롯: 남은 자리 채우기 (최대 2개, 총 3개 목표)
+        ai_needed = 3 - len(self.core_positions)
+        self.add_log(f"🔍 AI 코어 종목 선정 중... (목표 {ai_needed}개, 섹터 분산 적용)")
+        ai_core_list = select_ai_core_stock(n=ai_needed, exclude_tickers=user_tickers, verbose=False)
+        for ai_core in ai_core_list:
+            self.core_positions.append(CorePosition(ai_core['ticker'], ai_core['name'], initial_cash=0))
+
+        # 코어 예산 균등 배분
+        n_cores = max(1, len(self.core_positions))
+        per_core_budget = core_budget / n_cores
+        for core in self.core_positions:
+            core.initial_cash = per_core_budget
+            core.cash = per_core_budget
+
+        # 선정 결과 로그 + 텔레그램 알림
+        core_lines_log = []
+        core_lines_tg  = []
+        for i, core in enumerate(self.core_positions):
+            tag     = "👤 사용자" if core.ticker in user_tickers else "🤖 AI"
+            tag_tg  = "👤사용자" if core.ticker in user_tickers else "🤖AI"
+            self.add_log(f"  코어 슬롯 {i+1}: {core.name}({core.ticker}) [{tag}] 예산 {per_core_budget:,.0f}원")
+            core_lines_tg.append(f"  · [{tag_tg}] {core.name} {core.ticker}  예산 {per_core_budget:,.0f}원")
+        self._send_telegram(
+            f"💎 코어 종목 선정 완료  ·  {self.alert_icon} {self.mode_name}\n"
+            f"━━━━━━━━━━━━━━━━━━━━\n"
+            f"{chr(10).join(core_lines_tg)}\n"
+            f"━━━━━━━━━━━━━━━━━━━━\n"
+            f"⏰ {_now_kst().strftime('%H:%M KST')}"
+        )
+        self.last_core_rebalance_date = _now_kst().date()
 
         self.satellite_positions = {c['ticker']: Position(c['ticker'], c['name'], per_sat) for c in self.satellite_info}
         
@@ -955,6 +1079,7 @@ class BaseBot:
                 "satellites": {ticker: {"name": pos.name, "shares": int(pos.shares), "cash": float(pos.cash), "initial_cash": float(pos.initial_cash), "avg_price": float(pos.avg_price), "partial_sold": bool(getattr(pos, 'partial_sold', False)), "partial_sold_2": bool(getattr(pos, 'partial_sold_2', False)), "second_buy_done": bool(getattr(pos, 'second_buy_done', False)), "pyramid_done": bool(getattr(pos, 'pyramid_done', False)), "second_buy_price": float(getattr(pos, 'second_buy_price', 0)), "second_buy_cash": float(getattr(pos, 'second_buy_cash', 0)), "max_price": float(getattr(pos, 'max_price', 0))} for ticker, pos in self.satellite_positions.items()},
                 "satellite_info": self.satellite_info, "satellite_strategies": self.satellite_strategies, "hot_sectors": self.hot_sectors, "num_satellites": self.num_satellites,
                 "last_screen_month": getattr(self, 'last_screen_month', None), "last_screen_date": self.last_screen_date.strftime('%Y-%m-%d') if getattr(self, 'last_screen_date', None) else None,
+                "last_core_rebalance_date": self.last_core_rebalance_date.strftime('%Y-%m-%d') if getattr(self, 'last_core_rebalance_date', None) else None,
                 "daily_pnl": self.daily_pnl, "daily_report": self.daily_report,
                 "momentum_positions": [self._serialize_one_momentum(mp) for mp in self.momentum_positions],
                 # 당일 블랙리스트 — 재시작 후에도 AI 거절 종목이 재심사 요청되지 않도록 저장
@@ -995,6 +1120,8 @@ class BaseBot:
             self.last_screen_month = state.get("last_screen_month")
             lsd_str = state.get("last_screen_date")
             self.last_screen_date = datetime.strptime(lsd_str, '%Y-%m-%d').date() if lsd_str else None
+            lcr_str = state.get("last_core_rebalance_date")
+            self.last_core_rebalance_date = datetime.strptime(lcr_str, '%Y-%m-%d').date() if lcr_str else None
             self.daily_pnl = state.get("daily_pnl", {})
             self.daily_report = state.get("daily_report", None)
             # 당일 블랙리스트 복원 — 저장된 날짜와 오늘이 같을 때만 적용 (자정 넘기면 무효)
@@ -1452,6 +1579,10 @@ class BaseBot:
                         else:
                             sat.status = "감시 중 👀"
                             sat.status_msg = f"예산 소진 — 다음 종목 교체 대기 | 시장: {_regime_label}"
+
+        # ── 📅 월요일 AI 코어 재선정 (09:10~09:20 사이 1회) ──────────────
+        if now.weekday() == 0 and "09:10" <= current_time_str <= "09:20":
+            self._run_threaded(self._rebalance_ai_cores)
 
         # ── 📡 뉴스 모니터: 악재 공시 감지 + 실적 발표 예정 체크 ───────────
         if self.news_monitor and is_golden_hours:

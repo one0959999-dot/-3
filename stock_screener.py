@@ -834,72 +834,112 @@ if __name__ == '__main__':
         print(f"  {c['name']}({c['ticker']}) | 점수 {c.get('score',0)} | 수익률 {c.get('return_pct',0):+.1f}%")
 
 # ──────────────────────────────────────────────
-# 6. AI 코어 장기 우량주 자동 선정 (듀얼 코어용)
+# 6. AI 코어 장기 우량주 자동 선정 (트리플 코어용)
 # ──────────────────────────────────────────────
-def select_ai_core_stock(verbose=False):
+def select_ai_core_stock(n: int = 2, exclude_tickers=None, verbose: bool = False) -> list:
     """
-    미리 정의된 우량주 풀(SECTOR_STOCKS) 중에서 
-    가장 안정적으로 우상향(120일 이평선 정배열 및 모멘텀)하는 1개 종목을 AI 코어로 선정.
-    Returns: dict { 'ticker': '...', 'name': '...', 'strategy_name': '...', 'return_pct': ... }
+    미리 정의된 우량주 풀(SECTOR_STOCKS) 중에서
+    안정적으로 우상향(60/120일 이평 정배열 + 120일 모멘텀)하는 상위 n개 종목을 선정.
+
+    Parameters
+    ----------
+    n               : 반환할 AI 코어 종목 수 (기본 2)
+    exclude_tickers : 사용자 지정 코어 등 제외할 티커 set/list
+    verbose         : 진단 로그 출력 여부
+
+    Returns
+    -------
+    list of dict  [{ 'ticker', 'name', 'strategy_name', 'return_pct', 'sector' }, ...]
     """
     if verbose:
-        print("\n🔍 [AI 코어] 장기 우상향 우량주 탐색 시작...")
+        print(f"\n🔍 [AI 코어] 장기 우상향 우량주 탐색 시작 (목표 {n}개)...")
 
-    best_ticker = None
-    best_score = -9999
-    
-    candidates = set()
+    # 제외 티커 집합 구성
+    exclude = set(EXCLUDE_TICKERS)
+    if exclude_tickers:
+        if isinstance(exclude_tickers, (set, list, tuple)):
+            exclude.update(str(t) for t in exclude_tickers)
+        else:
+            exclude.add(str(exclude_tickers))
+
+    # 섹터→티커 역매핑 (섹터 분산용)
+    ticker_to_sector_map: dict = {}
+    for sec, sec_tickers in SECTOR_STOCKS.items():
+        for t in sec_tickers:
+            if t not in ticker_to_sector_map:
+                ticker_to_sector_map[t] = sec
+
+    # 후보 풀 구성
+    candidates: set = set()
     for sec_tickers in SECTOR_STOCKS.values():
         for t in sec_tickers:
-            if t.isdigit() and len(t) == 6 and t not in EXCLUDE_TICKERS:
+            if t.isdigit() and len(t) == 6 and t not in exclude:
                 candidates.add(t)
-                
-    if "003850" in candidates: candidates.remove("003850")
 
+    # 종목별 점수 계산
+    scored: list = []
     for ticker in list(candidates):
         try:
-            # [I-NEW-06] days=150 → BACKTEST_DAYS(130) 통일로 fetch 캐시 재사용
             df = fetch_ohlcv(ticker, days=BACKTEST_DAYS)
             if len(df) < 120 or 'close' not in df.columns:
                 continue
-                
+
             close = df['close']
-            sma_60 = close.rolling(60).mean()
+            sma_60  = close.rolling(60).mean()
             sma_120 = close.rolling(120).mean()
-            
-            curr_close = close.iloc[-1]
-            curr_sma60 = sma_60.iloc[-1]
-            curr_sma120 = sma_120.iloc[-1]
-            
+
+            curr_close  = float(close.iloc[-1])
+            curr_sma60  = float(sma_60.iloc[-1])
+            curr_sma120 = float(sma_120.iloc[-1])
+
+            # 60일·120일 이평 정배열 필터 (현재가 > SMA60 > SMA120)
             if not (curr_close > curr_sma60 > curr_sma120):
                 continue
-                
-            momentum_120d = (curr_close / close.iloc[-120] - 1) * 100
-            std_20 = close.pct_change().rolling(20).std().iloc[-1] * 100
-            
+
+            momentum_120d = (curr_close / float(close.iloc[-120]) - 1) * 100
+            std_20        = float(close.pct_change().rolling(20).std().iloc[-1]) * 100
+
+            # 점수 = 120일 모멘텀 - 변동성 패널티 × 2
             score = momentum_120d - (std_20 * 2)
-            
-            if score > best_score:
-                best_score = score
-                best_ticker = ticker
-                
+            scored.append((score, ticker))
+
         except Exception:
             continue
-            
-    if best_ticker:
+
+    # 내림차순 정렬
+    scored.sort(key=lambda x: x[0], reverse=True)
+
+    # 상위 n개 선택 — 섹터 분산 (같은 섹터 2개 금지)
+    result: list = []
+    used_sectors: set = set()
+
+    for score, ticker in scored:
+        if len(result) >= n:
+            break
+        sec = ticker_to_sector_map.get(ticker, ticker)
+        if sec in used_sectors:
+            continue   # 같은 섹터 중복 제외
+        used_sectors.add(sec)
+
         try:
-            name = stock.get_market_ticker_name(best_ticker)
-        except:
-            name = best_ticker
-            
-        return {
-            'ticker': best_ticker,
-            'name': name,
+            name = stock.get_market_ticker_name(ticker)
+        except Exception:
+            name = ticker
+
+        result.append({
+            'ticker':        ticker,
+            'name':          name,
             'strategy_name': '정배열 장기보유',
-            'return_pct': best_score
-        }
-        
-    return None
+            'return_pct':    round(score, 2),
+            'sector':        sec,
+        })
+        if verbose:
+            print(f"   🏆 AI 코어 {len(result)}위: {name}({ticker}) | 섹터: {sec} | 점수 {score:.1f}")
+
+    if not result and verbose:
+        print("   ⚠️ 정배열 조건 통과 종목 없음 — 재시도 필요")
+
+    return result
 
 
 # ──────────────────────────────────────────────
