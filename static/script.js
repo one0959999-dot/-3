@@ -245,8 +245,9 @@ document.addEventListener('DOMContentLoaded', () => {
 
         const occupied = (momentumList || []).filter(mp => mp && mp.ticker);
 
-        // 배지 업데이트
-        if (badge) badge.textContent = `${occupied.length} / 3`;
+        // 배지 업데이트 — 총 슬롯 수는 momentumList 길이 기준 (하드코딩 제거)
+        const totalSlots = (momentumList || []).length;
+        if (badge) badge.textContent = `${occupied.length} / ${totalSlots}`;
 
         // 보유 없으면 안내 메시지만 표시
         if (occupied.length === 0) {
