@@ -54,6 +54,47 @@
         .fut-anim-in  { animation: fut-in  0.28s ease forwards; }
         .fut-anim-out { animation: fut-out 0.22s ease forwards; }
 
+        /* 선물 팝업 */
+        #fut-popup {
+            position: fixed;
+            z-index: 9000;
+            background: rgba(15, 23, 42, 0.97);
+            border: 1px solid rgba(255,255,255,0.12);
+            border-radius: 14px;
+            padding: 16px;
+            box-shadow: 0 8px 32px rgba(0,0,0,0.5);
+            backdrop-filter: blur(16px);
+            display: none;
+        }
+        #fut-popup-cards {
+            display: flex;
+            gap: 10px;
+        }
+        .fut-card {
+            background: rgba(255,255,255,0.05);
+            border: 1px solid rgba(255,255,255,0.1);
+            border-radius: 10px;
+            padding: 12px 14px;
+            width: 170px;
+            flex-shrink: 0;
+        }
+        .fut-card-top {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 6px;
+        }
+        .fut-card-label { color: #94a3b8; font-size: 0.72rem; font-weight: 600; }
+        .fut-card-trend {
+            font-size: 0.62rem;
+            padding: 1px 6px;
+            border-radius: 20px;
+            font-weight: 700;
+        }
+        .fut-card-price { color: #f1f5f9; font-size: 0.92rem; font-weight: 700; margin-bottom: 3px; }
+        .fut-card-chg   { font-size: 0.75rem; margin-bottom: 8px; }
+        .fut-card-desc  { color: #64748b; font-size: 0.68rem; line-height: 1.4; border-top: 1px solid rgba(255,255,255,0.07); padding-top: 7px; }
+
         .nav-user {
             display: flex;
             align-items: center;
@@ -426,12 +467,17 @@
                 <span id="fx-change" class="fx-flat">—</span>
             </div>
 
-            <!-- 선물 사이클링 ticker (모드별 지표 순환) -->
-            <div class="nav-fx" id="nav-fut-ticker" style="display:none; min-width:clamp(160px,18vw,240px);">
+            <!-- 선물 사이클링 ticker (클릭 시 전체 팝업) -->
+            <div class="nav-fx" id="nav-fut-ticker"
+                 style="display:none; min-width:clamp(160px,18vw,240px); cursor:pointer;"
+                 onclick="toggleFutPopup(event)" title="클릭하면 전체 선물 지표 보기">
                 <span class="fx-label" id="fut-lbl">—</span>
                 <span class="fx-rate"  id="fut-price">—</span>
                 <span id="fut-chg" style="font-size:clamp(0.58rem,0.85vw,0.78rem); color:#94a3b8;">—</span>
             </div>
+
+            <!-- 선물 지표 팝업 -->
+            <div id="fut-popup"></div>
 
         </div>
 
@@ -825,28 +871,56 @@
     updateExchangeRate();                       // 페이지 로드 시 즉시 실행
     setInterval(updateExchangeRate, 60000);     // 이후 1분마다 갱신
 
-    // ── 선물 사이클링 ticker ─────────────────────────────────────────
+    // ── 선물 사이클링 ticker + 팝업 ──────────────────────────────────
     let _futData  = {};
     let _futIsUS  = false;
-    let _futItems = [];
+    let _futItems = [];   // 순환용 (현재 모드 지표)
     let _futIdx   = 0;
     let _futTimer = null;
 
-    function _fmt(n, digits) {
-        return n.toLocaleString('en-US', {minimumFractionDigits: digits, maximumFractionDigits: digits});
+    // 지표 메타 (팝업 설명용)
+    const _futMeta = {
+        nq:  { lbl:'📈 NQ선물', key:'nq',  priceFmt: p => _fmt(p,2),
+               desc:'나스닥100 선물(NQ=F)\n미국 기술주·성장주의 방향성 선행지표.\n개장 전 나스닥이 어떻게 열릴지 예측하는 데 사용.' },
+        es:  { lbl:'📊 ES선물', key:'es',  priceFmt: p => _fmt(p,2),
+               desc:'S&P 500 선물(ES=F)\n미국 전체 시장 방향성 지표.\n글로벌 리스크온/오프 신호로 활용.' },
+        ewy: { lbl:'🇰🇷 EWY',   key:'ewy', priceFmt: p => '$'+_fmt(p,2),
+               desc:'iShares MSCI 한국 ETF(EWY)\n코스피 야간선물 프록시.\nCME 코스피선물 대신 미국 시간대에서\n한국 증시 흐름을 간접적으로 확인.' },
+    };
+
+    function _fmt(n, d) {
+        return n.toLocaleString('en-US', {minimumFractionDigits:d, maximumFractionDigits:d});
     }
 
-    function _buildFutItems(isUS) {
+    // KR·US 공통으로 3개 전부 순환
+    function _buildFutItems() {
         _futItems = [];
-        if (isUS) {
-            const nq = _futData.nq || {};
-            const es = _futData.es || {};
-            if (nq.price) _futItems.push({ lbl:'📈 NQ선물', price:_fmt(nq.price,2), c1h:nq.change_1h||0, c5d:nq.change_5d||0 });
-            if (es.price) _futItems.push({ lbl:'📊 ES선물', price:_fmt(es.price,2), c1h:es.change_1h||0, c5d:es.change_5d||0 });
-        } else {
-            const ewy = _futData.ewy || {};
-            if (ewy.price) _futItems.push({ lbl:'🇰🇷 EWY', price:'$'+_fmt(ewy.price,2), c1h:ewy.change_1h||0, c5d:ewy.change_5d||0 });
-        }
+        ['ewy','nq','es'].forEach(k => {
+            const raw  = _futData[k] || {};
+            const meta = _futMeta[k];
+            if (raw.price) _futItems.push({
+                lbl: meta.lbl,
+                price: meta.priceFmt(raw.price),
+                c1h: raw.change_1h || 0,
+                c5d: raw.change_5d || 0,
+                trend: raw.trend || 'NEUTRAL',
+                desc: meta.desc,
+            });
+        });
+    }
+
+    function _chgColor(c1h) {
+        return c1h >  0.01 ? '#4ade80' : (c1h < -0.01 ? '#f87171' : '#94a3b8');
+    }
+    function _chgText(c1h, c5d) {
+        const arrow = c1h > 0.01 ? '▲' : (c1h < -0.01 ? '▼' : '—');
+        const sign5 = c5d >= 0 ? '+' : '';
+        return `${arrow}${Math.abs(c1h).toFixed(2)}% (5일:${sign5}${c5d.toFixed(1)}%)`;
+    }
+    function _trendLabel(trend) {
+        if (trend === 'UPTREND')   return { text:'상승추세', bg:'rgba(74,222,128,0.15)', color:'#4ade80' };
+        if (trend === 'DOWNTREND') return { text:'하락추세', bg:'rgba(248,113,113,0.15)', color:'#f87171' };
+        return { text:'중립', bg:'rgba(148,163,184,0.15)', color:'#94a3b8' };
     }
 
     function _paintTicker(item, animate) {
@@ -855,26 +929,19 @@
         const priceEl = document.getElementById('fut-price');
         const chgEl   = document.getElementById('fut-chg');
         if (!ticker || !item) return;
-
         const doWrite = () => {
             lblEl.textContent   = item.lbl;
             priceEl.textContent = item.price;
-            const up    = item.c1h >  0.01;
-            const dn    = item.c1h < -0.01;
-            const arrow = up ? '▲' : (dn ? '▼' : '—');
-            const color = up ? '#4ade80' : (dn ? '#f87171' : '#94a3b8');
-            const sign5 = item.c5d >= 0 ? '+' : '';
-            chgEl.textContent = `${arrow}${Math.abs(item.c1h).toFixed(2)}% (5일:${sign5}${item.c5d.toFixed(1)}%)`;
-            // inline style로 확실히 적용 (CSS specificity 우회)
-            chgEl.style.color = color;
-            chgEl.style.webkitTextFillColor = color;
+            chgEl.textContent   = _chgText(item.c1h, item.c5d);
+            const col = _chgColor(item.c1h);
+            chgEl.style.color = col;
+            chgEl.style.webkitTextFillColor = col;
             if (animate) {
                 ticker.classList.remove('fut-anim-out');
                 ticker.classList.add('fut-anim-in');
                 setTimeout(() => ticker.classList.remove('fut-anim-in'), 300);
             }
         };
-
         if (animate) {
             ticker.classList.add('fut-anim-out');
             setTimeout(() => { ticker.classList.remove('fut-anim-out'); doWrite(); }, 230);
@@ -893,13 +960,68 @@
         }
     }
 
+    // ── 팝업 ──────────────────────────────────────────────────────────
+    let _futPopupOpen = false;
+
+    function _buildPopup() {
+        const popup = document.getElementById('fut-popup');
+        if (!popup) return;
+        const cards = _futItems.map(item => {
+            const col   = _chgColor(item.c1h);
+            const tr    = _trendLabel(item.trend);
+            const descLines = item.desc.split('\n');
+            const title = descLines[0];
+            const body  = descLines.slice(1).join('<br>');
+            return `
+            <div class="fut-card">
+                <div class="fut-card-top">
+                    <span class="fut-card-label">${item.lbl}</span>
+                    <span class="fut-card-trend"
+                          style="background:${tr.bg};color:${tr.color};border:1px solid ${tr.color}40;">
+                        ${tr.text}
+                    </span>
+                </div>
+                <div class="fut-card-price">${item.price}</div>
+                <div class="fut-card-chg" style="color:${col};">${_chgText(item.c1h,item.c5d)}</div>
+                <div class="fut-card-desc"><strong>${title}</strong><br>${body}</div>
+            </div>`;
+        }).join('');
+        popup.innerHTML = `<div id="fut-popup-cards">${cards}</div>`;
+    }
+
+    window.toggleFutPopup = function(e) {
+        e.stopPropagation();
+        const popup  = document.getElementById('fut-popup');
+        const ticker = document.getElementById('nav-fut-ticker');
+        if (!popup || !ticker) return;
+        _futPopupOpen = !_futPopupOpen;
+        if (_futPopupOpen) {
+            _buildPopup();
+            // 팝업 위치: ticker pill 바로 아래
+            const rect = ticker.getBoundingClientRect();
+            popup.style.top  = (rect.bottom + 8) + 'px';
+            popup.style.left = rect.left + 'px';
+            popup.style.display = 'block';
+        } else {
+            popup.style.display = 'none';
+        }
+    };
+
+    // 팝업 밖 클릭 시 닫기
+    document.addEventListener('click', () => {
+        if (_futPopupOpen) {
+            document.getElementById('fut-popup').style.display = 'none';
+            _futPopupOpen = false;
+        }
+    });
+
     function updateFuturesWidgets() {
         fetch('/api/futures_snapshot')
             .then(r => r.json())
             .then(d => {
                 if (d.error) return;
                 _futData = d;
-                _buildFutItems(_futIsUS);
+                _buildFutItems();
                 _futIdx = 0;
                 const ticker = document.getElementById('nav-fut-ticker');
                 if (ticker && _futItems.length) {
@@ -907,22 +1029,20 @@
                     _paintTicker(_futItems[0], false);
                     _startCycle();
                 }
+                // 팝업이 열려 있으면 내용 갱신
+                if (_futPopupOpen) _buildPopup();
             })
             .catch(() => {});
     }
 
-    // 모드 전환 시 호출
+    // 모드 전환 시 호출 (KR·US 모두 동일 3개 순환)
     window.applyFuturesVisibility = function(isUS) {
         _futIsUS = isUS;
-        _buildFutItems(isUS);
-        _futIdx = 0;
-        const ticker = document.getElementById('nav-fut-ticker');
-        if (ticker && _futItems.length) {
-            ticker.style.display = '';
+        if (_futItems.length) {
+            _futIdx = 0;
             _paintTicker(_futItems[0], false);
             _startCycle();
-        } else if (ticker) {
-            ticker.style.display = 'none';
+            document.getElementById('nav-fut-ticker').style.display = '';
         }
     };
 
