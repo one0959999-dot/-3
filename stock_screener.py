@@ -25,6 +25,11 @@ _full_ticker_cache: dict = {'ts': 0.0, 'movers': [], 'all': []}
 _full_ticker_lock  = threading.Lock()
 _FULL_TICKER_TTL   = 1800   # 30분 (장중 급등주 포착 주기)
 
+# 미국 섹터 선행 지수 캐시 (yfinance — 4시간마다 갱신)
+_us_sector_cache: dict = {'ts': 0.0, 'boosts': {}}
+_us_sector_lock  = threading.Lock()
+_US_SECTOR_TTL   = 14400  # 4시간 (미국장 마감 → KR장 개장 사이클 커버)
+
 # 당일 위성 후보 기준 (단타 모멘텀 슬롯과 역할 분리)
 # 위성: 완만한 상승 추세 (0.3% ~ 3%) → 중기 홀딩, 한달 20% 목표
 # 모멘텀: 급등주 (3%↑) → hot_momentum_scanner 전담
@@ -452,6 +457,117 @@ def calc_rsi(s, p=14):
     return 100 - 100 / (1 + g / (l + 1e-10))
 
 
+# ──────────────────────────────────────────────────────────────────────
+# 미국 섹터 선행 지수 → KR 섹터 보너스
+# ──────────────────────────────────────────────────────────────────────
+# US 섹터 ETF → KR 섹터 매핑 (가중치 0~1.0)
+# 한국 시장은 미국 야간 수익률에 높은 상관성 (반도체 0.85↑, 바이오 0.7, 방산 0.6)
+_US_ETF_TO_KR_SECTORS: dict = {
+    "SOXX": [("반도체", 1.0)],                              # 필라델피아 반도체 ETF
+    "XLK":  [("IT/소프트웨어", 0.8), ("AI/로봇", 0.7)],     # 기술주 ETF
+    "LIT":  [("2차전지", 1.0)],                             # 리튬/배터리 ETF
+    "IBB":  [("바이오/제약", 1.0)],                         # 바이오텍 ETF
+    "XLV":  [("바이오/제약", 0.6)],                         # 헬스케어 ETF (IBB 보완)
+    "XLE":  [("에너지/화학", 0.9)],                         # 에너지 ETF
+    "XLF":  [("금융/보험", 1.0)],                           # 금융 ETF
+    "ITA":  [("방산/우주", 1.0)],                           # 방산/항공 ETF
+    "XLY":  [("유통/소비", 0.8), ("자동차", 0.5)],          # 소비재 ETF
+    "XLI":  [("조선/중공업", 0.7)],                         # 산업재 ETF
+    "XLU":  [("전력/전기", 1.0)],                           # 유틸리티 ETF
+    "XLRE": [("건설/부동산", 1.0)],                         # 부동산 ETF
+}
+
+
+def get_us_sector_boost(verbose: bool = False) -> dict:
+    """
+    미국 섹터 ETF 수익률을 분석해 KR 섹터별 선행 지수 보너스 반환.
+
+    - 전일 미국장 수익률(1일) × 0.6 + 5일 추세 × 0.4 블렌드
+    - 4시간 캐시 → KR 개장 전 미리 반영, 장중에는 재계산 없음
+
+    Returns: { kr_sector_name: boost_score(float) }
+      예) {"반도체": 12.0, "바이오/제약": -4.0, ...}
+    """
+    now_ts = time.time()
+    with _us_sector_lock:
+        if now_ts - _us_sector_cache['ts'] < _US_SECTOR_TTL and _us_sector_cache['boosts']:
+            return dict(_us_sector_cache['boosts'])
+
+    boosts: dict = {}
+    try:
+        import yfinance as yf
+        etf_list = list(_US_ETF_TO_KR_SECTORS.keys())
+
+        raw = yf.download(etf_list, period="10d", interval="1d",
+                          progress=False, auto_adjust=True)
+        if raw is None or raw.empty:
+            return {}
+
+        if isinstance(raw.columns, pd.MultiIndex):
+            lv0 = raw.columns.get_level_values(0).unique().tolist()
+            closes = raw["Close"] if "Close" in lv0 else raw.xs("Close", axis=1, level=1)
+        else:
+            closes = raw
+
+        # ETF별 1일·5일 수익률 → 블렌디드 수익률
+        etf_returns: dict = {}
+        for etf in etf_list:
+            try:
+                if etf not in closes.columns:
+                    continue
+                c = closes[etf].dropna()
+                if len(c) < 2:
+                    continue
+                ret_1d = (float(c.iloc[-1]) / float(c.iloc[-2]) - 1) * 100
+                ret_5d = (float(c.iloc[-1]) / float(c.iloc[-min(6, len(c)-1)]) - 1) * 100
+                # 1일 60% + 5일 40% : 단기 반응 + 추세 둘 다 반영
+                etf_returns[etf] = ret_1d * 0.6 + ret_5d * 0.4
+            except Exception:
+                continue
+
+        # KR 섹터별 가중 평균 집계
+        kr_sector_raw: dict = {}
+        for etf, kr_sectors in _US_ETF_TO_KR_SECTORS.items():
+            if etf not in etf_returns:
+                continue
+            for kr_sector, weight in kr_sectors:
+                kr_sector_raw.setdefault(kr_sector, []).append(etf_returns[etf] * weight)
+
+        # 블렌디드 수익률 → 보너스 점수 변환
+        # 한국시장 US 연동 상관계수 반영: 반도체·2차전지 강함, 건설·유통 약함
+        for kr_sector, vals in kr_sector_raw.items():
+            avg = sum(vals) / len(vals)
+            if avg >= 2.0:
+                boost = 12.0
+            elif avg >= 1.0:
+                boost = 8.0
+            elif avg >= 0.3:
+                boost = 4.0
+            elif avg >= -0.3:
+                boost = 0.0
+            elif avg >= -1.0:
+                boost = -4.0
+            else:
+                boost = -8.0
+            boosts[kr_sector] = boost
+
+        if verbose:
+            print("\n🇺🇸 [미국 섹터 선행 지수] KR 섹터 보너스 반영:")
+            for sec, b in sorted(boosts.items(), key=lambda x: x[1], reverse=True):
+                arrow = "📈" if b > 0 else ("📉" if b < 0 else "➡️")
+                print(f"   {arrow} {sec:<16}: {b:+.0f}점")
+
+    except Exception as e:
+        logger.warning(f"[스크리너] 미국 섹터 선행 지수 조회 실패: {e}")
+        return {}
+
+    with _us_sector_lock:
+        _us_sector_cache['ts']     = time.time()
+        _us_sector_cache['boosts'] = boosts
+
+    return boosts
+
+
 def calc_signal_readiness(df: 'pd.DataFrame', strategy_name: str) -> float:
     """선정된 전략 기준으로 현재 BUY 신호까지의 '거리'를 점수화.
 
@@ -696,6 +812,9 @@ def select_satellites(kis=None, n=NUM_SATELLITES, verbose=True, gemini_client=No
     sector_momentum = get_sector_momentum(lookback=20, verbose=verbose)
     sector_tickers, ticker_to_sector, hot_sectors, ticker_sector_rank, hot_sector_returns = get_sector_tickers(sector_momentum, top_n_sectors=4)
 
+    # 미국 섹터 선행 지수 사전 로드 (4시간 캐시 — 미장 마감 후 KR 개장 전에 한 번만 조회)
+    us_sector_boosts = get_us_sector_boost(verbose=verbose)
+
     if verbose:
         if hot_sectors:
             sector_labels = []
@@ -813,6 +932,13 @@ def select_satellites(kis=None, n=NUM_SATELLITES, verbose=True, gemini_client=No
                 sector_bonus = int(_base * _quality)
             else:
                 sector_bonus = 0
+
+            # 미국 섹터 선행 지수 보너스 (전날 미국장 → KR 개장 방향 선반영)
+            # 반도체·2차전지·바이오 등 미국 연동 섹터는 최대 ±12점 추가
+            us_sector_name = ticker_to_sector.get(ticker, "")
+            us_boost = us_sector_boosts.get(us_sector_name, 0.0)
+            sector_bonus += us_boost
+
             # 외인/기관 보너스: 037(기관+외인) +8 / 161(외국계 전용) 추가 +5 = 최대 +13
             if ticker in frgn_only_tickers:
                 frgn_inst_bonus = 13   # 외국계 전용 순매수 — 더 강한 신호
@@ -944,9 +1070,11 @@ def select_satellites(kis=None, n=NUM_SATELLITES, verbose=True, gemini_client=No
             sr_tag = (f"🟢신호임박({sr:+.0f})" if sr >= 10
                       else f"🟡신호접근({sr:+.0f})" if sr >= 0
                       else f"🔴신호대기({sr:+.0f})")
+            _us_b = us_sector_boosts.get(c.get('sector', ''), 0.0)
+            us_tag = (f"🇺🇸US{_us_b:+.0f}" if _us_b != 0 else "")
             print(f"\n  {rank}위. [{c['name']}] ({c['ticker']}){dl_tag}{ai_tag}")
             print(f"       전략: {c['strategy_name']}  /  6개월 수익: {c.get('return_pct', 0):+.1f}%")
-            print(f"       20일 모멘텀: {c.get('momentum_20d', 0):+.1f}%  {pos_tag}  {vol_tag}  {sec_tag}  {fi_tag}")
+            print(f"       20일 모멘텀: {c.get('momentum_20d', 0):+.1f}%  {pos_tag}  {vol_tag}  {sec_tag}  {fi_tag}  {us_tag}")
             print(f"       종합점수: {c.get('score', 0):.1f}점  {sr_tag}")
         print(f"{'='*60}\n")
 
