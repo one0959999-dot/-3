@@ -774,6 +774,53 @@ class BaseBot:
             self._refresh_blacklist()
             return ticker in self._satellite_rejects
 
+    def _fmt_scan_report(self, theme: str, candidates: list, regime: str, action_note: str) -> str:
+        """친구 AI 스타일 매수 검토 리포트 포맷.
+        candidates: [{'name', 'ticker', 'price', 'stats': {'고점대비', '저점반등', 'ma5_pos', 'extra'}}]
+        """
+        regime_label = {"BULL": "상승장 🚀", "BEAR": "하락장 🐻", "NEUTRAL": "횡보장 ➡️"}.get(regime, regime)
+        now_str = _now_kst().strftime('%H:%M KST')
+        lines = [
+            f"[{theme}]",
+            f"정규장 · {regime_label} | {len(candidates)}종목",
+            "━━━━━━━━━━━━━━━━━━━━",
+        ]
+        for c in candidates:
+            s = c.get('stats', {})
+            parts = [f"<b>{c['name']}</b>({c['ticker']}) {c['price']:,.0f}원"]
+            if '고점대비' in s: parts.append(f"고점대비 {s['고점대비']:+.1f}%")
+            if '저점반등' in s: parts.append(f"저점반등 {s['저점반등']:+.1f}%")
+            if 'ma5_pos' in s: parts.append(f"MA5 {'위 ✅' if s['ma5_pos'] else '아래 ⚠️'}")
+            if 'extra'  in s: parts.append(s['extra'])
+            lines.append("· " + " / ".join(parts))
+        lines.append("━━━━━━━━━━━━━━━━━━━━")
+        lines.append(f"행동: {action_note}")
+        lines.append(f"⏰ {now_str}")
+        return "\n".join(lines)
+
+    @staticmethod
+    def _calc_price_stats(df: 'pd.DataFrame', price: float) -> dict:
+        """OHLCV DataFrame → 고점대비/저점반등/MA5 위치 계산."""
+        stats = {}
+        try:
+            if df is None or df.empty or 'close' not in df.columns:
+                return stats
+            closes = df['close'].dropna()
+            if len(closes) >= 5:
+                ma5 = closes.tail(5).mean()
+                stats['ma5_pos'] = price >= ma5
+            high_col = 'high' if 'high' in df.columns else 'close'
+            low_col  = 'low'  if 'low'  in df.columns else 'close'
+            recent20_high = df[high_col].tail(20).max()
+            recent5_low   = df[low_col].tail(5).min()
+            if recent20_high > 0:
+                stats['고점대비'] = (price - recent20_high) / recent20_high * 100
+            if recent5_low > 0:
+                stats['저점반등'] = (price - recent5_low)  / recent5_low  * 100
+        except Exception:
+            pass
+        return stats
+
     def _fmt_trade_msg(self, action_emoji, action_name, ticker, name, price, qty,
                        profit=None, strategy=None, ai_reason=None, note=None):
         """HTML 포맷 매매 체결 알림 메시지를 생성합니다."""
@@ -1638,6 +1685,19 @@ class BaseBot:
                     entry_cash   = p_cash * first_ratio
                     reserve_cash = p_cash * reserve_ratio
 
+                    # ── 매수 검토 리포트 발송 (친구 AI 스타일) ──────────────
+                    try:
+                        _stats = self._calc_price_stats(ex_df, price)
+                        _stats['extra'] = f"전략 [{st_nm}] / {regime_label}"
+                        self._send_telegram(self._fmt_scan_report(
+                            theme="📊 위성 매수 신호",
+                            candidates=[{'name': p_nm, 'ticker': ticker, 'price': price, 'stats': _stats}],
+                            regime=regime,
+                            action_note="AI 심사 후 자동주문" if self.gemini else "알고리즘 자동주문"
+                        ), 'misc')
+                    except Exception:
+                        pass
+
                     if self.gemini:
                         pos.status = "AI 심사 중 🤖"
                         trade_ctx = self._build_trade_context(ticker, p_nm, price, ex_df, st_nm, regime)
@@ -1987,6 +2047,21 @@ class BaseBot:
                         (df_m['low']  - df_m['close'].shift(1)).abs(),
                     ], axis=1).max(axis=1)
                     atr_val = float(tr.rolling(14, min_periods=1).mean().iloc[-1])
+            except Exception:
+                pass
+
+            # ── 매수 검토 리포트 (친구 AI 스타일) ──────────────────────────
+            try:
+                _df_stat = self._get_cached_base_ohlcv(b_ticker)
+                _stats   = self._calc_price_stats(_df_stat, b_price)
+                _stats['extra'] = f"거래량 {best.get('vol_ratio', 0):.1f}x↑"
+                _report = self._fmt_scan_report(
+                    theme=f"🚀 모멘텀 급등 포착 — 슬롯#{slot_idx+1}",
+                    candidates=[{'name': b_name, 'ticker': b_ticker, 'price': b_price, 'stats': _stats}],
+                    regime=regime,
+                    action_note="AI 심사 후 자동주문"
+                )
+                self._send_telegram(_report, 'misc')
             except Exception:
                 pass
 
