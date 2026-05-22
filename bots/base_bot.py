@@ -2243,15 +2243,8 @@ class BaseBot:
                             # exit_ts를 현재 시각으로 → 하루 종일 차단 (장 마감 후 _refresh_blacklist 초기화)
                             self._momentum_exit_times[b_ticker] = time.time() + 86400
                     else:
-                        # 1~2회 거절 → 30분 쿨다운 후 재심사 가능
+                        # 1~2회 거절 → 30분 쿨다운 후 재심사 가능 (텔레그램 알림 없음 — 로그만 기록)
                         self.add_log(f"🛑 모멘텀#{slot_idx+1} AI 거절({reject_count}/3): {b_name} — {m_ai_reason}")
-                        self._send_reject_telegram(
-                            f"🛑 <b>모멘텀#{slot_idx+1} 진입 거절 ({reject_count}/3)</b>  ·  {self.alert_icon} {self.mode_name}\n"
-                            f"━━━━━━━━━━━━━━━━━━━━\n"
-                            f"📌 <b>{b_name}</b>  <code>{b_ticker}</code>\n"
-                            f"💰 진입 예정가: {b_price:,.0f}원\n"
-                            f"❌ {m_ai_reason[:300]}"
-                        )
                         with self.lock:
                             self._refresh_blacklist()
                             self._momentum_exit_times[b_ticker] = time.time() - (self._MOMENTUM_COOLDOWN_SEC - 600)

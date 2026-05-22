@@ -1,7 +1,11 @@
+import re
 import requests
 
 # 텔레그램 단일 메시지 최대 길이 (API 제한 4096자)
 _TG_MAX_LEN = 4096
+
+# HTML 태그 제거 패턴 (parse_mode 없이 plain text 전송 시 태그가 그대로 노출되는 문제 방지)
+_HTML_TAG_RE = re.compile(r'<[^>]+>')
 
 class TelegramNotifier:
     """텔레그램을 통해 매매 알림을 보내는 클래스입니다."""
@@ -28,10 +32,14 @@ class TelegramNotifier:
     def send_message(self, text: str):
         """동기 방식으로 텔레그램 메시지 전송.
         4096자 초과 시 줄 단위로 분할해 연속 전송합니다 (짤림 방지).
+        HTML 태그는 자동 제거 (parse_mode 없이 plain text 전송하므로).
         """
         if not self.token or not self.chat_id:
             print(f"[텔레그램 알림] (설정안됨) {text}")
             return
+
+        # HTML 태그 제거 (<b>, </b>, <code>, </code> 등 모두)
+        text = _HTML_TAG_RE.sub('', text)
 
         if len(text) <= _TG_MAX_LEN:
             self._post(text)
