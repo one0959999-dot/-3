@@ -238,6 +238,66 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     // ── 모멘텀 슬롯 카드 렌더링: 보유 중인 종목만 동적 생성 ──
+    function renderDefensiveAssets(defensiveList, regime) {
+        const container = document.getElementById('defensive-slots');
+        const badge     = document.getElementById('defensive-regime-badge');
+        if (!container) return;
+
+        const isBear = (regime === 'BEAR');
+
+        // 배지 업데이트
+        if (badge) {
+            if (isBear) {
+                badge.textContent = '🐻 BEAR — 헤지 가동 중';
+                badge.style.background    = 'rgba(248,81,73,0.15)';
+                badge.style.borderColor   = 'rgba(248,81,73,0.45)';
+                badge.style.color         = '#fca5a5';
+            } else {
+                badge.textContent = regime === 'BULL' ? '🚀 BULL — 대기' : '➡️ NEUTRAL — 대기';
+                badge.style.background    = 'rgba(255,255,255,0.04)';
+                badge.style.borderColor   = 'rgba(255,255,255,0.12)';
+                badge.style.color         = '#8b949e';
+            }
+        }
+
+        if (!defensiveList || defensiveList.length === 0) {
+            container.innerHTML = '<div style="color:#6b7280;font-size:0.84rem;padding:14px 4px;text-align:center;">방어자산 데이터 없음</div>';
+            return;
+        }
+
+        container.style.display = 'grid';
+        container.style.gridTemplateColumns = 'repeat(3, 1fr)';
+
+        container.innerHTML = defensiveList.map(asset => {
+            const holding  = asset.shares > 0;
+            const priceStr = asset.price > 0 ? Math.round(asset.price).toLocaleString() + '원' : '조회 중';
+            const valueStr = holding ? Math.round(asset.value).toLocaleString() + '원' : '-';
+            const ratioStr = (asset.ratio * 100).toFixed(0) + '% 배정';
+
+            let borderColor, bgColor, statusText, statusColor;
+            if (isBear && holding) {
+                borderColor = 'rgba(248,81,73,0.5)'; bgColor = 'rgba(248,81,73,0.06)';
+                statusText = `${asset.shares.toLocaleString()}주 보유 중`; statusColor = '#fca5a5';
+            } else if (isBear) {
+                borderColor = 'rgba(245,158,11,0.45)'; bgColor = 'rgba(245,158,11,0.05)';
+                statusText = 'BEAR — 매수 대기'; statusColor = '#fcd34d';
+            } else {
+                borderColor = 'rgba(255,255,255,0.1)'; bgColor = 'transparent';
+                statusText = holding ? `${asset.shares.toLocaleString()}주 보유` : '비활성 (대기)';
+                statusColor = holding ? '#94a3b8' : '#4b5563';
+            }
+
+            return `<div style="border:1px solid ${borderColor};background:${bgColor};border-radius:12px;padding:14px 16px;transition:all 0.3s;">
+                <div style="font-size:0.72rem;color:#6b7280;margin-bottom:6px;">${asset.emoji} ${ratioStr}</div>
+                <div style="font-size:0.95rem;font-weight:700;color:#e6edf3;margin-bottom:4px;">${asset.name}</div>
+                <div style="font-size:0.78rem;color:#64748b;margin-bottom:8px;">${asset.ticker}</div>
+                <div style="font-size:0.88rem;color:#94a3b8;">현재가 ${priceStr}</div>
+                ${holding ? `<div style="font-size:0.82rem;color:#94a3b8;">평가 ${valueStr}</div>` : ''}
+                <div style="margin-top:8px;font-size:0.78rem;font-weight:600;color:${statusColor};">${statusText}</div>
+            </div>`;
+        }).join('');
+    }
+
     function renderMomentumSlots(momentumList) {
         const container = document.getElementById('momentum-slots');
         const badge     = document.getElementById('momentum-slot-badge');
@@ -352,6 +412,8 @@ document.addEventListener('DOMContentLoaded', () => {
             }
         }
 
+        // 방어자산 렌더링
+        renderDefensiveAssets(data.defensive_list, data.market_regime);
         // 모멘텀 슬롯 렌더링
         renderMomentumSlots(data.momentum_list);
 

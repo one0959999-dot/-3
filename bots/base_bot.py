@@ -2724,8 +2724,28 @@ class BaseBot:
                 mock_total_asset = 0.0; mock_pnl = 0.0; mock_pnl_rt = 0.0
 
             available_cash = self.internal_cash if self.internal_cash is not None else 0.0
+
+            # ── 방어자산 상태 (고정 3종목 항상 표시) ──
+            is_bear = (self.market_regime == "BEAR")
+            defensive_list = []
+            bal_stocks = {s['ticker']: int(s.get('shares', 0)) for s in (self.cached_balance or {}).get('stocks', [])} if self.cached_balance else {}
+            for asset in DEFENSIVE_ASSETS:
+                d_ticker = asset['ticker']
+                d_price  = self.live_prices.get(d_ticker, 0)
+                d_shares = bal_stocks.get(d_ticker, 0)
+                defensive_list.append({
+                    "ticker": d_ticker,
+                    "name":   asset['name'],
+                    "emoji":  asset['emoji'],
+                    "ratio":  asset['ratio'],
+                    "price":  d_price,
+                    "shares": d_shares,
+                    "value":  d_shares * d_price,
+                    "active": is_bear,
+                })
+
             # BUG-FIX: deque는 슬라이싱 불가 → list()로 변환 후 슬라이스 (TypeError 방지)
             recent_logs = list(self.logs)[-30:]
-            return {"is_running": self.is_running, "is_mock": self._is_mock, "has_keys": self.kis is not None, "logs": recent_logs, "hot_sectors": self.hot_sectors, "num_satellites": self.num_satellites, "cores": cores_data, "satellites": satellites, "momentum_list": momentum_list, "mock_total_asset": mock_total_asset, "mock_pnl": mock_pnl, "mock_pnl_rt": mock_pnl_rt, "initial_cash": current_initial_cash, "available_cash": available_cash}
+            return {"is_running": self.is_running, "is_mock": self._is_mock, "has_keys": self.kis is not None, "logs": recent_logs, "hot_sectors": self.hot_sectors, "num_satellites": self.num_satellites, "cores": cores_data, "satellites": satellites, "momentum_list": momentum_list, "defensive_list": defensive_list, "market_regime": self.market_regime, "mock_total_asset": mock_total_asset, "mock_pnl": mock_pnl, "mock_pnl_rt": mock_pnl_rt, "initial_cash": current_initial_cash, "available_cash": available_cash}
         except Exception as critical_e:
             return {"is_running": False, "is_mock": self._is_mock, "has_keys": False, "logs": [{"time": "Error", "message": f"오류: {str(critical_e)}"}], "hot_sectors": [], "num_satellites": self.num_satellites, "cores": [], "satellites": [], "momentum_list": [None] * len(self.momentum_positions), "mock_total_asset": 0, "mock_pnl": 0, "mock_pnl_rt": 0, "initial_cash": 10000000}
