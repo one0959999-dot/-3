@@ -2028,6 +2028,8 @@ class BaseBot:
                 chg = candidate.get('price_chg_pct', 0)
                 if chg > 20.0:
                     self.add_log(f"⛔ 모멘텀 진입 금지: {candidate.get('name','?')}({ct}) 당일 +{chg:.1f}% 고점 과열")
+                    # 고점 과열 종목은 30분 쿨다운 — 매 사이클 반복 로그 방지
+                    self._momentum_exit_times[ct] = time.time() + 1800
                     continue
                 best = candidate
                 break
