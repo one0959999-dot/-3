@@ -501,12 +501,13 @@ class USBotController:
                 # ── 장 밖이면 대기 ──────────────────────────────────
                 if not _is_us_market_open():
                     h, m = now.hour, now.minute
+                    api_hint = "" if self.kis_overseas else " (⚠️ KIS 미연결)"
                     self.add_log(
-                        f"💤 장 외 시간 ({now.strftime('%a %H:%M ET')}) "
-                        f"— 09:30 개장 대기 중"
+                        f"💤 장 외 시간 ({now.strftime('%a %H:%M ET')})"
+                        f" — 09:30 개장 대기 중{api_hint}"
                     )
                     if h < 9 or (h == 9 and m < 30):
-                        self._screen_satellites()
+                        self._screen_satellites()   # 사전 스캔은 항상 허용
                     time.sleep(300)
                     continue
 
@@ -518,11 +519,14 @@ class USBotController:
                     self._sync_balance_from_kis()
                     _last_bal_ts = time.time()
 
-                # ── 위성 스크리닝 (하루 1회) ────────────────────────
+                # ── 위성 스크리닝 (하루 1회, KIS 미연결이어도 허용) ───
                 self._screen_satellites()
 
-                # ── 위성 관리 ───────────────────────────────────────
-                self._manage_satellites()
+                # ── 위성 관리 (KIS 연결 시에만 실매매) ─────────────
+                if self.kis_overseas:
+                    self._manage_satellites()
+                else:
+                    self.add_log("🔍 스캔 완료 — KIS API 미연결로 매매 건너뜀")
 
                 # ── 상태 저장 ───────────────────────────────────────
                 if time.time() - _last_save_ts >= _save_interval:
