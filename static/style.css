@@ -1,4 +1,4 @@
-/* ═══════════════════════════════════════════
+﻿/* ═══════════════════════════════════════════
    DESIGN TOKENS
 ═══════════════════════════════════════════ */
 :root {
@@ -1174,11 +1174,11 @@ body {
 }
 
 /* ==========================================================================
-   [테마 클래스] 모의투자 모드 격리 패치 (모든 배경 & 모든 글자 완전 개별 독립 적용)
+   [theme-us] US 모드 라이트 테마 (모든 배경 & 모든 글자 완전 개별 독립 적용)
    ========================================================================== */
 
-/* 1. 모의투자 전용 독립 라이트 토크 변수 정의 */
-body.theme-warm-beige {
+/* 1. US 모드 전용 독립 라이트 토크 변수 정의 */
+body.theme-us {
     --bg-primary: #f4efe6;
     --bg-secondary: #e8dfd1;
     --card-bg: rgba(255, 255, 255, 0.95);
@@ -1192,33 +1192,33 @@ body.theme-warm-beige {
     color: var(--text-primary) !important;
 }
 
-/* 2. [배경 독립] 모의투자 모드일 때 모든 컨테이너 레이어 배경 개별 적용 */
-body.theme-warm-beige .glass-card,
-body.theme-warm-beige .info-card,
-body.theme-warm-beige .mini-log,
-body.theme-warm-beige #ai-chat-panel,
-body.theme-warm-beige .chat-msg.ai .chat-bubble {
+/* 2. [배경 독립] US 모드일 때 모든 컨테이너 레이어 배경 개별 적용 */
+body.theme-us .glass-card,
+body.theme-us .info-card,
+body.theme-us .mini-log,
+body.theme-us #ai-chat-panel,
+body.theme-us .chat-msg.ai .chat-bubble {
     background: var(--card-bg) !important;
     border-color: var(--card-border) !important;
     box-shadow: 0 6px 24px rgba(165, 150, 130, 0.2) !important;
 }
 
 /* 모바일 전용 세로형 카드 및 일반 테이블 행 배경색 격리 */
-body.theme-warm-beige .sat-table tr {
+body.theme-us .sat-table tr {
     background: rgba(255, 255, 255, 0.7) !important;
     border: 1px solid #e2e8f0 !important;
 }
 
-body.theme-warm-beige .sat-table tr:hover {
+body.theme-us .sat-table tr:hover {
     background: rgba(255, 255, 255, 1) !important;
 }
 
 /* 3. 🛠️ 상단 네비게이션 버튼(오늘의 리포트, 계좌설정, 로그아웃) 명확한 가독성 보장 */
-body.theme-warm-beige .navbar a,
-body.theme-warm-beige .navbar button,
-body.theme-warm-beige .nav-user a,
-body.theme-warm-beige .nav-user button,
-body.theme-warm-beige .btn-settings {
+body.theme-us .navbar a,
+body.theme-us .navbar button,
+body.theme-us .nav-user a,
+body.theme-us .nav-user button,
+body.theme-us .btn-settings {
     background: #ffffff !important;
     color: #0f172a !important;
     border: 1px solid #cbd5e1 !important;
@@ -1229,78 +1229,78 @@ body.theme-warm-beige .btn-settings {
     padding: 6px 12px;
 }
 
-body.theme-warm-beige .navbar a:hover,
-body.theme-warm-beige .navbar button:hover,
-body.theme-warm-beige .nav-user a:hover,
-body.theme-warm-beige .btn-settings:hover {
+body.theme-us .navbar a:hover,
+body.theme-us .navbar button:hover,
+body.theme-us .nav-user a:hover,
+body.theme-us .btn-settings:hover {
     background: #f1f5f9 !important;
     border-color: #94a3b8 !important;
 }
 
 /* 4. 그라데이션 텍스트(제목, 강조 숫자) 배경 텍스처만 선택적 삭제하여 블랙 텍스트화 */
-body.theme-warm-beige h1,
-body.theme-warm-beige .card-value.highlight {
+body.theme-us h1,
+body.theme-us .card-value.highlight {
     background: none !important;
     -webkit-text-fill-color: var(--text-primary) !important;
 }
 
 /* 5. 🛠️ [글자 독립] 대시보드 내 "모든 텍스트" 색상 검은색 강제 전환 (스위치 배경 보호) */
-body.theme-warm-beige h1,
-body.theme-warm-beige h2,
-body.theme-warm-beige h4,
-body.theme-warm-beige p,
-body.theme-warm-beige th,
-body.theme-warm-beige td,
-body.theme-warm-beige b,
-body.theme-warm-beige strong,
-body.theme-warm-beige small,
-body.theme-warm-beige span:not(.slider):not(.toggle-dot):not(.chat-status-dot):not(.badge):not(#fut-chg),
-body.theme-warm-beige .card-value,
-body.theme-warm-beige .card-subvalue,
-body.theme-warm-beige .mini-log-entry,
-body.theme-warm-beige .chat-header-title,
-body.theme-warm-beige .chat-msg-time,
-body.theme-warm-beige .muted-center {
+body.theme-us h1,
+body.theme-us h2,
+body.theme-us h4,
+body.theme-us p,
+body.theme-us th,
+body.theme-us td,
+body.theme-us b,
+body.theme-us strong,
+body.theme-us small,
+body.theme-us span:not(.slider):not(.toggle-dot):not(.chat-status-dot):not(.badge):not(#fut-chg),
+body.theme-us .card-value,
+body.theme-us .card-subvalue,
+body.theme-us .mini-log-entry,
+body.theme-us .chat-header-title,
+body.theme-us .chat-msg-time,
+body.theme-us .muted-center {
     color: var(--text-primary) !important;
     -webkit-text-fill-color: var(--text-primary) !important;
 }
 
 /* 7. 부차적인 세부 설명 및 시간표시 글자색 회색조 개별 격리 */
-body.theme-warm-beige p,
-body.theme-warm-beige small,
-body.theme-warm-beige label,
-body.theme-warm-beige .card-subvalue,
-body.theme-warm-beige .mini-log-entry .log-time,
-body.theme-warm-beige .chat-msg-time,
-body.theme-warm-beige .muted-center {
+body.theme-us p,
+body.theme-us small,
+body.theme-us label,
+body.theme-us .card-subvalue,
+body.theme-us .mini-log-entry .log-time,
+body.theme-us .chat-msg-time,
+body.theme-us .muted-center {
     color: var(--text-secondary) !important;
     -webkit-text-fill-color: var(--text-secondary) !important;
 }
 
 /* 8. 예외 요소(정지 버튼, 뱃지, 테이블 테두리) 최종 보정 */
-body.theme-warm-beige .btn-stopped {
+body.theme-us .btn-stopped {
     background: #e2e8f0 !important;
     border-color: #cbd5e1 !important;
     color: var(--text-primary) !important;
     box-shadow: 0 2px 8px rgba(0, 0, 0, 0.06) !important;
 }
 
-body.theme-warm-beige .btn-stopped .toggle-dot {
+body.theme-us .btn-stopped .toggle-dot {
     background: #ef4444 !important;
     box-shadow: none !important;
 }
 
-body.theme-warm-beige .hot-sectors {
+body.theme-us .hot-sectors {
     background: rgba(210, 153, 34, 0.15) !important;
     color: #b45309 !important;
     -webkit-text-fill-color: #b45309 !important;
 }
 
-body.theme-warm-beige .sat-table th {
+body.theme-us .sat-table th {
     border-bottom: 2px solid #cbd5e1 !important;
 }
 
-body.theme-warm-beige .sat-table td {
+body.theme-us .sat-table td {
     border-bottom: 1px solid #e2e8f0 !important;
 }
 
@@ -1316,33 +1316,33 @@ body.theme-warm-beige .sat-table td {
  */
 
 /* 수익(+) → 진한 빨강 */
-body.theme-warm-beige #total-value[data-pnl="profit"],
-body.theme-warm-beige #total-pnl[data-pnl="profit"],
-body.theme-warm-beige #chart-monthly-pnl[data-pnl="profit"],
-body.theme-warm-beige #chart-yearly-pnl[data-pnl="profit"],
-body.theme-warm-beige #chart-total-pnl[data-pnl="profit"] {
+body.theme-us #total-value[data-pnl="profit"],
+body.theme-us #total-pnl[data-pnl="profit"],
+body.theme-us #chart-monthly-pnl[data-pnl="profit"],
+body.theme-us #chart-yearly-pnl[data-pnl="profit"],
+body.theme-us #chart-total-pnl[data-pnl="profit"] {
     color: #dc2626 !important;
     -webkit-text-fill-color: #dc2626 !important;
     font-weight: 700 !important;
 }
 
 /* 손실(-) → 진한 파랑 */
-body.theme-warm-beige #total-value[data-pnl="loss"],
-body.theme-warm-beige #total-pnl[data-pnl="loss"],
-body.theme-warm-beige #chart-monthly-pnl[data-pnl="loss"],
-body.theme-warm-beige #chart-yearly-pnl[data-pnl="loss"],
-body.theme-warm-beige #chart-total-pnl[data-pnl="loss"] {
+body.theme-us #total-value[data-pnl="loss"],
+body.theme-us #total-pnl[data-pnl="loss"],
+body.theme-us #chart-monthly-pnl[data-pnl="loss"],
+body.theme-us #chart-yearly-pnl[data-pnl="loss"],
+body.theme-us #chart-total-pnl[data-pnl="loss"] {
     color: #2563eb !important;
     -webkit-text-fill-color: #2563eb !important;
     font-weight: 700 !important;
 }
 
 /* 보합(0) → 회색 */
-body.theme-warm-beige #total-value[data-pnl="neutral"],
-body.theme-warm-beige #total-pnl[data-pnl="neutral"],
-body.theme-warm-beige #chart-monthly-pnl[data-pnl="neutral"],
-body.theme-warm-beige #chart-yearly-pnl[data-pnl="neutral"],
-body.theme-warm-beige #chart-total-pnl[data-pnl="neutral"] {
+body.theme-us #total-value[data-pnl="neutral"],
+body.theme-us #total-pnl[data-pnl="neutral"],
+body.theme-us #chart-monthly-pnl[data-pnl="neutral"],
+body.theme-us #chart-yearly-pnl[data-pnl="neutral"],
+body.theme-us #chart-total-pnl[data-pnl="neutral"] {
     color: #64748b !important;
     -webkit-text-fill-color: #64748b !important;
     font-weight: 400 !important;
@@ -1353,45 +1353,45 @@ body.theme-warm-beige #chart-total-pnl[data-pnl="neutral"] {
  * 위성 테이블 td, 코어 카드 내 수익률 div 모두 동일 클래스 적용.
  * 파일 후반부 배치로 동일 !important 규칙 중 "나중에 선언된 쪽 우선" 규칙 활용.
  */
-body.theme-warm-beige .pnl-rate[data-pnl="profit"] {
+body.theme-us .pnl-rate[data-pnl="profit"] {
     color: #dc2626 !important;
     -webkit-text-fill-color: #dc2626 !important;
     font-weight: 700 !important;
 }
-body.theme-warm-beige .pnl-rate[data-pnl="loss"] {
+body.theme-us .pnl-rate[data-pnl="loss"] {
     color: #2563eb !important;
     -webkit-text-fill-color: #2563eb !important;
     font-weight: 700 !important;
 }
-body.theme-warm-beige .pnl-rate[data-pnl="neutral"] {
+body.theme-us .pnl-rate[data-pnl="neutral"] {
     color: #64748b !important;
     -webkit-text-fill-color: #64748b !important;
 }
 
-/* 10-b. 🛠️ 위성 종목 갯수 조절 UI (모의투자 라이트 모드 맞춤형 디자인) */
+/* 10-b. 🛠️ 위성 종목 갯수 조절 UI (US 라이트 모드 맞춤형 디자인) */
 
 /* 전체 조절 칸 배경 및 테두리 */
-body.theme-warm-beige .sat-controls {
+body.theme-us .sat-controls {
     background: #ffffff !important;
     border: 1px solid #cbd5e1 !important;
     box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05) !important;
 }
 
 /* '위성', '종목' 글자 색상 (너무 튀지 않는 짙은 회색) */
-body.theme-warm-beige .sat-controls span {
+body.theme-us .sat-controls span {
     color: #475569 !important;
     -webkit-text-fill-color: #475569 !important;
 }
 
 /* 가운데 숫자(5) 색상 (가장 뚜렷한 진검정) */
-body.theme-warm-beige .sat-controls .sat-count-val {
+body.theme-us .sat-controls .sat-count-val {
     color: #0f172a !important;
     -webkit-text-fill-color: #0f172a !important;
     font-weight: 800 !important;
 }
 
 /* +, - 조절 버튼 디자인 (실전투자의 박스 형태를 화이트 톤으로 구현) */
-body.theme-warm-beige .sat-adj-btn {
+body.theme-us .sat-adj-btn {
     background: #f8fafc !important;
     border: 1px solid #cbd5e1 !important;
     color: #0f172a !important;
@@ -1401,32 +1401,32 @@ body.theme-warm-beige .sat-adj-btn {
 }
 
 /* +, - 버튼 마우스 오버 시 색상 변화 */
-body.theme-warm-beige .sat-adj-btn:hover {
+body.theme-us .sat-adj-btn:hover {
     background: #e2e8f0 !important;
     border-color: #94a3b8 !important;
 }
 
-/* 11. 🛠️ 팝업창(모달: 코어 설정, 계좌 설정, 리포트 등) 모의투자 라이트 테마 동기화 */
+/* 11. 🛠️ 팝업창(모달: 코어 설정, 계좌 설정, 리포트 등) US 라이트 테마 동기화 */
 
 /* 모달 전체 배경을 하얀색으로 밝게 변경 */
-body.theme-warm-beige .modal-content {
+body.theme-us .modal-content {
     background: #ffffff !important;
     border: 1px solid #cbd5e1 !important;
     box-shadow: 0 10px 40px rgba(0, 0, 0, 0.1) !important;
 }
 
 /* 우측 상단 닫기(X) 버튼 색상 */
-body.theme-warm-beige .close-modal {
+body.theme-us .close-modal {
     color: #64748b !important;
 }
 
-body.theme-warm-beige .close-modal:hover {
+body.theme-us .close-modal:hover {
     color: #0f172a !important;
 }
 
 /* 입력칸(코어 검색칸, API 설정칸 등) 밝은 톤으로 통일 */
-body.theme-warm-beige .settings-group input,
-body.theme-warm-beige .core-search-box input {
+body.theme-us .settings-group input,
+body.theme-us .core-search-box input {
     background: #f8fafc !important;
     border: 1px solid #cbd5e1 !important;
     color: #0f172a !important;
@@ -1434,21 +1434,21 @@ body.theme-warm-beige .core-search-box input {
 }
 
 /* 코어 주식 검색 결과 리스트 마우스 오버(Hover) 효과 밝게 */
-body.theme-warm-beige .search-result-item:hover {
+body.theme-us .search-result-item:hover {
     background: #f1f5f9 !important;
 }
 
 /* 추가/검색/저장 버튼은 텍스트가 잘 보이도록 강제 흰색 지정 */
-body.theme-warm-beige .btn-save-keys,
-body.theme-warm-beige .core-search-box button,
-body.theme-warm-beige .btn-add-core {
+body.theme-us .btn-save-keys,
+body.theme-us .core-search-box button,
+body.theme-us .btn-add-core {
     color: #ffffff !important;
     -webkit-text-fill-color: #ffffff !important;
     font-weight: 700 !important;
 }
 
 /* 코어 종목으로 선택된 '태그' 배경 및 글자색 보정 (연두색 테마) */
-body.theme-warm-beige .core-tag {
+body.theme-us .core-tag {
     background: #ecfdf5 !important;
     border: 1px solid #10b981 !important;
     color: #047857 !important;
@@ -1456,142 +1456,142 @@ body.theme-warm-beige .core-tag {
 }
 
 /* 일일 시장 분석 리포트 내용 글자색 블랙 톤으로 고정 */
-body.theme-warm-beige #report-content,
-body.theme-warm-beige #strat-desc {
+body.theme-us #report-content,
+body.theme-us #strat-desc {
     color: #334155 !important;
     -webkit-text-fill-color: #334155 !important;
 }
 
-/* 예수금 표시 — 모의(밝은) 테마 */
-body.theme-warm-beige #available-cash-row {
+/* 예수금 표시 — US(밝은) 테마 */
+body.theme-us #available-cash-row {
     color: #475569 !important;
 }
-body.theme-warm-beige #available-cash-val {
+body.theme-us #available-cash-val {
     color: #334155 !important;
     -webkit-text-fill-color: #334155 !important;
 }
 
-/* 모멘텀 슬롯 카드 — 모의(밝은) 테마 가독성 보정 */
-body.theme-warm-beige .momentum-slot-card {
+/* 모멘텀 슬롯 카드 — US(밝은) 테마 가독성 보정 */
+body.theme-us .momentum-slot-card {
     background: rgba(15, 23, 42, 0.06) !important;
     border: 1.5px solid rgba(15, 23, 42, 0.18) !important;
     box-shadow: inset 0 0 0 1px rgba(15,23,42,0.06), 0 2px 8px rgba(100,80,60,0.08);
 }
-body.theme-warm-beige .momentum-slot-card.occupied {
+body.theme-us .momentum-slot-card.occupied {
     background: rgba(245,158,11,0.09) !important;
     border-color: rgba(180,120,0,0.38) !important;
 }
-body.theme-warm-beige .momentum-slot-card.profit {
+body.theme-us .momentum-slot-card.profit {
     border-color: rgba(200,30,20,0.4) !important;
     background: rgba(200,30,20,0.05) !important;
 }
-body.theme-warm-beige .momentum-slot-card.loss {
+body.theme-us .momentum-slot-card.loss {
     border-color: rgba(30,90,200,0.38) !important;
     background: rgba(30,90,200,0.05) !important;
 }
-body.theme-warm-beige .mslot-label {
+body.theme-us .mslot-label {
     color: #64748b !important;
     -webkit-text-fill-color: #64748b !important;
 }
-body.theme-warm-beige .mslot-name {
+body.theme-us .mslot-name {
     color: #0f172a !important;
     -webkit-text-fill-color: #0f172a !important;
 }
-body.theme-warm-beige .mslot-meta {
+body.theme-us .mslot-meta {
     color: #475569 !important;
     -webkit-text-fill-color: #475569 !important;
 }
-body.theme-warm-beige .mslot-empty {
+body.theme-us .mslot-empty {
     color: #94a3b8 !important;
     -webkit-text-fill-color: #94a3b8 !important;
 }
 
 /* ==========================================================================
-   ⚙️ [라씨 AI 채팅창] 모의투자 모드(라이트 테마) 독점 가독성 극대화 패치
+   ⚙️ [라씨 AI 채팅창] US 모드(라이트 테마) 가독성 패치
    ========================================================================== */
 
 /* 1. AI 응답 말풍선 내부의 모든 텍스트(리스트, 강조 포함) 진한 네이비 블랙으로 동기화 */
-body.theme-warm-beige .chat-msg.ai .chat-bubble {
+body.theme-us .chat-msg.ai .chat-bubble {
     background: #f1f5f9 !important;
     border: 1px solid #cbd5e1 !important;
     color: #0f172a !important;
 }
 
-body.theme-warm-beige .chat-msg.ai .chat-bubble * {
+body.theme-us .chat-msg.ai .chat-bubble * {
     color: #0f172a !important;
     -webkit-text-fill-color: #0f172a !important;
 }
 
-body.theme-warm-beige .chat-msg.ai .chat-bubble strong {
+body.theme-us .chat-msg.ai .chat-bubble strong {
     color: #4f46e5 !important;
     -webkit-text-fill-color: #4f46e5 !important;
     font-weight: 700 !important;
 }
 
 /* 2. 사용자(User) 말풍선 내부 글자색 강제 방어 (검은색으로 변질되는 현상 차단) */
-body.theme-warm-beige .chat-msg.user .chat-bubble {
+body.theme-us .chat-msg.user .chat-bubble {
     background: linear-gradient(135deg, #4f46e5, #7c3aed) !important;
     color: #ffffff !important;
     box-shadow: 0 4px 12px rgba(79, 70, 229, 0.2) !important;
 }
 
-body.theme-warm-beige .chat-msg.user .chat-bubble * {
+body.theme-us .chat-msg.user .chat-bubble * {
     color: #ffffff !important;
     -webkit-text-fill-color: #ffffff !important;
 }
 
 /* 3. 질문 입력창(Textarea) 화이트아웃 버그 수정: 배경을 흰색으로 고정하고 글자색을 어둡게 변경 */
-body.theme-warm-beige #ai-chat-input {
+body.theme-us #ai-chat-input {
     background: #ffffff !important;
     border: 1px solid #cbd5e1 !important;
     color: #0f172a !important;
 }
 
-body.theme-warm-beige #ai-chat-input::placeholder {
+body.theme-us #ai-chat-input::placeholder {
     color: #94a3b8 !important;
 }
 
 /* 4. 하단 질문 추천 칩(Chips) 디자인을 화이트 톤 매칭 레이아웃으로 변경 */
-body.theme-warm-beige .chat-chip {
+body.theme-us .chat-chip {
     background: #ffffff !important;
     border: 1px solid #cbd5e1 !important;
     color: #4f46e5 !important;
     box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05) !important;
 }
 
-body.theme-warm-beige .chat-chip:hover {
+body.theme-us .chat-chip:hover {
     background: #eef2ff !important;
     border-color: #4f46e5 !important;
     color: #4f46e5 !important;
 }
 
 /* ==========================================
-   [상태 팝업창 및 뱃지] 모의투자 라이트 테마 강제 보정
+   [상태 팝업창 및 뱃지] US 라이트 테마 강제 보정
    ========================================== */
 
 /* 1. 위성/코어 종목 상태 뱃지 테두리 가독성 확보 */
-body.theme-warm-beige .badge {
+body.theme-us .badge {
     background: #f8fafc !important;
     border: 1px solid #cbd5e1 !important;
     color: #334155 !important;
 }
 
 /* 뱃지 상태별 고유 색상 살리기 (테두리 뚜렷하게) */
-body.theme-warm-beige .badge[style*="168,85,247"] {
+body.theme-us .badge[style*="168,85,247"] {
     /* AI 심사 중 (보라) */
     background: #f3e8ff !important;
     border-color: #d8b4fe !important;
     color: #9333ea !important;
 }
 
-body.theme-warm-beige .badge[style*="245,158,11"] {
+body.theme-us .badge[style*="245,158,11"] {
     /* 체결 대기 (노랑) */
     background: #fef3c7 !important;
     border-color: #fcd34d !important;
     color: #d97706 !important;
 }
 
-body.theme-warm-beige .badge[style*="239,68,68"] {
+body.theme-us .badge[style*="239,68,68"] {
     /* 긴급/거절 (빨강) */
     background: #fee2e2 !important;
     border-color: #fca5a5 !important;
@@ -1599,23 +1599,23 @@ body.theme-warm-beige .badge[style*="239,68,68"] {
 }
 
 /* 2. 뱃지 클릭 시 나오는 팝업(상태 점검 리포트) 하얀색 테마로 완벽 동기화 */
-body.theme-warm-beige #statusModal>div {
+body.theme-us #statusModal>div {
     background: #ffffff !important;
     border: 1px solid #cbd5e1 !important;
     box-shadow: 0 10px 40px rgba(0, 0, 0, 0.1) !important;
 }
 
-body.theme-warm-beige #statusModal h3 {
+body.theme-us #statusModal h3 {
     color: #2563eb !important;
     /* 파란색 제목 */
 }
 
-body.theme-warm-beige #modalTickerName {
+body.theme-us #modalTickerName {
     color: #0f172a !important;
     /* 종목명 검은색 */
 }
 
-body.theme-warm-beige #modalStatusMsg {
+body.theme-us #modalStatusMsg {
     background: #f8fafc !important;
     /* 설명칸 밝은 회색 */
     border: 1px solid #e2e8f0 !important;

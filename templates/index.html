@@ -1,4 +1,4 @@
-<!DOCTYPE html>
+﻿<!DOCTYPE html>
 <html lang="ko">
 
 <head>
@@ -934,7 +934,7 @@
             priceEl.textContent = item.price;
             chgEl.textContent   = _chgText(item.c1h, item.c5d);
             const col = _chgColor(item.c1h);
-            // setProperty + 'important' → theme-warm-beige span !important 규칙을 이김
+            // setProperty + 'important' → theme-us span !important 규칙을 이김
             chgEl.style.setProperty('color', col, 'important');
             chgEl.style.setProperty('-webkit-text-fill-color', col, 'important');
             if (animate) {

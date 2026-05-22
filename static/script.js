@@ -1,4 +1,4 @@
-// ══════════════════════════════════════════════════════════════
+﻿// ══════════════════════════════════════════════════════════════
 // 💱 통화 전환 (₩ KRW ↔ $ USD)
 // ══════════════════════════════════════════════════════════════
 window.FX = { mode: 'KRW', rate: 1 };   // rate: USD/KRW 환율 (e.g. 1516)
@@ -482,9 +482,9 @@ document.addEventListener('DOMContentLoaded', () => {
         }
 
         if (isLive) {
-            document.body.classList.remove('theme-warm-beige');
+            document.body.classList.remove('theme-us');
         } else {
-            document.body.classList.add('theme-warm-beige');
+            document.body.classList.add('theme-us');
         }
 
         const pnlTitle = document.getElementById('pnl-title');
@@ -1343,3 +1343,4 @@ window.resetInitialCash = async function () {
         alert('❌ 서버 통신 오류: ' + e.message);
     }
 }
+
