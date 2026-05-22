@@ -2204,11 +2204,16 @@ class BaseBot:
 
             # AI 심사
             if self.gemini:
-                trade_ctx = (
-                    f"모멘텀 슬롯#{slot_idx+1} 진입 요청.\n"
-                    f"트리거: {best['trigger_reason']}\n"
-                    f"모멘텀 점수: {best['momentum_score']:.1f}점\n"
-                    f"현재가: {b_price:,.0f}원  ATR: {atr_val:,.0f}원"
+                # 풀 기술 지표 컨텍스트 + 모멘텀 전용 신호 정보 결합
+                _ex_df_m = self._get_extended_ohlcv(b_ticker, b_price)
+                trade_ctx = self._build_trade_context(
+                    b_ticker, b_name, b_price, _ex_df_m, "모멘텀슬롯", regime
+                )
+                trade_ctx += (
+                    f"\n[모멘텀 신호] 슬롯#{slot_idx+1} | "
+                    f"트리거: {best['trigger_reason']} | "
+                    f"점수: {best['momentum_score']:.1f}점 | "
+                    f"ATR: {atr_val:,.0f}원"
                 )
                 m_decision, m_ai_reason = self.gemini.ai_approve_trade(
                     'BUY', b_name, b_ticker, b_price, "모멘텀슬롯",
