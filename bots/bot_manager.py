@@ -1,4 +1,4 @@
-from bots.real_bot import RealBotController   # KR 실전 봇
+from bots.base_bot import KRBotController     # KR 실전 봇
 from bots.us_bot import USBotController       # US 페이퍼 트레이딩 봇
 from claude_api import ClaudeApi
 from kis_brokers.kis_real_api import KisRealApi
@@ -40,7 +40,7 @@ class BotManager:
                     "app_secret": user_data.get('real_app_secret'),
                     "account_no": user_data.get('real_account_no'),
                 }
-                self.bots[bot_key] = RealBotController(
+                self.bots[bot_key] = KRBotController(
                     user_id, kis_config, tele_config,
                     core_stocks=user_data.get('core_stocks'),
                 )

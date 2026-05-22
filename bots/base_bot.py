@@ -26,6 +26,8 @@ from stock_screener import select_satellites, generate_daily_market_report
 from hot_momentum_scanner import scan_hot_momentum, clear_expired_cache
 from database import update_bot_status, save_portfolio_state, load_portfolio_state, log_trade_journal, get_recent_trades, save_ai_rules, load_ai_rules, get_ai_rules_history, get_user_initial_cash, set_user_initial_cash, add_user_initial_cash, get_news_api_keys, get_sector_guide
 from news_monitor import NewsMonitor
+from kis_brokers.kis_real_api import KisRealApi
+from kis_brokers.kis_real_websocket import KisRealWebSocket
 
 _SELL_FEE = 0.00015   # 매도 수수료율 (0.015%)
 _SELL_TAX = 0.0018    # 증권거래세율 (0.18%)
@@ -52,18 +54,17 @@ def fetch_recent_news(stock_name):
     return "뉴스 조회 실패"
 
 
-class BaseBot:
-    """실전/모의투자의 공통 매매 및 AI 판단 로직을 품은 부모 클래스"""
-    def __init__(self, user_id, kis_config=None, telegram_config=None, core_stocks=None, is_mock=False):
+class KRBotController:
+    """KR 실전 매매 봇 — KIS 국내주식 API (BaseBot 통합본)"""
+    def __init__(self, user_id, kis_config=None, telegram_config=None, core_stocks=None):
         self.user_id = user_id
         self.is_running = False
         self.thread = None
         self.logs = collections.deque(maxlen=100)   # 스레드 안전 + O(1) 순환 버퍼
         self.num_satellites = 3  # 위성 3개 고정
-        self._is_mock = is_mock
-        
-        self.mode_name = "모의" if is_mock else "실전"
-        self.alert_icon = "🟢" if is_mock else "🔴"
+        self._is_mock = False     # KR 봇은 항상 실전
+        self.mode_name = "실전"
+        self.alert_icon = "🔴"
 
         self.core_ticker = "003850"
         self.core_name = "보령"
@@ -191,10 +192,19 @@ class BaseBot:
         self.add_log(f"User {user_id} {self.mode_name}투자 전용 Bot Controller 가동 완료.")
 
     def _init_api(self, kis_config):
-        raise NotImplementedError("자식 클래스에서 KIS API 객체를 초기화해야 합니다.")
+        """KIS 실전투자 API 초기화."""
+        if kis_config and kis_config.get('app_key'):
+            self.kis = KisRealApi(
+                app_key    = kis_config.get('app_key', '').strip(),
+                app_secret = kis_config.get('app_secret', '').strip(),
+                account_no = kis_config.get('account_no', '').strip(),
+            )
+        else:
+            self.kis = None
 
     def _create_websocket(self, app_key, callback):
-        raise NotImplementedError("자식 클래스에서 웹소켓 객체를 반환해야 합니다.")
+        """KIS 실전투자 웹소켓 생성."""
+        return KisRealWebSocket(app_key, price_callback=callback)
 
     def _init_news_monitor(self):
         """DB에 저장된 뉴스 API 키로 NewsMonitor 초기화."""
