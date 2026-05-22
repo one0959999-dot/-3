@@ -564,7 +564,9 @@
 
                 <!-- ════ TAB 1: 계좌 & 원금 ════ -->
                 <div id="stab-panel-1">
-                    <div class="settings-group"
+
+                    <!-- KR 모드 전용: KIS API 입력 -->
+                    <div id="kr-api-section" class="settings-group"
                         style="border:1px solid rgba(239,68,68,0.3); padding:10px; border-radius:8px; margin-bottom:14px;">
                         <h3 style="color:#ef4444; font-size:0.9rem; margin-bottom:10px;">KR API 설정</h3>
                         <label>App Key</label>
@@ -575,6 +577,16 @@
                         <input type="text" id="realAccountNo" value="{{ user.data.real_account_no or '' }}">
                     </div>
 
+                    <!-- US 모드 전용: 페이퍼 트레이딩 안내 -->
+                    <div id="us-api-section"
+                        style="display:none; border:1px solid rgba(16,185,129,0.3); padding:10px; border-radius:8px; margin-bottom:14px; background:rgba(16,185,129,0.05);">
+                        <h3 style="color:#10b981; font-size:0.9rem; margin-bottom:8px;">🇺🇸 US 페이퍼 트레이딩</h3>
+                        <p style="font-size:0.82rem; color:#94a3b8; line-height:1.5; margin:0;">
+                            미국장 봇은 <b style="color:#10b981;">브로커 API 없이</b> yfinance 기반으로 동작합니다.<br>
+                            별도 계좌 설정이 필요하지 않습니다.
+                        </p>
+                    </div>
+
                     <div class="settings-group"
                         style="background:rgba(59,130,246,0.1); border:1px solid rgba(59,130,246,0.3); padding:10px; border-radius:8px; margin-bottom:14px;">
                         <label style="color:#60a5fa;">💰 총 투자 원금 (누적 입금액)</label>
@@ -582,7 +594,7 @@
                         <p style="font-size:0.75rem; color:#94a3b8; margin-top:6px; line-height:1.4;">※ 봇이 <b>자동으로 입출금을 감지하여 갱신</b>합니다. 오차가 발생했을 때만 수동 수정하세요.</p>
                     </div>
 
-                    <button class="btn-save-keys" onclick="saveAccountSettings()" style="background:#10b981;">API 설정 저장</button>
+                    <button class="btn-save-keys" onclick="saveAccountSettings()" style="background:#10b981;">설정 저장</button>
 
                     <div style="margin-top:1rem; padding:1rem; background:rgba(245,158,11,0.08); border:1px solid rgba(245,158,11,0.3); border-radius:10px;">
                         <div style="font-size:0.8rem; color:#f59e0b; font-weight:600; margin-bottom:0.6rem;">🧪 주문 API 연결 테스트 (1주)</div>
