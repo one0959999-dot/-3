@@ -90,20 +90,26 @@ class BotManager:
             return None
 
         if want_us:
-            # US → KR: 미국장 국면 + 주도 섹터 + 보유 위성 성과
+            # US → KR: 미국장 국면 + 주도 섹터 + 보유 위성 성과 + 선물 + 섹터 추세
             sat_summary = []
             for t, p in getattr(peer, 'satellite_positions', {}).items():
                 if p.shares > 0 and p.avg_price_usd > 0:
                     price = getattr(peer, '_price_cache', {}).get(t, p.avg_price_usd)
                     pnl_pct = (price / p.avg_price_usd - 1) * 100
-                    sat_summary.append(
-                        f"{p.name}({t}): {pnl_pct:+.1f}%"
-                    )
+                    sat_summary.append(f"{p.name}({t}): {pnl_pct:+.1f}%")
+
+            futures = getattr(peer, 'futures_snapshot', {})
             return {
-                "market_regime":  getattr(peer, 'market_regime', 'NEUTRAL'),
-                "hot_sectors":    getattr(peer, 'hot_sectors', []),
-                "satellite_perf": sat_summary,
-                "is_running":     getattr(peer, 'is_running', False),
+                "market_regime":    getattr(peer, 'market_regime', 'NEUTRAL'),
+                "hot_sectors":      getattr(peer, 'hot_sectors', []),
+                "satellite_perf":   sat_summary,
+                "is_running":       getattr(peer, 'is_running', False),
+                # 선행지표
+                "futures_summary":  futures.get("summary", ""),
+                "nq_futures":       futures.get("nq", {}),   # 나스닥100 선물
+                "es_futures":       futures.get("es", {}),   # S&P500 선물
+                "ewy_futures":      futures.get("ewy", {}),  # 한국 ETF 프록시
+                "sector_trends":    getattr(peer, 'sector_trends', []),
             }
         else:
             # KR → US: 한국장 국면 + 주도 섹터

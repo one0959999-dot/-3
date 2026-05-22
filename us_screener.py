@@ -259,11 +259,185 @@ def get_us_prices_batch(tickers) -> dict[str, float]:
     return prices
 
 
+def get_futures_snapshot() -> dict:
+    """
+    야간선물 스냅샷 — 미국장 선행지표.
+
+    - NQ=F  : NASDAQ 100 선물 (yfinance 직접 지원)
+    - ES=F  : S&P 500 선물
+    - EWY   : iShares MSCI 한국 ETF (코스피 야간 프록시)
+
+    Returns:
+        {
+          "nq":  {"label", "price", "change_1h", "change_5d", "trend"},
+          "es":  { ... },
+          "ewy": { ... },
+          "summary": "나스닥100 선물: ▲0.32% (5일:+1.8%) | ...",
+        }
+    """
+    symbols = {
+        "nq":  ("NQ=F",  "나스닥100 선물"),
+        "es":  ("ES=F",  "S&P500 선물"),
+        "ewy": ("EWY",   "한국(EWY) 코스피 프록시"),
+    }
+    result: dict = {}
+    for key, (sym, label) in symbols.items():
+        entry = {"label": label, "price": 0.0, "change_1h": 0.0, "change_5d": 0.0, "trend": "NEUTRAL"}
+        try:
+            df = yf.download(sym, period="5d", interval="1h",
+                             progress=False, auto_adjust=True)
+            if isinstance(df.columns, pd.MultiIndex):
+                df.columns = df.columns.get_level_values(0)
+            df = df.dropna(subset=["Close"])
+            if len(df) < 2:
+                result[key] = entry
+                continue
+
+            cur  = float(df["Close"].iloc[-1])
+            prev = float(df["Close"].iloc[-2])      # 1시간 전
+            chg_1h = (cur / prev - 1) * 100
+
+            # 5일 추세: 일봉 리샘플
+            daily = df["Close"].resample("D").last().dropna()
+            chg_5d = (cur / float(daily.iloc[0]) - 1) * 100 if len(daily) >= 2 else 0.0
+
+            if chg_5d > 1.0:
+                trend = "UPTREND"
+            elif chg_5d < -1.0:
+                trend = "DOWNTREND"
+            else:
+                trend = "NEUTRAL"
+
+            entry = {
+                "label":      label,
+                "price":      round(cur, 2),
+                "change_1h":  round(chg_1h, 3),
+                "change_5d":  round(chg_5d, 2),
+                "trend":      trend,
+            }
+        except Exception as e:
+            logger.debug(f"[선물스냅샷] {sym} 조회 실패: {e}")
+        result[key] = entry
+
+    # 텍스트 요약
+    parts = []
+    for key, data in result.items():
+        if data.get("price", 0) > 0:
+            arrow = "▲" if data["change_1h"] > 0 else ("▼" if data["change_1h"] < 0 else "→")
+            parts.append(
+                f"{data['label']}: {arrow}{abs(data['change_1h']):.2f}%"
+                f" (5일:{data['change_5d']:+.1f}%)"
+            )
+    result["summary"] = " | ".join(parts)
+    logger.info(f"[선물스냅샷] {result.get('summary', 'N/A')}")
+    return result
+
+
+def get_sector_trends() -> dict:
+    """
+    NASDAQ 섹터별 추세 분석 (US_UNIVERSE 기반).
+
+    Returns:
+        {
+          "sectors": [
+              {"name": str, "trend": "UPTREND"|"DOWNTREND"|"NEUTRAL",
+               "momentum_5d": float, "momentum_20d": float,
+               "leaders": [ticker, ...]},
+              ...
+          ],
+          "hot_sectors":  [sector_name, ...],   # 상승 섹터
+          "cold_sectors": [sector_name, ...],   # 하락 섹터
+        }
+    """
+    all_tickers  = [t for tickers in US_UNIVERSE.values() for t in tickers]
+    ticker_sector = {t: s for s, tickers in US_UNIVERSE.items() for t in tickers}
+
+    try:
+        raw = yf.download(all_tickers, period="30d", interval="1d",
+                          progress=False, auto_adjust=True)
+        if raw is None or raw.empty:
+            return {"sectors": [], "hot_sectors": [], "cold_sectors": []}
+
+        if isinstance(raw.columns, pd.MultiIndex):
+            lv0 = raw.columns.get_level_values(0).unique().tolist()
+            closes = raw["Close"] if "Close" in lv0 else raw.xs("Close", axis=1, level=1, drop_level=True)
+        else:
+            closes = raw[["Close"]].rename(columns={"Close": all_tickers[0]})
+
+    except Exception as e:
+        logger.error(f"[섹터추세] 다운로드 실패: {e}")
+        return {"sectors": [], "hot_sectors": [], "cold_sectors": []}
+
+    # 종목별 모멘텀
+    mom5:  dict[str, float] = {}
+    mom20: dict[str, float] = {}
+    for ticker in all_tickers:
+        try:
+            if ticker not in closes.columns:
+                continue
+            close = closes[ticker].dropna()
+            if len(close) < 6:
+                continue
+            cur = float(close.iloc[-1])
+            mom5[ticker]  = (cur / float(close.iloc[-5])  - 1) * 100 if len(close) >= 5  else 0.0
+            mom20[ticker] = (cur / float(close.iloc[-20]) - 1) * 100 if len(close) >= 20 else 0.0
+        except Exception:
+            pass
+
+    # 섹터별 집계
+    sectors_out: list[dict] = []
+    hot_sectors:  list[str] = []
+    cold_sectors: list[str] = []
+
+    for sector_name, tickers in US_UNIVERSE.items():
+        m5s  = [mom5.get(t, 0.0)  for t in tickers if t in mom5]
+        m20s = [mom20.get(t, 0.0) for t in tickers if t in mom20]
+        if not m5s:
+            continue
+        avg5  = sum(m5s)  / len(m5s)
+        avg20 = sum(m20s) / len(m20s) if m20s else 0.0
+
+        if avg5 >= 2.0 and avg20 >= 0:
+            trend = "UPTREND"
+            hot_sectors.append(sector_name)
+        elif avg5 <= -2.0:
+            trend = "DOWNTREND"
+            cold_sectors.append(sector_name)
+        else:
+            trend = "NEUTRAL"
+
+        # 섹터 내 리더 종목 (5일 모멘텀 상위 2개)
+        leaders = sorted(
+            [t for t in tickers if t in mom5],
+            key=lambda t: mom5[t], reverse=True
+        )[:2]
+
+        sectors_out.append({
+            "name":         sector_name,
+            "trend":        trend,
+            "momentum_5d":  round(avg5, 2),
+            "momentum_20d": round(avg20, 2),
+            "leaders":      leaders,
+        })
+
+    sectors_out.sort(key=lambda x: x["momentum_5d"], reverse=True)
+    logger.info(
+        f"[섹터추세] 핫:{hot_sectors}  콜드:{cold_sectors}"
+    )
+    return {
+        "sectors":     sectors_out,
+        "hot_sectors": hot_sectors,
+        "cold_sectors": cold_sectors,
+    }
+
+
 def generate_us_daily_report(gemini_client=None, positions: dict = None,
                               satellite_info: list = None,
                               news_context: str = None,
                               kr_context: dict = None,
-                              market_regime: str = "NEUTRAL") -> dict:
+                              market_regime: str = "NEUTRAL",
+                              futures_snapshot: dict = None,
+                              sector_trends: list = None) -> dict:
     """
     미국장 일일 리포트 생성.
     - 주요 지수(SPY·QQQ·DIA) + 섹터 ETF 흐름 수집 (yfinance)
@@ -271,6 +445,8 @@ def generate_us_daily_report(gemini_client=None, positions: dict = None,
     - news_context: yfinance 뉴스 헤드라인 텍스트 (선택)
     - kr_context: KR 봇 피어 컨텍스트 dict (선택)
     - market_regime: "BULL" | "BEAR" | "NEUTRAL"
+    - futures_snapshot: get_futures_snapshot() 결과 dict (선택)
+    - sector_trends: get_sector_trends()["sectors"] 리스트 (선택)
     - gemini_client 제공 시 Claude AI 분석, 없으면 룰 기반 리포트
     """
     from datetime import datetime, timezone, timedelta
@@ -283,6 +459,34 @@ def generate_us_daily_report(gemini_client=None, positions: dict = None,
     # ── 0. 시장 국면 ──────────────────────────────────────────────────
     regime_label = {"BULL": "🟢 강세장", "BEAR": "🔴 약세장", "NEUTRAL": "🟡 중립"}.get(market_regime, market_regime)
     lines.append(f"\n[현재 시장 국면] {regime_label} ({market_regime})")
+
+    # ── 0-A. 야간선물 스냅샷 ─────────────────────────────────────────
+    if futures_snapshot:
+        lines.append("\n[야간선물 / 선행지표]")
+        for key in ("nq", "es", "ewy"):
+            data = futures_snapshot.get(key, {})
+            if data.get("price", 0) > 0:
+                arrow  = "▲" if data["change_1h"] > 0 else ("▼" if data["change_1h"] < 0 else "→")
+                trend_str = {"UPTREND": "상승추세", "DOWNTREND": "하락추세", "NEUTRAL": "중립"}.get(
+                    data.get("trend", "NEUTRAL"), data.get("trend", ""))
+                lines.append(
+                    f"- {data['label']}: ${data['price']:,.2f}  "
+                    f"1h {arrow}{abs(data['change_1h']):.2f}%  "
+                    f"5일 {data['change_5d']:+.1f}%  [{trend_str}]"
+                )
+
+    # ── 0-B. NASDAQ 섹터 추세 ────────────────────────────────────────
+    if sector_trends:
+        lines.append("\n[NASDAQ 섹터 추세 (5일/20일 모멘텀)]")
+        trend_icons = {"UPTREND": "🟢↑", "DOWNTREND": "🔴↓", "NEUTRAL": "🟡→"}
+        for s in sector_trends:
+            icon    = trend_icons.get(s["trend"], "")
+            leaders = "/".join(s["leaders"]) if s["leaders"] else ""
+            lines.append(
+                f"- {icon} {s['name']:12s}  "
+                f"5일 {s['momentum_5d']:+.1f}%  20일 {s['momentum_20d']:+.1f}%"
+                + (f"  주도: {leaders}" if leaders else "")
+            )
 
     # ── 1. 주요 지수 ──────────────────────────────────────────────────
     indices = {
@@ -405,7 +609,8 @@ def generate_us_daily_report(gemini_client=None, positions: dict = None,
             f"아래 데이터를 바탕으로 한국어로 오늘의 미국 시장 분석 리포트를 작성해주세요.\n"
             f"형식: 마크다운 (제목/소제목/불릿 포인트 사용)\n"
             f"포함 내용: ① 전체 시장 방향성 (현재 국면: {market_regime}) "
-            f"② 주목 섹터 ③ 보유 포지션 의견 ④ 오늘의 전략 제안 ⑤ 주요 뉴스 시사점{kr_note}\n\n"
+            f"② 야간선물이 시사하는 다음 장 방향 ③ 상승/하락 섹터 분석 "
+            f"④ 보유 포지션 의견 ⑤ 오늘의 전략 제안 ⑥ 주요 뉴스 시사점{kr_note}\n\n"
             f"{market_data_text}"
         )
         try:

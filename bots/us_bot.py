@@ -21,7 +21,10 @@ from collections import defaultdict
 import yfinance as yf
 
 from telegram_bot import TelegramNotifier
-from us_screener import scan_us_satellites, get_us_prices_batch, generate_us_daily_report
+from us_screener import (
+    scan_us_satellites, get_us_prices_batch, generate_us_daily_report,
+    get_futures_snapshot, get_sector_trends,
+)
 from kis_brokers.kis_overseas_api import KisOverseasApi
 from database import (
     update_bot_status,
@@ -141,8 +144,10 @@ class USBotController:
         self.pnl_this_turn            = 0.0
 
         # ── 스크리닝 ──────────────────────────────────────────────────
-        self.last_screen_date = None
-        self.market_regime    = "NEUTRAL"
+        self.last_screen_date  = None
+        self.market_regime     = "NEUTRAL"
+        self.futures_snapshot: dict = {}     # 야간선물 스냅샷 (NQ=F / ES=F / EWY)
+        self.sector_trends:    list = []     # NASDAQ 섹터 추세 리스트
 
         # ── 블랙리스트 ────────────────────────────────────────────────
         self._bl_date           = ""
@@ -664,7 +669,14 @@ class USBotController:
     # ─────────────────────────────────────────────────────────────────
 
     def _update_market_regime(self):
-        """SPY/QQQ 기반 미국 시장 국면 판단 (BULL / BEAR / NEUTRAL)"""
+        """
+        미국 시장 국면 + 야간선물 스냅샷 + NASDAQ 섹터 추세 갱신.
+
+        ① SPY SMA20/50 → BULL / BEAR / NEUTRAL
+        ② NQ=F / ES=F / EWY 선물 스냅샷 (선행지표)
+        ③ NASDAQ 섹터 추세 분석 → hot_sectors 업데이트
+        """
+        # ── ① SPY 시장 국면 ──────────────────────────────────────────
         try:
             import pandas as pd
             df = yf.download("SPY", period="60d", interval="1d",
@@ -672,23 +684,49 @@ class USBotController:
             if isinstance(df.columns, pd.MultiIndex):
                 df.columns = df.columns.get_level_values(0)
             df = df.dropna(subset=["Close"])
-            if len(df) < 50:
-                return
-            close  = df["Close"]
-            cur    = float(close.iloc[-1])
-            sma20  = float(close.rolling(20).mean().iloc[-1])
-            sma50  = float(close.rolling(50).mean().iloc[-1])
-            if cur > sma20 > sma50:
-                regime = "BULL"
-            elif cur < sma20 < sma50:
-                regime = "BEAR"
-            else:
-                regime = "NEUTRAL"
-            if regime != self.market_regime:
-                self.add_log(f"📊 US 시장 국면 변경: {self.market_regime} → {regime}")
+            if len(df) >= 50:
+                close = df["Close"]
+                cur   = float(close.iloc[-1])
+                sma20 = float(close.rolling(20).mean().iloc[-1])
+                sma50 = float(close.rolling(50).mean().iloc[-1])
+                if cur > sma20 > sma50:
+                    regime = "BULL"
+                elif cur < sma20 < sma50:
+                    regime = "BEAR"
+                else:
+                    regime = "NEUTRAL"
+                if regime != self.market_regime:
+                    self.add_log(f"📊 US 시장 국면 변경: {self.market_regime} → {regime}")
                 self.market_regime = regime
         except Exception as e:
             logger.debug(f"[US봇] 시장 국면 판단 실패: {e}")
+
+        # ── ② 야간선물 스냅샷 ────────────────────────────────────────
+        try:
+            snap = get_futures_snapshot()
+            self.futures_snapshot = snap
+            summary = snap.get("summary", "N/A")
+            self.add_log(f"📈 선물 스냅샷: {summary}")
+        except Exception as e:
+            logger.debug(f"[US봇] 선물 스냅샷 실패: {e}")
+
+        # ── ③ NASDAQ 섹터 추세 ───────────────────────────────────────
+        try:
+            sector_result = get_sector_trends()
+            self.sector_trends = sector_result.get("sectors", [])
+            trend_hot  = sector_result.get("hot_sectors", [])
+            trend_cold = sector_result.get("cold_sectors", [])
+
+            # 스크리닝 선정 종목의 섹터와 병합 (순서 유지, 중복 제거)
+            screen_hot = list({c["sector"] for c in self.satellite_info})
+            merged = list(dict.fromkeys(trend_hot + screen_hot))
+            self.hot_sectors = merged
+
+            up_str   = ", ".join(trend_hot)  or "없음"
+            down_str = ", ".join(trend_cold) or "없음"
+            self.add_log(f"🏭 섹터 추세 — 상승: [{up_str}]  하락: [{down_str}]")
+        except Exception as e:
+            logger.debug(f"[US봇] 섹터 추세 분석 실패: {e}")
 
     # ─────────────────────────────────────────────────────────────────
     # US 뉴스 수집 (yfinance 무료 — API 키 불필요)
@@ -750,12 +788,14 @@ class USBotController:
                 pass
 
             result = generate_us_daily_report(
-                gemini_client  = self.gemini,
-                positions      = dict(self.satellite_positions),
-                satellite_info = list(self.satellite_info),
-                news_context   = news_context,
-                kr_context     = kr_context,
-                market_regime  = self.market_regime,
+                gemini_client    = self.gemini,
+                positions        = dict(self.satellite_positions),
+                satellite_info   = list(self.satellite_info),
+                news_context     = news_context,
+                kr_context       = kr_context,
+                market_regime    = self.market_regime,
+                futures_snapshot = self.futures_snapshot,
+                sector_trends    = self.sector_trends,
             )
             if result:
                 if not isinstance(self.daily_report, dict) or self.daily_report.get("date") != today_str:
@@ -782,6 +822,8 @@ class USBotController:
                 "daily_pnl":             self.daily_pnl,
                 "daily_report":          self.daily_report,
                 "last_screen_date":      self.last_screen_date,
+                "futures_snapshot":      self.futures_snapshot,
+                "sector_trends":         self.sector_trends,
                 "satellites": {
                     t: {
                         "name":           p.name,
@@ -813,6 +855,8 @@ class USBotController:
             self.daily_pnl              = state.get("daily_pnl", {})
             self.daily_report           = state.get("daily_report", None)
             self.last_screen_date       = state.get("last_screen_date")
+            self.futures_snapshot       = state.get("futures_snapshot", {})
+            self.sector_trends          = state.get("sector_trends", [])
             for t, s in state.get("satellites", {}).items():
                 self.satellite_positions[t] = USPosition(
                     ticker         = t,
