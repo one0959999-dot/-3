@@ -937,7 +937,7 @@ class BaseBot:
         try:
             state = {
                 "cores": [{"ticker": c.ticker, "name": c.name, "shares": int(c.shares), "floor_shares": int(c.floor_shares), "cash": float(c.cash), "initial_cash": float(c.initial_cash), "avg_price": float(c.avg_price)} for c in self.core_positions],
-                "satellites": {ticker: {"name": pos.name, "shares": int(pos.shares), "cash": float(pos.cash), "initial_cash": float(pos.initial_cash), "avg_price": float(pos.avg_price)} for ticker, pos in self.satellite_positions.items()},
+                "satellites": {ticker: {"name": pos.name, "shares": int(pos.shares), "cash": float(pos.cash), "initial_cash": float(pos.initial_cash), "avg_price": float(pos.avg_price), "partial_sold": bool(getattr(pos, 'partial_sold', False)), "partial_sold_2": bool(getattr(pos, 'partial_sold_2', False)), "second_buy_done": bool(getattr(pos, 'second_buy_done', False)), "pyramid_done": bool(getattr(pos, 'pyramid_done', False)), "second_buy_price": float(getattr(pos, 'second_buy_price', 0)), "second_buy_cash": float(getattr(pos, 'second_buy_cash', 0))} for ticker, pos in self.satellite_positions.items()},
                 "satellite_info": self.satellite_info, "satellite_strategies": self.satellite_strategies, "hot_sectors": self.hot_sectors, "num_satellites": self.num_satellites,
                 "last_screen_month": getattr(self, 'last_screen_month', None), "last_screen_date": self.last_screen_date.strftime('%Y-%m-%d') if getattr(self, 'last_screen_date', None) else None,
                 "daily_pnl": self.daily_pnl, "daily_report": self.daily_report,
@@ -960,6 +960,12 @@ class BaseBot:
             for ticker, s in state["satellites"].items():
                 pos = Position(ticker, s["name"], s.get("initial_cash", 1400000))
                 pos.shares = s["shares"]; pos.cash = s["cash"]; pos.avg_price = s.get("avg_price", 0)
+                pos.partial_sold     = bool(s.get("partial_sold",     False))
+                pos.partial_sold_2   = bool(s.get("partial_sold_2",   False))
+                pos.second_buy_done  = bool(s.get("second_buy_done",  False))
+                pos.pyramid_done     = bool(s.get("pyramid_done",     False))
+                pos.second_buy_price = float(s.get("second_buy_price", 0))
+                pos.second_buy_cash  = float(s.get("second_buy_cash",  0))
                 self.satellite_positions[ticker] = pos
 
             self.satellite_info = state.get("satellite_info", [])
@@ -972,14 +978,18 @@ class BaseBot:
             self.daily_pnl = state.get("daily_pnl", {})
             self.daily_report = state.get("daily_report", None)
             # 모멘텀 슬롯 복원 (구버전 단일 포지션 호환)
+            # __init__ 에서 설정한 슬롯 수를 먼저 저장 (덮어쓰기 전)
+            target_slots = len(self.momentum_positions)
             saved_slots = state.get("momentum_positions")
             if saved_slots is not None:
-                self.momentum_positions = [self._deserialize_one_momentum(mp) for mp in saved_slots]
-                while len(self.momentum_positions) < 3:
-                    self.momentum_positions.append(None)
+                restored = [self._deserialize_one_momentum(mp) for mp in saved_slots]
+                # 현재 슬롯 수에 맞게 자르거나 None 으로 채움
+                while len(restored) < target_slots:
+                    restored.append(None)
+                self.momentum_positions = restored[:target_slots]
             else:
                 old_single = state.get("momentum_position")
-                self.momentum_positions = [self._deserialize_one_momentum(old_single), None, None]
+                self.momentum_positions = [self._deserialize_one_momentum(old_single)] + [None] * (target_slots - 1)
             return True
         except Exception as e:
             logger.error(f"[{self.mode_name}] 상태 복구 실패: {e}", exc_info=True)
