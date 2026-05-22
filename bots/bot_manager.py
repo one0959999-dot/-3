@@ -21,10 +21,15 @@ class BotManager:
                 "chat_id": user_data.get('telegram_chat_id')
             }
             if is_mock:
-                # ── US 모드 (is_mock=True) → 미국장 페이퍼 트레이딩 봇 ──
+                # ── US 모드 (is_mock=True) → 미국장 실전 매매 봇 (KIS 해외주식) ──
+                us_kis_config = {
+                    "app_key":    user_data.get('mock_app_key'),
+                    "app_secret": user_data.get('mock_app_secret'),
+                    "account_no": user_data.get('mock_account_no'),
+                }
                 self.bots[bot_key] = USBotController(
                     user_id,
-                    kis_config=None,   # 페이퍼 트레이딩: 브로커 API 불필요
+                    kis_config=us_kis_config,
                     telegram_config=tele_config,
                     core_stocks=user_data.get('core_stocks'),
                 )

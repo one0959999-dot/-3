@@ -1,10 +1,10 @@
 """
-bots/us_bot.py — 미국장 페이퍼 트레이딩 봇
-──────────────────────────────────────────────
-- yfinance 기반 실시간 가격 (1분 캐시)
-- 가상 주문 체결 (페이퍼 트레이딩 — 브로커 API 불필요)
+bots/us_bot.py — 미국장 실전 매매 봇 (KIS 해외주식 API)
+──────────────────────────────────────────────────────────
+- KIS 해외주식 OpenAPI 로 실제 주문 체결 (NASDAQ / NYSE)
+- yfinance 는 위성 스크리닝 + 가격 캐시 보조용으로만 사용
 - 미국 동부 시간(ET) 장 운영 시간 체크 (09:30 ~ 16:00)
-- 코어(SPY) + 위성(US 모멘텀 종목 N개) 구조
+- 위성(US 모멘텀 종목 N개) 전략
 - BaseBot 과 동일한 공개 인터페이스: start / stop / get_status / get_pnl_data
 """
 
@@ -28,6 +28,7 @@ from database import (
 )
 from telegram_bot import TelegramNotifier
 from us_screener import scan_us_satellites, get_us_prices_batch, get_us_ohlcv
+from kis_brokers.kis_overseas_api import KisOverseasApi
 
 logger = logging.getLogger('lassi_bot')
 
@@ -90,12 +91,9 @@ def _net_profit_usd(sell_p: float, avg_p: float, shares: float) -> float:
 
 # ══════════════════════════════════════════════════════════════════════
 class USBotController:
-    """미국장 페이퍼 트레이딩 봇 (BaseBot 호환 인터페이스)"""
+    """미국장 실전 매매 봇 — KIS 해외주식 API (BaseBot 호환 인터페이스)"""
 
-    US_CORE_TICKER = "SPY"
-    US_CORE_NAME   = "S&P 500 ETF (SPY)"
-    CORE_RATIO     = 0.40    # 코어 40%
-    SAT_RATIO      = 0.40    # 위성 40%  (나머지 20% = 현금 버퍼)
+    SAT_RATIO      = 0.80    # 위성 80%  (나머지 20% = 현금 버퍼)
     ORDER_COOLDOWN = 300     # 연속 주문 방지 (초)
     STOP_LOSS_PCT  = -12.0   # 하드 손절 (%)
     TRAIL_DROP_PCT = -8.0    # ATR trailing stop: 고점 대비 (%)
@@ -106,72 +104,75 @@ class USBotController:
 
     def __init__(self, user_id, kis_config=None, telegram_config=None, core_stocks=None):
         self.user_id    = user_id
-        self._is_mock   = True    # DB 호환: US 봇은 항상 is_mock=True
+        self._is_mock   = True    # DB 호환: US 봇은 is_mock=True 슬롯 사용
         self.is_running = False
         self.thread     = None
         self.lock       = threading.RLock()
         self.logs: collections.deque = collections.deque(maxlen=100)
 
+        # ── KIS 해외주식 API ───────────────────────────────────────
+        self.kis_overseas: KisOverseasApi | None = None
+        if (kis_config
+                and kis_config.get("app_key")
+                and kis_config.get("app_secret")):
+            try:
+                self.kis_overseas = KisOverseasApi(
+                    app_key    = kis_config["app_key"].strip(),
+                    app_secret = kis_config["app_secret"].strip(),
+                    account_no = (kis_config.get("account_no") or "").strip(),
+                )
+            except Exception as e:
+                logger.warning(f"[US봇] KIS 해외주식 API 초기화 실패: {e}")
+
         # ── 포트폴리오 ─────────────────────────────────────────────
-        self.core_ticker      = self.US_CORE_TICKER
-        self.core_name        = self.US_CORE_NAME
         self.num_satellites   = 3
-        self.core_shares      = 0.0
-        self.core_avg_usd     = 0.0
-        self.core_cash_usd    = 0.0   # 코어에 배정된 현금 (아직 미매수분)
-        self.core_budget_usd  = 0.0
-        self.core_status      = "감시 중 👀"
         self.satellite_positions: dict[str, USPosition] = {}
         self.satellite_info: list = []
         self.hot_sectors:    list = []
 
-        # ── 현금 ───────────────────────────────────────────────────
-        self.cash_usd         = 0.0   # 가용 현금 (USD)
-        self.initial_cash_usd = 0.0   # 투자 원금 (USD)
+        # ── 현금 / 원금 추적 (KIS 잔고 기준, 로컬 캐시) ────────────
+        self.cash_usd         = 0.0
+        self.initial_cash_usd = 0.0
 
         # ── PnL ────────────────────────────────────────────────────
-        self.daily_pnl: dict = {}   # {YYYY-MM-DD: usd_pnl}
+        self.daily_pnl: dict = {}
 
         # ── 스크리닝 ───────────────────────────────────────────────
         self.last_screen_date = None
         self._last_screen_ts  = 0.0
 
-        # ── 가격 캐시 ──────────────────────────────────────────────
-        self._price_cache:    dict  = {}
-        self._last_price_ts:  float = 0.0
-        self._price_ttl:      int   = 60   # 1분
+        # ── 가격 캐시 (yfinance 보조 + KIS 실시간 병행) ───────────
+        self._price_cache:   dict  = {}
+        self._last_price_ts: float = 0.0
 
         # ── 텔레그램 ──────────────────────────────────────────────
         self.telegram = None
         if telegram_config and telegram_config.get("token"):
             try:
                 self.telegram = TelegramNotifier(
-                    token=telegram_config["token"].strip(),
-                    chat_id=(telegram_config.get("chat_id") or "").strip(),
+                    token    = telegram_config["token"].strip(),
+                    chat_id  = (telegram_config.get("chat_id") or "").strip(),
                 )
             except Exception:
                 pass
 
         # ── BaseBot 호환 필드 ─────────────────────────────────────
-        # kis=None: US 봇은 KIS API 없음 → app.py 의 `if bot.kis:` 분기가 False → KIS 기능 skip
-        self.kis             = None
+        self.kis             = None   # KR KIS API 없음 (app.py 분기용)
         self.cached_balance  = None
         self.live_prices     = {}
         self.market_regime   = "NEUTRAL"
         self.gemini          = None
         self.sector_guide    = get_sector_guide(user_id) or ""
-        # BaseBot 호환 속성 — app.py 공통 라우트에서 참조
         self.daily_report    = None
-        self.core_positions  = []    # US봇은 별도 core 관리, ai_chat 호환용 빈 리스트
+        self.core_positions  = []
         self.fundamental_cache: dict = {}
 
         # 상태 복원
         self._restore_state()
-        self.add_log("🇺🇸 미국장 페이퍼 트레이딩 봇 초기화 완료")
+        has_api = "✅ KIS 해외주식 API 연결됨" if self.kis_overseas else "⚠️ KIS API 미설정 (설정 후 재시작)"
+        self.add_log(f"🇺🇸 미국장 실전 매매 봇 초기화 완료 — {has_api}")
 
-        # ── 백그라운드 가격 갱신 루프 (UI 응답 속도 분리) ────────────
-        # get_status()에서 yfinance를 직접 호출하지 않도록
-        # 별도 데몬 스레드에서 60초마다 가격을 캐시에 미리 채워둠
+        # ── 백그라운드 가격 갱신 (yfinance, 60초 주기) ───────────
         self._sync_thread = threading.Thread(
             target=self._perpetual_price_sync, daemon=True
         )
@@ -198,21 +199,51 @@ class USBotController:
     # ─────────────────────────────────────────────────────────────────
 
     def _refresh_prices(self, tickers=None):
-        """보유 종목(+ 지정 종목) 가격 일괄 갱신"""
+        """보유 종목(+ 지정 종목) 가격 일괄 갱신.
+        KIS 해외주식 API 우선, 실패 시 yfinance 폴백.
+        """
         if tickers is None:
             tickers = set()
         tickers = set(tickers)
-        tickers.add(self.core_ticker)
         for t in self.satellite_positions:
             tickers.add(t)
         for info in self.satellite_info:
             tickers.add(info["ticker"])
 
-        new_prices = get_us_prices_batch(tickers)
+        if not tickers:
+            return {}
+
+        new_prices: dict = {}
+
+        # 1순위: KIS 해외주식 실시간 가격
+        if self.kis_overseas:
+            try:
+                new_prices = self.kis_overseas.get_prices_batch(list(tickers))
+            except Exception as e:
+                logger.debug(f"[US봇] KIS 가격 조회 실패, yfinance 폴백: {e}")
+
+        # 2순위: yfinance 보조 (KIS 미조회 종목 보완)
+        missing = tickers - set(new_prices.keys())
+        if missing:
+            yf_prices = get_us_prices_batch(missing)
+            new_prices.update(yf_prices)
+
         with self.lock:
             self._price_cache.update(new_prices)
             self._last_price_ts = time.time()
         return new_prices
+
+    def _sync_balance_from_kis(self):
+        """KIS 잔고에서 실제 현금 잔액 동기화 (5분마다 호출)"""
+        if not self.kis_overseas:
+            return
+        try:
+            bal = self.kis_overseas.get_balance()
+            with self.lock:
+                self.cash_usd = bal["cash_usd"]
+            logger.debug(f"[US봇] KIS 잔고 동기화: 현금 ${bal['cash_usd']:,.2f}")
+        except Exception as e:
+            logger.debug(f"[US봇] KIS 잔고 동기화 실패: {e}")
 
     def _perpetual_price_sync(self):
         """백그라운드 가격 갱신 루프 — 60초마다 캐시를 채워둠."""
@@ -232,7 +263,10 @@ class USBotController:
     # ─────────────────────────────────────────────────────────────────
 
     def _buy(self, ticker: str, name: str, budget_usd: float, price: float = 0) -> int:
-        """페이퍼 매수. 체결 주수 반환 (0 = 실패/현금 부족)"""
+        """실전 매수. KIS 해외주식 시장가 주문. 체결 주수 반환 (0 = 실패)"""
+        if not self.kis_overseas:
+            self.add_log(f"⚠️ BUY 실패: KIS API 미설정 ({ticker})")
+            return 0
         price = price or self._price(ticker)
         if price <= 0 or budget_usd <= 0:
             return 0
@@ -241,21 +275,36 @@ class USBotController:
             qty   = int(avail / price)
             if qty <= 0:
                 return 0
-            cost = qty * price
-            self.cash_usd -= cost
-        self.add_log(f"📥 BUY  {name}({ticker}) {qty}주 @ ${price:.2f}  (${cost:,.0f})")
-        return qty
+        ok = self.kis_overseas.buy_market_order(ticker, qty)
+        if ok:
+            cost = qty * price  # 체결 추정가 (실제 체결가는 KIS 잔고에서 확인)
+            with self.lock:
+                self.cash_usd = max(0.0, self.cash_usd - cost)
+            self.add_log(f"📥 BUY  {name}({ticker}) {qty}주 @ ${price:.2f} 추정  (${cost:,.0f})")
+            return qty
+        else:
+            self.add_log(f"❌ BUY 주문 실패: {name}({ticker}) — KIS 응답 확인 필요")
+            return 0
 
     def _sell(self, ticker: str, name: str, shares: float, price: float = 0) -> float:
-        """페이퍼 매도. 체결 대금(USD) 반환"""
-        price = price or self._price(ticker)
-        if price <= 0 or shares <= 0:
+        """실전 매도. KIS 해외주식 시장가 주문. 체결 대금(USD) 추정값 반환"""
+        if not self.kis_overseas:
+            self.add_log(f"⚠️ SELL 실패: KIS API 미설정 ({ticker})")
             return 0.0
-        proceeds = shares * price * (1 - _US_FEE)
-        with self.lock:
-            self.cash_usd += proceeds
-        self.add_log(f"📤 SELL {name}({ticker}) {shares:.0f}주 @ ${price:.2f}  (${proceeds:,.0f})")
-        return proceeds
+        price  = price or self._price(ticker)
+        qty    = int(shares)
+        if price <= 0 or qty <= 0:
+            return 0.0
+        ok = self.kis_overseas.sell_market_order(ticker, qty)
+        if ok:
+            proceeds = qty * price * (1 - _US_FEE)
+            with self.lock:
+                self.cash_usd += proceeds
+            self.add_log(f"📤 SELL {name}({ticker}) {qty}주 @ ${price:.2f} 추정  (${proceeds:,.0f})")
+            return proceeds
+        else:
+            self.add_log(f"❌ SELL 주문 실패: {name}({ticker}) — KIS 응답 확인 필요")
+            return 0.0
 
     # ─────────────────────────────────────────────────────────────────
     # 손익 기록
@@ -271,19 +320,12 @@ class USBotController:
     # ─────────────────────────────────────────────────────────────────
 
     def _init_cash_from_krw(self, total_krw: float):
-        """KRW → USD 환산 후 포트폴리오 예산 배분"""
+        """KRW → USD 환산 후 초기 자금 설정 (KIS 잔고 미연결 시 fallback)"""
         fx = _get_fx_rate()
         total_usd = total_krw / fx
         self.initial_cash_usd = total_usd
-        self.core_budget_usd  = total_usd * self.CORE_RATIO
-        self.core_cash_usd    = self.core_budget_usd
-        # 위성 예산 + 현금 버퍼
-        self.cash_usd = total_usd * (1 - self.CORE_RATIO)
-        self.add_log(
-            f"💵 초기 자금 ${total_usd:,.0f}"
-            f" (코어 ${self.core_budget_usd:,.0f}"
-            f" / 위성+버퍼 ${self.cash_usd:,.0f})"
-        )
+        self.cash_usd = total_usd
+        self.add_log(f"💵 초기 자금 설정 ${total_usd:,.0f} (≈ ₩{total_krw:,.0f})")
 
     # ─────────────────────────────────────────────────────────────────
     # 위성 스크리닝 (하루 1회, 장 시작 후 최초 1회)
@@ -295,7 +337,7 @@ class USBotController:
             return
         # 이미 보유 중인 종목은 제외 (교체 방지)
         holding = {t for t, p in self.satellite_positions.items() if p.shares > 0}
-        exclude = {self.core_ticker} | holding
+        exclude = holding
         self.add_log("🔍 미국 위성 종목 스캔 시작…")
         candidates = scan_us_satellites(n=self.num_satellites * 2, exclude=exclude)
         if not candidates:
@@ -316,26 +358,6 @@ class USBotController:
         self.last_screen_date = today
         names = [f"{c['ticker']}(점수:{c['score']:.0f})" for c in self.satellite_info]
         self.add_log(f"✅ 위성 종목 선정: {', '.join(names)}")
-
-    # ─────────────────────────────────────────────────────────────────
-    # 코어 관리 (SPY 장기 보유)
-    # ─────────────────────────────────────────────────────────────────
-
-    def _manage_core(self):
-        price = self._price(self.core_ticker)
-        if price <= 0:
-            return
-        # 미보유 → 코어 예산으로 매수
-        if self.core_shares <= 0 and self.core_cash_usd >= price:
-            qty = self._buy(self.core_ticker, self.core_name, self.core_cash_usd, price)
-            if qty > 0:
-                cost = qty * price
-                with self.lock:
-                    self.core_avg_usd    = price
-                    self.core_shares     = float(qty)
-                    self.core_cash_usd   = max(0.0, self.core_cash_usd - cost)
-                    self.core_status     = "코어 보유 중 💎"
-                self._tg(f"🇺🇸 [코어 매수] {self.core_name} {qty}주 @ ${price:.2f}")
 
     # ─────────────────────────────────────────────────────────────────
     # 위성 관리 (매수 + 청산 조건 체크)
@@ -457,14 +479,21 @@ class USBotController:
     # ─────────────────────────────────────────────────────────────────
 
     def _run_loop(self, total_cash: float):
-        self.add_log("🚀 미국장 봇 루프 시작")
-        # 초기 자금 설정 (복원 데이터 없을 때만)
+        self.add_log("🚀 미국장 실전 봇 루프 시작")
+        if not self.kis_overseas:
+            self.add_log("⚠️ KIS 해외주식 API 미설정 — 계좌 설정에서 API 키를 입력하세요")
+
+        # 초기 자금: KIS 잔고 우선, 없으면 설정값 사용
+        if self.kis_overseas and self.cash_usd <= 0:
+            self._sync_balance_from_kis()
         if self.initial_cash_usd <= 0:
             self._init_cash_from_krw(total_cash)
             set_user_initial_cash(self.user_id, total_cash, is_mock=True)
 
         _save_interval  = 300   # 5분마다 상태 저장
+        _bal_interval   = 300   # 5분마다 KIS 잔고 동기화
         _last_save_ts   = 0.0
+        _last_bal_ts    = 0.0
 
         while self.is_running:
             try:
@@ -476,21 +505,21 @@ class USBotController:
                         f"💤 장 외 시간 ({now.strftime('%a %H:%M ET')}) "
                         f"— 09:30 개장 대기 중"
                     )
-                    # 장 시작 전이면 스크리닝 미리 실행
                     if h < 9 or (h == 9 and m < 30):
                         self._screen_satellites()
                     time.sleep(300)
                     continue
 
-                # ── 가격 갱신 (트레이딩 루프: 최신 가격 확보) ────────
-                # 백그라운드 sync와 타이밍이 겹칠 수 있지만 무해함
+                # ── 가격 갱신 ───────────────────────────────────────
                 self._refresh_prices()
+
+                # ── KIS 잔고 동기화 (5분마다) ───────────────────────
+                if time.time() - _last_bal_ts >= _bal_interval:
+                    self._sync_balance_from_kis()
+                    _last_bal_ts = time.time()
 
                 # ── 위성 스크리닝 (하루 1회) ────────────────────────
                 self._screen_satellites()
-
-                # ── 코어 관리 ───────────────────────────────────────
-                self._manage_core()
 
                 # ── 위성 관리 ───────────────────────────────────────
                 self._manage_satellites()
@@ -500,7 +529,7 @@ class USBotController:
                     self._save_state()
                     _last_save_ts = time.time()
 
-                time.sleep(60)   # 1분 간격
+                time.sleep(60)
 
             except Exception as e:
                 logger.error(f"[US봇] 루프 오류: {e}", exc_info=True)
@@ -516,15 +545,11 @@ class USBotController:
     def _save_state(self):
         try:
             state = {
-                "core_shares":     self.core_shares,
-                "core_avg_usd":    self.core_avg_usd,
-                "core_cash_usd":   self.core_cash_usd,
-                "core_budget_usd": self.core_budget_usd,
-                "cash_usd":        self.cash_usd,
-                "initial_cash_usd":self.initial_cash_usd,
-                "satellite_info":  self.satellite_info,
-                "hot_sectors":     self.hot_sectors,
-                "daily_pnl":       self.daily_pnl,
+                "cash_usd":         self.cash_usd,
+                "initial_cash_usd": self.initial_cash_usd,
+                "satellite_info":   self.satellite_info,
+                "hot_sectors":      self.hot_sectors,
+                "daily_pnl":        self.daily_pnl,
                 "satellites": {
                     t: {
                         "name":          p.name,
@@ -548,17 +573,11 @@ class USBotController:
             state = load_portfolio_state(self.user_id, is_mock=True)
             if not state:
                 return
-            self.core_shares      = float(state.get("core_shares", 0))
-            self.core_avg_usd     = float(state.get("core_avg_usd", 0))
-            self.core_cash_usd    = float(state.get("core_cash_usd", 0))
-            self.core_budget_usd  = float(state.get("core_budget_usd", 0))
             self.cash_usd         = float(state.get("cash_usd", 0))
             self.initial_cash_usd = float(state.get("initial_cash_usd", 0))
             self.satellite_info   = state.get("satellite_info", [])
             self.hot_sectors      = state.get("hot_sectors", [])
             self.daily_pnl        = state.get("daily_pnl", {})
-            if self.core_shares > 0:
-                self.core_status = "코어 보유 중 💎"
             for t, s in state.get("satellites", {}).items():
                 self.satellite_positions[t] = USPosition(
                     ticker=t,
@@ -580,18 +599,35 @@ class USBotController:
     # ─────────────────────────────────────────────────────────────────
 
     def reload_api_keys(self, kis_config, telegram_config, gemini_config, core_stocks):
-        """BaseBot 호환 인터페이스 — US 봇은 KIS API 불필요, 텔레그램만 갱신."""
+        """BaseBot 호환 인터페이스 — KIS 해외주식 API + 텔레그램 갱신."""
+        # KIS 해외주식 API 갱신
+        if (kis_config
+                and kis_config.get("app_key")
+                and kis_config.get("app_secret")):
+            try:
+                self.kis_overseas = KisOverseasApi(
+                    app_key    = kis_config["app_key"].strip(),
+                    app_secret = kis_config["app_secret"].strip(),
+                    account_no = (kis_config.get("account_no") or "").strip(),
+                )
+                self.add_log("🔑 KIS 해외주식 API 갱신 완료")
+            except Exception as e:
+                self.kis_overseas = None
+                self.add_log(f"⚠️ KIS 해외주식 API 갱신 실패: {e}")
+        else:
+            self.kis_overseas = None
+
+        # 텔레그램 갱신
         if telegram_config and telegram_config.get("token"):
             try:
                 self.telegram = TelegramNotifier(
-                    token=telegram_config["token"].strip(),
-                    chat_id=(telegram_config.get("chat_id") or "").strip(),
+                    token    = telegram_config["token"].strip(),
+                    chat_id  = (telegram_config.get("chat_id") or "").strip(),
                 )
             except Exception:
                 self.telegram = None
         else:
             self.telegram = None
-        self.add_log("🔑 US 봇 설정 갱신 완료 (페이퍼 트레이딩 — KIS API 불필요)")
 
     def reload_news_monitor(self, dart_key: str, naver_id: str, naver_secret: str):
         """BaseBot 호환 인터페이스 — US 봇은 한국 뉴스 모니터 미사용."""
@@ -665,10 +701,6 @@ class USBotController:
             # 가격은 백그라운드 루프(_perpetual_price_sync)가 60초마다 갱신.
             # get_status()는 캐시를 그대로 읽음 → 블로킹 없이 즉시 반환
 
-            # ── 코어 가치 (총 자산 계산에만 사용, UI 카드 미출력) ────
-            cp_usd       = self._price_cache.get(self.core_ticker, 0.0)
-            core_val_usd = self.core_shares * cp_usd
-
             # ── 위성 ─────────────────────────────────────────────
             total_sat_usd = 0.0
             satellites    = []
@@ -705,12 +737,7 @@ class USBotController:
                     total_sat_usd += pos.shares * sp_usd
 
             # ── 총 평가금액 ───────────────────────────────────────
-            total_usd = (
-                self.cash_usd
-                + self.core_cash_usd   # 아직 미매수 코어 예산
-                + core_val_usd
-                + total_sat_usd
-            )
+            total_usd = self.cash_usd + total_sat_usd
 
             try:
                 initial_krw = get_user_initial_cash(self.user_id, is_mock=True)
@@ -724,20 +751,20 @@ class USBotController:
             return {
                 "is_running":       self.is_running,
                 "is_mock":          True,
-                "has_keys":         True,   # 페이퍼 트레이딩 = 항상 준비됨
+                "has_keys":         self.kis_overseas is not None,  # KIS API 설정 여부
                 "logs":             list(self.logs)[-30:],
                 "hot_sectors":      self.hot_sectors,
                 "num_satellites":   self.num_satellites,
-                "cores":            [],        # US 모드 = 코어 카드 숨김
+                "cores":            [],
                 "satellites":       satellites,
-                "momentum_list":    [],   # US 모드 = 단타 모멘텀 없음
+                "momentum_list":    [],
                 "defensive_list":   [],
                 "market_regime":    self.market_regime,
                 "mock_total_asset": total_krw,
                 "mock_pnl":         pnl_krw,
                 "mock_pnl_rt":      round(pnl_rt, 2),
                 "initial_cash":     initial_krw,
-                "available_cash":   round((self.cash_usd + self.core_cash_usd) * fx),
+                "available_cash":   round(self.cash_usd * fx),
             }
 
         except Exception as e:

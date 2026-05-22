@@ -578,14 +578,21 @@
                         <input type="text" id="realAccountNo" value="{{ user.data.real_account_no or '' }}">
                     </div>
 
-                    <!-- US 설정 (항상 표시) -->
+                    <!-- US API 설정 (항상 표시) -->
                     <div class="settings-group"
                         style="border:1px solid rgba(16,185,129,0.3); padding:10px; border-radius:8px; margin-bottom:14px; background:rgba(16,185,129,0.04);">
-                        <h3 style="color:#10b981; font-size:0.9rem; margin-bottom:10px;">🇺🇸 US 설정 (페이퍼 트레이딩)</h3>
-                        <p style="font-size:0.8rem; color:#6b7280; line-height:1.5; margin-bottom:10px;">
-                            미국장 봇은 yfinance 기반 페이퍼 트레이딩으로 별도 브로커 API가 필요 없습니다.
+                        <h3 style="color:#10b981; font-size:0.9rem; margin-bottom:10px;">🇺🇸 US API 설정 (KIS 해외주식)</h3>
+                        <p style="font-size:0.78rem; color:#6b7280; line-height:1.4; margin-bottom:10px;">
+                            한국투자증권 해외주식 전용 App Key / Secret / 계좌번호를 입력하세요.<br>
+                            KR 봇과 동일한 키를 사용하거나, 해외주식 전용 키를 별도 발급할 수 있습니다.
                         </p>
-                        <label style="color:#10b981;">💰 US 투자 원금 (KRW 기준)</label>
+                        <label>App Key</label>
+                        <input type="text" id="mockAppKey" value="{{ user.data.mock_app_key or '' }}">
+                        <label>App Secret</label>
+                        <input type="password" id="mockAppSecret" value="{{ user.data.mock_app_secret or '' }}">
+                        <label>해외주식 계좌번호</label>
+                        <input type="text" id="mockAccountNo" value="{{ user.data.mock_account_no or '' }}" placeholder="예: 50123456-01">
+                        <label style="color:#10b981; margin-top:10px;">💰 US 투자 원금 (KRW 기준)</label>
                         <input type="number" id="initialCash" value="{{ user.data.initial_cash or 10000000 }}" placeholder="예: 10000000">
                         <p style="font-size:0.75rem; color:#94a3b8; margin-top:6px; line-height:1.4;">※ 봇 시작 시 이 금액을 USD로 환산하여 운용합니다.</p>
                     </div>
