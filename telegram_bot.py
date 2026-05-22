@@ -11,9 +11,12 @@ class TelegramNotifier:
         self.chat_id = chat_id
 
     def _post(self, text: str):
-        """단일 청크를 Telegram API로 전송합니다."""
+        """단일 청크를 Telegram API로 전송합니다.
+        parse_mode 없이 순수 텍스트로 전송 — HTML 특수문자(< > & * 등)가
+        포함된 AI 응답에서 텔레그램 파서가 메시지를 끊는 문제 방지.
+        """
         url = f"https://api.telegram.org/bot{self.token}/sendMessage"
-        data = {"chat_id": self.chat_id, "text": text, "parse_mode": "HTML"}
+        data = {"chat_id": self.chat_id, "text": text}
         try:
             # timeout=5.0 — 기존 3.0보다 여유 있게, 단 매매 로직 차단 방지
             res = requests.post(url, data=data, timeout=5.0)
