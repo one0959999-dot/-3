@@ -96,6 +96,17 @@ def init_db():
         )
         ''')
 
+            # AI 채팅 히스토리 — 세션 종료/서버 재시작 후에도 대화 기억
+            cursor.execute('''
+        CREATE TABLE IF NOT EXISTS chat_history (
+            user_id INTEGER,
+            is_mock  INTEGER,
+            messages TEXT,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            PRIMARY KEY (user_id, is_mock)
+        )
+        ''')
+
             cursor.execute('UPDATE users SET is_running = 0')
             conn.commit()
         finally:
@@ -411,6 +422,57 @@ def init_default_ai_rules(user_id: int):
 - 보합장/하락장/불확실장: 현금 자체가 포지션."""
 
     save_ai_rules(user_id, DEFAULT_RULES)
+
+
+# ── AI 채팅 히스토리 ─────────────────────────────────────────────────────────
+
+_CHAT_HISTORY_LIMIT = 30  # 저장 최대 메시지 수 (15쌍 = 충분한 컨텍스트, 토큰 과다 방지)
+
+def load_chat_history(user_id: int, is_mock: int) -> list:
+    """DB에서 채팅 히스토리를 불러옵니다. 없으면 빈 리스트."""
+    conn = get_db_connection()
+    try:
+        row = conn.execute(
+            'SELECT messages FROM chat_history WHERE user_id=? AND is_mock=?',
+            (user_id, is_mock)
+        ).fetchone()
+    finally:
+        conn.close()
+    if row and row['messages']:
+        try:
+            return json.loads(row['messages'])
+        except Exception:
+            return []
+    return []
+
+
+def save_chat_history(user_id: int, is_mock: int, messages: list):
+    """채팅 히스토리를 DB에 저장. 최신 _CHAT_HISTORY_LIMIT개만 유지."""
+    trimmed = messages[-_CHAT_HISTORY_LIMIT:] if len(messages) > _CHAT_HISTORY_LIMIT else messages
+    with db_lock:
+        conn = get_db_connection()
+        try:
+            conn.execute('''
+                INSERT OR REPLACE INTO chat_history (user_id, is_mock, messages, updated_at)
+                VALUES (?, ?, ?, CURRENT_TIMESTAMP)
+            ''', (user_id, is_mock, json.dumps(trimmed, ensure_ascii=False)))
+            conn.commit()
+        finally:
+            conn.close()
+
+
+def clear_chat_history(user_id: int, is_mock: int):
+    """채팅 히스토리 초기화 (사용자가 '대화 초기화' 버튼 누를 때)."""
+    with db_lock:
+        conn = get_db_connection()
+        try:
+            conn.execute(
+                'DELETE FROM chat_history WHERE user_id=? AND is_mock=?',
+                (user_id, is_mock)
+            )
+            conn.commit()
+        finally:
+            conn.close()
 
 
 if __name__ == '__main__':

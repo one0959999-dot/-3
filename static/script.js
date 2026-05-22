@@ -1313,10 +1313,10 @@ window.sendChip = function (text) { document.getElementById('ai-chat-input').val
 window.handleChatKey = function (e) { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendAiMessage(); } }
 window.autoResizeTextarea = function (el) { el.style.height = 'auto'; el.style.height = Math.min(el.scrollHeight, 120) + 'px'; }
 window.resetAiChat = async function () {
-    if (!confirm('대화 기록을 초기화할까요?')) return;
-    try { await fetch('/api/ai_reset', { method: 'POST' }); } catch (e) { }
+    if (!confirm('대화 기록을 초기화할까요?\n(서버 메모리 + DB 저장 기록 모두 삭제됩니다)')) return;
+    try { await fetch('/api/ai_chat/reset', { method: 'POST' }); } catch (e) { }
     const messages = document.getElementById('chat-messages');
-    messages.innerHTML = `<div class="chat-msg ai"><div class="chat-bubble">대화 기록이 초기화되었습니다.</div><span class="chat-msg-time">라씨 AI · ${new Date().toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit' })}</span></div>`;
+    messages.innerHTML = `<div class="chat-msg ai"><div class="chat-bubble">대화 기록이 초기화되었습니다. 새 대화를 시작해보세요! 😊</div><span class="chat-msg-time">라씨 AI · ${new Date().toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit' })}</span></div>`;
 }
 
 window.resetInitialCash = async function () {

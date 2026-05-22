@@ -8,7 +8,7 @@ from flask import Flask, render_template, jsonify, request, redirect, url_for, f
 from flask_login import LoginManager, UserMixin, login_user, logout_user, login_required, current_user
 
 from bots.bot_manager import manager
-from database import get_db_connection, verify_user, add_user, init_db, update_user_keys, init_default_ai_rules, set_user_initial_cash, get_news_api_keys, set_news_api_keys, get_sector_guide, set_sector_guide
+from database import get_db_connection, verify_user, add_user, init_db, update_user_keys, init_default_ai_rules, set_user_initial_cash, get_news_api_keys, set_news_api_keys, get_sector_guide, set_sector_guide, load_chat_history, save_chat_history, clear_chat_history
 
 # ── 통합 로깅 설정 (파일 + 콘솔) ──
 logging.basicConfig(
@@ -502,12 +502,37 @@ def ai_chat():
     if not gemini_client:
         return jsonify({"status": "error", "reply": "⚠️ Claude API 키가 설정되지 않았습니다."})
 
+    # ── 채팅 히스토리 DB 복원 (세션이 끊겨도 대화 기억) ──────────────────
+    is_mock_flag = int(current_user.data.get('is_mock', 1))
+    saved_history = load_chat_history(current_user.id, is_mock_flag)
+    if saved_history:
+        gemini_client._conversation_history = saved_history
+
     reply = gemini_client.chat(
         user_message,
         portfolio_context=bot.get_status(),
         stock_analysis_context=stock_analysis_context
     )
+
+    # 응답 후 최신 히스토리를 DB에 저장
+    save_chat_history(current_user.id, is_mock_flag, gemini_client._conversation_history)
+
     return jsonify({"status": "success", "reply": reply})
+
+
+@app.route('/api/ai_chat/reset', methods=['POST'])
+@login_required
+def ai_chat_reset():
+    """AI 채팅 히스토리 초기화 — 메모리 + DB 모두 삭제."""
+    bot = get_current_bot()
+    is_mock_flag = int(current_user.data.get('is_mock', 1))
+    # 메모리 히스토리 초기화
+    if bot and bot.gemini:
+        bot.gemini.reset_chat()
+    # DB 히스토리 삭제
+    clear_chat_history(current_user.id, is_mock_flag)
+    return jsonify({"status": "success", "message": "대화 기록이 초기화되었습니다."})
+
 
 @app.route('/api/settings/mode', methods=['POST'])
 @login_required
