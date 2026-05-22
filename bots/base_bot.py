@@ -1070,7 +1070,11 @@ class BaseBot:
                         self.add_log(f"⏳ {name} 재매수 쿨다운 중 ({cooldown_remaining/3600:.1f}h 남음) — 휩쏘 방지")
                         continue
 
-                    budget = int(total_assets * ratio)
+                    # BEAR 시 방어헤지 총합 50% (기존 30% → 50% 스케일업)
+                    # 개별 비율을 ×(0.50/0.30) = ×5/3 적용 → 인버스 25%, 달러 16.7%, 금 8.3%
+                    _total_def_ratio = sum(a['ratio'] for a in DEFENSIVE_ASSETS)  # 0.30
+                    bear_ratio_scaled = ratio * (0.50 / _total_def_ratio)
+                    budget = int(total_assets * bear_ratio_scaled)
                     price  = self.kis.get_current_price(ticker)
                     if price and price > 0:
                         qty = int(budget // price)
@@ -1078,13 +1082,13 @@ class BaseBot:
                             if self.kis.buy_market_order(ticker, qty):  # [BUG-FIX] 반환값 확인
                                 total_cash -= qty * price  # 현금 차감 (다음 종목 계산용)
                                 self.add_log(f"🐻 하락장 방어 매수 | {emoji} {name} {qty}주 @ {price:,.0f}원")
-                                self._log_trade(ticker, name, 'BUY', price, "방어자산", f"BEAR 국면 {ratio*100:.0f}% 헤지")
+                                self._log_trade(ticker, name, 'BUY', price, "방어자산", f"BEAR 국면 총자산 {bear_ratio_scaled*100:.0f}% 헤지")
                                 self._send_telegram(
                                     f"🐻 <b>방어 자산 매수</b>  ·  {self.alert_icon} {self.mode_name}\n"
                                     f"━━━━━━━━━━━━━━━━━━━━\n"
                                     f"{emoji} <b>{name}</b>  <code>{ticker}</code>\n"
                                     f"💰 <b>{price:,.0f}원</b> × <b>{qty}주</b>  =  <b>{qty*price:,.0f}원</b>\n"
-                                    f"📋 BEAR 국면  ·  총자산 {ratio*100:.0f}% 헤지\n"
+                                    f"📋 BEAR 국면  ·  총자산 {bear_ratio_scaled*100:.0f}% 헤지 (방어50% + 위성저점50%)\n"
                                     f"━━━━━━━━━━━━━━━━━━━━\n"
                                     f"⏰ {_now_kst().strftime('%H:%M KST')}",
                                     msg_type='trade'
@@ -1531,18 +1535,18 @@ class BaseBot:
                             self._record_daily_pnl(profit)
                         continue
 
-                # ── 1차 분할 익절: +10% 도달 시 보유량 50% 익절 (손익비 1:2 확보) ──
+                # ── 부분 익절: +10% 도달 시 보유량 50% 익절 (손익비 1:2 확보) ──
                 if (p_sh > 0 and p_avg > 0 and is_cd_passed
                         and not getattr(pos, 'partial_sold', False)
                         and price >= p_avg * 1.10):
                     sell_qty = max(1, p_sh // 2)
                     if self._sell_order(ticker, sell_qty, pos, p_nm):
                         with self.lock:
-                            pos.last_order_time = time.time(); pos.partial_sold = True; pos.status = "1차익절 ✅"
+                            pos.last_order_time = time.time(); pos.partial_sold = True; pos.status = "부분익절 ✅"
                             pos.shares = max(0, pos.shares - sell_qty)
                         profit = _net_profit(price, p_avg, sell_qty)
-                        self._log_trade(ticker, p_nm, 'SELL', price, st_nm, f"1차 분할 익절 +10% ({sell_qty}주)", profit=profit)
-                        self._send_trade_telegram(self._fmt_trade_msg("🎯", "1차 분할 익절", ticker, p_nm, price, sell_qty, profit=profit, strategy=st_nm, note=f"나머지 {p_sh - sell_qty}주는 +20% 목표 ATR 트레일링"))
+                        self._log_trade(ticker, p_nm, 'SELL', price, st_nm, f"부분 익절 +10% ({sell_qty}주)", profit=profit)
+                        self._send_trade_telegram(self._fmt_trade_msg("🎯", "부분 익절", ticker, p_nm, price, sell_qty, profit=profit, strategy=st_nm, note=f"나머지 {p_sh - sell_qty}주는 +20% 목표 ATR 트레일링"))
                         with self.lock: self.pnl_this_turn += profit
                         self._record_daily_pnl(profit)
 
@@ -1617,12 +1621,14 @@ class BaseBot:
                             pos.status_msg = "BEAR 국면 — 저점 신호 없음, 매수 차단"
                             continue
                         # 신호 강도에 따른 차등 포지션 사이징
+                        # BEAR 시 위성 저점매수 = 총예산의 50% 기준 배분
+                        # (방어헤지 50% + 위성저점 50% 대칭 구조)
                         if bear_score >= 3:
-                            bear_ratio, bear_label = 0.40, f"저점 강신호({bear_score}개)"
+                            bear_ratio, bear_label = 1.00, f"저점 강신호({bear_score}개)"  # 위성예산 전액
                         elif bear_score == 2:
-                            bear_ratio, bear_label = 0.30, f"저점 중신호({bear_score}개)"
+                            bear_ratio, bear_label = 0.70, f"저점 중신호({bear_score}개)"  # 70%
                         else:
-                            bear_ratio, bear_label = 0.20, f"저점 약신호({bear_score}개)"
+                            bear_ratio, bear_label = 0.50, f"저점 약신호({bear_score}개)"  # 50%
                         bear_reason_str = " | ".join(bear_reasons)
                         bounce_cash = p_cash * bear_ratio
                         qty = int((bounce_cash * 0.98) // price)
