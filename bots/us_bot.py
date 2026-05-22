@@ -27,7 +27,7 @@ from database import (
     get_sector_guide,
 )
 from telegram_bot import TelegramNotifier
-from us_screener import scan_us_satellites, get_us_prices_batch, get_us_ohlcv
+from us_screener import scan_us_satellites, get_us_prices_batch, get_us_ohlcv, generate_us_daily_report
 from kis_brokers.kis_overseas_api import KisOverseasApi
 
 logger = logging.getLogger('lassi_bot')
@@ -135,7 +135,8 @@ class USBotController:
         self.initial_cash_usd = 0.0
 
         # ── PnL ────────────────────────────────────────────────────
-        self.daily_pnl: dict = {}
+        self.daily_pnl: dict  = {}
+        self.daily_report     = None
 
         # ── 스크리닝 ───────────────────────────────────────────────
         self.last_screen_date = None
@@ -494,6 +495,7 @@ class USBotController:
         _bal_interval   = 300   # 5분마다 KIS 잔고 동기화
         _last_save_ts   = 0.0
         _last_bal_ts    = 0.0
+        _REPORT_SLOTS   = ("09:45", "12:00", "15:45")  # ET 리포트 발간 시각
 
         while self.is_running:
             try:
@@ -518,6 +520,24 @@ class USBotController:
                 if time.time() - _last_bal_ts >= _bal_interval:
                     self._sync_balance_from_kis()
                     _last_bal_ts = time.time()
+
+                # ── 일일 리포트 (ET 09:45 / 12:00 / 15:45) ─────────
+                cur_time_str = now.strftime("%H:%M")
+                for slot in _REPORT_SLOTS:
+                    if cur_time_str == slot:
+                        today_str = now.strftime("%Y-%m-%d")
+                        already = (
+                            isinstance(self.daily_report, dict)
+                            and self.daily_report.get("date") == today_str
+                            and self.daily_report.get(slot) is not None
+                        )
+                        if not already:
+                            t = threading.Thread(
+                                target=self.generate_daily_report,
+                                args=(slot,), daemon=True
+                            )
+                            t.start()
+                        break
 
                 # ── 위성 스크리닝 (하루 1회, KIS 미연결이어도 허용) ───
                 self._screen_satellites()
@@ -554,6 +574,7 @@ class USBotController:
                 "satellite_info":   self.satellite_info,
                 "hot_sectors":      self.hot_sectors,
                 "daily_pnl":        self.daily_pnl,
+                "daily_report":     self.daily_report,
                 "satellites": {
                     t: {
                         "name":          p.name,
@@ -582,6 +603,7 @@ class USBotController:
             self.satellite_info   = state.get("satellite_info", [])
             self.hot_sectors      = state.get("hot_sectors", [])
             self.daily_pnl        = state.get("daily_pnl", {})
+            self.daily_report     = state.get("daily_report", None)
             for t, s in state.get("satellites", {}).items():
                 self.satellite_positions[t] = USPosition(
                     ticker=t,
@@ -601,6 +623,36 @@ class USBotController:
     # ─────────────────────────────────────────────────────────────────
     # 공개 인터페이스 (BaseBot 호환)
     # ─────────────────────────────────────────────────────────────────
+
+    # ─────────────────────────────────────────────────────────────────
+    # US 일일 리포트 생성
+    # ─────────────────────────────────────────────────────────────────
+
+    def generate_daily_report(self, time_slot: str = "09:45"):
+        """ET 시간 슬롯별 US 일일 리포트 생성 (백그라운드 스레드에서 호출)"""
+        try:
+            today_str = _now_et().strftime("%Y-%m-%d")
+            # 이미 해당 슬롯 리포트가 있으면 건너뜀
+            if (isinstance(self.daily_report, dict)
+                    and self.daily_report.get("date") == today_str
+                    and self.daily_report.get(time_slot) is not None):
+                return
+
+            self.add_log(f"📝 US 일일 리포트 생성 중… ({time_slot} ET)")
+            result = generate_us_daily_report(
+                gemini_client   = self.gemini,
+                positions       = dict(self.satellite_positions),
+                satellite_info  = list(self.satellite_info),
+            )
+            if result:
+                if not isinstance(self.daily_report, dict) or self.daily_report.get("date") != today_str:
+                    self.daily_report = {"date": today_str, "09:45": None, "12:00": None, "15:45": None}
+                self.daily_report[time_slot] = result.get("report_markdown", "")
+                self._save_state()
+                self.add_log(f"✅ US 리포트 발간 완료 ({time_slot} ET)")
+                self._tg(f"📝 [US 리포트 {time_slot} ET]\n\n{self.daily_report[time_slot][:3000]}")
+        except Exception as e:
+            logger.error(f"[US봇] 리포트 생성 오류: {e}", exc_info=True)
 
     def reload_api_keys(self, kis_config, telegram_config, gemini_config, core_stocks):
         """BaseBot 호환 인터페이스 — KIS 해외주식 API + 텔레그램 갱신."""

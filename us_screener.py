@@ -259,6 +259,135 @@ def get_us_prices_batch(tickers) -> dict[str, float]:
     return prices
 
 
+def generate_us_daily_report(gemini_client=None, positions: dict = None,
+                              satellite_info: list = None) -> dict:
+    """
+    미국장 일일 리포트 생성.
+    - 주요 지수(SPY·QQQ·DIA) + 섹터 ETF 흐름 수집 (yfinance)
+    - 보유 위성 포지션 손익 요약 포함
+    - gemini_client 제공 시 Claude AI 분석, 없으면 룰 기반 리포트
+    """
+    from datetime import datetime, timezone, timedelta
+    _ET = timezone(timedelta(hours=-4))
+    today_str  = datetime.now(_ET).strftime('%Y년 %m월 %d일 (%a)')
+    today_key  = datetime.now(_ET).strftime('%Y-%m-%d')
+
+    lines: list[str] = [f"날짜: {today_str} (ET 기준)"]
+
+    # ── 1. 주요 지수 ──────────────────────────────────────────────────
+    indices = {
+        "S&P 500 (SPY)":   "SPY",
+        "NASDAQ 100 (QQQ)":"QQQ",
+        "Dow Jones (DIA)": "DIA",
+        "Russell 2000 (IWM)": "IWM",
+        "VIX (공포지수)":  "^VIX",
+    }
+    lines.append("\n[주요 지수 데이터]")
+    for name, sym in indices.items():
+        try:
+            df = yf.download(sym, period="35d", interval="1d",
+                             progress=False, auto_adjust=True)
+            if isinstance(df.columns, pd.MultiIndex):
+                df.columns = df.columns.get_level_values(0)
+            df = df.dropna(subset=["Close"])
+            if len(df) < 2:
+                continue
+            close   = df["Close"]
+            cur     = float(close.iloc[-1])
+            prev    = float(close.iloc[-2])
+            chg_pct = (cur / prev - 1) * 100
+            sma5    = float(close.rolling(5).mean().iloc[-1]) if len(close) >= 5 else cur
+            sma20   = float(close.rolling(20).mean().iloc[-1]) if len(close) >= 20 else cur
+            # RSI
+            delta = close.diff()
+            gain  = delta.clip(lower=0).rolling(14).mean()
+            loss  = (-delta.clip(upper=0)).rolling(14).mean()
+            rs    = gain / loss.replace(0, float('nan'))
+            rsi   = float((100 - 100 / (1 + rs)).iloc[-1]) if not rs.empty else 50.0
+            lines.append(
+                f"- {name}: ${cur:.2f} ({chg_pct:+.2f}%)  "
+                f"5일선 ${sma5:.2f} / 20일선 ${sma20:.2f}  RSI {rsi:.1f}"
+            )
+        except Exception:
+            pass
+
+    # ── 2. 섹터 ETF 흐름 ──────────────────────────────────────────────
+    sector_etfs = {
+        "기술(XLK)": "XLK", "금융(XLF)": "XLF", "에너지(XLE)": "XLE",
+        "헬스케어(XLV)": "XLV", "소비재(XLY)": "XLY", "산업재(XLI)": "XLI",
+    }
+    lines.append("\n[섹터 ETF 5일 수익률]")
+    sector_perf: list[tuple[str, float]] = []
+    for name, sym in sector_etfs.items():
+        try:
+            df = yf.download(sym, period="10d", interval="1d",
+                             progress=False, auto_adjust=True)
+            if isinstance(df.columns, pd.MultiIndex):
+                df.columns = df.columns.get_level_values(0)
+            df = df.dropna(subset=["Close"])
+            if len(df) >= 6:
+                ret = (float(df["Close"].iloc[-1]) / float(df["Close"].iloc[-6]) - 1) * 100
+                sector_perf.append((name, ret))
+        except Exception:
+            pass
+    sector_perf.sort(key=lambda x: x[1], reverse=True)
+    for name, ret in sector_perf:
+        lines.append(f"- {name}: {ret:+.2f}%")
+
+    # ── 3. 보유 위성 포지션 손익 ──────────────────────────────────────
+    if positions:
+        holding = {t: p for t, p in positions.items() if p.shares > 0}
+        if holding:
+            lines.append("\n[현재 보유 위성 포지션]")
+            for ticker, pos in holding.items():
+                try:
+                    df = yf.download(ticker, period="2d", interval="1d",
+                                     progress=False, auto_adjust=True)
+                    if isinstance(df.columns, pd.MultiIndex):
+                        df.columns = df.columns.get_level_values(0)
+                    cur_p = float(df["Close"].dropna().iloc[-1]) if not df.empty else pos.avg_price_usd
+                except Exception:
+                    cur_p = pos.avg_price_usd
+                pnl_pct = (cur_p / pos.avg_price_usd - 1) * 100 if pos.avg_price_usd > 0 else 0.0
+                lines.append(
+                    f"- {pos.name}({ticker}): {int(pos.shares)}주  "
+                    f"평균단가 ${pos.avg_price_usd:.2f} → 현재 ${cur_p:.2f}  ({pnl_pct:+.1f}%)"
+                )
+
+    # ── 4. 스캔 후보 ──────────────────────────────────────────────────
+    if satellite_info:
+        lines.append("\n[오늘의 위성 후보 종목]")
+        for info in satellite_info:
+            lines.append(
+                f"- {info['name']}({info['ticker']})  "
+                f"섹터: {info['sector']}  점수: {info['score']:.0f}"
+            )
+
+    market_data_text = "\n".join(lines)
+
+    # ── 5. AI 분석 or 룰 기반 리포트 ─────────────────────────────────
+    if gemini_client:
+        prompt = (
+            f"당신은 미국 주식 시장 전문 애널리스트입니다.\n"
+            f"아래 데이터를 바탕으로 한국어로 오늘의 미국 시장 분석 리포트를 작성해주세요.\n"
+            f"형식: 마크다운 (제목/소제목/불릿 포인트 사용)\n"
+            f"포함 내용: ① 전체 시장 방향성 ② 주목 섹터 ③ 보유 포지션 의견 ④ 오늘의 전략 제안\n\n"
+            f"{market_data_text}"
+        )
+        try:
+            report_text = gemini_client.analyze_market(prompt)
+        except Exception:
+            report_text = market_data_text
+    else:
+        report_text = (
+            f"### 📊 Lassi US Bot 시장 분석 리포트\n\n"
+            f"```\n{market_data_text}\n```\n\n"
+            f"> AI 분석 비활성화 상태입니다. Claude API 키를 등록하면 정교한 분석을 받을 수 있습니다."
+        )
+
+    return {"date": today_key, "report_markdown": report_text}
+
+
 def get_us_ohlcv(ticker: str, days: int = 200) -> pd.DataFrame:
     """
     단일 종목 OHLCV (일봉, USD).
