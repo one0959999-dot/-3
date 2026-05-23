@@ -2617,9 +2617,14 @@ class KRBotController:
             now = _now_kst()
             if not ("09:01" <= now.strftime('%H:%M') <= "20:00") or now.weekday() >= 5: return  # [BUG-M4] trading_job과 시간 가드 통일
             self.add_log(f"🦅 {self.mode_name} 위성 실시간 교체 탐색 중...")
-            keep_tickers = set(); freed_cash = 0
+            keep_tickers = set()      # 유지 티커 (교체 슬롯으로 계산하지 않음)
+            strong_keeps = set()      # 성장세 양호 — 절대 교체 대상 제외
+            freed_cash = 0
             with self.lock: sat_items = list(self.satellite_positions.items())
-            
+
+            _GROWTH_KEEP = 3.0    # +3% 이상 → 성장세 양호, 교체 없이 강제 유지
+            _LOSS_CUT    = -5.0   # -5% 이하 → 손절 교체
+
             for ticker, pos in sat_items:
                 if pos.shares == 0:
                     freed_cash += pos.cash
@@ -2631,7 +2636,15 @@ class KRBotController:
                 price = self.kis.get_current_price(ticker) if self.kis else 0
                 if price and pos.avg_price > 0:
                     profit_rt = (price / pos.avg_price - 1) * 100
-                    if profit_rt > -5: keep_tickers.add(ticker)
+                    if profit_rt >= _GROWTH_KEEP:
+                        # 성장세 양호 → 교체 대상에서 완전 제외
+                        keep_tickers.add(ticker)
+                        strong_keeps.add(ticker)
+                        self.add_log(f"🌱 {pos.name}({ticker}) 성장세 양호 ({profit_rt:+.1f}%) — 교체 없이 유지")
+                    elif profit_rt > _LOSS_CUT:
+                        # 관망 구간 → 유지하되 빈 슬롯 생기면 교체 가능
+                        keep_tickers.add(ticker)
+                        self.add_log(f"⏸️ {pos.name}({ticker}) 관망 유지 ({profit_rt:+.1f}%)")
                     else:
                         # I-05: trading_job과의 이중 매도 방지 — 락 안에서 shares 확인 후 주문
                         with self.lock:
@@ -2696,8 +2709,13 @@ class KRBotController:
                         keep_tickers.discard(t)
                         self.add_log(f"✂️ 위성 초과({self.num_satellites}개 한도) 정리: {pos.name}({t}) 청산")
 
+            # strong_keeps는 교체 후보 슬롯에서 제외 — 성장세 종목은 건드리지 않음
+            replaceable_keeps = keep_tickers - strong_keeps
             n_needed = self.num_satellites - len(keep_tickers)
-            if n_needed <= 0: return
+            if n_needed <= 0:
+                if strong_keeps:
+                    self.add_log(f"✅ 위성 {len(strong_keeps)}개 성장세 양호 — 전 슬롯 유지, 재스크리닝 스킵")
+                return
 
             # 당일 블랙리스트 종목을 충분히 걸러낼 수 있도록 여유 있게 조회
             # [BUG-7] _refresh_blacklist 는 내부 딕셔너리를 수정하므로 락 필요
