@@ -118,10 +118,10 @@ class KRBotController:
         self._defensive_sold_ts   = {}      # 방어 자산 종목별 청산 타임스탬프 {ticker: ts} (24h 쿨다운)
 
         # ── 🚀 테마·급등주 모멘텀 전용 슬롯 ──────────────────────────
-        # 위성 5개와 완전히 별개의 단일 포지션.
-        # 초고속 진입·이탈이 핵심이므로 AI 심사 없이 즉시 주문.
-        self.momentum_positions = [None]      # 모멘텀 슬롯 1개 (총자산의 10%)
-        self.momentum_budget_ratio = 0.10    # 총자산의 10% (단일 슬롯)
+        # 위성과 완전히 별개의 단일 포지션. AI 심사 후 진입, BEAR 시 현금 보유.
+        # 코어 40% + 위성 40% + 이 슬롯 20% = 총 100% (AI 재량으로 현금 가능)
+        self.momentum_positions = [None]      # 모멘텀 슬롯 1개 (총자산의 20%)
+        self.momentum_budget_ratio = 0.20    # 총자산의 20% (단일 슬롯)
         self._last_momentum_scan = 0.0       # 마지막 스캔 타임스탬프
         self._momentum_scan_interval = 60    # 1분마다 스캔
 
