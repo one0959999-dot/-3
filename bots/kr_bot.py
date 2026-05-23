@@ -1694,36 +1694,67 @@ class KRBotController:
                         self._send_trade_telegram(self._fmt_trade_msg("🚨", "코어 손절 전량", c_tk, c_nm, cp, c_sh, profit=core_profit, strategy="코어 ATR 손절", note=f"재진입 대기 — 더 좋은 타점 탐색 중"))
                     continue  # 손절 후 이번 턴 추가 로직 스킵
 
-                # ── 코어 부분 익절 (+10%/+20%) — 위성·US 코어와 동일 흐름 ──
+                # ── 코어 부분 익절 (AI 판단) ─────────────────────────────
                 if c_sh > 0 and c_avg > 0 and is_core_cd:
                     c_pnl_pct = (cp / c_avg - 1) * 100
+                    c_decision = getattr(core, 'ai_exit_decision', None)
+
+                    # 1차: +10% 도달 → AI에 익절 여부 문의
                     if not core.partial_sold and c_pnl_pct >= 10.0 and c_sh > 1:
-                        partial_qty = max(1, c_sh // 2)
-                        if self._sell_order(c_tk, partial_qty, core, c_nm):
-                            core_profit = _net_profit(cp, c_avg, partial_qty)
+                        if c_decision is None:
+                            if self.gemini:
+                                self._trigger_ai_partial_exit(core, c_tk, c_nm, cp, c_avg, c_pnl_pct, regime)
+                                with self.lock: core.status = f"AI 익절 검토 중 ({c_pnl_pct:+.1f}%) 🤖"
+                            else:
+                                with self.lock: core.ai_exit_decision = "SELL_PARTIAL"
+                        elif c_decision == "HOLD":
                             with self.lock:
-                                core.last_order_time = time.time()
-                                core.shares     -= partial_qty
-                                core.partial_sold = True
-                                core.status      = f"코어 1차익절({c_pnl_pct:+.1f}%) ✂️"
-                                self.pnl_this_turn += core_profit
-                            self._record_daily_pnl(core_profit)
-                            self.add_log(f"✂️  {c_nm} 코어 1차익절 | {partial_qty}주 @ {cp:,}원 | 손익: {core_profit:+,.0f}원")
-                            self._send_trade_telegram(self._fmt_trade_msg("✂️", "코어 1차익절(50%)", c_tk, c_nm, cp, partial_qty, profit=core_profit, strategy="코어 +10% 부분익절"))
+                                core.ai_exit_hold_until = time.time() + 300
+                                core.ai_exit_decision   = None
+                                core.status = f"AI 홀드 ({c_pnl_pct:+.1f}%) ⏳"
+                        else:
+                            partial_qty = max(1, c_sh // 2)
+                            if self._sell_order(c_tk, partial_qty, core, c_nm):
+                                core_profit = _net_profit(cp, c_avg, partial_qty)
+                                with self.lock:
+                                    core.last_order_time  = time.time()
+                                    core.shares          -= partial_qty
+                                    core.partial_sold     = True
+                                    core.ai_exit_decision = None
+                                    core.status           = f"코어 1차익절({c_pnl_pct:+.1f}%) ✂️"
+                                    self.pnl_this_turn   += core_profit
+                                self._record_daily_pnl(core_profit)
+                                self.add_log(f"✂️  {c_nm} 코어 1차익절 | {partial_qty}주 @ {cp:,}원 | 손익: {core_profit:+,.0f}원")
+                                self._send_trade_telegram(self._fmt_trade_msg("✂️", "코어 1차익절(50%)", c_tk, c_nm, cp, partial_qty, profit=core_profit, strategy="코어 AI 익절"))
                         continue
+
+                    # 2차: +20% 도달 → AI에 전량 익절 여부 문의
                     elif core.partial_sold and not core.partial_sold_2 and c_pnl_pct >= 20.0:
-                        if self._sell_order(c_tk, c_sh, core, c_nm):
-                            core_profit = _net_profit(cp, c_avg, c_sh)
+                        if c_decision is None:
+                            if self.gemini:
+                                self._trigger_ai_partial_exit(core, c_tk, c_nm, cp, c_avg, c_pnl_pct, regime)
+                                with self.lock: core.status = f"AI 익절 검토 중 ({c_pnl_pct:+.1f}%) 🤖"
+                            else:
+                                with self.lock: core.ai_exit_decision = "SELL_ALL"
+                        elif c_decision == "HOLD":
                             with self.lock:
-                                core.last_order_time = time.time()
-                                core.shares         = 0
-                                core._bought_val    = 0.0
-                                core.partial_sold_2 = True
-                                core.status         = f"코어 2차익절({c_pnl_pct:+.1f}%) ✅"
-                                self.pnl_this_turn += core_profit
-                            self._record_daily_pnl(core_profit)
-                            self.add_log(f"✅ {c_nm} 코어 2차익절(전량) | {c_sh}주 @ {cp:,}원 | 손익: {core_profit:+,.0f}원")
-                            self._send_trade_telegram(self._fmt_trade_msg("✅", "코어 2차익절(전량)", c_tk, c_nm, cp, c_sh, profit=core_profit, strategy=f"코어 +20% 전량익절"))
+                                core.ai_exit_hold_until = time.time() + 300
+                                core.ai_exit_decision   = None
+                                core.status = f"AI 홀드 ({c_pnl_pct:+.1f}%) ⏳"
+                        else:
+                            if self._sell_order(c_tk, c_sh, core, c_nm):
+                                core_profit = _net_profit(cp, c_avg, c_sh)
+                                with self.lock:
+                                    core.last_order_time  = time.time()
+                                    core.shares           = 0
+                                    core._bought_val      = 0.0
+                                    core.partial_sold_2   = True
+                                    core.ai_exit_decision = None
+                                    core.status           = f"코어 2차익절({c_pnl_pct:+.1f}%) ✅"
+                                    self.pnl_this_turn   += core_profit
+                                self._record_daily_pnl(core_profit)
+                                self.add_log(f"✅ {c_nm} 코어 2차익절(전량) | {c_sh}주 @ {cp:,}원 | 손익: {core_profit:+,.0f}원")
+                                self._send_trade_telegram(self._fmt_trade_msg("✅", "코어 2차익절(전량)", c_tk, c_nm, cp, c_sh, profit=core_profit, strategy="코어 AI 전량익절"))
                         continue
 
                 # c_cash를 락 안에서 최신값으로 재확인 (스냅샷 후 _sync_internal_balances가 변경 가능)
@@ -1941,36 +1972,70 @@ class KRBotController:
                             with self.lock: self.pnl_this_turn += profit
                             self._record_daily_pnl(profit)
 
-                # ── 부분 익절: +10% 도달 시 보유량 50% 익절 (손익비 1:2 확보) ──
+                # ── 부분 익절: +10% 도달 시 AI 판단 ─────────────────────
                 if (p_sh > 0 and p_avg > 0 and is_cd_passed
                         and not getattr(pos, 'partial_sold', False)
                         and price >= p_avg * 1.10):
-                    sell_qty = max(1, p_sh // 2)
-                    if self._sell_order(ticker, sell_qty, pos, p_nm):
+                    s_decision = getattr(pos, 'ai_exit_decision', None)
+                    if s_decision is None:
+                        if self.gemini:
+                            pnl_pct_s = (price / p_avg - 1) * 100
+                            self._trigger_ai_partial_exit(pos, ticker, p_nm, price, p_avg, pnl_pct_s, regime)
+                            with self.lock: pos.status = f"AI 익절 검토 중 (+{pnl_pct_s:.1f}%) 🤖"
+                        else:
+                            with self.lock: pos.ai_exit_decision = "SELL_PARTIAL"
+                    elif s_decision == "HOLD":
                         with self.lock:
-                            pos.last_order_time = time.time(); pos.partial_sold = True; pos.status = "부분익절 ✅"
-                            pos.shares = max(0, pos.shares - sell_qty)
-                        profit = _net_profit(price, p_avg, sell_qty)
-                        self._log_trade(ticker, p_nm, 'SELL', price, st_nm, f"부분 익절 +10% ({sell_qty}주)", profit=profit)
-                        self._send_trade_telegram(self._fmt_trade_msg("🎯", "부분 익절", ticker, p_nm, price, sell_qty, profit=profit, strategy=st_nm, note=f"나머지 {p_sh - sell_qty}주는 +20% 목표 ATR 트레일링"))
-                        with self.lock: self.pnl_this_turn += profit
-                        self._record_daily_pnl(profit)
+                            pos.ai_exit_hold_until = time.time() + 300
+                            pos.ai_exit_decision   = None
+                            pos.status = f"AI 홀드 ⏳"
+                    else:
+                        sell_qty = max(1, p_sh // 2)
+                        if self._sell_order(ticker, sell_qty, pos, p_nm):
+                            with self.lock:
+                                pos.last_order_time   = time.time()
+                                pos.partial_sold      = True
+                                pos.ai_exit_decision  = None
+                                pos.status            = "부분익절 ✅"
+                                pos.shares            = max(0, pos.shares - sell_qty)
+                            profit = _net_profit(price, p_avg, sell_qty)
+                            self._log_trade(ticker, p_nm, 'SELL', price, st_nm, f"부분 익절 +10% ({sell_qty}주)", profit=profit)
+                            self._send_trade_telegram(self._fmt_trade_msg("🎯", "부분 익절", ticker, p_nm, price, sell_qty, profit=profit, strategy=st_nm, note=f"나머지 {p_sh - sell_qty}주는 AI 판단 트레일링"))
+                            with self.lock: self.pnl_this_turn += profit
+                            self._record_daily_pnl(profit)
 
-                # ── 2차 분할 익절: +20% 도달 시 나머지 전량 익절 (한달 20% 목표) ──
+                # ── 2차 분할 익절: +20% 도달 시 AI 판단 ──────────────────
                 if (p_sh > 0 and p_avg > 0 and is_cd_passed
                         and getattr(pos, 'partial_sold', False)
                         and not getattr(pos, 'partial_sold_2', False)
                         and price >= p_avg * 1.20):
-                    sell_qty = pos.shares  # 나머지 전량
-                    if sell_qty > 0 and self._sell_order(ticker, sell_qty, pos, p_nm):
+                    s_decision = getattr(pos, 'ai_exit_decision', None)
+                    if s_decision is None:
+                        if self.gemini:
+                            pnl_pct_s = (price / p_avg - 1) * 100
+                            self._trigger_ai_partial_exit(pos, ticker, p_nm, price, p_avg, pnl_pct_s, regime)
+                            with self.lock: pos.status = f"AI 익절 검토 중 (+{pnl_pct_s:.1f}%) 🤖"
+                        else:
+                            with self.lock: pos.ai_exit_decision = "SELL_ALL"
+                    elif s_decision == "HOLD":
                         with self.lock:
-                            pos.last_order_time = time.time(); pos.partial_sold_2 = True; pos.status = "2차익절 ✅"
-                            pos.shares = 0
-                        profit = _net_profit(price, p_avg, sell_qty)
-                        self._log_trade(ticker, p_nm, 'SELL', price, st_nm, f"2차 전량 익절 +20% ({sell_qty}주)", profit=profit)
-                        self._send_trade_telegram(self._fmt_trade_msg("🏆", "2차 전량 익절", ticker, p_nm, price, sell_qty, profit=profit, strategy=st_nm, note="한달 20% 목표 달성"))
-                        with self.lock: self.pnl_this_turn += profit
-                        self._record_daily_pnl(profit)
+                            pos.ai_exit_hold_until = time.time() + 300
+                            pos.ai_exit_decision   = None
+                            pos.status = f"AI 홀드 ⏳"
+                    else:
+                        sell_qty = pos.shares
+                        if sell_qty > 0 and self._sell_order(ticker, sell_qty, pos, p_nm):
+                            with self.lock:
+                                pos.last_order_time   = time.time()
+                                pos.partial_sold_2    = True
+                                pos.ai_exit_decision  = None
+                                pos.status            = "2차익절 ✅"
+                                pos.shares            = 0
+                            profit = _net_profit(price, p_avg, sell_qty)
+                            self._log_trade(ticker, p_nm, 'SELL', price, st_nm, f"2차 전량 익절 +20% ({sell_qty}주)", profit=profit)
+                            self._send_trade_telegram(self._fmt_trade_msg("🏆", "2차 전량 익절", ticker, p_nm, price, sell_qty, profit=profit, strategy=st_nm, note="AI 판단 익절"))
+                            with self.lock: self.pnl_this_turn += profit
+                            self._record_daily_pnl(profit)
 
                 # ── 피라미딩: +3% 수익 중 & 상승 추세 지속 → 추가 20% 매수 ──
                 if (p_sh > 0 and p_avg > 0 and is_cd_passed
@@ -2611,6 +2676,34 @@ class KRBotController:
             )
             used_tickers.add(b_ticker)
             held.add(b_ticker)
+
+    def _trigger_ai_partial_exit(self, pos, ticker: str, name: str,
+                                  price: float, avg: float,
+                                  pnl_pct: float, regime: str):
+        """AI 익절 판단을 백그라운드 스레드로 요청 (메인 루프 비차단)."""
+        if getattr(pos, 'ai_exit_pending', False):
+            return
+        if time.time() < getattr(pos, 'ai_exit_hold_until', 0.0):
+            return
+        pos.ai_exit_pending = True
+
+        def _worker():
+            try:
+                decision = self.gemini.ai_partial_exit(
+                    ticker=ticker, stock_name=name, price=price,
+                    avg_price=avg, pnl_pct=pnl_pct,
+                    shares=int(getattr(pos, 'shares', 0)),
+                    partial_sold=bool(getattr(pos, 'partial_sold', False)),
+                    regime=regime,
+                )
+                with self.lock:
+                    pos.ai_exit_decision = decision
+                    pos.ai_exit_pending  = False
+            except Exception:
+                with self.lock:
+                    pos.ai_exit_pending = False
+
+        threading.Thread(target=_worker, daemon=True).start()
 
     def _rescreen_satellites(self):
         try:

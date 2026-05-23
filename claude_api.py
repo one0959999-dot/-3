@@ -813,6 +813,46 @@ REASON: (핵심 근거 2~3줄, 구체적 수치 포함)"""
                 f"[ClaudeAPI] ai_approve_trade 오류 — 알고리즘 신호 허용: {type(e).__name__}: {e}")
             return True, "AI 일시 오류 — 알고리즘 신호 그대로 허용"  # [BUG-M6] 오류 시 자동 거절 → 허용
 
+    def ai_partial_exit(self, ticker: str, stock_name: str, price: float,
+                        avg_price: float, pnl_pct: float, shares: int,
+                        partial_sold: bool, regime: str = "NEUTRAL") -> str:
+        """AI 익절 판단 — 백그라운드 스레드에서 호출됨.
+
+        Returns: 'SELL_PARTIAL' | 'SELL_ALL' | 'HOLD'
+        """
+        if not self.client:
+            return "SELL_PARTIAL"
+
+        stage = "2차(나머지 전량)" if partial_sold else "1차(50%)"
+        prompt = f"""[익절 시점 판단 요청]
+종목: {stock_name}({ticker}) | {stage} 익절 검토 중
+보유주수: {shares}주 | 평균단가: {avg_price:,.0f} | 현재가: {price:,.0f} | 수익률: {pnl_pct:+.1f}%
+시장 국면: {regime}
+
+【판단 기준】
+- 상승 추세가 강하고 모멘텀이 살아있다면 → 추가 상승 여지 있어 HOLD
+- 추세 약화 / RSI 과열(>70) / 거래량 감소 / 지지선 이탈 위험 → SELL
+- 시장이 BEAR 국면이거나 급격한 방향 전환 신호 → SELL
+- 목표 수익률 달성 후 기간이 길면 기회비용 감안 SELL
+
+아래 형식으로만 답하십시오:
+DECISION: SELL_PARTIAL 또는 SELL_ALL 또는 HOLD
+REASON: (핵심 근거 한 줄)"""
+
+        try:
+            res = self.generate_content(prompt, temperature=0.1, model=self._FAST_MODEL)
+            upper = res.upper()
+            decision_line = next(
+                (ln for ln in upper.splitlines() if "DECISION:" in ln), ""
+            )
+            after_colon = decision_line.split("DECISION:", 1)[-1].strip()
+            first_word = after_colon.split()[0] if after_colon.split() else "SELL_PARTIAL"
+            if first_word in ("SELL_PARTIAL", "SELL_ALL", "HOLD"):
+                return first_word
+            return "SELL_PARTIAL"
+        except Exception:
+            return "SELL_PARTIAL"
+
     # 시스템이 실제로 지원하는 전략 목록 (get_signal_by_strategy 매칭 기준)
     VALID_STRATEGIES = [
         "RSI(9) 30/70", "RSI(14) 30/70", "RSI(14) 40/60",

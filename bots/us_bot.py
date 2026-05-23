@@ -96,6 +96,9 @@ class USPosition:
     status:         str   = "감시 중 👀"
     last_order_time:float = 0.0
     max_price_usd:  float = 0.0
+    ai_exit_pending:    bool  = False
+    ai_exit_decision:   str   = None   # 'SELL_PARTIAL' / 'SELL_ALL' / 'HOLD' / None
+    ai_exit_hold_until: float = 0.0    # HOLD 판단 후 재요청 금지 시각
 
 
 # ══════════════════════════════════════════════════════════════════════
@@ -639,33 +642,97 @@ class USBotController:
                             self.add_log(f"💎 코어 매수 {pos.name}({ticker}) {bought_qty}주 @ ${price:.2f} | {c_score}pt [{score_str}] | AI: {ai_reason[:40]}")
                             self._tg(f"💎 [US 코어 매수] {pos.name} ({ticker})\n@ ${price:.2f}  점수 {c_score}pt")
 
-            # ── 코어 부분 익절 (+10%/+20%) ─────────────────────────────
+            # ── 코어 부분 익절 (AI 판단) ──────────────────────────────
             elif pos.shares > 0 and avg > 0:
                 pnl_pct = (price / avg - 1) * 100
+                decision = getattr(pos, 'ai_exit_decision', None)
+
+                # 1차: +10% 도달 → AI에 익절 여부 문의
                 if not pos.partial_sold and pnl_pct >= self.PARTIAL1_PCT and pos.shares > 1:
-                    q   = max(1.0, pos.shares * self.PARTIAL1_QTY)
-                    self._sell(ticker, pos.name, q, price)
-                    pnl = _net_profit_usd(price, avg, q)
-                    with self.lock:
-                        pos.shares      -= q
-                        pos.partial_sold = True
-                        pos.status       = f"코어 1차익절({pnl_pct:+.1f}%) ✂️"
-                    self._record_pnl(pnl)
-                    self.add_log(f"✂️  코어 1차익절 {pos.name} | PnL ${pnl:+.0f}")
+                    if decision is None:
+                        if self.gemini:
+                            self._trigger_ai_partial_exit(pos, ticker, pos.name, price, avg, pnl_pct, regime)
+                            with self.lock: pos.status = f"AI 익절 검토 중 ({pnl_pct:+.1f}%) 🤖"
+                        else:
+                            with self.lock: pos.ai_exit_decision = "SELL_PARTIAL"
+                    elif decision == "HOLD":
+                        with self.lock:
+                            pos.ai_exit_hold_until = time.time() + 300
+                            pos.ai_exit_decision   = None
+                            pos.status = f"AI 홀드 ({pnl_pct:+.1f}%) ⏳"
+                    else:
+                        q   = max(1.0, pos.shares * self.PARTIAL1_QTY)
+                        self._sell(ticker, pos.name, q, price)
+                        pnl = _net_profit_usd(price, avg, q)
+                        with self.lock:
+                            pos.shares           -= q
+                            pos.partial_sold      = True
+                            pos.ai_exit_decision  = None
+                            pos.status            = f"코어 1차익절({pnl_pct:+.1f}%) ✂️"
+                        self._record_pnl(pnl)
+                        self.add_log(f"✂️  코어 1차익절 {pos.name} | PnL ${pnl:+.0f}")
+
+                # 2차: +20% 도달 → AI에 전량 익절 여부 문의
                 elif pos.partial_sold and not pos.partial_sold_2 and pnl_pct >= self.PARTIAL2_PCT and pos.shares > 0:
-                    q   = pos.shares  # 나머지 전량
-                    self._sell(ticker, pos.name, q, price)
-                    pnl = _net_profit_usd(price, avg, q)
-                    with self.lock:
-                        pos.shares        = 0.0
-                        pos.partial_sold_2 = True
-                        pos.status         = f"코어 2차익절({pnl_pct:+.1f}%) ✅"
-                    self._record_pnl(pnl)
-                    self.add_log(f"✅ 코어 2차익절(전량) {pos.name} | PnL ${pnl:+.0f}")
-                    self._tg(f"✅ [US 코어 전량익절] {pos.name} | +{pnl_pct:.1f}% | ${pnl:+,.0f}")
+                    if decision is None:
+                        if self.gemini:
+                            self._trigger_ai_partial_exit(pos, ticker, pos.name, price, avg, pnl_pct, regime)
+                            with self.lock: pos.status = f"AI 익절 검토 중 ({pnl_pct:+.1f}%) 🤖"
+                        else:
+                            with self.lock: pos.ai_exit_decision = "SELL_ALL"
+                    elif decision == "HOLD":
+                        with self.lock:
+                            pos.ai_exit_hold_until = time.time() + 300
+                            pos.ai_exit_decision   = None
+                            pos.status = f"AI 홀드 ({pnl_pct:+.1f}%) ⏳"
+                    else:
+                        q   = pos.shares
+                        self._sell(ticker, pos.name, q, price)
+                        pnl = _net_profit_usd(price, avg, q)
+                        with self.lock:
+                            pos.shares            = 0.0
+                            pos.partial_sold_2    = True
+                            pos.ai_exit_decision  = None
+                            pos.status            = f"코어 2차익절({pnl_pct:+.1f}%) ✅"
+                        self._record_pnl(pnl)
+                        self.add_log(f"✅ 코어 2차익절(전량) {pos.name} | PnL ${pnl:+.0f}")
+                        self._tg(f"✅ [US 코어 전량익절] {pos.name} | +{pnl_pct:.1f}% | ${pnl:+,.0f}")
+
                 else:
                     with self.lock:
                         pos.status = f"코어 보유 💎 ({pnl_pct:+.1f}%)"
+
+    # ─────────────────────────────────────────────────────────────────
+    # AI 익절 판단 헬퍼 (백그라운드 비차단)
+    # ─────────────────────────────────────────────────────────────────
+
+    def _trigger_ai_partial_exit(self, pos, ticker: str, name: str,
+                                  price: float, avg: float,
+                                  pnl_pct: float, regime: str):
+        """AI 익절 판단을 백그라운드 스레드로 요청 (메인 루프 비차단)."""
+        if getattr(pos, 'ai_exit_pending', False):
+            return
+        if time.time() < getattr(pos, 'ai_exit_hold_until', 0.0):
+            return
+        pos.ai_exit_pending = True
+
+        def _worker():
+            try:
+                decision = self.gemini.ai_partial_exit(
+                    ticker=ticker, stock_name=name, price=price,
+                    avg_price=avg, pnl_pct=pnl_pct,
+                    shares=int(getattr(pos, 'shares', 0)),
+                    partial_sold=bool(getattr(pos, 'partial_sold', False)),
+                    regime=regime,
+                )
+                with self.lock:
+                    pos.ai_exit_decision = decision
+                    pos.ai_exit_pending  = False
+            except Exception:
+                with self.lock:
+                    pos.ai_exit_pending = False
+
+        threading.Thread(target=_worker, daemon=True).start()
 
     # ─────────────────────────────────────────────────────────────────
     # 위성 스크리닝 (하루 1회)
@@ -918,29 +985,61 @@ class USBotController:
                                 f"ATR 손절 (평단${avg:.2f}  ATR×{hard_mult:.1f})")
                 continue
 
-            # ③ 1차 부분 익절 (+10% → 50% 매도) — KR 동일
+            # ③ 1차 부분 익절 (+10%) — AI 판단
             if not pos.partial_sold and pnl_pct >= self.PARTIAL1_PCT and pos.shares > 1:
+                decision = getattr(pos, 'ai_exit_decision', None)
+                if decision is None:
+                    if self.gemini:
+                        self._trigger_ai_partial_exit(pos, ticker, pos.name, price, avg, pnl_pct, regime)
+                        with self.lock: pos.status = f"AI 익절 검토 중 ({pnl_pct:+.1f}%) 🤖"
+                    else:
+                        with self.lock: pos.ai_exit_decision = "SELL_PARTIAL"
+                    continue
+                if decision == "HOLD":
+                    with self.lock:
+                        pos.ai_exit_hold_until = time.time() + 300
+                        pos.ai_exit_decision   = None
+                        pos.status = f"AI 홀드 ({pnl_pct:+.1f}%) ⏳"
+                    continue
+                # SELL_PARTIAL 또는 SELL_ALL → 1차 익절 실행
                 q   = max(1.0, pos.shares * self.PARTIAL1_QTY)
                 self._sell(ticker, pos.name, q, price)
                 pnl = _net_profit_usd(price, avg, q)
                 with self.lock:
-                    pos.shares      -= q
-                    pos.partial_sold = True
-                    pos.status       = f"1차익절({pnl_pct:+.1f}%) ✂️"
+                    pos.shares           -= q
+                    pos.partial_sold      = True
+                    pos.ai_exit_decision  = None
+                    pos.status            = f"1차익절({pnl_pct:+.1f}%) ✂️"
                 self._record_pnl(pnl)
                 self.add_log(f"✂️  1차익절 {pos.name} | PnL ${pnl:+.0f}")
                 continue
 
-            # ④ 2차 전량 익절 (+20%) — KR 동일
+            # ④ 2차 전량 익절 (+20%) — AI 판단
             if (pos.partial_sold and not pos.partial_sold_2
                     and pnl_pct >= self.PARTIAL2_PCT and pos.shares > 0):
+                decision = getattr(pos, 'ai_exit_decision', None)
+                if decision is None:
+                    if self.gemini:
+                        self._trigger_ai_partial_exit(pos, ticker, pos.name, price, avg, pnl_pct, regime)
+                        with self.lock: pos.status = f"AI 익절 검토 중 ({pnl_pct:+.1f}%) 🤖"
+                    else:
+                        with self.lock: pos.ai_exit_decision = "SELL_ALL"
+                    continue
+                if decision == "HOLD":
+                    with self.lock:
+                        pos.ai_exit_hold_until = time.time() + 300
+                        pos.ai_exit_decision   = None
+                        pos.status = f"AI 홀드 ({pnl_pct:+.1f}%) ⏳"
+                    continue
+                # SELL_PARTIAL 또는 SELL_ALL → 2차 전량 익절 실행
                 q   = pos.shares
                 self._sell(ticker, pos.name, q, price)
                 pnl = _net_profit_usd(price, avg, q)
                 with self.lock:
-                    pos.shares        = 0.0
-                    pos.partial_sold_2 = True
-                    pos.status         = f"2차익절({pnl_pct:+.1f}%) ✅"
+                    pos.shares            = 0.0
+                    pos.partial_sold_2    = True
+                    pos.ai_exit_decision  = None
+                    pos.status            = f"2차익절({pnl_pct:+.1f}%) ✅"
                 self._record_pnl(pnl)
                 self.add_log(f"✅ 2차익절(전량) {pos.name} | PnL ${pnl:+.0f}")
                 self._tg(f"✅ [US 위성 전량익절] {pos.name} | +{pnl_pct:.1f}% | ${pnl:+,.0f}")

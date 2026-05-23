@@ -1578,6 +1578,11 @@ class Position:
         self.partial_sold     = False # 1차 익절 완료 여부
         self.partial_sold_2   = False # 2차 익절 완료 여부
 
+        # AI 익절 판단 (백그라운드 스레드)
+        self.ai_exit_pending   = False  # AI 요청 진행 중
+        self.ai_exit_decision  = None   # 'SELL_PARTIAL' / 'HOLD' / None
+        self.ai_exit_hold_until= 0.0    # HOLD 판단 후 재요청 금지 시각
+
         # 한국 금융시장 표준 수수료 및 거래세율 정의
         self.fee_rate = 0.00015      # 실전 및 모의 온라인 매매 수수료 기본율 (0.015%)
         self.tax_rate = 0.0018       # 장내 매도 시 국가 증권거래세율 (0.18%)
@@ -1657,9 +1662,12 @@ class CorePosition:
         # 상태 및 익절 추적 플래그
         self.status = "감시 중 👀"
         self.status_msg = "현재 지정된 전략에 따라 차트 및 지표를 실시간 감시하고 있습니다."
-        self.partial_sold   = False   # 1차 익절(+10%) 완료 여부
-        self.partial_sold_2 = False   # 2차 익절(+20%) 완료 여부
-        self.max_price      = 0       # 보유 중 최고가
+        self.partial_sold      = False  # 1차 익절(+10%) 완료 여부
+        self.partial_sold_2    = False  # 2차 익절(+20%) 완료 여부
+        self.max_price         = 0      # 보유 중 최고가
+        self.ai_exit_pending   = False  # AI 요청 진행 중
+        self.ai_exit_decision  = None   # 'SELL_PARTIAL' / 'HOLD' / None
+        self.ai_exit_hold_until= 0.0    # HOLD 판단 후 재요청 금지 시각
 
     def buy(self, price, cash_to_use=None):
         """매수 (cash_to_use 미지정 시 전액 매수)"""
