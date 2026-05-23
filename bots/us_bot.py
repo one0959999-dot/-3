@@ -430,6 +430,26 @@ class USBotController:
         today = _now_et().strftime("%Y-%m-%d")
         self.daily_pnl[today] = self.daily_pnl.get(today, 0.0) + usd_pnl
 
+    def _get_total_assets_usd(self) -> float:
+        """
+        현재 총 자산 USD = 현금 + 전체 포지션 평가액.
+        KR 봇의 '위성 수익 → 코어 재투자' 대신,
+        수익금이 cash_usd에 환원된 뒤 이 값 기준으로 예산을 재산정함으로써
+        코어·위성 40/40 고정 비율 복리 효과를 구현합니다.
+        """
+        pos_value = 0.0
+        for t, p in self.core_positions.items():
+            if p.shares > 0:
+                price = self._price(t)
+                if price > 0:
+                    pos_value += p.shares * price
+        for t, p in self.satellite_positions.items():
+            if p.shares > 0:
+                price = self._price(t)
+                if price > 0:
+                    pos_value += p.shares * price
+        return self.cash_usd + pos_value
+
     # ─────────────────────────────────────────────────────────────────
     # 코어 스크리닝 (주 1회 — 월요일 KR 봇과 동일 패턴)
     # ─────────────────────────────────────────────────────────────────
@@ -484,10 +504,9 @@ class USBotController:
             return
 
         import pandas as pd
-        initial_krw    = get_user_initial_cash(self.user_id, self._is_mock)
-        fx             = _get_fx_rate()
-        initial_usd    = initial_krw / fx if fx > 0 else 0.0
-        core_budget_per = (initial_usd * self.CORE_RATIO) / max(1, self.num_cores)
+        # 총자산 기준 예산 산정 (수익 복리 효과: 수익금 → cash_usd → 총자산 증가 → 예산 자동 증가)
+        total_usd      = self._get_total_assets_usd()
+        core_budget_per = (total_usd * self.CORE_RATIO) / max(1, self.num_cores)
 
         for info in self.core_info:
             ticker = info["ticker"]
@@ -679,10 +698,9 @@ class USBotController:
             return
 
         import pandas as pd
-        initial_krw    = get_user_initial_cash(self.user_id, self._is_mock)
-        fx             = _get_fx_rate()
-        initial_usd    = initial_krw / fx if fx > 0 else 0.0
-        sat_budget_per = (initial_usd * self.SAT_RATIO) / max(1, self.num_satellites)
+        # 총자산 기준 예산 산정 — 코어와 동일하게 수익 복리 효과 적용
+        total_usd      = self._get_total_assets_usd()
+        sat_budget_per = (total_usd * self.SAT_RATIO) / max(1, self.num_satellites)
         regime         = self.market_regime
 
         # ── 미보유 후보 매수 ─────────────────────────────────────────
