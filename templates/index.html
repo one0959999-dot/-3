@@ -59,58 +59,39 @@
         #fut-inner.fut-anim-in  { animation: fut-in  0.28s ease forwards; }
         #fut-inner.fut-anim-out { animation: fut-out 0.22s ease forwards; }
 
-        /* 선물 모달 — 배경 오버레이 */
+        /* 선물 모달 — statusModal 동일 구조: 오버레이가 flex로 자식을 화면 중앙에 배치 */
         #fut-overlay {
-            position: fixed;
-            inset: 0;
-            background: rgba(0, 0, 0, 0.55);
-            backdrop-filter: blur(3px);
-            -webkit-backdrop-filter: blur(3px);
-            z-index: 8999;
             display: none;
-        }
-        /* 선물 모달 — 화면 중앙 고정 */
-        #fut-popup {
             position: fixed;
-            z-index: 9000;
-            top: 50%;
-            left: 50%;
-            transform: translate(-50%, -50%);
-            background: rgba(15, 23, 42, 0.97);
-            border: 1px solid rgba(255,255,255,0.12);
-            border-radius: 18px;
-            padding: 0;
-            box-shadow: 0 24px 60px rgba(0,0,0,0.7);
-            backdrop-filter: blur(24px);
-            -webkit-backdrop-filter: blur(24px);
-            display: none;
-            width: min(560px, calc(100vw - 32px));
-            overflow: hidden;
-        }
-        /* 모달 헤더 */
-        #fut-popup-header {
-            display: flex;
-            justify-content: space-between;
+            z-index: 9999;
+            left: 0; top: 0;
+            width: 100%; height: 100%;
+            background-color: rgba(0, 0, 0, 0.6);
             align-items: center;
-            padding: 14px 18px 12px;
-            border-bottom: 1px solid rgba(255,255,255,0.08);
+            justify-content: center;
+        }
+        /* 선물 모달 내부 카드 */
+        #fut-popup {
+            background: #1e293b;
+            border-radius: 12px;
+            width: 90%;
+            max-width: 520px;
+            border: 1px solid rgba(255,255,255,0.1);
+            box-shadow: 0 4px 15px rgba(0,0,0,0.4);
+            overflow: hidden;
+            position: relative;
+        }
+        /* 모달 헤더 — 타이틀 중앙 정렬 */
+        #fut-popup-header {
+            text-align: center;
+            padding: 18px 18px 12px;
         }
         #fut-popup-title {
-            font-size: 0.82rem;
+            font-size: 1.05rem;
             font-weight: 700;
-            color: #e2e8f0;
+            color: #3b82f6;
             letter-spacing: 0.3px;
         }
-        #fut-popup-close {
-            cursor: pointer;
-            color: #475569;
-            font-size: 1.05rem;
-            line-height: 1;
-            padding: 3px 7px;
-            border-radius: 7px;
-            transition: background 0.15s, color 0.15s;
-        }
-        #fut-popup-close:hover { background: rgba(255,255,255,0.09); color: #f1f5f9; }
         /* 카드 그리드 */
         #fut-popup-cards {
             display: grid;
@@ -168,16 +149,13 @@
         body.theme-us .fx-label { color: #475569 !important; -webkit-text-fill-color: #475569 !important; }
         body.theme-us .fx-rate  { color: #0f172a !important; -webkit-text-fill-color: #0f172a !important; }
         /* US 모드: 선물 모달 — 흰색 배경 + 검은 글씨 */
-        body.theme-us #fut-overlay { background: rgba(0,0,0,0.35) !important; }
+        body.theme-us #fut-overlay { background-color: rgba(0,0,0,0.4) !important; }
         body.theme-us #fut-popup {
             background: #ffffff !important;
             border: 1px solid rgba(0,0,0,0.18) !important;
-            box-shadow: 0 20px 60px rgba(0,0,0,0.18) !important;
+            box-shadow: 0 4px 15px rgba(0,0,0,0.18) !important;
         }
-        body.theme-us #fut-popup-header { border-bottom-color: rgba(0,0,0,0.08) !important; }
-        body.theme-us #fut-popup-title  { color: #1e293b !important; }
-        body.theme-us #fut-popup-close  { color: #94a3b8 !important; }
-        body.theme-us #fut-popup-close:hover { background: rgba(0,0,0,0.06) !important; color: #0f172a !important; }
+        body.theme-us #fut-popup-title  { color: #2563eb !important; }
         body.theme-us .fut-card { border-right-color: rgba(0,0,0,0.07) !important; }
         body.theme-us .fut-card-label { color: #64748b !important; }
         body.theme-us .fut-card-price { color: #0f172a !important; }
@@ -574,11 +552,6 @@
                 </span>
             </div>
 
-            <!-- 선물 지표 팝업 -->
-            <!-- 선물 모달 오버레이 + 팝업 (body 레벨로 분리 불필요 — z-index로 제어) -->
-            <div id="fut-overlay" onclick="toggleFutPopup(event)"></div>
-            <div id="fut-popup"></div>
-
         </div>
 
         <div class="nav-user">
@@ -919,6 +892,11 @@
         </div>
     </div>
 
+    <!-- 선물 모달 — statusModal과 동일 구조: 오버레이가 자식을 flex로 중앙배치 -->
+    <div id="fut-overlay" onclick="toggleFutPopup(event)">
+        <div id="fut-popup" onclick="event.stopPropagation()"></div>
+    </div>
+
     <div id="statusModal"
         style="display:none; position:fixed; z-index:9999; left:0; top:0; width:100%; height:100%; background-color:rgba(0,0,0,0.6); align-items:center; justify-content:center;">
         <div
@@ -1093,7 +1071,6 @@
         popup.innerHTML = `
             <div id="fut-popup-header">
                 <span id="fut-popup-title">📊 선물 현황</span>
-                <span id="fut-popup-close" onclick="toggleFutPopup(event)">✕</span>
             </div>
             <div id="fut-popup-cards">${cards}</div>
             <div id="fut-popup-footer">
@@ -1102,17 +1079,14 @@
     }
 
     function _setFutModal(open) {
-        const popup   = document.getElementById('fut-popup');
         const overlay = document.getElementById('fut-overlay');
-        if (!popup) return;
+        if (!overlay) return;
         _futPopupOpen = open;
         if (open) {
             _buildPopup();
-            popup.style.display   = 'block';
-            if (overlay) overlay.style.display = 'block';
+            overlay.style.display = 'flex';
         } else {
-            popup.style.display   = 'none';
-            if (overlay) overlay.style.display = 'none';
+            overlay.style.display = 'none';
         }
     }
 
