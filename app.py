@@ -475,17 +475,11 @@ def ai_chat():
             if len(context_lines) > 1:
                 stock_analysis_context += "\n".join(context_lines)
         
-        # ── 봇 직접 제어 명령 힌트 ────────────────────────────────────────
+        # ── 봇 명령 적용 가능 리마인더 (시스템 프롬프트 보강) ───────────
         stock_analysis_context += (
-            "\n[🤖 봇 직접 제어 기능 — 중요]\n"
-            '사용자가 "이걸로 바꿔줘", "봇에 적용해줘", "설정 변경해줘", "이 종목으로 변경해" 등\n'
-            "봇 설정 변경을 명시적으로 요청하면, 답변 맨 마지막 줄에 아래 형식의 명령 블록을 포함하세요:\n"
-            "[BOT_COMMAND]"
-            '{"action":"update_sector_guide","content":"여기에 새 전략 가이드 전체 내용"}'
-            "[/BOT_COMMAND]\n"
-            "- action: update_sector_guide (현재 지원하는 유일한 명령)\n"
-            "- content: 사용자에게 제안한 전략 내용을 텍스트로 정리 (코어/위성 종목, 비중, 주의사항 등)\n"
-            "- 단순 분석·조언만 요청하면 이 블록을 포함하지 마세요.\n"
+            "\n[리마인더] 사용자가 봇 설정 변경을 요청하면 "
+            "[BOT_COMMAND]{\"action\":\"update_sector_guide\",\"content\":\"...\"}[/BOT_COMMAND] "
+            "블록을 답변 마지막에 포함하세요. 당신은 이 명령을 통해 봇 설정을 직접 바꿀 수 있습니다.\n"
         )
 
         if stock_analysis_context:
