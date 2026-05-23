@@ -35,6 +35,7 @@ from database import (
     add_user_initial_cash,
     get_sector_guide,
 )
+from strategy import calculate_entry_score, get_entry_threshold, get_budget_ratio_from_score
 # bot_manager는 순환 임포트 방지를 위해 런타임에 참조
 import importlib
 
@@ -102,14 +103,18 @@ class USBotController:
     """미국장 실전 매매 봇 — KIS 해외주식 API (KRBotController 아키텍처 기반)"""
 
     # ── 전략 상수 ─────────────────────────────────────────────────────
-    SAT_RATIO      = 0.80    # 위성 80% (나머지 20% = 현금 버퍼)
+    CORE_RATIO     = 0.40    # 코어 40%
+    SAT_RATIO      = 0.40    # 위성 40%
     ORDER_COOLDOWN = 300     # 연속 주문 방지 (초)
-    STOP_LOSS_PCT  = -12.0   # 하드 손절 (%)
-    TRAIL_DROP_PCT = -8.0    # 트레일링 스탑: 고점 대비 (%)
-    PARTIAL1_PCT   = 15.0    # 1차 익절 기준 (%)
-    PARTIAL1_QTY   = 0.30    # 1차 익절 비율
-    PARTIAL2_PCT   = 30.0    # 2차 익절 기준 (%)
-    PARTIAL2_QTY   = 0.50    # 2차 익절 비율
+    # ATR 기반 손절 (KR 동일 방식)
+    CORE_HARD_MULT  = {"BULL": 3.0, "NEUTRAL": 2.5, "BEAR": 1.8}
+    SAT_TRAIL_MULT  = {"BULL": 1.5, "NEUTRAL": 1.5, "BEAR": 1.2}
+    SAT_TRAIL_TRIG  = {"BULL": 1.2, "NEUTRAL": 1.0, "BEAR": 0.8}
+    SAT_HARD_MULT   = {"BULL": 3.0, "NEUTRAL": 2.5, "BEAR": 1.8}
+    PARTIAL1_PCT    = 10.0   # 1차 익절 기준 (%) — KR 동일
+    PARTIAL1_QTY    = 0.50   # 1차 익절 비율 — KR 동일 (50%)
+    PARTIAL2_PCT    = 20.0   # 2차 익절 기준 (%)
+    PARTIAL2_QTY    = 1.00   # 2차: 나머지 전량
 
     def __init__(self, user_id, kis_config=None, telegram_config=None, core_stocks=None):
         self.user_id    = user_id
@@ -128,6 +133,10 @@ class USBotController:
         self._init_api(kis_config)
 
         # ── 포트폴리오 ────────────────────────────────────────────────
+        self.core_positions:      dict[str, USPosition] = {}  # 코어 40%
+        self.core_info:           list = []     # AI 선정 코어 종목 메타
+        self.num_cores            = 3
+        self.last_core_screen_date = None       # 코어 스크리닝 날짜 (주 1회)
         self.satellite_positions: dict[str, USPosition] = {}
         self.satellite_info:      list = []
         self.hot_sectors:         list = []
@@ -422,6 +431,192 @@ class USBotController:
         self.daily_pnl[today] = self.daily_pnl.get(today, 0.0) + usd_pnl
 
     # ─────────────────────────────────────────────────────────────────
+    # 코어 스크리닝 (주 1회 — 월요일 KR 봇과 동일 패턴)
+    # ─────────────────────────────────────────────────────────────────
+
+    def _screen_cores(self):
+        """월요일 1회 AI가 코어 종목 선정 (장기 우량주)."""
+        now = _now_et()
+        today = now.strftime("%Y-%m-%d")
+        # 주 1회 (월요일) 또는 코어가 비어있을 때만 실행
+        if self.last_core_screen_date == today:
+            return
+        if now.weekday() != 0 and self.core_info:
+            return
+
+        holding = {t for t, p in self.core_positions.items() if p.shares > 0}
+        self.add_log("🔍 US 코어 종목 스캔 시작…")
+
+        try:
+            from us_screener import scan_us_satellites
+            # 코어는 더 넓게 스캔 후 AI에게 넘김
+            candidates = scan_us_satellites(n=self.num_cores * 3, exclude=holding)
+            if not candidates:
+                self.add_log("⚠️ 코어 스캔 결과 없음 — 기존 유지")
+                return
+
+            if self.gemini:
+                ai_result = self.gemini.ai_select_us_core_stocks(
+                    candidates=candidates, n=self.num_cores
+                )
+                if ai_result:
+                    self.core_info = ai_result
+                    names = [f"{c['ticker']}({c.get('ai_reason','')[:15]})" for c in self.core_info]
+                    self.add_log(f"🤖 AI 코어 선정: {', '.join(names)}")
+                else:
+                    self.core_info = candidates[:self.num_cores]
+                    self.add_log("⚠️ AI 코어 선정 실패 → 퀀트 상위 유지")
+            else:
+                self.core_info = candidates[:self.num_cores]
+                self.add_log(f"✅ 코어 종목: {[c['ticker'] for c in self.core_info]}")
+
+            self.last_core_screen_date = today
+        except Exception as e:
+            logger.warning(f"[US봇] 코어 스캔 오류: {e}")
+
+    # ─────────────────────────────────────────────────────────────────
+    # 코어 관리 (KR 코어와 동일 로직: RSI + ATR 손절 + 통합 점수)
+    # ─────────────────────────────────────────────────────────────────
+
+    def _manage_cores(self):
+        """코어 포지션 매수/손절 — KR 코어와 동일 전략."""
+        if not self.kis_overseas or not self.core_info:
+            return
+
+        import pandas as pd
+        initial_krw    = get_user_initial_cash(self.user_id, self._is_mock)
+        fx             = _get_fx_rate()
+        initial_usd    = initial_krw / fx if fx > 0 else 0.0
+        core_budget_per = (initial_usd * self.CORE_RATIO) / max(1, self.num_cores)
+
+        for info in self.core_info:
+            ticker = info["ticker"]
+            pos    = self.core_positions.get(ticker)
+            price  = self._price(ticker)
+            if price <= 0:
+                continue
+            if pos is None:
+                pos = USPosition(ticker=ticker, name=info["name"],
+                                 budget_usd=core_budget_per)
+                with self.lock:
+                    self.core_positions[ticker] = pos
+
+            # OHLCV 조회 (yfinance)
+            try:
+                import yfinance as yf
+                df_raw = yf.download(ticker, period="180d", interval="1d",
+                                     progress=False, auto_adjust=True)
+                if hasattr(df_raw.columns, "get_level_values"):
+                    df_raw.columns = df_raw.columns.get_level_values(0)
+                df_raw = df_raw.dropna(subset=["Close"])
+                df_raw.columns = [c.lower() for c in df_raw.columns]
+            except Exception:
+                df_raw = None
+
+            avg    = pos.avg_price_usd
+            regime = self.market_regime
+
+            # ── ATR 계산 ───────────────────────────────────────────────
+            c_atr = avg * 0.02 if avg > 0 else price * 0.02
+            if df_raw is not None and not df_raw.empty and all(
+                    c in df_raw.columns for c in ['high', 'low', 'close']):
+                try:
+                    tr    = pd.concat([
+                        df_raw['high'] - df_raw['low'],
+                        (df_raw['high'] - df_raw['close'].shift(1)).abs(),
+                        (df_raw['low']  - df_raw['close'].shift(1)).abs(),
+                    ], axis=1).max(axis=1)
+                    c_atr = float(tr.rolling(14, min_periods=1).mean().iloc[-1])
+                except Exception:
+                    pass
+
+            hard_mult = self.CORE_HARD_MULT.get(regime, 2.5)
+            is_cd     = time.time() - pos.last_order_time > self.ORDER_COOLDOWN
+
+            # ── ATR 하드 손절 (전량) ────────────────────────────────────
+            if pos.shares > 0 and avg > 0 and is_cd and price <= avg - (hard_mult * c_atr):
+                proceeds = self._sell(ticker, pos.name, pos.shares, price)
+                pnl      = _net_profit_usd(price, avg, pos.shares)
+                with self.lock:
+                    pos.shares = 0.0
+                    pos.status = "코어 손절 🚨"
+                self._record_pnl(pnl)
+                self.add_log(f"🚨 코어 손절 {pos.name}({ticker}) | ATR×{hard_mult:.1f} 이탈 | PnL ${pnl:+.0f}")
+                self._tg(f"🚨 [US 코어 손절] {pos.name}\nATR×{hard_mult:.1f} 이탈 | 재진입 타점 탐색 중\n손익: ${pnl:+,.0f}")
+                continue
+
+            # ── 통합 진입 점수 + RSI 매수 신호 ─────────────────────────
+            if pos.shares == 0 and is_cd:
+                available_cash = self.cash_usd
+                budget = min(core_budget_per, available_cash)
+                if budget < price * 0.1:
+                    continue
+
+                # 통합 점수 체크
+                if df_raw is not None and not df_raw.empty:
+                    momentum_20d = 0.0
+                    try:
+                        c = df_raw['close'].dropna()
+                        if len(c) >= 21:
+                            momentum_20d = float((c.iloc[-1] / c.iloc[-21] - 1) * 100)
+                    except Exception:
+                        pass
+                    c_score, c_reasons = calculate_entry_score(
+                        df_raw, price, regime, momentum_20d=momentum_20d
+                    )
+                else:
+                    c_score, c_reasons = 0, []
+
+                c_threshold = get_entry_threshold(regime, 'core')
+                if c_score < c_threshold:
+                    with self.lock:
+                        pos.status = f"코어 진입 대기 ({c_score}/{c_threshold}pt) ⏳"
+                    continue
+
+                budget_ratio = get_budget_ratio_from_score(c_score, c_threshold)
+                qty = int((budget * budget_ratio) // price)
+                if qty > 0:
+                    bought_qty = self._buy(ticker, pos.name, budget * budget_ratio, price)
+                    if bought_qty > 0:
+                        with self.lock:
+                            pos.shares         = float(bought_qty)
+                            pos.avg_price_usd  = price
+                            pos.max_price_usd  = price
+                            pos.last_order_time = time.time()
+                            pos.status         = f"코어 보유 💎 ({c_score}pt)"
+                        score_str = " | ".join(c_reasons[:3])
+                        self.add_log(f"💎 코어 매수 {pos.name}({ticker}) {bought_qty}주 @ ${price:.2f} | {c_score}pt [{score_str}]")
+                        self._tg(f"💎 [US 코어 매수] {pos.name} ({ticker})\n@ ${price:.2f}  점수 {c_score}pt")
+
+            # ── 코어 부분 익절 (+10%/+20%) ─────────────────────────────
+            elif pos.shares > 0 and avg > 0:
+                pnl_pct = (price / avg - 1) * 100
+                if not pos.partial_sold and pnl_pct >= self.PARTIAL1_PCT and pos.shares > 1:
+                    q   = max(1.0, pos.shares * self.PARTIAL1_QTY)
+                    self._sell(ticker, pos.name, q, price)
+                    pnl = _net_profit_usd(price, avg, q)
+                    with self.lock:
+                        pos.shares      -= q
+                        pos.partial_sold = True
+                        pos.status       = f"코어 1차익절({pnl_pct:+.1f}%) ✂️"
+                    self._record_pnl(pnl)
+                    self.add_log(f"✂️  코어 1차익절 {pos.name} | PnL ${pnl:+.0f}")
+                elif pos.partial_sold and not pos.partial_sold_2 and pnl_pct >= self.PARTIAL2_PCT and pos.shares > 0:
+                    q   = pos.shares  # 나머지 전량
+                    self._sell(ticker, pos.name, q, price)
+                    pnl = _net_profit_usd(price, avg, q)
+                    with self.lock:
+                        pos.shares        = 0.0
+                        pos.partial_sold_2 = True
+                        pos.status         = f"코어 2차익절({pnl_pct:+.1f}%) ✅"
+                    self._record_pnl(pnl)
+                    self.add_log(f"✅ 코어 2차익절(전량) {pos.name} | PnL ${pnl:+.0f}")
+                    self._tg(f"✅ [US 코어 전량익절] {pos.name} | +{pnl_pct:.1f}% | ${pnl:+,.0f}")
+                else:
+                    with self.lock:
+                        pos.status = f"코어 보유 💎 ({pnl_pct:+.1f}%)"
+
+    # ─────────────────────────────────────────────────────────────────
     # 위성 스크리닝 (하루 1회)
     # ─────────────────────────────────────────────────────────────────
 
@@ -483,10 +678,12 @@ class USBotController:
         if not self.kis_overseas:
             return
 
-        initial_krw = get_user_initial_cash(self.user_id, self._is_mock)
-        fx          = _get_fx_rate()
-        initial_usd = initial_krw / fx if fx > 0 else 0.0
+        import pandas as pd
+        initial_krw    = get_user_initial_cash(self.user_id, self._is_mock)
+        fx             = _get_fx_rate()
+        initial_usd    = initial_krw / fx if fx > 0 else 0.0
         sat_budget_per = (initial_usd * self.SAT_RATIO) / max(1, self.num_satellites)
+        regime         = self.market_regime
 
         # ── 미보유 후보 매수 ─────────────────────────────────────────
         for info in self.satellite_info:
@@ -494,15 +691,49 @@ class USBotController:
             pos    = self.satellite_positions.get(ticker)
             if pos and pos.shares > 0:
                 continue
-            # 블랙리스트 체크
             if ticker in self._satellite_rejects:
                 continue
-            # 쿨다운 체크
             if pos and (time.time() - pos.last_order_time < self.ORDER_COOLDOWN):
                 continue
             price = self._price(ticker)
-            if price <= 0 or self.cash_usd < sat_budget_per * 0.5:
+            if price <= 0 or self.cash_usd < sat_budget_per * 0.3:
                 continue
+
+            # OHLCV 조회
+            try:
+                import yfinance as yf
+                df_raw = yf.download(ticker, period="120d", interval="1d",
+                                     progress=False, auto_adjust=True)
+                if hasattr(df_raw.columns, "get_level_values"):
+                    df_raw.columns = df_raw.columns.get_level_values(0)
+                df_raw = df_raw.dropna(subset=["Close"])
+                df_raw.columns = [c.lower() for c in df_raw.columns]
+            except Exception:
+                df_raw = None
+
+            # ── 통합 진입 점수 체크 ────────────────────────────────
+            momentum_20d = info.get("momentum_20d", 0.0)
+            if df_raw is not None and not df_raw.empty:
+                entry_score, entry_reasons = calculate_entry_score(
+                    df_raw, price, regime, momentum_20d=momentum_20d
+                )
+            else:
+                entry_score, entry_reasons = 0, []
+
+            entry_threshold = get_entry_threshold(regime, 'satellite')
+            if entry_score < entry_threshold:
+                if pos is None:
+                    self.satellite_positions[ticker] = USPosition(
+                        ticker=ticker, name=info["name"], budget_usd=sat_budget_per,
+                        status=f"진입 점수 부족 ({entry_score}/{entry_threshold}pt) ⏳"
+                    )
+                else:
+                    with self.lock:
+                        pos.status = f"진입 점수 부족 ({entry_score}/{entry_threshold}pt) ⏳"
+                continue
+
+            budget_ratio = get_budget_ratio_from_score(entry_score, entry_threshold)
+            actual_budget = sat_budget_per * budget_ratio
 
             # ── AI 매수 승인 심사 ────────────────────────────────────
             if self.gemini:
@@ -514,22 +745,21 @@ class USBotController:
                         price_usd   = price,
                         sector      = info.get("sector", ""),
                         hot_sectors = self.hot_sectors,
-                        momentum_20d= info.get("momentum_20d", 0.0),
+                        momentum_20d= momentum_20d,
                         rsi         = info.get("rsi", 50.0),
                         ai_reason   = info.get("ai_reason", ""),
                     )
                     if not approved:
                         self._satellite_rejects[ticker] = ai_reason
-                        self.add_log(
-                            f"🤖 AI 매수 거절: {info['name']}({ticker}) — {ai_reason[:80]}"
-                        )
+                        self.add_log(f"🤖 AI 매수 거절: {info['name']}({ticker}) — {ai_reason[:80]}")
                         continue
-                    self.add_log(f"🤖 AI 매수 승인: {info['name']}({ticker})")
+                    self.add_log(f"🤖 AI 매수 승인: {info['name']}({ticker}) | 점수 {entry_score}pt")
                 except Exception as e:
                     logger.warning(f"[US봇] AI 승인 심사 오류 ({ticker}): {e} — 알고리즘 신호 허용")
 
-            qty = self._buy(ticker, info["name"], sat_budget_per, price)
+            qty = self._buy(ticker, info["name"], actual_budget, price)
             if qty > 0:
+                score_str = " | ".join(entry_reasons[:3])
                 with self.lock:
                     self.satellite_positions[ticker] = USPosition(
                         ticker         = ticker,
@@ -537,16 +767,17 @@ class USBotController:
                         shares         = float(qty),
                         avg_price_usd  = price,
                         budget_usd     = sat_budget_per,
-                        status         = "보유 중 🛰️",
+                        status         = f"보유 중 🛰️ ({entry_score}pt)",
                         last_order_time= time.time(),
                         max_price_usd  = price,
                     )
+                self.add_log(f"🛰️ 위성 매수 {info['name']}({ticker}) {qty}주 @ ${price:.2f} | {entry_score}pt [{score_str}]")
                 self._tg(
                     f"🛰️ [US 위성 매수] {info['name']} ({ticker})\n"
-                    f"@ ${price:.2f}  섹터: {info['sector']}"
+                    f"@ ${price:.2f}  점수 {entry_score}pt  섹터: {info.get('sector','')}"
                 )
 
-        # ── 보유 중 청산 조건 체크 ───────────────────────────────────
+        # ── 보유 중 청산 조건 체크 (ATR 기반 — KR 동일) ─────────────
         for ticker, pos in list(self.satellite_positions.items()):
             if pos.shares <= 0:
                 continue
@@ -554,28 +785,64 @@ class USBotController:
             if price <= 0:
                 continue
 
+            # OHLCV 조회
+            try:
+                import yfinance as yf
+                df_raw = yf.download(ticker, period="60d", interval="1d",
+                                     progress=False, auto_adjust=True)
+                if hasattr(df_raw.columns, "get_level_values"):
+                    df_raw.columns = df_raw.columns.get_level_values(0)
+                df_raw = df_raw.dropna(subset=["Close"])
+                df_raw.columns = [c.lower() for c in df_raw.columns]
+            except Exception:
+                df_raw = None
+
+            avg = pos.avg_price_usd
+            if avg <= 0:
+                continue
+
+            # ATR 계산
+            s_atr = avg * 0.02
+            if df_raw is not None and not df_raw.empty and all(
+                    c in df_raw.columns for c in ['high', 'low', 'close']):
+                try:
+                    tr    = pd.concat([
+                        df_raw['high'] - df_raw['low'],
+                        (df_raw['high'] - df_raw['close'].shift(1)).abs(),
+                        (df_raw['low']  - df_raw['close'].shift(1)).abs(),
+                    ], axis=1).max(axis=1)
+                    s_atr = float(tr.rolling(14, min_periods=1).mean().iloc[-1])
+                except Exception:
+                    pass
+
+            trail_mult  = self.SAT_TRAIL_MULT.get(regime, 1.5)
+            trail_trig  = self.SAT_TRAIL_TRIG.get(regime, 1.0)
+            hard_mult   = self.SAT_HARD_MULT.get(regime, 2.5)
+            pnl_pct     = (price / avg - 1) * 100
+
             # 고점 갱신
             if price > pos.max_price_usd:
                 with self.lock:
                     pos.max_price_usd = price
 
-            avg     = pos.avg_price_usd
-            pnl_pct = (price / avg - 1) * 100 if avg > 0 else 0.0
-            trail   = (price - pos.max_price_usd) / pos.max_price_usd * 100 if pos.max_price_usd > 0 else 0.0
+            p_max = pos.max_price_usd
 
-            # ① 하드 손절
-            if pnl_pct <= self.STOP_LOSS_PCT:
-                self._close_sat(ticker, pos, price, f"손절 {pnl_pct:.1f}%")
+            # ① ATR 트레일링 익절 — KR과 동일
+            if (p_max >= avg + (trail_trig * s_atr)
+                    and price <= p_max - (trail_mult * s_atr)):
+                self._close_sat(ticker, pos, price,
+                                f"ATR 트레일링 익절 (고점${p_max:.2f}→${price:.2f})")
                 continue
 
-            # ② 트레일링 스탑 (고점 대비 -8%)
-            if trail <= self.TRAIL_DROP_PCT:
-                self._close_sat(ticker, pos, price, f"트레일링 손절 (고점-{abs(trail):.1f}%)")
+            # ② ATR 하드 손절 (전량)
+            if price <= avg - (hard_mult * s_atr):
+                self._close_sat(ticker, pos, price,
+                                f"ATR 손절 (평단${avg:.2f}  ATR×{hard_mult:.1f})")
                 continue
 
-            # ③ 1차 부분 익절 (+15% → 30% 매도)
+            # ③ 1차 부분 익절 (+10% → 50% 매도) — KR 동일
             if not pos.partial_sold and pnl_pct >= self.PARTIAL1_PCT and pos.shares > 1:
-                q = max(1.0, pos.shares * self.PARTIAL1_QTY)
+                q   = max(1.0, pos.shares * self.PARTIAL1_QTY)
                 self._sell(ticker, pos.name, q, price)
                 pnl = _net_profit_usd(price, avg, q)
                 with self.lock:
@@ -586,26 +853,27 @@ class USBotController:
                 self.add_log(f"✂️  1차익절 {pos.name} | PnL ${pnl:+.0f}")
                 continue
 
-            # ④ 2차 부분 익절 (+30% → 추가 50% 매도)
-            if not pos.partial_sold_2 and pnl_pct >= self.PARTIAL2_PCT and pos.shares > 1:
-                q = max(1.0, pos.shares * self.PARTIAL2_QTY)
+            # ④ 2차 전량 익절 (+20%) — KR 동일
+            if (pos.partial_sold and not pos.partial_sold_2
+                    and pnl_pct >= self.PARTIAL2_PCT and pos.shares > 0):
+                q   = pos.shares
                 self._sell(ticker, pos.name, q, price)
                 pnl = _net_profit_usd(price, avg, q)
                 with self.lock:
-                    pos.shares        -= q
+                    pos.shares        = 0.0
                     pos.partial_sold_2 = True
-                    pos.status         = f"2차익절({pnl_pct:+.1f}%) ✂️✂️"
+                    pos.status         = f"2차익절({pnl_pct:+.1f}%) ✅"
                 self._record_pnl(pnl)
-                self.add_log(f"✂️✂️ 2차익절 {pos.name} | PnL ${pnl:+.0f}")
+                self.add_log(f"✅ 2차익절(전량) {pos.name} | PnL ${pnl:+.0f}")
+                self._tg(f"✅ [US 위성 전량익절] {pos.name} | +{pnl_pct:.1f}% | ${pnl:+,.0f}")
                 continue
 
-            # ⑤ 스크리너 제외 종목 + 수익권 → 청산
+            # ⑤ 스크리너 제외 + 수익권 → 청산
             in_info = {i["ticker"] for i in self.satellite_info}
             if ticker not in in_info and pnl_pct > 0:
                 self._close_sat(ticker, pos, price, f"스크리너 제외 (수익 {pnl_pct:.1f}%)")
                 continue
 
-            # 상태 업데이트
             with self.lock:
                 pos.status = f"보유 중 🛰️ ({pnl_pct:+.1f}%)"
 
@@ -663,6 +931,7 @@ class USBotController:
                     # 장 시작 전 → 종목 사전 스캔
                     if h < 9 or (h == 9 and m < 30):
                         self._screen_satellites()
+                        self._screen_cores()
                     time.sleep(300)
                     continue
 
@@ -689,11 +958,13 @@ class USBotController:
                     if not already and self.gemini:
                         self._run_threaded(lambda: self.generate_daily_report(_REPORT_SLOT))
 
-                # ── 위성 스크리닝 (하루 1회, KIS 미연결도 허용) ───────
+                # ── 종목 스크리닝 (코어: 주 1회 / 위성: 하루 1회) ────
+                self._screen_cores()
                 self._screen_satellites()
 
-                # ── 위성 매매 (KIS 연결 시에만) ──────────────────────
+                # ── 코어·위성 매매 (KIS 연결 시에만) ────────────────
                 if self.kis_overseas:
+                    self._manage_cores()
                     self._manage_satellites()
                 else:
                     self.add_log("🔍 스캔 완료 — KIS API 미연결로 매매 건너뜀")
@@ -865,6 +1136,8 @@ class USBotController:
                 "cash_usd":              self.cash_usd,
                 "last_asset_cost":       self.last_asset_cost,
                 "initial_capital_captured": self.initial_capital_captured,
+                "core_info":             self.core_info,
+                "last_core_screen_date": self.last_core_screen_date,
                 "satellite_info":        self.satellite_info,
                 "hot_sectors":           self.hot_sectors,
                 "daily_pnl":             self.daily_pnl,
@@ -872,6 +1145,19 @@ class USBotController:
                 "last_screen_date":      self.last_screen_date,
                 "futures_snapshot":      self.futures_snapshot,
                 "sector_trends":         self.sector_trends,
+                "cores": {
+                    t: {
+                        "name":           p.name,
+                        "shares":         p.shares,
+                        "avg_price_usd":  p.avg_price_usd,
+                        "budget_usd":     p.budget_usd,
+                        "partial_sold":   p.partial_sold,
+                        "partial_sold_2": p.partial_sold_2,
+                        "max_price_usd":  p.max_price_usd,
+                        "status":         p.status,
+                    }
+                    for t, p in self.core_positions.items()
+                },
                 "satellites": {
                     t: {
                         "name":           p.name,
@@ -898,6 +1184,8 @@ class USBotController:
             self.cash_usd               = float(state.get("cash_usd", 0))
             self.last_asset_cost        = state.get("last_asset_cost")
             self.initial_capital_captured = bool(state.get("initial_capital_captured", False))
+            self.core_info              = state.get("core_info", [])
+            self.last_core_screen_date  = state.get("last_core_screen_date")
             self.satellite_info         = state.get("satellite_info", [])
             self.hot_sectors            = state.get("hot_sectors", [])
             self.daily_pnl              = state.get("daily_pnl", {})
@@ -905,6 +1193,18 @@ class USBotController:
             self.last_screen_date       = state.get("last_screen_date")
             self.futures_snapshot       = state.get("futures_snapshot", {})
             self.sector_trends          = state.get("sector_trends", [])
+            for t, s in state.get("cores", {}).items():
+                self.core_positions[t] = USPosition(
+                    ticker         = t,
+                    name           = s.get("name", t),
+                    shares         = float(s.get("shares", 0)),
+                    avg_price_usd  = float(s.get("avg_price_usd", 0)),
+                    budget_usd     = float(s.get("budget_usd", 0)),
+                    partial_sold   = bool(s.get("partial_sold", False)),
+                    partial_sold_2 = bool(s.get("partial_sold_2", False)),
+                    max_price_usd  = float(s.get("max_price_usd", 0)),
+                    status         = s.get("status", "코어 보유 💎"),
+                )
             for t, s in state.get("satellites", {}).items():
                 self.satellite_positions[t] = USPosition(
                     ticker         = t,

@@ -21,7 +21,7 @@ def _now_kst():
     return datetime.now(_KST).replace(tzinfo=None)
 
 from telegram_bot import TelegramNotifier
-from strategy import CorePosition, Position, get_rsi_signal, get_signal_by_strategy, REINVEST_RATIO, get_market_regime, get_bear_bounce_signal, get_bear_bottom_score, get_bull_momentum_score, get_neutral_range_score, INVERSE_ETF_TICKER, INVERSE_ETF_NAME, INVERSE_BUDGET_RATIO, DEFENSIVE_ASSETS, check_giveback_stop, check_early_drop_stop, check_theme_overextension_exit, check_rsi_progressive_exit
+from strategy import CorePosition, Position, get_rsi_signal, get_signal_by_strategy, REINVEST_RATIO, get_market_regime, get_bear_bounce_signal, get_bear_bottom_score, get_bull_momentum_score, get_neutral_range_score, INVERSE_ETF_TICKER, INVERSE_ETF_NAME, INVERSE_BUDGET_RATIO, DEFENSIVE_ASSETS, check_giveback_stop, check_early_drop_stop, check_theme_overextension_exit, check_rsi_progressive_exit, calculate_entry_score, get_entry_threshold, get_budget_ratio_from_score
 from stock_screener import select_satellites, generate_daily_market_report
 from hot_momentum_scanner import scan_hot_momentum, clear_expired_cache
 from database import update_bot_status, save_portfolio_state, load_portfolio_state, log_trade_journal, get_recent_trades, save_ai_rules, load_ai_rules, get_ai_rules_history, get_user_initial_cash, set_user_initial_cash, add_user_initial_cash, get_news_api_keys, get_sector_guide
@@ -1658,45 +1658,78 @@ class KRBotController:
         for core in safe_core_positions:
             cp = self.live_prices.get(core.ticker) or getattr(core, 'kis_current_price', 0) or (self.kis.get_current_price(core.ticker) if self.kis else 0)
             if not cp or cp <= 0: continue
-            with self.lock: core._last_price = cp; c_sh = core.shares; c_fl = core.floor_shares; c_cash = core.cash; c_nm = core.name; c_tk = core.ticker
+            with self.lock: core._last_price = cp; c_sh = core.shares; c_fl = core.floor_shares; c_avg = core.avg_price; c_cash = core.cash; c_nm = core.name; c_tk = core.ticker
             try:
                 from strategy import get_rsi_signal
                 ex_df = self._get_extended_ohlcv(c_tk, cp)
                 c_sig, _, c_rsi = get_rsi_signal(c_tk, kis_api=self.kis, df=ex_df)
 
-                # c_cash를 락 안에서 최신값으로 재확인 (스냅샷 후 _sync_internal_balances가 변경 가능)
-                with self.lock: c_cash = core.cash
-                if c_sig == 'BUY' and c_cash >= cp and (time.time() - getattr(core, 'last_order_time', 0) > 300):
-                    qty = int((c_cash * 0.98) // cp)
-                    if qty > 0 and self._buy_order(c_tk, qty, core, c_nm):
-                        # W-02: 체결 확인 전 임시로 shares 갱신 → 다음 턴에 중복 매수 방지
+                # ── ATR(14) 코어 하드 손절 (전량 청산 — floor_shares 없음) ──
+                c_atr = c_avg * 0.02
+                if not ex_df.empty and all(col in ex_df.columns for col in ['high','low','close']):
+                    _tr = pd.concat([
+                        ex_df['high'] - ex_df['low'],
+                        (ex_df['high'] - ex_df['close'].shift(1)).abs(),
+                        (ex_df['low']  - ex_df['close'].shift(1)).abs(),
+                    ], axis=1).max(axis=1)
+                    c_atr = float(_tr.rolling(14, min_periods=1).mean().iloc[-1])
+
+                core_hard_mult = 2.5 if regime == "NEUTRAL" else (3.0 if regime == "BULL" else 1.8)
+                is_core_cd = time.time() - getattr(core, 'last_order_time', 0) > 300
+
+                if c_sh > 0 and c_avg > 0 and is_core_cd and cp <= c_avg - (core_hard_mult * c_atr):
+                    if self._sell_order(c_tk, c_sh, core, c_nm):
+                        core_profit = _net_profit(cp, c_avg, c_sh)
                         with self.lock:
-                            core.last_order_time = time.time()
-                            core.status = "체결 대기 ⏳"
-                            core.shares += qty
-                            # [BUG-FIX v2] _bought_val에 매수 확약액 누적.
-                            # core.shares는 30초마다 0으로 리셋되지만 _bought_val은 유지됨.
-                            # API가 보유 주식을 반영할 때까지 core.cash 재배정을 원천 차단.
-                            core._bought_val = getattr(core, '_bought_val', 0.0) + int(cp * qty)
-                            core.cash = max(0.0, core.cash - int(cp * qty))
-                        self.add_log(f"💎 {c_nm} 매수 | {qty}주 @ {cp:,}원")
-                        self._log_trade(c_tk, c_nm, 'BUY', cp, "RSI 코어 장기보유", "RSI 골든크로스")
-                        self._send_trade_telegram(self._fmt_trade_msg("💎", "코어 매수", c_tk, c_nm, cp, qty, strategy="RSI 코어 장기보유"))
-                elif c_sig == 'SELL' and c_sh > c_fl and (time.time() - getattr(core, 'last_order_time', 0) > 300):
-                    sellable = c_sh - c_fl
-                    # W-03: avg_price가 0이면 수익 계산이 무의미하므로 매도 건너뜀
-                    if sellable > 0 and core.avg_price > 0 and self._sell_order(c_tk, sellable, core, c_nm):
-                        core_profit = _net_profit(cp, core.avg_price, sellable)
-                        with self.lock:
-                            core.last_order_time = time.time(); core.status = "체결 대기 ⏳"
-                            core.shares = max(0, core.shares - sellable)  # [C-NEW-02] 매도 후 잔여주수 반영
-                            # 매도 시 _bought_val도 차감 → 다음 sync에서 core.cash 복구
-                            core._bought_val = max(0.0, getattr(core, '_bought_val', 0.0) - int(cp * sellable))
+                            core.last_order_time = time.time(); core.status = "코어 손절 🚨"
+                            core.shares = 0
+                            core._bought_val = 0.0
                             self.pnl_this_turn += core_profit
                         self._record_daily_pnl(core_profit)
-                        self.add_log(f"💎 {c_nm} 매도 | {sellable}주 @ {cp:,}원 | 손익: {core_profit:+,.0f}원")
-                        self._log_trade(c_tk, c_nm, 'SELL', cp, "RSI 코어 장기보유", "RSI 데드크로스", profit=core_profit)
-                        self._send_trade_telegram(self._fmt_trade_msg("💎", "코어 매도", c_tk, c_nm, cp, sellable, profit=core_profit, strategy="RSI 코어 장기보유"))
+                        self.add_log(f"🚨 {c_nm} 코어 ATR 손절 전량 | {c_sh}주 @ {cp:,}원 | 손익: {core_profit:+,.0f}원")
+                        self._log_trade(c_tk, c_nm, 'SELL', cp, "코어 ATR 손절", f"평단 {c_avg:,.0f} 대비 ATR×{core_hard_mult} 이탈", profit=core_profit)
+                        self._send_trade_telegram(self._fmt_trade_msg("🚨", "코어 손절 전량", c_tk, c_nm, cp, c_sh, profit=core_profit, strategy="코어 ATR 손절", note=f"재진입 대기 — 더 좋은 타점 탐색 중"))
+                    continue  # 손절 후 이번 턴 추가 로직 스킵
+
+                # c_cash를 락 안에서 최신값으로 재확인 (스냅샷 후 _sync_internal_balances가 변경 가능)
+                with self.lock: c_cash = core.cash
+
+                if c_sig == 'BUY' and c_cash >= cp and is_core_cd:
+                    # 통합 진입 점수 체크
+                    c_score, c_score_reasons = calculate_entry_score(ex_df, cp, regime)
+                    c_threshold = get_entry_threshold(regime, 'core')
+                    if c_score < c_threshold:
+                        with self.lock:
+                            core.status = "감시 중 👀"
+                            core.status_msg = f"코어 진입 점수 부족 ({c_score}/{c_threshold}) — 신호 강화 대기"
+                    else:
+                        budget_ratio = get_budget_ratio_from_score(c_score, c_threshold)
+                        qty = int((c_cash * budget_ratio * 0.98) // cp)
+                        if qty > 0 and self._buy_order(c_tk, qty, core, c_nm):
+                            with self.lock:
+                                core.last_order_time = time.time()
+                                core.status = "체결 대기 ⏳"
+                                core.shares += qty
+                                core._bought_val = getattr(core, '_bought_val', 0.0) + int(cp * qty)
+                                core.cash = max(0.0, core.cash - int(cp * qty))
+                            score_str = " | ".join(c_score_reasons[:3])
+                            self.add_log(f"💎 {c_nm} 코어 매수 | {qty}주 @ {cp:,}원 | 점수 {c_score}점 ({int(budget_ratio*100)}%)")
+                            self._log_trade(c_tk, c_nm, 'BUY', cp, "RSI+멀티점수 코어", f"RSI골든크로스 + 점수{c_score}pt [{score_str}]")
+                            self._send_trade_telegram(self._fmt_trade_msg("💎", f"코어 매수 ({int(budget_ratio*100)}%)", c_tk, c_nm, cp, qty, strategy=f"RSI코어 · {c_score}pt/{c_threshold}pt"))
+
+                elif c_sig == 'SELL' and c_sh > 0 and is_core_cd:
+                    # RSI 데드크로스 → 전량 매도 (floor_shares 제거)
+                    if c_avg > 0 and self._sell_order(c_tk, c_sh, core, c_nm):
+                        core_profit = _net_profit(cp, c_avg, c_sh)
+                        with self.lock:
+                            core.last_order_time = time.time(); core.status = "체결 대기 ⏳"
+                            core.shares = 0
+                            core._bought_val = 0.0
+                            self.pnl_this_turn += core_profit
+                        self._record_daily_pnl(core_profit)
+                        self.add_log(f"💎 {c_nm} 코어 매도 전량 | {c_sh}주 @ {cp:,}원 | 손익: {core_profit:+,.0f}원")
+                        self._log_trade(c_tk, c_nm, 'SELL', cp, "RSI 코어 전량매도", "RSI 데드크로스 — 재진입 타점 탐색", profit=core_profit)
+                        self._send_trade_telegram(self._fmt_trade_msg("💎", "코어 전량매도", c_tk, c_nm, cp, c_sh, profit=core_profit, strategy="RSI 데드크로스 → 재진입 대기"))
             except Exception as e:
                 logger.error(f"[{self.mode_name}] 코어 매매 오류 ({c_tk}): {e}", exc_info=True)
             time.sleep(0.2)
@@ -1931,6 +1964,23 @@ class KRBotController:
                     continue
 
                 if sig == 'BUY' and p_sh == 0 and is_cd_passed and is_golden_hours:
+                    # ── 통합 진입 점수 체크 (1차 게이트) ──
+                    _frgn_net = 0
+                    try:
+                        if self.kis and hasattr(self.kis, 'get_foreign_buy_by_ticker'):
+                            _fi = self.kis.get_foreign_buy_by_ticker(ticker)
+                            if _fi:
+                                _frgn_net = int(_fi.get("frgn_net", 0))
+                    except Exception:
+                        pass
+                    entry_score, entry_reasons = calculate_entry_score(ex_df, price, regime, frgn_net=_frgn_net)
+                    entry_threshold = get_entry_threshold(regime, 'satellite')
+                    if entry_score < entry_threshold:
+                        pos.status = f"진입 점수 부족 ({entry_score}/{entry_threshold}) ⏳"
+                        pos.status_msg = f"현재 {entry_score}점 — {entry_threshold}점 이상 필요 | 부족 항목: {', '.join(set(['①20MA','②60MA','③정배열','④MACD','⑤RSI','⑥거래량','⑦전일종가','⑧BB위치','⑨수급','⑩120MA']) - set([r[:4] for r in entry_reasons]))}"
+                        continue
+                    score_ratio = get_budget_ratio_from_score(entry_score, entry_threshold)
+
                     # ── BEAR 국면: 10개 저점 전략 스코어 기반 차등 진입 + AI 최종 심사 ──
                     if regime == "BEAR":
                         bear_score, bear_reasons = get_bear_bottom_score(ex_df)
@@ -1941,12 +1991,10 @@ class KRBotController:
                         # 신호 강도에 따른 차등 포지션 사이징
                         # BEAR 시 위성 저점매수 = 총예산의 50% 기준 배분
                         # (방어헤지 50% + 위성저점 50% 대칭 구조)
-                        if bear_score >= 3:
-                            bear_ratio, bear_label = 1.00, f"저점 강신호({bear_score}개)"  # 위성예산 전액
-                        elif bear_score == 2:
-                            bear_ratio, bear_label = 0.70, f"저점 중신호({bear_score}개)"  # 70%
-                        else:
-                            bear_ratio, bear_label = 0.50, f"저점 약신호({bear_score}개)"  # 50%
+                        # 하락장: 통합 점수(score_ratio)와 저점 타이밍 신호 합산
+                        bear_timing_bonus = 0.15 if bear_score >= 3 else (0.10 if bear_score == 2 else 0.05)
+                        bear_ratio  = min(0.90, score_ratio + bear_timing_bonus)
+                        bear_label  = f"BEAR·점수{entry_score}pt+저점{bear_score}개"
                         bear_reason_str = " | ".join(bear_reasons)
                         bounce_cash = p_cash * bear_ratio
                         qty = int((bounce_cash * 0.98) // price)
@@ -1987,17 +2035,13 @@ class KRBotController:
                         pos.status_msg = "최근 5분봉 하락 추세, 매수 보류"
                         continue
 
-                    # ── 국면별 포지션 사이징 ──────────────────────────────
+                    # ── 국면별 타이밍 신호 + 통합 점수 합산 포지션 사이징 ──────
                     if regime == "BULL":
                         bull_score, bull_reasons = get_bull_momentum_score(ex_df)
-                        if bull_score >= 3:
-                            entry_ratio, regime_label = 0.80, f"상승강신호({bull_score}개)"
-                        elif bull_score >= 1:
-                            # [BUG-11] 이 0.70 은 위성 예산(satellite_ratio=0.40) 내부의 포지션 투입 비율이며,
-                            # satellite_ratio 클래스 변수(0.40)와 무관한 별개 수치임.
-                            entry_ratio, regime_label = 0.70, f"상승중신호({bull_score}개)"
-                        else:
-                            entry_ratio, regime_label = 0.60, "상승장기본진입"
+                        # 통합 점수(score_ratio)와 국면 타이밍 신호를 합산
+                        regime_bonus = 0.10 if bull_score >= 3 else (0.05 if bull_score >= 1 else 0.0)
+                        entry_ratio  = min(0.90, score_ratio + regime_bonus)
+                        regime_label = f"BULL·점수{entry_score}pt+타이밍{bull_score}개"
                         regime_reason_str = " | ".join(bull_reasons) if bull_reasons else "상승 추세 추종"
                     else:  # NEUTRAL
                         neutral_score, neutral_reasons = get_neutral_range_score(ex_df)
@@ -2005,19 +2049,16 @@ class KRBotController:
                             pos.status = "횡보 관망 ⏸"
                             pos.status_msg = "NEUTRAL 국면 — 레인지 신호 없음, 매수 차단"
                             continue
-                        if neutral_score >= 3:
-                            entry_ratio, regime_label = 0.55, f"횡보강신호({neutral_score}개)"
-                        elif neutral_score == 2:
-                            entry_ratio, regime_label = 0.45, f"횡보중신호({neutral_score}개)"
-                        else:
-                            entry_ratio, regime_label = 0.30, f"횡보약신호({neutral_score}개)"
+                        regime_bonus  = 0.10 if neutral_score >= 3 else (0.05 if neutral_score >= 2 else 0.0)
+                        entry_ratio   = min(0.90, score_ratio + regime_bonus)
+                        regime_label  = f"NEUTRAL·점수{entry_score}pt+타이밍{neutral_score}개"
                         regime_reason_str = " | ".join(neutral_reasons)
 
                     # 1차 매수: entry_ratio 의 75%, 나머지 25%는 2차 분할 매수용 유보
-                    first_ratio  = entry_ratio * 0.75
+                    first_ratio   = entry_ratio * 0.75
                     reserve_ratio = entry_ratio * 0.25
-                    entry_cash   = p_cash * first_ratio
-                    reserve_cash = p_cash * reserve_ratio
+                    entry_cash    = p_cash * first_ratio
+                    reserve_cash  = p_cash * reserve_ratio
 
                     # ── 매수 검토 리포트 발송 (친구 AI 스타일) ──────────────
                     try:

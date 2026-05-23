@@ -1379,6 +1379,146 @@ def check_rsi_progressive_exit(df, current_price: float, avg_price: float) -> tu
         return 'HOLD',             rsi, f'RSI {rsi:.0f} — 정상 범위'
 
 
+# ─────────────────────────────────────────────────────────────────────────────
+# 통합 매수 강도 점수 — KR / US 공통 (10점 만점)
+# ─────────────────────────────────────────────────────────────────────────────
+
+def calculate_entry_score(df, price: float, regime: str = 'NEUTRAL',
+                           frgn_net: int = 0, momentum_20d: float = 0.0) -> tuple:
+    """
+    10개 지표 합산 매수 강도 점수.  KR/US 공통 사용.
+    frgn_net    : KR 외국계 순매수 주수 (양수이면 +1점)
+    momentum_20d: US 20일 가격 모멘텀 % (3% 초과이면 +1점)
+
+    Returns: (score: int, reasons: list[str])
+    """
+    if df is None or df.empty or 'close' not in df.columns:
+        return 0, []
+
+    score   = 0
+    reasons = []
+    try:
+        c = df['close'].dropna()
+        if len(c) < 6:
+            return 0, []
+
+        # ① 20일선 위 (+1)
+        if len(c) >= 22:
+            ma20 = float(c.rolling(20).mean().iloc[-1])
+            if price > ma20:
+                score += 1
+                reasons.append(f"가격>20MA({ma20:,.0f})")
+
+        # ② 60일선 위 (+1)
+        if len(c) >= 62:
+            ma60 = float(c.rolling(60).mean().iloc[-1])
+            if price > ma60:
+                score += 1
+                reasons.append(f"가격>60MA({ma60:,.0f})")
+
+        # ③ 5MA > 20MA 단기 정배열 (+1)
+        if len(c) >= 22:
+            ma5_v  = float(c.rolling(5).mean().iloc[-1])
+            ma20_v = float(c.rolling(20).mean().iloc[-1])
+            if ma5_v > ma20_v:
+                score += 1
+                reasons.append("5MA>20MA 정배열")
+
+        # ④ MACD 히스토그램 플러스 (+1)
+        if len(c) >= 30:
+            ema12       = c.ewm(span=12, adjust=False).mean()
+            ema26       = c.ewm(span=26, adjust=False).mean()
+            macd_line   = ema12 - ema26
+            signal_line = macd_line.ewm(span=9, adjust=False).mean()
+            hist        = float(macd_line.iloc[-1] - signal_line.iloc[-1])
+            if hist > 0:
+                score += 1
+                reasons.append(f"MACD히스토그램+({hist:+.2f})")
+
+        # ⑤ RSI 건강 구간 40~68 (+1)
+        if len(c) >= 16:
+            rsi = _calc_rsi14(c)
+            if 40 <= rsi <= 68:
+                score += 1
+                reasons.append(f"RSI건강구간({rsi:.0f})")
+
+        # ⑥ 거래량 130% 이상 (+1)
+        if 'volume' in df.columns:
+            v = df['volume'].dropna()
+            if len(v) >= 21:
+                avg_vol   = float(v.iloc[-21:-1].mean())
+                today_vol = float(v.iloc[-1])
+                if avg_vol > 0 and today_vol >= avg_vol * 1.30:
+                    score += 1
+                    reasons.append(f"거래량급증({today_vol / avg_vol * 100:.0f}%)")
+
+        # ⑦ 전일 종가 이상 (+1)
+        if len(c) >= 2:
+            prev_close = float(c.iloc[-2])
+            if price >= prev_close:
+                score += 1
+                reasons.append("전일종가회복")
+
+        # ⑧ 볼린저밴드 25~75% 구간 (+1) — 극단 회피
+        if len(c) >= 22:
+            ma20_bb = float(c.rolling(20).mean().iloc[-1])
+            std20   = float(c.rolling(20).std().iloc[-1])
+            bb_upper = ma20_bb + 2 * std20
+            bb_lower = ma20_bb - 2 * std20
+            bb_range = bb_upper - bb_lower
+            if bb_range > 0:
+                bb_pct = (price - bb_lower) / bb_range * 100
+                if 25 <= bb_pct <= 75:
+                    score += 1
+                    reasons.append(f"BB내위치({bb_pct:.0f}%)")
+
+        # ⑨ 수급: KR 외국계 순매수 OR US 20일 모멘텀 (+1)
+        if frgn_net > 0:
+            score += 1
+            reasons.append(f"외국계순매수(+{frgn_net:,}주)")
+        elif momentum_20d > 3.0:
+            score += 1
+            reasons.append(f"20일모멘텀({momentum_20d:+.1f}%)")
+
+        # ⑩ 120일선 위 (+1) — 장기 우상향 확인
+        if len(c) >= 60:
+            ma120 = float(c.rolling(120, min_periods=60).mean().iloc[-1])
+            if price > ma120:
+                score += 1
+                reasons.append(f"가격>120MA({ma120:,.0f})")
+
+    except Exception:
+        pass
+
+    return score, reasons
+
+
+def get_entry_threshold(regime: str, slot: str = 'satellite') -> int:
+    """
+    국면·슬롯별 최소 진입 점수.
+    slot: 'core' | 'satellite'
+    """
+    table = {
+        ('BULL',    'core'):      6,
+        ('BULL',    'satellite'): 5,
+        ('NEUTRAL', 'core'):      7,
+        ('NEUTRAL', 'satellite'): 6,
+        ('BEAR',    'core'):      8,
+        ('BEAR',    'satellite'): 7,
+    }
+    return table.get((regime, slot), 6)
+
+
+def get_budget_ratio_from_score(score: int, threshold: int) -> float:
+    """
+    임계치 초과분 → 예산 투입 비율.
+    +0 → 30 % | +1 → 45 % | +2 → 60 % | +3 → 75 % | +4+ → 90 %
+    """
+    excess = max(0, score - threshold)
+    ratios = [0.30, 0.45, 0.60, 0.75, 0.90]
+    return ratios[min(excess, len(ratios) - 1)]
+
+
 def check_early_drop_stop(current_price: float, entry_price: float) -> tuple:
     """
     장초 09:00~09:10 급락 분기 원칙 (02_intraday_operating_rules.md).
