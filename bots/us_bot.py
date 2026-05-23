@@ -445,11 +445,35 @@ class USBotController:
             if seen_sec[s] <= 2:
                 filtered.append(c)
 
-        self.satellite_info   = filtered[:self.num_satellites]
+        # ── AI 위성 선정 (gemini 설정 시) ────────────────────────────
+        if self.gemini and filtered:
+            try:
+                ai_result = self.gemini.ai_select_us_satellites(
+                    candidates  = filtered,
+                    hot_sectors = self.hot_sectors or [],
+                    n           = self.num_satellites,
+                    sector_guide= self.sector_guide,
+                )
+                if ai_result:
+                    self.satellite_info = ai_result
+                    names = [
+                        f"{c['ticker']}(AI:{c.get('ai_reason','')[:20]})"
+                        for c in self.satellite_info
+                    ]
+                    self.add_log(f"🤖 AI 위성 선정: {', '.join(names)}")
+                else:
+                    self.satellite_info = filtered[:self.num_satellites]
+                    self.add_log("⚠️ AI 선정 실패 → 퀀트 상위 종목 유지")
+            except Exception as e:
+                logger.warning(f"[US봇] AI 위성 선정 오류: {e}")
+                self.satellite_info = filtered[:self.num_satellites]
+        else:
+            self.satellite_info = filtered[:self.num_satellites]
+            names = [f"{c['ticker']}(점수:{c['score']:.0f})" for c in self.satellite_info]
+            self.add_log(f"✅ 위성 종목 선정: {', '.join(names)}")
+
         self.hot_sectors      = list({c["sector"] for c in self.satellite_info})
         self.last_screen_date = today
-        names = [f"{c['ticker']}(점수:{c['score']:.0f})" for c in self.satellite_info]
-        self.add_log(f"✅ 위성 종목 선정: {', '.join(names)}")
 
     # ─────────────────────────────────────────────────────────────────
     # 위성 관리 (매수 + 청산 조건)
@@ -479,6 +503,30 @@ class USBotController:
             price = self._price(ticker)
             if price <= 0 or self.cash_usd < sat_budget_per * 0.5:
                 continue
+
+            # ── AI 매수 승인 심사 ────────────────────────────────────
+            if self.gemini:
+                try:
+                    approved, ai_reason = self.gemini.ai_approve_us_trade(
+                        signal      = 'BUY',
+                        stock_name  = info["name"],
+                        ticker      = ticker,
+                        price_usd   = price,
+                        sector      = info.get("sector", ""),
+                        hot_sectors = self.hot_sectors,
+                        momentum_20d= info.get("momentum_20d", 0.0),
+                        rsi         = info.get("rsi", 50.0),
+                        ai_reason   = info.get("ai_reason", ""),
+                    )
+                    if not approved:
+                        self._satellite_rejects[ticker] = ai_reason
+                        self.add_log(
+                            f"🤖 AI 매수 거절: {info['name']}({ticker}) — {ai_reason[:80]}"
+                        )
+                        continue
+                    self.add_log(f"🤖 AI 매수 승인: {info['name']}({ticker})")
+                except Exception as e:
+                    logger.warning(f"[US봇] AI 승인 심사 오류 ({ticker}): {e} — 알고리즘 신호 허용")
 
             qty = self._buy(ticker, info["name"], sat_budget_per, price)
             if qty > 0:
