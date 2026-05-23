@@ -68,8 +68,9 @@ class KRBotController:
 
         self.core_ticker = "003850"
         self.core_name = "보령"
-        self.core_ratio = 0.50        # 코어 50% — 목표 100% 풀투자, AI 거절 시 현금 보유
-        self.satellite_ratio = 0.50   # 위성 50% — 진입점수 미달/AI거절 시 현금 유지
+        self.core_ratio = 0.40        # 코어 40% — 중기 누적 매수
+        self.satellite_ratio = 0.40   # 위성 40% — 중기 성장주 (단타 아님)
+        # 나머지 20%는 단타 or 현금 — AI 재량 보유
         self.core_min_floor_ratio = 0.5
         self.market_indices = [("069500", "KOSPI"), ("229200", "KOSDAQ")]
 
@@ -2715,7 +2716,7 @@ class KRBotController:
             with self.lock: sat_items = list(self.satellite_positions.items())
 
             _GROWTH_KEEP = 3.0    # +3% 이상 → 성장세 양호, 교체 없이 강제 유지
-            _LOSS_CUT    = -5.0   # -5% 이하 → 손절 교체
+            _LOSS_CUT    = -3.0   # -3% 이하 → 손절 교체 (관망 구간: -3%~+3%)
 
             for ticker, pos in sat_items:
                 if pos.shares == 0:
