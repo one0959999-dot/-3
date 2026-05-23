@@ -1,6 +1,7 @@
 import logging
 import os
 import json
+import re
 import threading
 from datetime import datetime, timedelta, timezone
 
@@ -474,6 +475,19 @@ def ai_chat():
             if len(context_lines) > 1:
                 stock_analysis_context += "\n".join(context_lines)
         
+        # ── 봇 직접 제어 명령 힌트 ────────────────────────────────────────
+        stock_analysis_context += (
+            "\n[🤖 봇 직접 제어 기능 — 중요]\n"
+            '사용자가 "이걸로 바꿔줘", "봇에 적용해줘", "설정 변경해줘", "이 종목으로 변경해" 등\n'
+            "봇 설정 변경을 명시적으로 요청하면, 답변 맨 마지막 줄에 아래 형식의 명령 블록을 포함하세요:\n"
+            "[BOT_COMMAND]"
+            '{"action":"update_sector_guide","content":"여기에 새 전략 가이드 전체 내용"}'
+            "[/BOT_COMMAND]\n"
+            "- action: update_sector_guide (현재 지원하는 유일한 명령)\n"
+            "- content: 사용자에게 제안한 전략 내용을 텍스트로 정리 (코어/위성 종목, 비중, 주의사항 등)\n"
+            "- 단순 분석·조언만 요청하면 이 블록을 포함하지 마세요.\n"
+        )
+
         if stock_analysis_context:
             stock_analysis_context += "\n\n[🚨 다정한 AI 비서를 위한 특별 지침]\n"
             stock_analysis_context += "당신은 회원님의 소중한 자산을 지켜주는 다정다감하고 영리한 최고의 투자 파트너입니다. "
@@ -517,7 +531,32 @@ def ai_chat():
     # 응답 후 최신 히스토리를 DB에 저장
     save_chat_history(current_user.id, is_mock_flag, gemini_client._conversation_history)
 
-    return jsonify({"status": "success", "reply": reply})
+    # ── 봇 명령 파싱 및 실행 ────────────────────────────────────────────
+    # AI가 [BOT_COMMAND]{...}[/BOT_COMMAND] 블록을 포함하면 즉시 실행
+    applied_commands = []
+    _cmd_pattern = r'\[BOT_COMMAND\](.*?)\[/BOT_COMMAND\]'
+    for _match in re.findall(_cmd_pattern, reply, re.DOTALL):
+        try:
+            cmd = json.loads(_match.strip())
+            if cmd.get('action') == 'update_sector_guide':
+                new_guide = (cmd.get('content') or '').strip()
+                if new_guide:
+                    set_sector_guide(current_user.id, new_guide)
+                    for _is_mock_v in (True, False):
+                        _b = manager.bots.get((current_user.id, _is_mock_v))
+                        if _b:
+                            _b.sector_guide = new_guide
+                    applied_commands.append("✅ 봇 전략 가이드가 업데이트되었습니다.")
+                    logging.getLogger('lassi_bot').info(
+                        f"[AI봇명령] user={current_user.id} sector_guide 업데이트 ({len(new_guide)}자)"
+                    )
+        except Exception as _cmd_err:
+            logging.getLogger('lassi_bot').warning(f"[AI봇명령] 파싱 오류: {_cmd_err}")
+
+    # 명령 블록을 최종 답변에서 제거
+    clean_reply = re.sub(_cmd_pattern, '', reply, flags=re.DOTALL).strip()
+
+    return jsonify({"status": "success", "reply": clean_reply, "applied_commands": applied_commands})
 
 
 @app.route('/api/ai_chat/reset', methods=['POST'])

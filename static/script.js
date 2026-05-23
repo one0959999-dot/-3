@@ -1301,6 +1301,19 @@ window.sendAiMessage = async function () {
         aWrapper.appendChild(aBubble); aWrapper.appendChild(aTime); messages.appendChild(aWrapper);
         messages.scrollTop = messages.scrollHeight;
         if (!_aiChatOpen) document.getElementById('ai-new-badge').classList.add('visible');
+
+        // ── 봇 명령 실행 결과 표시 ──────────────────────────────────
+        if (data.applied_commands && data.applied_commands.length > 0) {
+            const cmdWrapper = document.createElement('div'); cmdWrapper.className = 'chat-msg ai';
+            const cmdBubble  = document.createElement('div'); cmdBubble.className = 'chat-bubble';
+            cmdBubble.style.cssText = 'background:rgba(59,130,246,0.15);border:1px solid rgba(59,130,246,0.35);color:#93c5fd;';
+            cmdBubble.innerHTML = '🤖 <strong>봇 설정 자동 적용 완료</strong><br>' +
+                data.applied_commands.map(c => markdownToHtml(c)).join('<br>');
+            const cmdTime = document.createElement('span'); cmdTime.className = 'chat-msg-time';
+            cmdTime.textContent = `라씨 AI · ${new Date().toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit' })}`;
+            cmdWrapper.appendChild(cmdBubble); cmdWrapper.appendChild(cmdTime);
+            messages.appendChild(cmdWrapper); messages.scrollTop = messages.scrollHeight;
+        }
     } catch (e) {
         const indicatorEl = document.getElementById('chat-typing-indicator'); if (indicatorEl) indicatorEl.remove();
         const aWrapper = document.createElement('div'); aWrapper.className = 'chat-msg ai';
