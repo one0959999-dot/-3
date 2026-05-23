@@ -597,19 +597,47 @@ class USBotController:
                 budget_ratio = get_budget_ratio_from_score(c_score, c_threshold)
                 qty = int((budget * budget_ratio) // price)
                 if qty > 0:
-                    bought_qty = self._buy(ticker, pos.name, budget * budget_ratio, price)
-                    if bought_qty > 0:
+                    # AI 승인 (위성과 동일)
+                    approved, ai_reason = True, "AI 미설정"
+                    if self.gemini:
                         with self.lock:
-                            pos.shares         = float(bought_qty)
-                            pos.avg_price_usd  = price
-                            pos.max_price_usd  = price
-                            pos.partial_sold   = False
-                            pos.partial_sold_2 = False
-                            pos.last_order_time = time.time()
-                            pos.status         = f"코어 보유 💎 ({c_score}pt)"
-                        score_str = " | ".join(c_reasons[:3])
-                        self.add_log(f"💎 코어 매수 {pos.name}({ticker}) {bought_qty}주 @ ${price:.2f} | {c_score}pt [{score_str}]")
-                        self._tg(f"💎 [US 코어 매수] {pos.name} ({ticker})\n@ ${price:.2f}  점수 {c_score}pt")
+                            pos.status = "AI 심사 중 🤖"
+                        momentum_20d = 0.0
+                        try:
+                            c = df_raw['close'].dropna()
+                            if len(c) >= 21:
+                                momentum_20d = float((c.iloc[-1] / c.iloc[-21] - 1) * 100)
+                        except Exception:
+                            pass
+                        approved, ai_reason = self.gemini.ai_approve_us_trade(
+                            signal       = 'BUY',
+                            stock_name   = pos.name,
+                            ticker       = ticker,
+                            price_usd    = price,
+                            sector       = info.get("sector", ""),
+                            hot_sectors  = self.hot_sectors,
+                            momentum_20d = momentum_20d,
+                            rsi          = info.get("rsi", 50.0),
+                            ai_reason    = info.get("ai_reason", ""),
+                        )
+                    if not approved:
+                        with self.lock:
+                            pos.status = f"코어 AI 거절 🛑 ({c_score}pt)"
+                        self.add_log(f"🛑 코어 AI 거절 {pos.name}({ticker}): {ai_reason[:60]}")
+                    else:
+                        bought_qty = self._buy(ticker, pos.name, budget * budget_ratio, price)
+                        if bought_qty > 0:
+                            with self.lock:
+                                pos.shares         = float(bought_qty)
+                                pos.avg_price_usd  = price
+                                pos.max_price_usd  = price
+                                pos.partial_sold   = False
+                                pos.partial_sold_2 = False
+                                pos.last_order_time = time.time()
+                                pos.status         = f"코어 보유 💎 ({c_score}pt)"
+                            score_str = " | ".join(c_reasons[:3])
+                            self.add_log(f"💎 코어 매수 {pos.name}({ticker}) {bought_qty}주 @ ${price:.2f} | {c_score}pt [{score_str}] | AI: {ai_reason[:40]}")
+                            self._tg(f"💎 [US 코어 매수] {pos.name} ({ticker})\n@ ${price:.2f}  점수 {c_score}pt")
 
             # ── 코어 부분 익절 (+10%/+20%) ─────────────────────────────
             elif pos.shares > 0 and avg > 0:

@@ -1654,9 +1654,12 @@ class CorePosition:
         self.fee_rate = 0.00015   # 수수료율 (0.015%)
         self.tax_rate = 0.0018    # 거래세율 (0.18%)
         
-        # 🟢 [신규 추가] 상태 뱃지 및 메시지 초기화
+        # 상태 및 익절 추적 플래그
         self.status = "감시 중 👀"
         self.status_msg = "현재 지정된 전략에 따라 차트 및 지표를 실시간 감시하고 있습니다."
+        self.partial_sold   = False   # 1차 익절(+10%) 완료 여부
+        self.partial_sold_2 = False   # 2차 익절(+20%) 완료 여부
+        self.max_price      = 0       # 보유 중 최고가
 
     def buy(self, price, cash_to_use=None):
         """매수 (cash_to_use 미지정 시 전액 매수)"""

@@ -68,8 +68,8 @@ class KRBotController:
 
         self.core_ticker = "003850"
         self.core_name = "보령"
-        self.core_ratio = 0.40        # 코어 40%
-        self.satellite_ratio = 0.40   # 위성 40%
+        self.core_ratio = 0.50        # 코어 50% — 목표 100% 풀투자, AI 거절 시 현금 보유
+        self.satellite_ratio = 0.50   # 위성 50% — 진입점수 미달/AI거절 시 현금 유지
         self.core_min_floor_ratio = 0.5
         self.market_indices = [("069500", "KOSPI"), ("229200", "KOSDAQ")]
 
@@ -1681,9 +1681,12 @@ class KRBotController:
                     if self._sell_order(c_tk, c_sh, core, c_nm):
                         core_profit = _net_profit(cp, c_avg, c_sh)
                         with self.lock:
-                            core.last_order_time = time.time(); core.status = "코어 손절 🚨"
-                            core.shares = 0
-                            core._bought_val = 0.0
+                            core.last_order_time = time.time()
+                            core.status         = "코어 손절 🚨"
+                            core.shares         = 0
+                            core._bought_val    = 0.0
+                            core.partial_sold   = False
+                            core.partial_sold_2 = False
                             self.pnl_this_turn += core_profit
                         self._record_daily_pnl(core_profit)
                         self.add_log(f"🚨 {c_nm} 코어 ATR 손절 전량 | {c_sh}주 @ {cp:,}원 | 손익: {core_profit:+,.0f}원")
@@ -1691,11 +1694,43 @@ class KRBotController:
                         self._send_trade_telegram(self._fmt_trade_msg("🚨", "코어 손절 전량", c_tk, c_nm, cp, c_sh, profit=core_profit, strategy="코어 ATR 손절", note=f"재진입 대기 — 더 좋은 타점 탐색 중"))
                     continue  # 손절 후 이번 턴 추가 로직 스킵
 
+                # ── 코어 부분 익절 (+10%/+20%) — 위성·US 코어와 동일 흐름 ──
+                if c_sh > 0 and c_avg > 0 and is_core_cd:
+                    c_pnl_pct = (cp / c_avg - 1) * 100
+                    if not core.partial_sold and c_pnl_pct >= 10.0 and c_sh > 1:
+                        partial_qty = max(1, c_sh // 2)
+                        if self._sell_order(c_tk, partial_qty, core, c_nm):
+                            core_profit = _net_profit(cp, c_avg, partial_qty)
+                            with self.lock:
+                                core.last_order_time = time.time()
+                                core.shares     -= partial_qty
+                                core.partial_sold = True
+                                core.status      = f"코어 1차익절({c_pnl_pct:+.1f}%) ✂️"
+                                self.pnl_this_turn += core_profit
+                            self._record_daily_pnl(core_profit)
+                            self.add_log(f"✂️  {c_nm} 코어 1차익절 | {partial_qty}주 @ {cp:,}원 | 손익: {core_profit:+,.0f}원")
+                            self._send_trade_telegram(self._fmt_trade_msg("✂️", "코어 1차익절(50%)", c_tk, c_nm, cp, partial_qty, profit=core_profit, strategy="코어 +10% 부분익절"))
+                        continue
+                    elif core.partial_sold and not core.partial_sold_2 and c_pnl_pct >= 20.0:
+                        if self._sell_order(c_tk, c_sh, core, c_nm):
+                            core_profit = _net_profit(cp, c_avg, c_sh)
+                            with self.lock:
+                                core.last_order_time = time.time()
+                                core.shares         = 0
+                                core._bought_val    = 0.0
+                                core.partial_sold_2 = True
+                                core.status         = f"코어 2차익절({c_pnl_pct:+.1f}%) ✅"
+                                self.pnl_this_turn += core_profit
+                            self._record_daily_pnl(core_profit)
+                            self.add_log(f"✅ {c_nm} 코어 2차익절(전량) | {c_sh}주 @ {cp:,}원 | 손익: {core_profit:+,.0f}원")
+                            self._send_trade_telegram(self._fmt_trade_msg("✅", "코어 2차익절(전량)", c_tk, c_nm, cp, c_sh, profit=core_profit, strategy=f"코어 +20% 전량익절"))
+                        continue
+
                 # c_cash를 락 안에서 최신값으로 재확인 (스냅샷 후 _sync_internal_balances가 변경 가능)
                 with self.lock: c_cash = core.cash
 
                 if c_sig == 'BUY' and c_cash >= cp and is_core_cd:
-                    # 통합 진입 점수 체크
+                    # ① 통합 진입 점수 체크
                     c_score, c_score_reasons = calculate_entry_score(ex_df, cp, regime)
                     c_threshold = get_entry_threshold(regime, 'core')
                     if c_score < c_threshold:
@@ -1705,26 +1740,46 @@ class KRBotController:
                     else:
                         budget_ratio = get_budget_ratio_from_score(c_score, c_threshold)
                         qty = int((c_cash * budget_ratio * 0.98) // cp)
-                        if qty > 0 and self._buy_order(c_tk, qty, core, c_nm):
-                            with self.lock:
-                                core.last_order_time = time.time()
-                                core.status = "체결 대기 ⏳"
-                                core.shares += qty
-                                core._bought_val = getattr(core, '_bought_val', 0.0) + int(cp * qty)
-                                core.cash = max(0.0, core.cash - int(cp * qty))
-                            score_str = " | ".join(c_score_reasons[:3])
-                            self.add_log(f"💎 {c_nm} 코어 매수 | {qty}주 @ {cp:,}원 | 점수 {c_score}점 ({int(budget_ratio*100)}%)")
-                            self._log_trade(c_tk, c_nm, 'BUY', cp, "RSI+멀티점수 코어", f"RSI골든크로스 + 점수{c_score}pt [{score_str}]")
-                            self._send_trade_telegram(self._fmt_trade_msg("💎", f"코어 매수 ({int(budget_ratio*100)}%)", c_tk, c_nm, cp, qty, strategy=f"RSI코어 · {c_score}pt/{c_threshold}pt"))
+                        if qty > 0:
+                            # ② AI 승인 (위성과 동일)
+                            approved, ai_reason = True, "AI 미설정"
+                            if self.gemini:
+                                with self.lock: core.status = "AI 심사 중 🤖"
+                                trade_ctx = self._build_trade_context(c_tk, c_nm, cp, ex_df, 'RSI코어', regime)
+                                approved, ai_reason = self.gemini.ai_approve_trade(
+                                    'BUY', c_nm, c_tk, cp, 'RSI코어', c_rsi,
+                                    self.hot_sectors, get_recent_trades(self.user_id, c_tk),
+                                    load_ai_rules(self.user_id),
+                                    context=trade_ctx
+                                )
+                            if not approved:
+                                with self.lock: core.status = f"코어 AI 거절 🛑 ({c_score}pt)"
+                                self.add_log(f"🛑 {c_nm} 코어 AI 거절: {ai_reason[:60]}")
+                            elif self._buy_order(c_tk, qty, core, c_nm):
+                                with self.lock:
+                                    core.last_order_time = time.time()
+                                    core.status         = "체결 대기 ⏳"
+                                    core.shares         += qty
+                                    core._bought_val    = getattr(core, '_bought_val', 0.0) + int(cp * qty)
+                                    core.cash           = max(0.0, core.cash - int(cp * qty))
+                                    core.partial_sold   = False
+                                    core.partial_sold_2 = False
+                                score_str = " | ".join(c_score_reasons[:3])
+                                self.add_log(f"💎 {c_nm} 코어 매수 | {qty}주 @ {cp:,}원 | 점수 {c_score}점 ({int(budget_ratio*100)}%) | AI: {ai_reason[:40]}")
+                                self._log_trade(c_tk, c_nm, 'BUY', cp, "RSI+멀티점수 코어", f"RSI골든크로스 + 점수{c_score}pt [{score_str}] AI승인")
+                                self._send_trade_telegram(self._fmt_trade_msg("💎", f"코어 매수 ({int(budget_ratio*100)}%)", c_tk, c_nm, cp, qty, strategy=f"RSI코어 · {c_score}pt/{c_threshold}pt", ai_reason=ai_reason))
 
                 elif c_sig == 'SELL' and c_sh > 0 and is_core_cd:
                     # RSI 데드크로스 → 전량 매도 (floor_shares 제거)
                     if c_avg > 0 and self._sell_order(c_tk, c_sh, core, c_nm):
                         core_profit = _net_profit(cp, c_avg, c_sh)
                         with self.lock:
-                            core.last_order_time = time.time(); core.status = "체결 대기 ⏳"
-                            core.shares = 0
-                            core._bought_val = 0.0
+                            core.last_order_time = time.time()
+                            core.status         = "체결 대기 ⏳"
+                            core.shares         = 0
+                            core._bought_val    = 0.0
+                            core.partial_sold   = False
+                            core.partial_sold_2 = False
                             self.pnl_this_turn += core_profit
                         self._record_daily_pnl(core_profit)
                         self.add_log(f"💎 {c_nm} 코어 매도 전량 | {c_sh}주 @ {cp:,}원 | 손익: {core_profit:+,.0f}원")
