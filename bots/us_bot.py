@@ -671,15 +671,44 @@ class USBotController:
     # 위성 스크리닝 (하루 1회)
     # ─────────────────────────────────────────────────────────────────
 
+    _GROWTH_KEEP_PCT = 3.0   # +3% 이상 = 성장세 양호 → 교체 없이 강제 유지
+
     def _screen_satellites(self):
         today = _now_et().strftime("%Y-%m-%d")
         if self.last_screen_date == today:
             return
-        holding = {t for t, p in self.satellite_positions.items() if p.shares > 0}
-        self.add_log("🔍 미국 위성 종목 스캔 시작…")
-        candidates = scan_us_satellites(n=self.num_satellites * 2, exclude=holding)
+
+        # ── 성장세 양호 종목 파악 — 교체 슬롯에서 제외 ──────────────
+        strong_keep_info: list = []
+        strong_keep_tickers: set = set()
+        for t, p in list(self.satellite_positions.items()):
+            if p.shares > 0 and p.avg_price_usd > 0:
+                price = self._price(t)
+                if price > 0:
+                    pnl_pct = (price / p.avg_price_usd - 1) * 100
+                    if pnl_pct >= self._GROWTH_KEEP_PCT:
+                        existing = next((i for i in self.satellite_info if i["ticker"] == t), None)
+                        strong_keep_info.append(existing or {"ticker": t, "name": p.name,
+                                                             "sector": "", "score": 0, "ai_reason": ""})
+                        strong_keep_tickers.add(t)
+                        self.add_log(f"🌱 {p.name}({t}) 성장세 양호 ({pnl_pct:+.1f}%) — 교체 없이 유지")
+
+        slots_needed = self.num_satellites - len(strong_keep_tickers)
+        if slots_needed <= 0:
+            self.add_log(f"✅ 위성 {len(strong_keep_tickers)}개 성장세 양호 — 재스크리닝 스킵")
+            self.satellite_info   = strong_keep_info
+            self.last_screen_date = today
+            return
+
+        # ── 빈 슬롯만 새로 채움 ──────────────────────────────────────
+        holding = strong_keep_tickers | {t for t, p in self.satellite_positions.items() if p.shares > 0}
+        self.add_log(f"🔍 미국 위성 종목 스캔 시작… (빈 슬롯 {slots_needed}개)")
+        candidates = scan_us_satellites(n=slots_needed * 2 + 2, exclude=holding)
         if not candidates:
             self.add_log("⚠️ 스캔 결과 없음 — 기존 위성 유지")
+            self.satellite_info   = strong_keep_info + [i for i in self.satellite_info
+                                                        if i["ticker"] not in strong_keep_tickers]
+            self.last_screen_date = today
             return
 
         # 섹터 다양성: 같은 섹터 최대 2개
@@ -691,34 +720,33 @@ class USBotController:
             if seen_sec[s] <= 2:
                 filtered.append(c)
 
-        # ── AI 위성 선정 (gemini 설정 시) ────────────────────────────
+        # ── AI 위성 선정 (빈 슬롯 대상만) ───────────────────────────
+        new_info: list = []
         if self.gemini and filtered:
             try:
                 ai_result = self.gemini.ai_select_us_satellites(
                     candidates  = filtered,
                     hot_sectors = self.hot_sectors or [],
-                    n           = self.num_satellites,
+                    n           = slots_needed,
                     sector_guide= self.sector_guide,
                 )
                 if ai_result:
-                    self.satellite_info = ai_result
-                    names = [
-                        f"{c['ticker']}(AI:{c.get('ai_reason','')[:20]})"
-                        for c in self.satellite_info
-                    ]
-                    self.add_log(f"🤖 AI 위성 선정: {', '.join(names)}")
+                    new_info = ai_result
+                    names = [f"{c['ticker']}(AI:{c.get('ai_reason','')[:20]})" for c in new_info]
+                    self.add_log(f"🤖 AI 위성 선정 (신규): {', '.join(names)}")
                 else:
-                    self.satellite_info = filtered[:self.num_satellites]
-                    self.add_log("⚠️ AI 선정 실패 → 퀀트 상위 종목 유지")
+                    new_info = filtered[:slots_needed]
+                    self.add_log("⚠️ AI 선정 실패 → 퀀트 상위 종목")
             except Exception as e:
                 logger.warning(f"[US봇] AI 위성 선정 오류: {e}")
-                self.satellite_info = filtered[:self.num_satellites]
+                new_info = filtered[:slots_needed]
         else:
-            self.satellite_info = filtered[:self.num_satellites]
-            names = [f"{c['ticker']}(점수:{c['score']:.0f})" for c in self.satellite_info]
-            self.add_log(f"✅ 위성 종목 선정: {', '.join(names)}")
+            new_info = filtered[:slots_needed]
+            names = [f"{c['ticker']}(점수:{c['score']:.0f})" for c in new_info]
+            self.add_log(f"✅ 위성 종목 선정 (신규): {', '.join(names)}")
 
-        self.hot_sectors      = list({c["sector"] for c in self.satellite_info})
+        self.satellite_info   = strong_keep_info + new_info
+        self.hot_sectors      = list({c["sector"] for c in self.satellite_info if c.get("sector")})
         self.last_screen_date = today
 
     # ─────────────────────────────────────────────────────────────────
@@ -919,8 +947,9 @@ class USBotController:
                 continue
 
             # ⑤ 스크리너 제외 + 수익권 → 청산
+            # 성장세 양호(+3% 이상)면 스크리너 제외여도 유지 — 자연 익절/손절 대기
             in_info = {i["ticker"] for i in self.satellite_info}
-            if ticker not in in_info and pnl_pct > 0:
+            if ticker not in in_info and pnl_pct > 0 and pnl_pct < self._GROWTH_KEEP_PCT:
                 self._close_sat(ticker, pos, price, f"스크리너 제외 (수익 {pnl_pct:.1f}%)")
                 continue
 
