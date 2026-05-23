@@ -96,9 +96,9 @@ class USPosition:
     status:         str   = "감시 중 👀"
     last_order_time:float = 0.0
     max_price_usd:  float = 0.0
-    ai_exit_pending:    bool  = False
-    ai_exit_decision:   str   = None   # 'SELL_PARTIAL' / 'SELL_ALL' / 'HOLD' / None
-    ai_exit_hold_until: float = 0.0    # HOLD 판단 후 재요청 금지 시각
+    ai_exit_pending:     bool  = False
+    ai_exit_decision:    str   = None   # 'SELL_PARTIAL' / 'SELL_ALL' / 'HOLD' / None
+    ai_exit_asked_price: float = 0.0    # 마지막 AI 문의 시점 가격 (새 고점 갱신 시 재요청)
 
 
 # ══════════════════════════════════════════════════════════════════════
@@ -657,8 +657,6 @@ class USBotController:
                             with self.lock: pos.ai_exit_decision = "SELL_PARTIAL"
                     elif decision == "HOLD":
                         with self.lock:
-                            pos.ai_exit_hold_until = time.time() + 300
-                            pos.ai_exit_decision   = None
                             pos.status = f"AI 홀드 ({pnl_pct:+.1f}%) ⏳"
                     else:
                         q   = max(1.0, pos.shares * self.PARTIAL1_QTY)
@@ -682,8 +680,6 @@ class USBotController:
                             with self.lock: pos.ai_exit_decision = "SELL_ALL"
                     elif decision == "HOLD":
                         with self.lock:
-                            pos.ai_exit_hold_until = time.time() + 300
-                            pos.ai_exit_decision   = None
                             pos.status = f"AI 홀드 ({pnl_pct:+.1f}%) ⏳"
                     else:
                         q   = pos.shares
@@ -709,12 +705,19 @@ class USBotController:
     def _trigger_ai_partial_exit(self, pos, ticker: str, name: str,
                                   price: float, avg: float,
                                   pnl_pct: float, regime: str):
-        """AI 익절 판단을 백그라운드 스레드로 요청 (메인 루프 비차단)."""
+        """AI 익절 판단을 백그라운드 스레드로 요청 (메인 루프 비차단).
+
+        HOLD 후에는 시간 대신 가격 기준: 마지막 문의가격 대비 +1% 이상 올랐을 때만 재요청.
+        """
         if getattr(pos, 'ai_exit_pending', False):
             return
-        if time.time() < getattr(pos, 'ai_exit_hold_until', 0.0):
-            return
-        pos.ai_exit_pending = True
+        asked = getattr(pos, 'ai_exit_asked_price', 0.0)
+        # HOLD 상태일 때: 새 고점(+1%) 도달 전까지 재요청 안 함
+        if getattr(pos, 'ai_exit_decision', None) == "HOLD" and asked > 0:
+            if price < asked * 1.01:
+                return
+        pos.ai_exit_pending     = True
+        pos.ai_exit_asked_price = price  # 현재 문의 가격 기록
 
         def _worker():
             try:

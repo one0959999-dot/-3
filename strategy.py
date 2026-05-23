@@ -1579,9 +1579,9 @@ class Position:
         self.partial_sold_2   = False # 2차 익절 완료 여부
 
         # AI 익절 판단 (백그라운드 스레드)
-        self.ai_exit_pending   = False  # AI 요청 진행 중
-        self.ai_exit_decision  = None   # 'SELL_PARTIAL' / 'HOLD' / None
-        self.ai_exit_hold_until= 0.0    # HOLD 판단 후 재요청 금지 시각
+        self.ai_exit_pending     = False  # AI 요청 진행 중
+        self.ai_exit_decision    = None   # 'SELL_PARTIAL' / 'SELL_ALL' / 'HOLD' / None
+        self.ai_exit_asked_price = 0.0    # 마지막 AI 문의 시점 가격 (새 고점 갱신 시 재요청)
 
         # 한국 금융시장 표준 수수료 및 거래세율 정의
         self.fee_rate = 0.00015      # 실전 및 모의 온라인 매매 수수료 기본율 (0.015%)

@@ -1709,8 +1709,6 @@ class KRBotController:
                                 with self.lock: core.ai_exit_decision = "SELL_PARTIAL"
                         elif c_decision == "HOLD":
                             with self.lock:
-                                core.ai_exit_hold_until = time.time() + 300
-                                core.ai_exit_decision   = None
                                 core.status = f"AI 홀드 ({c_pnl_pct:+.1f}%) ⏳"
                         else:
                             partial_qty = max(1, c_sh // 2)
@@ -1738,8 +1736,6 @@ class KRBotController:
                                 with self.lock: core.ai_exit_decision = "SELL_ALL"
                         elif c_decision == "HOLD":
                             with self.lock:
-                                core.ai_exit_hold_until = time.time() + 300
-                                core.ai_exit_decision   = None
                                 core.status = f"AI 홀드 ({c_pnl_pct:+.1f}%) ⏳"
                         else:
                             if self._sell_order(c_tk, c_sh, core, c_nm):
@@ -1986,8 +1982,6 @@ class KRBotController:
                             with self.lock: pos.ai_exit_decision = "SELL_PARTIAL"
                     elif s_decision == "HOLD":
                         with self.lock:
-                            pos.ai_exit_hold_until = time.time() + 300
-                            pos.ai_exit_decision   = None
                             pos.status = f"AI 홀드 ⏳"
                     else:
                         sell_qty = max(1, p_sh // 2)
@@ -2019,8 +2013,6 @@ class KRBotController:
                             with self.lock: pos.ai_exit_decision = "SELL_ALL"
                     elif s_decision == "HOLD":
                         with self.lock:
-                            pos.ai_exit_hold_until = time.time() + 300
-                            pos.ai_exit_decision   = None
                             pos.status = f"AI 홀드 ⏳"
                     else:
                         sell_qty = pos.shares
@@ -2680,12 +2672,19 @@ class KRBotController:
     def _trigger_ai_partial_exit(self, pos, ticker: str, name: str,
                                   price: float, avg: float,
                                   pnl_pct: float, regime: str):
-        """AI 익절 판단을 백그라운드 스레드로 요청 (메인 루프 비차단)."""
+        """AI 익절 판단을 백그라운드 스레드로 요청 (메인 루프 비차단).
+
+        HOLD 후에는 시간 대신 가격 기준: 마지막 문의가격 대비 +1% 이상 올랐을 때만 재요청.
+        """
         if getattr(pos, 'ai_exit_pending', False):
             return
-        if time.time() < getattr(pos, 'ai_exit_hold_until', 0.0):
-            return
-        pos.ai_exit_pending = True
+        asked = getattr(pos, 'ai_exit_asked_price', 0.0)
+        # HOLD 상태일 때: 새 고점(+1%) 도달 전까지 재요청 안 함
+        if getattr(pos, 'ai_exit_decision', None) == "HOLD" and asked > 0:
+            if price < asked * 1.01:
+                return
+        pos.ai_exit_pending     = True
+        pos.ai_exit_asked_price = price  # 현재 문의 가격 기록
 
         def _worker():
             try:
