@@ -103,8 +103,8 @@ class USBotController:
     """미국장 실전 매매 봇 — KIS 해외주식 API (KRBotController 아키텍처 기반)"""
 
     # ── 전략 상수 ─────────────────────────────────────────────────────
-    CORE_RATIO     = 0.40    # 코어 40%
-    SAT_RATIO      = 0.40    # 위성 40%
+    CORE_RATIO     = 0.50    # 코어 50% — 목표 풀매수(100%) / AI 거절 시 자연 현금 보유
+    SAT_RATIO      = 0.50    # 위성 50% — 목표 풀매수(100%) / 진입 점수 미달 시 현금 유지
     ORDER_COOLDOWN = 300     # 연속 주문 방지 (초)
     # ATR 기반 손절 (KR 동일 방식)
     CORE_HARD_MULT  = {"BULL": 3.0, "NEUTRAL": 2.5, "BEAR": 1.8}
@@ -557,8 +557,10 @@ class USBotController:
                 proceeds = self._sell(ticker, pos.name, pos.shares, price)
                 pnl      = _net_profit_usd(price, avg, pos.shares)
                 with self.lock:
-                    pos.shares = 0.0
-                    pos.status = "코어 손절 🚨"
+                    pos.shares         = 0.0
+                    pos.partial_sold   = False
+                    pos.partial_sold_2 = False
+                    pos.status         = "코어 손절 🚨"
                 self._record_pnl(pnl)
                 self.add_log(f"🚨 코어 손절 {pos.name}({ticker}) | ATR×{hard_mult:.1f} 이탈 | PnL ${pnl:+.0f}")
                 self._tg(f"🚨 [US 코어 손절] {pos.name}\nATR×{hard_mult:.1f} 이탈 | 재진입 타점 탐색 중\n손익: ${pnl:+,.0f}")
@@ -601,6 +603,8 @@ class USBotController:
                             pos.shares         = float(bought_qty)
                             pos.avg_price_usd  = price
                             pos.max_price_usd  = price
+                            pos.partial_sold   = False
+                            pos.partial_sold_2 = False
                             pos.last_order_time = time.time()
                             pos.status         = f"코어 보유 💎 ({c_score}pt)"
                         score_str = " | ".join(c_reasons[:3])
@@ -751,7 +755,7 @@ class USBotController:
                 continue
 
             budget_ratio = get_budget_ratio_from_score(entry_score, entry_threshold)
-            actual_budget = sat_budget_per * budget_ratio
+            actual_budget = min(sat_budget_per * budget_ratio, self.cash_usd)
 
             # ── AI 매수 승인 심사 ────────────────────────────────────
             if self.gemini:

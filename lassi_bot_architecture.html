@@ -1,0 +1,470 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Lassi Bot — 아키텍처 & 전략 구조</title>
+<style>
+  :root {
+    --bg: #0f1117;
+    --surface: #1a1d27;
+    --surface2: #22263a;
+    --border: #2e3347;
+    --accent: #5b8af0;
+    --accent2: #e8a838;
+    --green: #4caf7d;
+    --red: #e05c5c;
+    --yellow: #e8c83a;
+    --text: #d0d4e8;
+    --muted: #7a8099;
+    --code: #b8d0ff;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { background: var(--bg); color: var(--text); font-family: 'Segoe UI', sans-serif; font-size: 14px; line-height: 1.6; }
+  header { background: linear-gradient(135deg, #1a1d27 0%, #0d1230 100%); border-bottom: 1px solid var(--border); padding: 32px 40px 24px; }
+  header h1 { font-size: 26px; font-weight: 700; color: #fff; letter-spacing: -0.5px; }
+  header p { color: var(--muted); margin-top: 6px; font-size: 13px; }
+  .badge { display: inline-block; padding: 2px 10px; border-radius: 20px; font-size: 11px; font-weight: 600; margin-left: 8px; vertical-align: middle; }
+  .badge-kr { background: #1e3a5f; color: #5fa8ff; }
+  .badge-us { background: #1e3a2e; color: #5fce8f; }
+  main { max-width: 1200px; margin: 0 auto; padding: 32px 24px 80px; }
+  section { margin-bottom: 40px; }
+  h2 { font-size: 18px; font-weight: 700; color: #fff; margin-bottom: 16px; padding-bottom: 8px; border-bottom: 1px solid var(--border); display: flex; align-items: center; gap: 8px; }
+  h3 { font-size: 14px; font-weight: 600; color: var(--accent); margin: 16px 0 8px; text-transform: uppercase; letter-spacing: 0.5px; }
+  .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+  .grid-3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 16px; }
+  .card { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 20px; }
+  .card h4 { font-size: 13px; font-weight: 700; color: #fff; margin-bottom: 10px; }
+  .card p, .card li { font-size: 13px; color: var(--text); }
+  ul { padding-left: 18px; }
+  li { margin-bottom: 4px; }
+  .flow { display: flex; align-items: stretch; gap: 0; margin: 16px 0; flex-wrap: wrap; }
+  .flow-step { background: var(--surface2); border: 1px solid var(--border); border-radius: 8px; padding: 12px 16px; font-size: 12px; min-width: 130px; flex: 1; }
+  .flow-step .num { display: inline-block; background: var(--accent); color: #fff; border-radius: 50%; width: 20px; height: 20px; line-height: 20px; text-align: center; font-size: 11px; font-weight: 700; margin-bottom: 6px; }
+  .flow-step strong { display: block; font-size: 12px; color: #fff; margin-bottom: 3px; }
+  .arrow { display: flex; align-items: center; padding: 0 4px; color: var(--muted); font-size: 18px; flex: 0 0 auto; }
+  .tag { display: inline-block; padding: 1px 8px; border-radius: 4px; font-size: 11px; font-weight: 600; margin: 2px; }
+  .tag-bull { background: #1b3320; color: var(--green); }
+  .tag-neutral { background: #2a2515; color: var(--yellow); }
+  .tag-bear { background: #2e1515; color: var(--red); }
+  .tag-score { background: #1a2040; color: var(--accent); }
+  table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+  th { background: var(--surface2); color: var(--muted); font-weight: 600; padding: 8px 12px; text-align: left; border-bottom: 1px solid var(--border); }
+  td { padding: 8px 12px; border-bottom: 1px solid var(--border); color: var(--text); }
+  tr:last-child td { border-bottom: none; }
+  .highlight-green { color: var(--green); font-weight: 600; }
+  .highlight-red { color: var(--red); font-weight: 600; }
+  .highlight-yellow { color: var(--yellow); font-weight: 600; }
+  .highlight-blue { color: var(--accent); font-weight: 600; }
+  .code { font-family: 'Consolas', monospace; background: #111420; border: 1px solid var(--border); border-radius: 6px; padding: 12px 16px; font-size: 12px; color: var(--code); overflow-x: auto; margin: 8px 0; }
+  .diff-label { display: inline-block; padding: 2px 8px; border-radius: 4px; font-size: 11px; font-weight: 700; margin-right: 8px; }
+  .diff-kr { background: #1a2a4a; color: #6baeff; }
+  .diff-us { background: #1a3a28; color: #5fd68a; }
+  .diff-common { background: #2a2030; color: #c87fff; }
+  .note { background: #1a2010; border-left: 3px solid var(--green); padding: 10px 14px; border-radius: 0 6px 6px 0; font-size: 12.5px; color: var(--text); margin: 8px 0; }
+  .warn { background: #2a1a10; border-left: 3px solid var(--yellow); padding: 10px 14px; border-radius: 0 6px 6px 0; font-size: 12.5px; color: var(--text); margin: 8px 0; }
+  .stat-row { display: flex; gap: 12px; flex-wrap: wrap; margin: 12px 0; }
+  .stat { background: var(--surface2); border-radius: 8px; padding: 12px 18px; text-align: center; flex: 1; min-width: 100px; }
+  .stat .val { font-size: 22px; font-weight: 700; color: #fff; }
+  .stat .lbl { font-size: 11px; color: var(--muted); margin-top: 2px; }
+  .score-table td { text-align: center; }
+  .score-table td:first-child { text-align: left; }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>🤖 Lassi Bot <span class="badge badge-kr">KR</span> <span class="badge badge-us">US</span></h1>
+  <p>자동매매 봇 아키텍처 · 전략 로직 · 매수/매도 조건 전체 요약 &nbsp;|&nbsp; 2026-05-23 기준</p>
+</header>
+
+<main>
+
+<!-- ══════ 1. 전체 구조 ══════ -->
+<section>
+  <h2>🏗️ 전체 시스템 구조</h2>
+  <div class="grid-2">
+    <div class="card">
+      <h4>파일 구조</h4>
+      <div class="code">lassi_bot/
+├── app.py              # Flask 웹 서버 + REST API
+├── strategy.py         # 공통 지표 · 점수 계산 엔진
+├── claude_api.py       # Claude AI 승인/분석 레이어
+├── database.py         # SQLite 상태 저장
+├── bots/
+│   ├── kr_bot.py       # 한국 실전 봇 (KIS API)
+│   └── us_bot.py       # 미국 실전 봇 (KIS 해외 API)
+├── kis_brokers/        # KIS 증권사 API 래퍼
+└── us_screener.py      # 미국 종목 스캔 (yfinance)</div>
+    </div>
+    <div class="card">
+      <h4>런타임 흐름</h4>
+      <ul>
+        <li><strong>Flask</strong> — 웹 대시보드 · REST 엔드포인트</li>
+        <li><strong>APScheduler</strong> — 주기적 루프 실행</li>
+        <li><strong>SQLite</strong> — 포지션·수익·설정 영구 저장</li>
+        <li><strong>Telegram</strong> — 실시간 알림 (매수/매도/손절)</li>
+        <li><strong>Claude API</strong> — AI 승인 · 일일 리포트</li>
+        <li><strong>KIS API</strong> — 한국/미국 실주문 실행</li>
+        <li><strong>yfinance</strong> — 미국 OHLCV · 스크리닝</li>
+        <li><strong>pykrx</strong> — 한국 OHLCV · 외국인 매매 데이터</li>
+      </ul>
+    </div>
+  </div>
+</section>
+
+<!-- ══════ 2. 예산 구조 ══════ -->
+<section>
+  <h2>💰 예산 배분 구조</h2>
+  <div class="grid-2">
+    <div class="card">
+      <h4><span class="badge badge-kr">KR</span> 한국 봇</h4>
+      <div class="stat-row">
+        <div class="stat"><div class="val highlight-blue">40%</div><div class="lbl">코어 예산</div></div>
+        <div class="stat"><div class="val highlight-blue">40%</div><div class="lbl">위성 예산</div></div>
+        <div class="stat"><div class="val highlight-yellow">20%</div><div class="lbl">유동 현금</div></div>
+      </div>
+      <div class="note">위성·단타 수익의 <strong>50%</strong>는 코어 예산에 직접 재투입 → 코어 점진적 증가</div>
+      <ul style="margin-top:10px">
+        <li>코어 예산: 명시적 core.cash 변수로 추적</li>
+        <li>위성 수익 재투입: REINVEST_RATIO = 0.50</li>
+        <li>코어가 불어날수록 코어 매수 규모 자동 증가</li>
+      </ul>
+    </div>
+    <div class="card">
+      <h4><span class="badge badge-us">US</span> 미국 봇</h4>
+      <div class="stat-row">
+        <div class="stat"><div class="val highlight-green">50%</div><div class="lbl">코어 목표</div></div>
+        <div class="stat"><div class="val highlight-green">50%</div><div class="lbl">위성 목표</div></div>
+        <div class="stat"><div class="val highlight-muted" style="color:#7a8099">AI 재량</div><div class="lbl">현금 보유</div></div>
+      </div>
+      <div class="note">총자산(현금+포지션) × 고정비율로 슬롯 예산 산정 → 수익 자동 재배분</div>
+      <ul style="margin-top:10px">
+        <li>목표: 코어 50% + 위성 50% = <strong>100% 풀투자</strong></li>
+        <li>AI 거절 시 해당 슬롯은 현금 유지 (강제 없음)</li>
+        <li>상승장 = AI CONFIRM → 자연스럽게 풀매수</li>
+        <li>위험장 = AI REJECT → 현금 보유로 방어</li>
+      </ul>
+    </div>
+  </div>
+</section>
+
+<!-- ══════ 3. 통합 진입 점수 시스템 ══════ -->
+<section>
+  <h2>📊 통합 진입 점수 시스템 (KR/US 공통)</h2>
+  <p style="color:var(--muted); margin-bottom:14px; font-size:13px">10개 지표 각 1점, 총 10점 만점. 점수 ≥ 임계값이어야 매수 실행.</p>
+  <table class="score-table">
+    <thead>
+      <tr><th>#</th><th>지표</th><th>조건</th><th>의미</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>①</td><td>단기 추세</td><td>현재가 > 20MA</td><td>단기 상승 추세 확인</td></tr>
+      <tr><td>②</td><td>중기 추세</td><td>현재가 > 60MA</td><td>중기 추세 위에 위치</td></tr>
+      <tr><td>③</td><td>이동평균 정배열</td><td>5MA > 20MA</td><td>단기선이 중기선 위</td></tr>
+      <tr><td>④</td><td>MACD</td><td>히스토그램 > 0</td><td>모멘텀 양전환</td></tr>
+      <tr><td>⑤</td><td>RSI 건강구간</td><td>40 ≤ RSI ≤ 68</td><td>과매도/과매수 구간 제외</td></tr>
+      <tr><td>⑥</td><td>거래량 급증</td><td>당일 거래량 ≥ 20일 평균 × 130%</td><td>수급 확인</td></tr>
+      <tr><td>⑦</td><td>당일 상승</td><td>현재가 ≥ 전일 종가</td><td>당일 양봉</td></tr>
+      <tr><td>⑧</td><td>볼린저밴드 위치</td><td>%B 25~75% 구간</td><td>밴드 중간값, 과열/과냉 제외</td></tr>
+      <tr><td>⑨</td><td>외인/모멘텀</td><td>외인순매수 > 0 또는 20일 모멘텀 > 3%</td><td>KR:외국인 수급, US:20d 모멘텀</td></tr>
+      <tr><td>⑩</td><td>장기 추세</td><td>현재가 > 120MA</td><td>장기 상승장 여부</td></tr>
+    </tbody>
+  </table>
+  <div style="margin-top:16px">
+    <h3>임계값 테이블</h3>
+    <div class="grid-2">
+      <table>
+        <thead><tr><th>레짐</th><th>코어 임계값</th><th>위성 임계값</th></tr></thead>
+        <tbody>
+          <tr><td><span class="tag tag-bull">BULL</span></td><td class="highlight-green">6점</td><td class="highlight-green">5점</td></tr>
+          <tr><td><span class="tag tag-neutral">NEUTRAL</span></td><td class="highlight-yellow">7점</td><td class="highlight-yellow">6점</td></tr>
+          <tr><td><span class="tag tag-bear">BEAR</span></td><td class="highlight-red">8점</td><td class="highlight-red">7점</td></tr>
+        </tbody>
+      </table>
+      <table>
+        <thead><tr><th>점수 초과분</th><th>투자 비율</th><th>예시 (임계 6점)</th></tr></thead>
+        <tbody>
+          <tr><td>+0 (임계 정확)</td><td>30%</td><td>점수 6 → 30%</td></tr>
+          <tr><td>+1</td><td>45%</td><td>점수 7 → 45%</td></tr>
+          <tr><td>+2</td><td>60%</td><td>점수 8 → 60%</td></tr>
+          <tr><td>+3</td><td>75%</td><td>점수 9 → 75%</td></tr>
+          <tr><td>+4 이상</td><td class="highlight-green">90%</td><td>점수 10 → 90%</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+</section>
+
+<!-- ══════ 4. 마켓 레짐 ══════ -->
+<section>
+  <h2>📈 마켓 레짐 판단</h2>
+  <div class="grid-2">
+    <div class="card">
+      <h4><span class="badge badge-kr">KR</span> KOSPI200 ETF 기반</h4>
+      <ul>
+        <li><span class="tag tag-bull">BULL</span> — ETF 5MA > 20MA AND 종가 > 60MA</li>
+        <li><span class="tag tag-neutral">NEUTRAL</span> — 중간 조건</li>
+        <li><span class="tag tag-bear">BEAR</span> — ETF 종가 < 20MA AND 5MA < 20MA</li>
+      </ul>
+      <div style="margin-top:10px; font-size:12px; color:var(--muted)">레짐별 ATR 손절 배수 (코어): BULL×3.0 / NEUTRAL×2.5 / BEAR×1.8</div>
+    </div>
+    <div class="card">
+      <h4><span class="badge badge-us">US</span> SPY SMA 기반</h4>
+      <ul>
+        <li><span class="tag tag-bull">BULL</span> — SPY 종가 > SMA20 AND SMA20 > SMA50</li>
+        <li><span class="tag tag-neutral">NEUTRAL</span> — SPY > SMA20 (단기만 위)</li>
+        <li><span class="tag tag-bear">BEAR</span> — SPY < SMA20</li>
+      </ul>
+      <div style="margin-top:10px; font-size:12px; color:var(--muted)">레짐별 ATR 손절 배수 동일: BULL×3.0 / NEUTRAL×2.5 / BEAR×1.8</div>
+    </div>
+  </div>
+</section>
+
+<!-- ══════ 5. KR 봇 매매 로직 ══════ -->
+<section>
+  <h2><span class="badge badge-kr">KR</span> 한국 봇 매매 로직</h2>
+
+  <h3>코어 매매 흐름</h3>
+  <div class="flow">
+    <div class="flow-step"><span class="num">1</span><strong>RSI 신호</strong>데드크로스→SELL<br>골든크로스→BUY</div>
+    <div class="arrow">→</div>
+    <div class="flow-step"><span class="num">2</span><strong>ATR 하드 손절</strong>평단 − ATR×배수<br>이탈 시 전량 매도</div>
+    <div class="arrow">→</div>
+    <div class="flow-step"><span class="num">2</span><strong>BUY 시 점수 확인</strong>진입 점수 ≥ 임계값<br>미달 → 대기</div>
+    <div class="arrow">→</div>
+    <div class="flow-step"><span class="num">3</span><strong>예산 비율 결정</strong>점수 초과분으로<br>30~90% 결정</div>
+    <div class="arrow">→</div>
+    <div class="flow-step"><span class="num">4</span><strong>주문 실행</strong>KIS API<br>실주문</div>
+  </div>
+  <div class="note">코어 매도(RSI SELL): 전량 매도, floor_shares 없음. 손절 후 좋은 타점 재진입해 주식수 극대화가 목표.</div>
+
+  <h3 style="margin-top:20px">위성 매매 흐름</h3>
+  <div class="flow">
+    <div class="flow-step"><span class="num">1</span><strong>진입 점수 게이트</strong>점수 미달 → continue<br>(매수 차단)</div>
+    <div class="arrow">→</div>
+    <div class="flow-step"><span class="num">2</span><strong>레짐 타이밍 보너스</strong>BEAR 바닥/BULL 모멘텀<br>+5~15% 비율 추가</div>
+    <div class="arrow">→</div>
+    <div class="flow-step"><span class="num">3</span><strong>AI 최종 승인</strong>Claude 검토<br>CONFIRM/REJECT</div>
+    <div class="arrow">→</div>
+    <div class="flow-step"><span class="num">4</span><strong>익절 관리</strong>+10%→50% 매도<br>+20%→나머지 전량</div>
+    <div class="arrow">→</div>
+    <div class="flow-step"><span class="num">5</span><strong>수익 재투입</strong>수익 50% →<br>코어 예산 추가</div>
+  </div>
+
+  <h3 style="margin-top:20px">위성 청산 조건 (우선순위 순)</h3>
+  <table>
+    <thead><tr><th>조건</th><th>트리거</th><th>동작</th></tr></thead>
+    <tbody>
+      <tr><td>giveback 손절</td><td>고점 대비 -X% 이탈 (ATR 기반 트레일링)</td><td>전량 매도</td></tr>
+      <tr><td>early drop 손절</td><td>매수 후 단기 급락</td><td>전량 매도</td></tr>
+      <tr><td>theme 과열 청산</td><td>테마 과열 지표 임계 초과</td><td>전량 매도</td></tr>
+      <tr><td>RSI 과열 단계적 청산</td><td>RSI 70~85+ 구간별 단계적</td><td>부분/전량 매도</td></tr>
+      <tr><td>1차 익절</td><td>+10%</td><td>50% 매도</td></tr>
+      <tr><td>2차 익절</td><td>+20%</td><td>나머지 전량 매도</td></tr>
+    </tbody>
+  </table>
+</section>
+
+<!-- ══════ 6. US 봇 매매 로직 ══════ -->
+<section>
+  <h2><span class="badge badge-us">US</span> 미국 봇 매매 로직</h2>
+
+  <div class="grid-2">
+    <div class="card">
+      <h4>코어 종목 선정 (주 1회, 월요일)</h4>
+      <ul>
+        <li>yfinance로 후보 스캔 (코어 슬롯 × 3배)</li>
+        <li>Claude AI가 최종 3종목 선정 (장기 우량주 관점)</li>
+        <li>보유 중인 종목은 교체 대상 제외</li>
+        <li>AI 실패 시 퀀트 점수 상위로 폴백</li>
+      </ul>
+    </div>
+    <div class="card">
+      <h4>위성 종목 선정 (매일 1회)</h4>
+      <ul>
+        <li>us_screener: 퀀트 스코어 기반 후보 생성</li>
+        <li>섹터 다양성 제한 (같은 섹터 최대 2개)</li>
+        <li>AI 거절 이력 있는 종목은 당일 제외</li>
+        <li>강세 섹터(hot_sectors) 정보 AI에 전달</li>
+      </ul>
+    </div>
+  </div>
+
+  <h3 style="margin-top:20px">코어 매매 흐름</h3>
+  <div class="flow">
+    <div class="flow-step"><span class="num">1</span><strong>ATR 하드 손절</strong>평단 − ATR×배수<br>이탈 → 전량 매도<br><small style="color:var(--red)">flags 초기화</small></div>
+    <div class="arrow">→</div>
+    <div class="flow-step"><span class="num">2</span><strong>진입 점수 체크</strong>점수 ≥ 임계값<br>미달 → 대기</div>
+    <div class="arrow">→</div>
+    <div class="flow-step"><span class="num">3</span><strong>예산 결정</strong>총자산×50%÷3<br>× 점수비율</div>
+    <div class="arrow">→</div>
+    <div class="flow-step"><span class="num">4</span><strong>매수 실행</strong>KIS 해외주식<br><small style="color:var(--green)">flags 초기화</small></div>
+    <div class="arrow">→</div>
+    <div class="flow-step"><span class="num">5</span><strong>익절 관리</strong>+10%→50%<br>+20%→전량</div>
+  </div>
+
+  <h3 style="margin-top:20px">위성 매매 흐름</h3>
+  <div class="flow">
+    <div class="flow-step"><span class="num">1</span><strong>진입 점수 게이트</strong>점수 < 임계값<br>→ 매수 차단</div>
+    <div class="arrow">→</div>
+    <div class="flow-step"><span class="num">2</span><strong>AI 승인</strong>Claude 검토<br>상승장→CONFIRM<br>위험장→REJECT</div>
+    <div class="arrow">→</div>
+    <div class="flow-step"><span class="num">3</span><strong>예산 결정</strong>총자산×50%÷3<br>× 점수비율<br>∩ 가용 현금</div>
+    <div class="arrow">→</div>
+    <div class="flow-step"><span class="num">4</span><strong>매수 실행</strong>yfinance 가격<br>+ KIS 실주문</div>
+    <div class="arrow">→</div>
+    <div class="flow-step"><span class="num">5</span><strong>ATR 청산</strong>트레일링<br>하드 손절<br>익절×2단계</div>
+  </div>
+
+  <h3 style="margin-top:20px">AI 현금 보유 판단 기준</h3>
+  <div class="grid-2">
+    <div class="card">
+      <h4 style="color:var(--green)">CONFIRM (투자) 우선 상황</h4>
+      <ul>
+        <li>골든크로스 (50MA > 200MA)</li>
+        <li>RSI 40~65 건강 구간</li>
+        <li>강세 섹터(AI/반도체/방산/우주) 소속</li>
+        <li>20일 모멘텀 양호</li>
+        <li>→ 현금 보유는 기회비용</li>
+      </ul>
+    </div>
+    <div class="card">
+      <h4 style="color:var(--red)">REJECT (현금 보유) 판단 상황</h4>
+      <ul>
+        <li>VIX > 30 고변동성 국면</li>
+        <li>Fed 긴축 사이클 초입</li>
+        <li>섹터 전체 -15% 이상 하락</li>
+        <li>동일 종목 연속 손절 패턴</li>
+        <li>RSI > 80 과매수 또는 모멘텀 -10% 이하</li>
+      </ul>
+    </div>
+  </div>
+</section>
+
+<!-- ══════ 7. KR vs US 차이점 ══════ -->
+<section>
+  <h2>⚖️ KR / US 전략 비교</h2>
+  <table>
+    <thead>
+      <tr><th>항목</th><th><span class="badge badge-kr">KR</span> 한국 봇</th><th><span class="badge badge-us">US</span> 미국 봇</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>코어 예산 목표</td><td>40%</td><td class="highlight-green">50%</td></tr>
+      <tr><td>위성 예산 목표</td><td>40%</td><td class="highlight-green">50%</td></tr>
+      <tr><td>총 투자 목표</td><td>80% (20% 현금 고정)</td><td class="highlight-green">100% (AI 재량으로 현금 보유)</td></tr>
+      <tr><td>수익 재투입</td><td>위성 수익 50% → 코어 예산</td><td>수익 → cash_usd → 총자산 증가 → 비율 자동 재배분</td></tr>
+      <tr><td>코어 종목 선정</td><td>수동 설정 (sector_guide)</td><td>Claude AI 주 1회 자동 선정</td></tr>
+      <tr><td>위성 종목 선정</td><td>AI 채팅 + 수동 watchlist</td><td>us_screener 퀀트 자동 스캔 + AI 승인</td></tr>
+      <tr><td>진입 점수 시스템</td><td colspan="2" style="text-align:center; color:var(--accent)">동일 (calculate_entry_score — strategy.py 공통)</td></tr>
+      <tr><td>임계값</td><td colspan="2" style="text-align:center; color:var(--accent)">동일 (BULL 5/6, NEUTRAL 6/7, BEAR 7/8)</td></tr>
+      <tr><td>ATR 손절 배수</td><td colspan="2" style="text-align:center; color:var(--accent)">동일 (BULL×3.0, NEUTRAL×2.5, BEAR×1.8)</td></tr>
+      <tr><td>1차 익절</td><td colspan="2" style="text-align:center; color:var(--accent)">동일 (+10% → 50% 매도)</td></tr>
+      <tr><td>2차 익절</td><td colspan="2" style="text-align:center; color:var(--accent)">동일 (+20% → 나머지 전량)</td></tr>
+      <tr><td>floor_shares (최소 보유)</td><td colspan="2" style="text-align:center; color:var(--red)">폐지 — 손절 시 전량 매도 후 좋은 타점 재진입</td></tr>
+      <tr><td>데이터 소스</td><td>pykrx + KIS API</td><td>yfinance + KIS 해외주식 API</td></tr>
+      <tr><td>마켓 레짐 기준</td><td>KOSPI200 ETF</td><td>SPY SMA20/50</td></tr>
+    </tbody>
+  </table>
+</section>
+
+<!-- ══════ 8. 손절 로직 ══════ -->
+<section>
+  <h2>🛡️ 손절 체계</h2>
+  <div class="note" style="margin-bottom:16px">핵심 원칙: floor_shares 폐지. 손절 시 전량 매도 후 좋은 타점에 재진입 → 이전보다 더 많은 주식수 확보가 목표.</div>
+  <div class="grid-3">
+    <div class="card">
+      <h4>ATR 하드 손절 (코어)</h4>
+      <div class="code">손절가 = 평단 − (ATR × 배수)
+
+BULL:    ATR × 3.0
+NEUTRAL: ATR × 2.5
+BEAR:    ATR × 1.8</div>
+      <p style="margin-top:8px; font-size:12px; color:var(--muted)">ATR = 14일 평균 True Range. 기본값: 평단 × 2%</p>
+    </div>
+    <div class="card">
+      <h4>ATR 트레일링 손절 (위성)</h4>
+      <div class="code">트리거: 고점 ≥ 평단 + ATR×trig
+발동: 현재가 ≤ 고점 − ATR×mult
+
+BULL:    mult=1.5, trig=1.2
+NEUTRAL: mult=1.5, trig=1.0
+BEAR:    mult=1.2, trig=0.8</div>
+    </div>
+    <div class="card">
+      <h4>재진입 조건</h4>
+      <ul>
+        <li>손절가 < 재진입가여도 가능</li>
+        <li>진입 점수가 임계값 이상이면 OK</li>
+        <li>가격 비교는 hard rule이 아님</li>
+        <li>쿨다운 5분 후 재진입 가능</li>
+      </ul>
+      <div class="note" style="margin-top:8px; font-size:12px">손절가보다 높더라도 점수가 충분하면 매수 → 더 많은 수량 확보 기회</div>
+    </div>
+  </div>
+</section>
+
+<!-- ══════ 9. AI 레이어 ══════ -->
+<section>
+  <h2>🤖 AI 레이어 (Claude)</h2>
+  <div class="grid-2">
+    <div class="card">
+      <h4>사용 위치</h4>
+      <table style="font-size:12px">
+        <thead><tr><th>기능</th><th>KR</th><th>US</th></tr></thead>
+        <tbody>
+          <tr><td>위성 매수 최종 승인</td><td class="highlight-green">✓</td><td class="highlight-green">✓</td></tr>
+          <tr><td>코어 종목 자동 선정</td><td class="highlight-red">✗</td><td class="highlight-green">✓ (주 1회)</td></tr>
+          <tr><td>일일 리포트 생성</td><td class="highlight-green">✓</td><td class="highlight-green">✓</td></tr>
+          <tr><td>채팅 bot_command</td><td class="highlight-green">✓</td><td class="highlight-green">✓</td></tr>
+          <tr><td>코어 매수 승인</td><td class="highlight-red">✗ (점수만)</td><td class="highlight-red">✗ (점수만)</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="card">
+      <h4>[BOT_COMMAND] 시스템</h4>
+      <p style="font-size:12px; color:var(--muted); margin-bottom:8px">AI 채팅 응답에 포함된 명령어를 자동 파싱하여 설정 변경</p>
+      <div class="code">[BOT_COMMAND: sector_guide="반도체,AI,방산"]
+[BOT_COMMAND: watchlist_add=NVDA]
+[BOT_COMMAND: watchlist_remove=TSLA]</div>
+      <p style="font-size:12px; margin-top:8px">변경 즉시 DB에 저장 + 봇 루프에 반영</p>
+    </div>
+  </div>
+</section>
+
+<!-- ══════ 10. 상태 영속성 ══════ -->
+<section>
+  <h2>💾 상태 저장 구조 (SQLite)</h2>
+  <div class="grid-2">
+    <div class="card">
+      <h4>저장 항목</h4>
+      <ul>
+        <li>포지션 정보 (주식수, 평단, 최고가, 플래그)</li>
+        <li>코어/위성 종목 리스트</li>
+        <li>수익/손실 기록 (pnl_history)</li>
+        <li>AI 거절 이력 (_satellite_rejects)</li>
+        <li>스크리닝 날짜 (last_screen_date)</li>
+        <li>초기 자본금 (user_initial_cash)</li>
+      </ul>
+    </div>
+    <div class="card">
+      <h4>복리 성장 메커니즘</h4>
+      <div class="code">KR: 위성 수익 50%
+    → core.cash += profit * 0.5
+    → 코어 매수 규모 증가
+
+US: 수익 전액 → cash_usd
+    → total_assets 증가
+    → budget = total × 50% ÷ 3
+    → 슬롯 예산 자동 증가</div>
+    </div>
+  </div>
+</section>
+
+<!-- ══════ footer ══════ -->
+<div style="text-align:center; color:var(--muted); font-size:12px; margin-top:60px; padding-top:20px; border-top: 1px solid var(--border)">
+  Lassi Bot &nbsp;|&nbsp; Built with Claude Sonnet 4.6 &nbsp;|&nbsp; 2026-05-23
+</div>
+
+</main>
+</body>
+</html>
