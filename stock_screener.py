@@ -25,6 +25,11 @@ _full_ticker_cache: dict = {'ts': 0.0, 'movers': [], 'all': []}
 _full_ticker_lock  = threading.Lock()
 _FULL_TICKER_TTL   = 1800   # 30분 (장중 급등주 포착 주기)
 
+# 모듈 레벨 AI 클라이언트 — select_satellites() 호출 시 자동 주입됨
+# kr_bot.py가 select_ai_core_stock()에 gemini를 전달하지 않으므로
+# select_satellites()에서 먼저 받아 여기에 저장 → 코어 선정 시 재사용
+_module_gemini = None
+
 # 미국 섹터 선행 지수 캐시 (yfinance — 4시간마다 갱신)
 _us_sector_cache: dict = {'ts': 0.0, 'boosts': {}}
 _us_sector_lock  = threading.Lock()
@@ -800,6 +805,11 @@ def select_satellites(kis=None, n=NUM_SATELLITES, verbose=True, gemini_client=No
     """
     멀티팩터 위성 종목 선정 (딥러닝 PyTorch 확률 예측 엔진 연동 완료)
     """
+    # 모듈 레벨 AI 클라이언트 저장 — select_ai_core_stock()이 gemini 없이 호출될 때 재사용
+    global _module_gemini
+    if gemini_client is not None:
+        _module_gemini = gemini_client
+
     if verbose:
         print("\n" + "="*60)
         print("  🔍 위성 종목 딥러닝 + 멀티팩터 스크리닝 시작")
@@ -1172,7 +1182,40 @@ def select_ai_core_stock(n: int = 2, exclude_tickers=None, verbose: bool = False
     # 내림차순 정렬
     scored.sort(key=lambda x: x[0], reverse=True)
 
-    # 상위 n개 선택 — 섹터 분산 (같은 섹터 2개 금지)
+    # ── AI 코어 선정 (Gemini가 있으면 AI가 장기누적 기준으로 최종 선택) ──
+    # kr_bot.py가 gemini 없이 호출하므로, select_satellites()에서 주입된 _module_gemini 사용
+    if _module_gemini is not None and scored:
+        if verbose:
+            print(f"\n🤖 [AI 코어 선정] 퀀트 통과 {len(scored)}개 → Claude AI가 '장기 누적 매수' 기준으로 선정 중...")
+        # AI에게 넘길 후보 준비 (상위 20개, 이름 포함)
+        ai_candidates = []
+        for sc, t in scored[:20]:
+            try:
+                nm = stock.get_market_ticker_name(t)
+            except Exception:
+                nm = t
+            sec = ticker_to_sector_map.get(t, '-')
+            mom = (sc + 0.0)  # score ≒ 120일 모멘텀 - 변동성 패널티
+            ai_candidates.append({
+                'ticker':        t,
+                'name':          nm,
+                'sector':        sec,
+                'momentum_120d': round(sc, 1),
+                'score':         round(sc, 1),
+                'sma_aligned':   'YES',   # 이 목록은 이미 정배열 필터 통과
+                'strategy_name': '정배열 장기보유',
+                'return_pct':    round(sc, 2),
+            })
+        ai_result = _module_gemini.ai_select_core_stocks(ai_candidates, n)
+        if ai_result:
+            if verbose:
+                for i, c in enumerate(ai_result, 1):
+                    print(f"   🏆 AI 코어 {i}위: {c['name']}({c['ticker']}) | 섹터: {c.get('sector','-')} | 이유: {c.get('ai_reason','')}")
+            return ai_result
+        if verbose:
+            print("   ⚠️ AI 코어 선정 실패 — 퀀트 랭킹 폴백")
+
+    # ── 퀀트 폴백 — 섹터 분산 (같은 섹터 2개 금지) ──
     result: list = []
     used_sectors: set = set()
 
@@ -1197,7 +1240,7 @@ def select_ai_core_stock(n: int = 2, exclude_tickers=None, verbose: bool = False
             'sector':        sec,
         })
         if verbose:
-            print(f"   🏆 AI 코어 {len(result)}위: {name}({ticker}) | 섹터: {sec} | 점수 {score:.1f}")
+            print(f"   🏆 퀀트 코어 {len(result)}위: {name}({ticker}) | 섹터: {sec} | 점수 {score:.1f}")
 
     if not result and verbose:
         print("   ⚠️ 정배열 조건 통과 종목 없음 — 재시도 필요")
