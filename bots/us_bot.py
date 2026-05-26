@@ -974,6 +974,9 @@ class USBotController:
             self.last_screen_date = today
             return
 
+        # 블랙리스트(당일 AI 거절) 종목 제거
+        candidates = [c for c in candidates if c["ticker"] not in self._satellite_rejects]
+
         # 섹터 다양성: 같은 섹터 최대 2개
         seen_sec: dict = {}
         filtered: list = []
@@ -1700,6 +1703,9 @@ class USBotController:
                 "last_screen_date":      self.last_screen_date,
                 "futures_snapshot":      self.futures_snapshot,
                 "sector_trends":         self.sector_trends,
+                # 당일 AI 거절 블랙리스트 — 재시작 후에도 유지
+                "bl_date":               self._bl_date,
+                "satellite_rejects":     dict(self._satellite_rejects),
                 "cores": {
                     t: {
                         "name":             p.name,
@@ -1751,6 +1757,15 @@ class USBotController:
             self.last_screen_date       = state.get("last_screen_date")
             self.futures_snapshot       = state.get("futures_snapshot", {})
             self.sector_trends          = state.get("sector_trends", [])
+            # 당일 블랙리스트 복원 (같은 날 재시작 시에만)
+            saved_bl_date = state.get("bl_date", "")
+            today_str_us  = _now_et().strftime("%Y-%m-%d")
+            if saved_bl_date == today_str_us:
+                self._bl_date           = saved_bl_date
+                self._satellite_rejects = state.get("satellite_rejects", {})
+                n_rej = len(self._satellite_rejects)
+                if n_rej:
+                    self.add_log(f"🚫 [US] 당일 AI 거절 블랙리스트 복원: {n_rej}개 종목 재심사 제외")
             for t, s in state.get("cores", {}).items():
                 pos = USPosition(
                     ticker         = t,
