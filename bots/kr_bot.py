@@ -1601,10 +1601,12 @@ class KRBotController:
         if getattr(self, '_trading_job_running', False):
             return
         self._trading_job_running = True
+        self._trading_job_start_ts = time.time()
         try:
             self._trading_job_impl()
         finally:
             self._trading_job_running = False
+            self._trading_job_start_ts = 0
 
     def _trading_job_impl(self):
         if not self.core_positions: return
@@ -3433,6 +3435,15 @@ class KRBotController:
                 self.scheduler.run_pending()
             except Exception as e:
                 logger.error(f"[{self.mode_name}] 스케줄러 오류: {e}", exc_info=True)
+            # ── watchdog: _trading_job_running 고착 감지 ─────────────────
+            # AI API 무응답 등으로 trading_job이 180초 이상 실행 중이면 강제 리셋
+            if getattr(self, '_trading_job_running', False):
+                _job_start = getattr(self, '_trading_job_start_ts', 0)
+                if _job_start > 0 and (time.time() - _job_start) > 180:
+                    logger.error(f"[{self.mode_name}] trading_job 180초 초과 — 강제 리셋 (watchdog)")
+                    self.add_log("⚠️ [watchdog] trading_job 3분 초과 강제 리셋")
+                    self._trading_job_running = False
+                    self._trading_job_start_ts = 0
             time.sleep(1)
     
     def refresh_websocket(self):
