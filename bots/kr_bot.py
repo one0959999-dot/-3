@@ -1790,18 +1790,29 @@ class KRBotController:
                 c_sig, _, c_rsi = get_rsi_signal(c_tk, kis_api=self.kis, df=ex_df)
 
                 # ── BULL 국면 진입 신호 보완 ────────────────────────────────
-                # RSI 30/70 전략은 BULL 장에서 RSI가 50 이상 유지돼 BUY 신호 자체가 안 뜸.
-                # BULL + RSI ≤ 50 + bull_momentum_score ≥ 1 → BUY 오버라이드
+                # RSI 30/70 전략은 BULL 장에서 RSI 50~70 구간이 대부분이라 BUY 신호가 거의 안 뜸.
+                # 조건 A: RSI ≤ 65 + bull_score ≥ 1 (BULL에서 50~65도 매수 구간)
+                # 조건 B: MA5 > MA20 정배열 + 현재가가 MA5 이하(눌림목 진입)
                 if c_sig != 'BUY' and regime == "BULL" and c_sh == 0:
                     try:
                         if not ex_df.empty and 'close' in ex_df.columns:
-                            _rsi_bull = float(calc_rsi(ex_df['close']).iloc[-1])
-                            if _rsi_bull <= 50:
-                                _bull_sc, _ = get_bull_momentum_score(ex_df)
-                                if _bull_sc >= 1:
-                                    c_sig = 'BUY'
-                                    c_rsi = _rsi_bull
-                                    self.add_log(f"🚀 [BULL 코어 진입] {c_tk} RSI={_rsi_bull:.1f} bull_score={_bull_sc} → BUY 오버라이드")
+                            _closes_b  = ex_df['close'].dropna()
+                            _rsi_bull  = float(calc_rsi(_closes_b).iloc[-1])
+                            _bull_sc, _bull_reasons = get_bull_momentum_score(ex_df)
+                            # 조건 A: RSI ≤ 65 + bull_score ≥ 1
+                            _bull_cond_a = (_rsi_bull <= 65) and (_bull_sc >= 1)
+                            # 조건 B: MA5 > MA20 정배열 + 가격이 MA5 이내(2%) 눌림목
+                            _bull_cond_b = False
+                            if len(_closes_b) >= 22:
+                                _ma5_b  = float(_closes_b.rolling(5).mean().iloc[-1])
+                                _ma20_b = float(_closes_b.rolling(20).mean().iloc[-1])
+                                _bull_cond_b = (_ma5_b > _ma20_b) and (cp <= _ma5_b * 1.02)
+                            if _bull_cond_a or _bull_cond_b:
+                                c_sig = 'BUY'
+                                c_rsi = _rsi_bull
+                                _bull_why = (f"RSI={_rsi_bull:.1f} bull_score={_bull_sc}" if _bull_cond_a
+                                             else f"MA5눌림목(MA5={_closes_b.rolling(5).mean().iloc[-1]:,.0f})")
+                                self.add_log(f"🚀 [BULL 코어 진입] {c_tk} {_bull_why} → BUY 오버라이드")
                     except Exception as _be:
                         logger.debug(f"BULL 코어 오버라이드 오류: {_be}")
                 # ─────────────────────────────────────────────────────────────
@@ -1838,6 +1849,43 @@ class KRBotController:
                         self._send_trade_telegram(self._fmt_trade_msg("💎", "코어 2차 매수", c_tk, c_nm, cp, sq, strategy="RSI코어", note="-2% 눌림목 포착"))
                 # ─────────────────────────────────────────────────────────────
 
+                # ── BULL 불타기 (코어 피라미딩) — +3% 돌파 + MA5 정배열 유지 ──
+                # BULL 장에서 보유 포지션이 +3% 이상 수익 중 + 단기 정배열이면
+                # 잔여 현금의 30%를 추가 매수해 수익을 극대화.  1회만 실행.
+                with self.lock: c_cash = core.cash  # 최신 현금 재확인
+                if (regime == "BULL" and c_sh > 0 and is_core_cd
+                        and not getattr(core, 'bull_pyramid_done', False)
+                        and c_avg > 0 and cp >= c_avg * 1.03
+                        and c_sig != 'SELL' and c_cash > cp):
+                    try:
+                        _py_ok = False
+                        if not ex_df.empty and len(ex_df['close'].dropna()) >= 22:
+                            _cl_py  = ex_df['close'].dropna()
+                            _ma5_py = float(_cl_py.rolling(5).mean().iloc[-1])
+                            _ma20_py= float(_cl_py.rolling(20).mean().iloc[-1])
+                            _py_ok  = _ma5_py > _ma20_py
+                        if _py_ok:
+                            _py_qty = max(1, int((c_cash * 0.30 * 0.98) // cp))
+                            if _py_qty > 0 and self._buy_order(c_tk, _py_qty, core, c_nm):
+                                with self.lock:
+                                    core.last_order_time   = time.time()
+                                    core.bull_pyramid_done = True
+                                    _py_new_sh = core.shares + _py_qty
+                                    if _py_new_sh > 0:
+                                        core.avg_price = round((core.avg_price * core.shares + cp * _py_qty) / _py_new_sh, 2)
+                                    core.shares    = _py_new_sh
+                                    core._bought_val = getattr(core, '_bought_val', 0.0) + int(cp * _py_qty)
+                                    core.cash      = max(0.0, core.cash - int(cp * _py_qty))
+                                    _py_pct = (cp / c_avg - 1) * 100
+                                    core.status    = f"불타기 🔥 (+{_py_pct:.1f}%)"
+                                self.add_log(f"🔥 {c_nm} [BULL 불타기] +{_py_pct:.1f}% 상승 | {_py_qty}주 @ {cp:,}원 추가 (잔여현금 30%)")
+                                self._log_trade(c_tk, c_nm, 'BUY', cp, "BULL불타기", f"BULL 피라미딩 | +{_py_pct:.1f}% 돌파 · MA5 정배열 확인")
+                                self._send_trade_telegram(self._fmt_trade_msg("🔥", "BULL 불타기", c_tk, c_nm, cp, _py_qty,
+                                    strategy=f"BULL피라미딩 +{_py_pct:.1f}%", note="잔여현금 30% 추가 진입"))
+                    except Exception as _pye:
+                        logger.debug(f"BULL 불타기(코어) 오류: {_pye}")
+                # ─────────────────────────────────────────────────────────────
+
                 # ── ATR(14) 코어 하드 손절 (전량 청산 — floor_shares 없음) ──
                 c_atr = c_avg * 0.02
                 if not ex_df.empty and all(col in ex_df.columns for col in ['high','low','close']):
@@ -1856,15 +1904,16 @@ class KRBotController:
                         core_profit = _net_profit(cp, c_avg, c_sh)
                         with self.lock:
                             core.last_order_time = time.time()
-                            core.status          = "코어 손절 🚨"
-                            core.shares          = 0
-                            core._bought_val     = 0.0
-                            core.partial_sold    = False
-                            core.partial_sold_2  = False
-                            core.second_buy_price= 0.0
-                            core.second_buy_cash = 0.0
-                            core.second_buy_done = False
-                            self.pnl_this_turn  += core_profit
+                            core.status           = "코어 손절 🚨"
+                            core.shares           = 0
+                            core._bought_val      = 0.0
+                            core.partial_sold     = False
+                            core.partial_sold_2   = False
+                            core.second_buy_price = 0.0
+                            core.second_buy_cash  = 0.0
+                            core.second_buy_done  = False
+                            core.bull_pyramid_done= False
+                            self.pnl_this_turn   += core_profit
                         self._record_daily_pnl(core_profit)
                         self.add_log(f"🚨 {c_nm} 코어 ATR 손절 전량 | {c_sh}주 @ {cp:,}원 | 손익: {core_profit:+,.0f}원")
                         self._log_trade(c_tk, c_nm, 'SELL', cp, "코어 ATR 손절", f"평단 {c_avg:,.0f} 대비 ATR×{core_hard_mult} 이탈", profit=core_profit)
@@ -2043,12 +2092,13 @@ class KRBotController:
                             core.status         = "체결 대기 ⏳"
                             core.shares         = 0
                             core._bought_val     = 0.0
-                            core.partial_sold    = False
-                            core.partial_sold_2  = False
-                            core.second_buy_price= 0.0
-                            core.second_buy_cash = 0.0
-                            core.second_buy_done = False
-                            self.pnl_this_turn  += core_profit
+                            core.partial_sold     = False
+                            core.partial_sold_2   = False
+                            core.second_buy_price = 0.0
+                            core.second_buy_cash  = 0.0
+                            core.second_buy_done  = False
+                            core.bull_pyramid_done= False
+                            self.pnl_this_turn   += core_profit
                         self._record_daily_pnl(core_profit)
                         self.add_log(f"💎 {c_nm} 코어 매도 전량 | {c_sh}주 @ {cp:,}원 | 손익: {core_profit:+,.0f}원")
                         self._log_trade(c_tk, c_nm, 'SELL', cp, "RSI 코어 전량매도", "RSI 데드크로스 — 재진입 타점 탐색", profit=core_profit)
@@ -2075,18 +2125,27 @@ class KRBotController:
                 if price <= 0: continue
 
                 # ── BULL 국면 진입 신호 보완 ────────────────────────────────
-                # RSI 30/70 전략은 BULL 장에서 BUY 신호가 잘 안 뜸.
-                # BULL + RSI ≤ 50 + bull_momentum_score ≥ 1 → BUY 오버라이드
+                # RSI 30/70 전략은 BULL 장에서 RSI 50~70이 대부분이라 BUY 신호가 거의 안 뜸.
+                # 조건 A: RSI ≤ 65 + bull_score ≥ 1 (BULL에서 50~65도 매수 구간)
+                # 조건 B: MA5 > MA20 정배열 + 현재가가 MA5 이내(2%) 눌림목
                 if sig != 'BUY' and regime == "BULL" and p_sh == 0:
                     try:
                         if not ex_df.empty and 'close' in ex_df.columns:
-                            _rsi_bull = float(calc_rsi(ex_df['close']).iloc[-1])
-                            if _rsi_bull <= 50:
-                                _bull_sc, _ = get_bull_momentum_score(ex_df)
-                                if _bull_sc >= 1:
-                                    sig = 'BUY'
-                                    ind_val = _rsi_bull
-                                    self.add_log(f"🚀 [BULL 위성 진입] {ticker} RSI={_rsi_bull:.1f} bull_score={_bull_sc} → BUY 오버라이드")
+                            _closes_b  = ex_df['close'].dropna()
+                            _rsi_bull  = float(calc_rsi(_closes_b).iloc[-1])
+                            _bull_sc, _bull_reasons = get_bull_momentum_score(ex_df)
+                            _bull_cond_a = (_rsi_bull <= 65) and (_bull_sc >= 1)
+                            _bull_cond_b = False
+                            if len(_closes_b) >= 22:
+                                _ma5_b  = float(_closes_b.rolling(5).mean().iloc[-1])
+                                _ma20_b = float(_closes_b.rolling(20).mean().iloc[-1])
+                                _bull_cond_b = (_ma5_b > _ma20_b) and (price <= _ma5_b * 1.02)
+                            if _bull_cond_a or _bull_cond_b:
+                                sig = 'BUY'
+                                ind_val = _rsi_bull
+                                _bull_why = (f"RSI={_rsi_bull:.1f} bull_score={_bull_sc}" if _bull_cond_a
+                                             else f"MA5눌림목(MA5={_closes_b.rolling(5).mean().iloc[-1]:,.0f})")
+                                self.add_log(f"🚀 [BULL 위성 진입] {ticker} {_bull_why} → BUY 오버라이드")
                     except Exception as _be:
                         logger.debug(f"BULL 위성 오버라이드 오류: {_be}")
                 # ─────────────────────────────────────────────────────────────
@@ -2346,7 +2405,8 @@ class KRBotController:
                         and p_cash > price
                         and sig != 'SELL'
                         and regime != "BEAR"):
-                    pyramid_cash = p_cash * 0.20
+                    # BULL 장에서는 추세가 강하므로 30%, 그 외 20%
+                    pyramid_cash = p_cash * (0.30 if regime == "BULL" else 0.20)
                     pyramid_qty = int((pyramid_cash * 0.98) // price)
                     if pyramid_qty > 0 and self._buy_order(ticker, pyramid_qty, pos, p_nm):
                         with self.lock:
@@ -2452,14 +2512,17 @@ class KRBotController:
                                 self._send_trade_telegram(self._fmt_trade_msg("🎣", f"하락장 저점 매수 ({bear_label})", ticker, p_nm, price, qty, strategy=st_nm, note=bear_reason_str))
                         continue
 
-                    if not self._check_etf_market_positive():
-                        pos.status = "시장 약세 ⏸"
-                        pos.status_msg = "ETF 지수 -1% 이하, 매수 보류"
-                        continue
-                    if not self._check_minute_trend_up(ticker):
-                        pos.status = "추세 하락 📉"
-                        pos.status_msg = "최근 5분봉 하락 추세, 매수 보류"
-                        continue
+                    # BULL 국면에서 하락일은 저점 매수 기회 → ETF/분봉 게이트 우회
+                    # NEUTRAL/BEAR는 기존대로 시장 강도 확인 필수
+                    if regime != "BULL":
+                        if not self._check_etf_market_positive():
+                            pos.status = "시장 약세 ⏸"
+                            pos.status_msg = "ETF 지수 -1% 이하, 매수 보류 (BULL 국면 제외)"
+                            continue
+                        if not self._check_minute_trend_up(ticker):
+                            pos.status = "추세 하락 📉"
+                            pos.status_msg = "최근 5분봉 하락 추세, 매수 보류 (BULL 국면 제외)"
+                            continue
 
                     # ── 국면별 타이밍 신호 + 통합 점수 합산 포지션 사이징 ──────
                     if regime == "BULL":
