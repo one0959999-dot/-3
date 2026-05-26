@@ -366,6 +366,17 @@ class KRBotController:
                     # total_equity 기반 목표치가 코어 투자분 포함 총 자산에서 계산되므로
                     # 실제 현금 < 위성 예산 → "주문가능금액 초과" 주문 실패 방지.
                     core_reserved = sum(getattr(c, 'cash', 0.0) for c in self.core_positions)
+                    # T+2 매도 대금 미반영 보정:
+                    # ord_psbl_cash가 0이더라도 get_buyable_cash()가 실제 주문가능금액 반환
+                    # → 매도 당일 재매수 가능하도록 두 값 중 큰 값 사용
+                    if real_cash < 10000 and self.kis and hasattr(self.kis, 'get_buyable_cash'):
+                        try:
+                            buyable = float(self.kis.get_buyable_cash() or 0)
+                            if buyable > real_cash:
+                                logger.info(f"[{self.mode_name}] T+2 보정: ord_psbl_cash={real_cash:,.0f} → get_buyable_cash={buyable:,.0f}")
+                                real_cash = buyable
+                        except Exception:
+                            pass
                     avail_for_sat = max(0.0, real_cash - core_reserved)
                     total_sat_cash = min(
                         max(0.0, target_sat_pool - current_sat_stock_val),
