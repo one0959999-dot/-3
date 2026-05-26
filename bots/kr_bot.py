@@ -24,6 +24,7 @@ from telegram_bot import TelegramNotifier
 from strategy import CorePosition, Position, get_rsi_signal, get_signal_by_strategy, REINVEST_RATIO, get_market_regime, get_bear_bounce_signal, get_bear_bottom_score, get_bull_momentum_score, get_neutral_range_score, INVERSE_ETF_TICKER, INVERSE_ETF_NAME, INVERSE_BUDGET_RATIO, DEFENSIVE_ASSETS, check_giveback_stop, check_early_drop_stop, check_theme_overextension_exit, check_rsi_progressive_exit, calculate_entry_score, get_entry_threshold, get_budget_ratio_from_score
 from stock_screener import select_satellites, generate_daily_market_report
 from hot_momentum_scanner import scan_hot_momentum, clear_expired_cache
+from upper_limit_pattern_scanner import collect_and_save_pattern, scan_pattern_matches
 from database import update_bot_status, save_portfolio_state, load_portfolio_state, log_trade_journal, get_recent_trades, save_ai_rules, load_ai_rules, get_ai_rules_history, get_user_initial_cash, set_user_initial_cash, add_user_initial_cash, get_news_api_keys, get_sector_guide
 from news_monitor import NewsMonitor
 from kis_brokers.kis_real_api import KisRealApi
@@ -1560,6 +1561,30 @@ class KRBotController:
                     if not already:
                         self._run_threaded(lambda t=slot_time: self.generate_daily_report(t))
                     break
+
+        # ── 15:35 장 마감 직후: 오늘 급등/상한가 패턴 수집 → 내일 선제 매수용 ──
+        if current_time_str == '15:35':
+            if not getattr(self, '_pattern_collected_date', None) == today_str:
+                self._pattern_collected_date = today_str
+                def _collect_pattern():
+                    try:
+                        prof = collect_and_save_pattern(kis=self.kis, verbose=False)
+                        if prof:
+                            self.add_log(
+                                f"📊 [급등패턴] 오늘 급등 {prof['sample_count']}종목 패턴 저장 완료 "
+                                f"| RSI평균 {prof['rsi']:.0f} / BB {prof['bb_pct']:.0f}% "
+                                f"| 내일 유사 종목 선제 매수 준비"
+                            )
+                            self._send_telegram(
+                                f"📊 <b>급등패턴 수집 완료</b>\n"
+                                f"━━━━━━━━━━━━━━━━━━━━\n"
+                                f"오늘 급등 {prof['sample_count']}종목 전일 패턴 분석 완료\n"
+                                f"📈 평균 RSI: {prof['rsi']:.0f} | BB: {prof['bb_pct']:.0f}%\n"
+                                f"🔍 내일 장 시작 전 유사 종목 자동 스캔 예정", 'misc'
+                            )
+                    except Exception as e:
+                        logger.warning(f"[{self.mode_name}] 급등패턴 수집 오류: {e}")
+                threading.Thread(target=_collect_pattern, daemon=True).start()
         
         if not is_golden_hours:
             with self.lock:
@@ -2528,6 +2553,31 @@ class KRBotController:
         except Exception as e:
             logger.warning(f"[{self.mode_name}] 모멘텀 스캔 오류: {e}")
             return
+
+        # ── 급등패턴 매칭 후보 합산 (보너스 점수 부여) ──────────────────
+        # 장 시작 전(09:00~09:30) 또는 오전장(09:00~11:00)에 패턴 후보를 우선 추가
+        try:
+            with self.lock:
+                _held_now = {mp['ticker'] for mp in self.momentum_positions if mp is not None}
+                _held_now |= {t for t, p in self.satellite_positions.items() if p.shares > 0}
+            pattern_hits = scan_pattern_matches(
+                kis=self.kis, top_n=len(empty_slots) * 2,
+                exclude_tickers=_held_now, verbose=False,
+            )
+            if pattern_hits:
+                # 중복 제거: hot_momentum에 이미 있으면 패턴 보너스 +5점만 추가
+                hot_tickers = {h['ticker'] for h in hits}
+                for ph in pattern_hits:
+                    if ph['ticker'] in hot_tickers:
+                        for h in hits:
+                            if h['ticker'] == ph['ticker']:
+                                h['momentum_score'] += 5.0
+                                h['trigger_reason'] += ' | 🎯패턴매칭보너스'
+                    else:
+                        hits.append(ph)
+                self.add_log(f"🎯 [급등패턴] 유사종목 {len(pattern_hits)}개 모멘텀 후보 합산")
+        except Exception as _pe:
+            logger.debug(f"[{self.mode_name}] 패턴 매칭 스캔 오류(무시): {_pe}")
 
         if not hits:
             return
