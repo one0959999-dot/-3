@@ -693,16 +693,18 @@ class USBotController:
                                 momentum_20d = float((c.iloc[-1] / c.iloc[-21] - 1) * 100)
                         except Exception:
                             pass
+                        _core_news = self._fetch_us_news([ticker])
                         approved, ai_reason = self.gemini.ai_approve_us_trade(
-                            signal       = 'BUY',
-                            stock_name   = pos.name,
-                            ticker       = ticker,
-                            price_usd    = price,
-                            sector       = info.get("sector", ""),
-                            hot_sectors  = self.hot_sectors,
-                            momentum_20d = momentum_20d,
-                            rsi          = info.get("rsi", 50.0),
-                            ai_reason    = info.get("ai_reason", ""),
+                            signal         = 'BUY',
+                            stock_name     = pos.name,
+                            ticker         = ticker,
+                            price_usd      = price,
+                            sector         = info.get("sector", ""),
+                            hot_sectors    = self.hot_sectors,
+                            momentum_20d   = momentum_20d,
+                            rsi            = info.get("rsi", 50.0),
+                            ai_reason      = info.get("ai_reason", ""),
+                            news_headlines = _core_news,
                         )
                     if not approved:
                         with self.lock:
@@ -1098,16 +1100,19 @@ class USBotController:
             # ── AI 매수 승인 심사 ────────────────────────────────────
             if self.gemini:
                 try:
+                    # 종목 뉴스 헤드라인 fetch (yfinance, 무료)
+                    _news_str = self._fetch_us_news([ticker])
                     approved, ai_reason = self.gemini.ai_approve_us_trade(
-                        signal      = 'BUY',
-                        stock_name  = info["name"],
-                        ticker      = ticker,
-                        price_usd   = price,
-                        sector      = info.get("sector", ""),
-                        hot_sectors = self.hot_sectors,
-                        momentum_20d= momentum_20d,
-                        rsi         = info.get("rsi", 50.0),
-                        ai_reason   = info.get("ai_reason", ""),
+                        signal         = 'BUY',
+                        stock_name     = info["name"],
+                        ticker         = ticker,
+                        price_usd      = price,
+                        sector         = info.get("sector", ""),
+                        hot_sectors    = self.hot_sectors,
+                        momentum_20d   = momentum_20d,
+                        rsi            = info.get("rsi", 50.0),
+                        ai_reason      = info.get("ai_reason", ""),
+                        news_headlines = _news_str,
                     )
                     if not approved:
                         self._satellite_rejects[ticker] = ai_reason
