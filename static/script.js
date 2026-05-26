@@ -1174,13 +1174,13 @@ window.openReportModal = async function () {
         const json = await res.json();
         if (json.status === 'success' && json.data) {
             const data = json.data;
-            const times = ['11:00', '15:30', '20:00'];
+            const times = ['15:40'];
             let tabsHtml = '';
             let latestTime = null;
             let latestContent = null;
 
             // report_markdown: 단일 텍스트 (아직 시간별 분리 전)
-            if (data.report_markdown && !data['11:00'] && !data['15:30'] && !data['20:00']) {
+            if (data.report_markdown && !data['15:40']) {
                 latestContent = data.report_markdown;
             } else {
                 // 현재 KST 시간으로 생성 가능 여부 판단

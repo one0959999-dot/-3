@@ -1121,12 +1121,16 @@
     }
 
     // 모드 전환 시 호출 (KR·US 모두 동일 3개 순환)
+    // _futIsUS가 실제로 바뀔 때만 _futIdx 리셋 — updateUI 5초 폴링 시 불필요 리셋 방지
     window.applyFuturesVisibility = function(isUS) {
+        const modeChanged = (_futIsUS !== isUS);
         _futIsUS = isUS;
         if (_futItems.length) {
-            _futIdx = 0;
-            _paintTicker(_futItems[0], false);
-            _startCycle();
+            if (modeChanged) {
+                _futIdx = 0;
+                _paintTicker(_futItems[0], false);
+                _startCycle();
+            }
             document.getElementById('nav-fut-ticker').style.display = '';
         }
     };

@@ -1994,7 +1994,9 @@ class KRBotController:
                             # ② AI 승인 (위성과 동일)
                             approved, ai_reason = True, "AI 미설정"
                             if self.gemini:
-                                with self.lock: core.status = "AI 심사 중 🤖"
+                                with self.lock:
+                                    core.status     = "AI 심사 중 🤖"
+                                    core.status_msg = f"매수 신호 발생 | {c_score}pt/{c_threshold}pt | RSI {c_rsi:.1f} — AI 최종 승인 대기 중..."
                                 trade_ctx = self._build_trade_context(c_tk, c_nm, cp, ex_df, 'RSI코어', regime)
                                 approved, ai_reason = self.gemini.ai_approve_trade(
                                     'BUY', c_nm, c_tk, cp, 'RSI코어', c_rsi,
@@ -2003,7 +2005,9 @@ class KRBotController:
                                     context=trade_ctx
                                 )
                             if not approved:
-                                with self.lock: core.status = f"코어 AI 거절 🛑 ({c_score}pt)"
+                                with self.lock:
+                                    core.status     = f"코어 AI 거절 🛑 ({c_score}pt)"
+                                    core.status_msg = f"거절 이유: {ai_reason}"
                                 self.add_log(f"🛑 {c_nm} 코어 AI 거절: {ai_reason[:60]}")
                             elif self._buy_order(c_tk, qty, core, c_nm):
                                 with self.lock:
@@ -2411,16 +2415,20 @@ class KRBotController:
                         if qty > 0:
                             # 하락장은 더 신중해야 하므로 AI 심사 필수
                             if self.gemini:
-                                pos.status = "AI 심사 중 🤖"
+                                pos.status     = "AI 심사 중 🤖"
+                                pos.status_msg = f"하락장 저점 신호 | {bear_reason_str[:60]} — AI 최종 승인 대기 중..."
                                 trade_ctx = self._build_trade_context(ticker, p_nm, price, ex_df, st_nm, regime)
                                 decision, ai_reason = self.gemini.ai_approve_trade(sig, p_nm, ticker, price, st_nm, ind_val, self.hot_sectors, get_recent_trades(self.user_id, ticker), load_ai_rules(self.user_id) + "\n" + getattr(self, 'current_ai_market_view', '') + ("\n\n[📊 섹터 가이드 / 커스텀 전략]\n" + self.sector_guide if self.sector_guide else ''), context=trade_ctx)
                                 if decision:
                                     if self._buy_order(ticker, qty, pos, p_nm):
-                                        with self.lock: pos.last_order_time = time.time(); pos.status = "체결 대기 ⏳"
+                                        with self.lock:
+                                            pos.last_order_time = time.time(); pos.status = "체결 대기 ⏳"
+                                            pos.status_msg      = f"AI 승인: {ai_reason}"
                                         self._log_trade(ticker, p_nm, 'BUY', price, st_nm, f"하락장 저점포착 AI승인 [{bear_reason_str}]")
                                         self._send_trade_telegram(self._fmt_trade_msg("🎣", f"하락장 저점 매수 ({bear_label})", ticker, p_nm, price, qty, strategy=st_nm, ai_reason=ai_reason, note=bear_reason_str))
                                 else:
-                                    pos.status = "AI 거절(하락장) 🛑"
+                                    pos.status     = "AI 거절(하락장) 🛑"
+                                    pos.status_msg = f"거절 이유: {ai_reason}"
                                     self._add_satellite_reject(ticker, ai_reason)
                                     self._send_reject_telegram(
                                         f"🛑 <b>매수 거절</b>  ·  {self.alert_icon} {self.mode_name}\n"
@@ -2484,7 +2492,8 @@ class KRBotController:
                         pass
 
                     if self.gemini:
-                        pos.status = "AI 심사 중 🤖"
+                        pos.status     = "AI 심사 중 🤖"
+                        pos.status_msg = f"매수 신호 발생 | {st_nm} | RSI {ind_val:.1f} — AI 최종 승인 대기 중..."
                         trade_ctx = self._build_trade_context(ticker, p_nm, price, ex_df, st_nm, regime)
                         decision, ai_reason = self.gemini.ai_approve_trade(sig, p_nm, ticker, price, st_nm, ind_val, self.hot_sectors, get_recent_trades(self.user_id, ticker), load_ai_rules(self.user_id) + "\n" + getattr(self, 'current_ai_market_view', '') + ("\n\n[📊 섹터 가이드 / 커스텀 전략]\n" + self.sector_guide if self.sector_guide else ''), context=trade_ctx)
                         if decision:
@@ -2492,6 +2501,7 @@ class KRBotController:
                             if qty > 0 and self._buy_order(ticker, qty, pos, p_nm):
                                 with self.lock:
                                     pos.last_order_time = time.time(); pos.status = "체결 대기 ⏳"
+                                    pos.status_msg      = f"AI 승인: {ai_reason}"
                                     pos.second_buy_price = price * 0.98   # -2% 눌림목 발동가
                                     pos.second_buy_cash  = reserve_cash
                                     pos.second_buy_done  = False
@@ -2501,7 +2511,8 @@ class KRBotController:
                                 self._log_trade(ticker, p_nm, 'BUY', price, st_nm, f"AI 승인 [{regime_label}] 1차({int(first_ratio*100)}%) ({ai_reason})")
                                 self._send_trade_telegram(self._fmt_trade_msg("📈", f"AI 매수 승인  ({int(first_ratio*100)}% 1차)", ticker, p_nm, price, qty, strategy=f"{st_nm}  ·  {regime_label}", ai_reason=ai_reason, note=regime_reason_str))
                         else:
-                            pos.status = "AI 거절 🛑"
+                            pos.status     = "AI 거절 🛑"
+                            pos.status_msg = f"거절 이유: {ai_reason}"
                             # 당일 블랙리스트 등록 — 같은 이유로 재편입 금지
                             self._add_satellite_reject(ticker, ai_reason)
                             self._send_reject_telegram(
@@ -2528,13 +2539,15 @@ class KRBotController:
 
                 elif sig == 'SELL' and p_sh > 0 and is_cd_passed:
                     if self.gemini:
-                        pos.status = "AI 심사 중 🤖"
+                        pos.status     = "AI 심사 중 🤖"
+                        pos.status_msg = f"매도 신호 발생 | RSI {ind_val:.1f} — AI 최종 승인 대기 중..."
                         trade_ctx = self._build_trade_context(ticker, p_nm, price, ex_df, st_nm, regime)
                         decision, ai_reason = self.gemini.ai_approve_trade(sig, p_nm, ticker, price, st_nm, ind_val, self.hot_sectors, get_recent_trades(self.user_id, ticker), load_ai_rules(self.user_id) + "\n" + getattr(self, 'current_ai_market_view', '') + ("\n\n[📊 섹터 가이드 / 커스텀 전략]\n" + self.sector_guide if self.sector_guide else ''), context=trade_ctx)
                         if decision:
                             if self._sell_order(ticker, p_sh, pos, p_nm):
                                 with self.lock:
                                     pos.last_order_time = time.time(); pos.status = "체결 대기 ⏳"
+                                    pos.status_msg      = f"AI 승인: {ai_reason}"
                                     pos.shares = 0  # [BUG-C2] AI 승인 매도 후 잔여주수 초기화
                                 profit = _net_profit(price, p_avg, p_sh)
                                 self._log_trade(ticker, p_nm, 'SELL', price, st_nm, f"AI 승인 ({ai_reason})", profit=profit)
@@ -2549,7 +2562,8 @@ class KRBotController:
                                             core.cash += reinvest_sat / len(self.core_positions)
                                 self._record_daily_pnl(profit)
                         else:
-                            pos.status = "AI 거절(보유) 🛑"
+                            pos.status     = "AI 거절(보유) 🛑"
+                            pos.status_msg = f"거절 이유: {ai_reason}"
                     else:
                         if self._sell_order(ticker, p_sh, pos, p_nm):
                             with self.lock:
