@@ -208,11 +208,116 @@ def scan_us_satellites(n: int = 5, exclude: set = None) -> list[dict]:
     return top[:n]
 
 
+# ── KIS 기반 스크리너 ─────────────────────────────────────────────────
+
+def scan_us_satellites_kis(kis_api, n: int = 5, exclude: set = None) -> list[dict]:
+    """
+    KIS 해외주식 랭킹 API 기반 미국 위성 스크리너.
+
+    yfinance 대신 KIS 실시간 데이터를 사용:
+    - 거래량 순위 (HHDFS76310010)
+    - 거래증가율 순위 (HHDFS76330000)
+    - 52주 신고가 돌파 (HHDFS76300000)
+    - 상승율 순위 (HHDFS76290000)
+
+    Returns list of dicts (scan_us_satellites 호환 포맷):
+      ticker, name, sector, score, price, rate
+    """
+    exclude = (exclude or set()) | CORE_ETF_EXCLUDE
+    # 최소 주가 필터 (페니주 제외)
+    MIN_PRICE = 5.0
+
+    exchanges = ["NAS", "NYS"]   # NASDAQ + NYSE
+
+    # ── 4가지 랭킹 수집 ─────────────────────────────────────────────
+    all_items: dict[str, dict] = {}  # ticker → aggregated dict
+
+    def _add(items: list[dict], source: str, score_bonus: float):
+        for item in items:
+            ticker = item.get("ticker", "").strip()
+            price  = float(item.get("price", 0))
+            if not ticker or ticker in exclude or price < MIN_PRICE:
+                continue
+            if ticker not in all_items:
+                all_items[ticker] = {
+                    "ticker":  ticker,
+                    "name":    item.get("name", ticker),
+                    "price":   price,
+                    "rate":    float(item.get("rate", 0)),
+                    "score":   0.0,
+                    "sources": [],
+                    "sector":  "KIS랭킹",
+                }
+            all_items[ticker]["score"]   += score_bonus
+            all_items[ticker]["sources"].append(source)
+            # 최신 이름·가격 갱신
+            if item.get("name"):
+                all_items[ticker]["name"]  = item["name"]
+            if price > 0:
+                all_items[ticker]["price"] = price
+
+    try:
+        for excd in exchanges:
+            # ① 거래증가율 (서프라이즈 모멘텀) — 가장 중요
+            _add(kis_api.scan_trade_growth(exchange=excd, n=50),
+                 "trade_growth", 30.0)
+            time.sleep(0.1)
+            # ② 52주 신고가 (강한 추세 확인)
+            _add(kis_api.scan_new_highs(exchange=excd, n=50),
+                 "new_high", 25.0)
+            time.sleep(0.1)
+            # ③ 거래량 순위 (유동성 확인)
+            _add(kis_api.scan_top_volume(exchange=excd, n=50, min_price=MIN_PRICE),
+                 "top_volume", 15.0)
+            time.sleep(0.1)
+            # ④ 상승율 순위 (단기 가격 모멘텀)
+            _add(kis_api.scan_top_gainers(exchange=excd, n=50),
+                 "top_gainer", 20.0)
+            time.sleep(0.1)
+    except Exception as e:
+        logger.warning(f"[KIS스크리너] 랭킹 수집 중 오류: {e}")
+
+    if not all_items:
+        logger.warning("[KIS스크리너] 결과 없음")
+        return []
+
+    # ── 복수 소스 교차 보너스 ────────────────────────────────────────
+    for item in all_items.values():
+        unique_sources = len(set(item["sources"]))
+        if unique_sources >= 3:
+            item["score"] += 20.0   # 3개 이상 랭킹 동시 진입
+        elif unique_sources >= 2:
+            item["score"] += 10.0   # 2개 진입
+
+        # 등락율 보너스 (과매수 방지: 15% 초과 상승은 감점)
+        rate = item.get("rate", 0)
+        if 2.0 <= rate <= 15.0:
+            item["score"] += min(10.0, rate * 0.8)
+        elif rate > 15.0:
+            item["score"] -= 5.0   # 당일 급등 감점
+
+    # 스코어 내림차순 정렬
+    results = sorted(all_items.values(), key=lambda x: x["score"], reverse=True)
+
+    top = results[:n * 2]
+    logger.info(
+        f"[KIS스크리너] 수집 {len(all_items)}개 → 상위 {len(top)}개"
+    )
+    for r in top[:n]:
+        logger.info(
+            f"  {r['ticker']:6s}  스코어:{r['score']:5.1f}"
+            f"  등락:{r['rate']:+5.1f}%  소스:{set(r['sources'])}"
+        )
+
+    return top[:n]
+
+
 # ── 실시간 가격 조회 ──────────────────────────────────────────────────
 
-def get_us_prices_batch(tickers) -> dict[str, float]:
+def get_us_prices_batch(tickers, kis_api=None) -> dict[str, float]:
     """
     복수 종목 USD 가격 배치 조회.
+    kis_api 제공 시 KIS 복수시세조회(HHDFS76220000) 우선 사용.
     Returns {ticker: price_usd}
     """
     tickers = list(tickers)
@@ -221,9 +326,22 @@ def get_us_prices_batch(tickers) -> dict[str, float]:
 
     prices: dict[str, float] = {}
 
+    # ── KIS 우선 조회 ────────────────────────────────────────────────
+    if kis_api is not None:
+        try:
+            kis_prices = kis_api.get_prices_batch_multi(tickers)
+            prices.update(kis_prices)
+        except Exception as e:
+            logger.debug(f"[US스크리너] KIS 배치 가격 조회 실패: {e}")
+
+    missing = [t for t in tickers if t not in prices]
+    if not missing:
+        return prices
+
+    # ── yfinance 폴백 (missing 종목만) ──────────────────────────────
     try:
         raw = yf.download(
-            tickers,
+            missing,
             period="2d",
             interval="1d",
             progress=False,
@@ -237,9 +355,9 @@ def get_us_prices_batch(tickers) -> dict[str, float]:
             close_df = raw["Close"] if "Close" in lv0 else raw.xs("Close", axis=1, level=1, drop_level=True)
         else:
             # 단일 종목
-            close_df = raw[["Close"]].rename(columns={"Close": tickers[0]})
+            close_df = raw[["Close"]].rename(columns={"Close": missing[0]})
 
-        for t in tickers:
+        for t in missing:
             if t in close_df.columns:
                 s = close_df[t].dropna()
                 if not s.empty:
@@ -247,7 +365,7 @@ def get_us_prices_batch(tickers) -> dict[str, float]:
 
     except Exception as e:
         logger.debug(f"[US스크리너] 배치 가격 조회 실패 ({e}), 개별 조회로 폴백")
-        for t in tickers:
+        for t in missing:
             try:
                 hist = yf.Ticker(t).history(period="2d")
                 if not hist.empty:

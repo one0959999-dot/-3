@@ -22,7 +22,8 @@ import yfinance as yf
 
 from telegram_bot import TelegramNotifier
 from us_screener import (
-    scan_us_satellites, get_us_prices_batch, generate_us_daily_report,
+    scan_us_satellites, scan_us_satellites_kis,
+    get_us_prices_batch, generate_us_daily_report,
     get_futures_snapshot, get_sector_trends,
 )
 from kis_brokers.kis_overseas_api import KisOverseasApi
@@ -274,7 +275,16 @@ class USBotController:
                 # ── 현금 재동기화 ──────────────────────────────────────
                 # 첫 조회 or 마지막 체결 2분 경과 시 KIS 값으로 재동기화
                 if self.cash_usd == 0.0 or (time.time() - self._last_trade_ts >= 120):
-                    self.cash_usd = cash_usd
+                    # T+2 보정: 매수가능금액조회(TTTS3007R) → ovrs_ord_psbl_amt
+                    # 당일 매도 직후에도 재사용 가능 금액이 포함됨
+                    buyable_usd = cash_usd
+                    try:
+                        _bc = self.kis_overseas.get_buyable_cash_usd()
+                        if _bc > 0:
+                            buyable_usd = _bc
+                    except Exception:
+                        pass
+                    self.cash_usd = buyable_usd
 
                 # ── 원금 자동 감지 (KR 봇 동일 패턴) ─────────────────
                 if not self.initial_capital_captured and total_usd > 0:
@@ -811,7 +821,28 @@ class USBotController:
         # ── 빈 슬롯만 새로 채움 ──────────────────────────────────────
         holding = strong_keep_tickers | {t for t, p in self.satellite_positions.items() if p.shares > 0}
         self.add_log(f"🔍 미국 위성 종목 스캔 시작… (빈 슬롯 {slots_needed}개)")
-        candidates = scan_us_satellites(n=slots_needed * 2 + 2, exclude=holding)
+
+        # KIS API 있으면 실시간 랭킹 스크리너 우선 시도
+        candidates: list = []
+        if self.kis_overseas:
+            try:
+                self.add_log("📡 KIS 랭킹 API 스크리너 시도…")
+                candidates = scan_us_satellites_kis(
+                    kis_api = self.kis_overseas,
+                    n       = slots_needed * 2 + 2,
+                    exclude = holding,
+                )
+                if candidates:
+                    self.add_log(f"✅ KIS 스크리너: {len(candidates)}개 후보 수집")
+            except Exception as _e:
+                logger.warning(f"[US봇] KIS 스크리너 오류: {_e}")
+                candidates = []
+
+        # KIS 실패 or 결과 없으면 yfinance 폴백
+        if not candidates:
+            self.add_log("📈 yfinance 스크리너로 폴백…")
+            candidates = scan_us_satellites(n=slots_needed * 2 + 2, exclude=holding)
+
         if not candidates:
             self.add_log("⚠️ 스캔 결과 없음 — 기존 위성 유지")
             self.satellite_info   = strong_keep_info + [i for i in self.satellite_info
