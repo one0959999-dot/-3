@@ -1553,6 +1553,18 @@ class KRBotController:
             return True
 
     def trading_job(self):
+        # ── 중복 실행 방지 ─────────────────────────────────────────────
+        # trading_job이 60초 이상 걸리면 schedule 라이브러리가 "늦었다"고 판단해
+        # run_pending() 호출마다 (1초마다) 즉시 재실행하는 버그 방지.
+        if getattr(self, '_trading_job_running', False):
+            return
+        self._trading_job_running = True
+        try:
+            self._trading_job_impl()
+        finally:
+            self._trading_job_running = False
+
+    def _trading_job_impl(self):
         if not self.core_positions: return
         now = _now_kst()  # EC2(UTC) 환경에서도 KST 기준으로 장 시간 판단
         if now.weekday() >= 5: return
