@@ -1113,6 +1113,7 @@ class USBotController:
             trail_trig  = self.SAT_TRAIL_TRIG.get(regime, 1.0)
             hard_mult   = self.SAT_HARD_MULT.get(regime, 2.5)
             pnl_pct     = (price / avg - 1) * 100
+            is_cd       = time.time() - pos.last_order_time > self.ORDER_COOLDOWN
 
             # 고점 갱신
             if price > pos.max_price_usd:
@@ -1122,7 +1123,7 @@ class USBotController:
             p_max = pos.max_price_usd
 
             # ① BEAR 국면 하드 익절: +5% 도달 시 즉시 전량 청산
-            if regime == "BEAR" and price >= avg * 1.05:
+            if regime == "BEAR" and is_cd and price >= avg * 1.05:
                 self._close_sat(ticker, pos, price,
                                 f"BEAR +5% 하드 익절 (평단${avg:.2f}→${price:.2f})")
                 continue

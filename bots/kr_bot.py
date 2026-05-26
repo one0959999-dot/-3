@@ -21,7 +21,7 @@ def _now_kst():
     return datetime.now(_KST).replace(tzinfo=None)
 
 from telegram_bot import TelegramNotifier
-from strategy import CorePosition, Position, get_rsi_signal, get_signal_by_strategy, REINVEST_RATIO, get_market_regime, get_bear_bounce_signal, get_bear_bottom_score, get_bull_momentum_score, get_neutral_range_score, INVERSE_ETF_TICKER, INVERSE_ETF_NAME, INVERSE_BUDGET_RATIO, DEFENSIVE_ASSETS, check_giveback_stop, check_early_drop_stop, check_theme_overextension_exit, check_rsi_progressive_exit, calculate_entry_score, get_entry_threshold, get_budget_ratio_from_score
+from strategy import CorePosition, Position, get_rsi_signal, get_signal_by_strategy, REINVEST_RATIO, get_market_regime, get_bear_bounce_signal, get_bear_bottom_score, get_bull_momentum_score, get_neutral_range_score, INVERSE_ETF_TICKER, INVERSE_ETF_NAME, INVERSE_BUDGET_RATIO, DEFENSIVE_ASSETS, check_giveback_stop, check_early_drop_stop, check_theme_overextension_exit, check_rsi_progressive_exit, calculate_entry_score, get_entry_threshold, get_budget_ratio_from_score, calc_rsi
 from stock_screener import select_satellites, generate_daily_market_report
 from hot_momentum_scanner import scan_hot_momentum, clear_expired_cache
 from upper_limit_pattern_scanner import collect_and_save_pattern, scan_pattern_matches
@@ -1784,7 +1784,6 @@ class KRBotController:
                 # BULL + RSI ≤ 50 + bull_momentum_score ≥ 1 → BUY 오버라이드
                 if c_sig != 'BUY' and regime == "BULL" and c_sh == 0:
                     try:
-                        from strategy import calc_rsi
                         if not ex_df.empty and 'close' in ex_df.columns:
                             _rsi_bull = float(calc_rsi(ex_df['close']).iloc[-1])
                             if _rsi_bull <= 50:
@@ -1956,7 +1955,10 @@ class KRBotController:
                             with self.lock:
                                 core.last_order_time = time.time()
                                 core.last_dca_time   = _now_ts
-                                core.shares         += _dca_qty
+                                _new_shares = core.shares + _dca_qty
+                                if _new_shares > 0:
+                                    core.avg_price = round((core.avg_price * core.shares + cp * _dca_qty) / _new_shares, 2)
+                                core.shares         = _new_shares
                                 core._bought_val    = getattr(core, '_bought_val', 0.0) + int(cp * _dca_qty)
                                 core.cash           = max(0.0, core.cash - int(cp * _dca_qty))
                                 core.status         = "DCA 적립 💰"
@@ -2063,7 +2065,6 @@ class KRBotController:
                 # BULL + RSI ≤ 50 + bull_momentum_score ≥ 1 → BUY 오버라이드
                 if sig != 'BUY' and regime == "BULL" and p_sh == 0:
                     try:
-                        from strategy import calc_rsi
                         if not ex_df.empty and 'close' in ex_df.columns:
                             _rsi_bull = float(calc_rsi(ex_df['close']).iloc[-1])
                             if _rsi_bull <= 50:
