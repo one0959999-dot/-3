@@ -1747,6 +1747,24 @@ class KRBotController:
                 ex_df = self._get_extended_ohlcv(c_tk, cp)
                 c_sig, _, c_rsi = get_rsi_signal(c_tk, kis_api=self.kis, df=ex_df)
 
+                # ── BULL 국면 진입 신호 보완 ────────────────────────────────
+                # RSI 30/70 전략은 BULL 장에서 RSI가 50 이상 유지돼 BUY 신호 자체가 안 뜸.
+                # BULL + RSI ≤ 50 + bull_momentum_score ≥ 1 → BUY 오버라이드
+                if c_sig != 'BUY' and regime == "BULL" and c_sh == 0:
+                    try:
+                        from strategy import calc_rsi
+                        if not ex_df.empty and 'close' in ex_df.columns:
+                            _rsi_bull = float(calc_rsi(ex_df['close']).iloc[-1])
+                            if _rsi_bull <= 50:
+                                _bull_sc, _ = get_bull_momentum_score(ex_df)
+                                if _bull_sc >= 1:
+                                    c_sig = 'BUY'
+                                    c_rsi = _rsi_bull
+                                    self.add_log(f"🚀 [BULL 코어 진입] {c_tk} RSI={_rsi_bull:.1f} bull_score={_bull_sc} → BUY 오버라이드")
+                    except Exception as _be:
+                        logger.debug(f"BULL 코어 오버라이드 오류: {_be}")
+                # ─────────────────────────────────────────────────────────────
+
                 # ── ATR(14) 코어 하드 손절 (전량 청산 — floor_shares 없음) ──
                 c_atr = c_avg * 0.02
                 if not ex_df.empty and all(col in ex_df.columns for col in ['high','low','close']):
@@ -1915,6 +1933,24 @@ class KRBotController:
                 ex_df = self._get_extended_ohlcv(ticker, price)
                 sig, _, ind_val = get_signal_by_strategy(ticker, st_nm, kis_api=self.kis, df=ex_df)
                 if price <= 0: continue
+
+                # ── BULL 국면 진입 신호 보완 ────────────────────────────────
+                # RSI 30/70 전략은 BULL 장에서 BUY 신호가 잘 안 뜸.
+                # BULL + RSI ≤ 50 + bull_momentum_score ≥ 1 → BUY 오버라이드
+                if sig != 'BUY' and regime == "BULL" and p_sh == 0:
+                    try:
+                        from strategy import calc_rsi
+                        if not ex_df.empty and 'close' in ex_df.columns:
+                            _rsi_bull = float(calc_rsi(ex_df['close']).iloc[-1])
+                            if _rsi_bull <= 50:
+                                _bull_sc, _ = get_bull_momentum_score(ex_df)
+                                if _bull_sc >= 1:
+                                    sig = 'BUY'
+                                    ind_val = _rsi_bull
+                                    self.add_log(f"🚀 [BULL 위성 진입] {ticker} RSI={_rsi_bull:.1f} bull_score={_bull_sc} → BUY 오버라이드")
+                    except Exception as _be:
+                        logger.debug(f"BULL 위성 오버라이드 오류: {_be}")
+                # ─────────────────────────────────────────────────────────────
 
                 if ex_df.empty or not all(c in ex_df.columns for c in ['high', 'low', 'close']):
                     atr_14 = p_avg * 0.02
