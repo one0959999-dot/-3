@@ -1964,11 +1964,11 @@ class KRBotController:
                             with self.lock: self.pnl_this_turn += profit
                             self._record_daily_pnl(profit)
 
-                    elif _fe_sig == 'PARTIAL_EXIT_30' and p_sh > 0:
+                    elif (_fe_sig == 'PARTIAL_EXIT_30'
+                            and p_sh > 0
+                            and getattr(pos, 'overext_sell_count', 0) < 3):
                         _oe_cnt = getattr(pos, 'overext_sell_count', 0)
-                        if _oe_cnt >= 3:
-                            pass  # 3차 완료 — 더 이상 매도 없음
-                        elif _oe_cnt < 2 and p_sh > 1:
+                        if _oe_cnt < 2 and p_sh > 1:
                             # 1차 / 2차: 30% 매도
                             _q30 = max(1, int(p_sh * 0.30))
                             if self._sell_order(ticker, _q30, pos, p_nm):
