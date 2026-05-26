@@ -66,8 +66,6 @@ class KRBotController:
         self.mode_name = "실전"
         self.alert_icon = "🔴"
 
-        self.core_ticker = "003850"
-        self.core_name = "보령"
         self.core_ratio = 0.40        # 코어 40% — 중기 누적 매수
         self.satellite_ratio = 0.40   # 위성 40% — 중기 성장주 (단타 아님)
         # 나머지 20%는 단타 or 현금 — AI 재량 보유
@@ -78,6 +76,11 @@ class KRBotController:
             self.user_core_stocks = json.loads(core_stocks) if core_stocks else []
         except Exception:
             self.user_core_stocks = []
+
+        # 사용자 지정 코어 종목 (첫 번째만 사용) — DB에서 동적으로 읽음
+        _u = self.user_core_stocks[0] if self.user_core_stocks else None
+        self.core_ticker = _u['ticker'] if _u else ""
+        self.core_name   = _u['name']   if _u else ""
 
         self.core_positions = []
         self.satellite_positions = {}
@@ -443,12 +446,12 @@ class KRBotController:
         if self.user_core_stocks:
             c = self.user_core_stocks[0]
             self.core_positions.append(CorePosition(c['ticker'], c['name'], initial_cash=0))
-        # AI 슬롯 플레이스홀더 (initialize_portfolio 호출 시 실제 AI 선정으로 교체됨)
-        ai_needed = 3 - len(self.core_positions)   # 사용자가 1개 지정하면 2개, 없으면 3개
-        _placeholders = [("003850", "보령"), ("047040", "대우건설"), ("005930", "삼성전자")]
-        for i in range(min(ai_needed, len(_placeholders))):
-            t, n = _placeholders[i]
-            self.core_positions.append(CorePosition(t, n, initial_cash=0))
+        # AI 슬롯 플레이스홀더 — 실제 종목 없음, initialize_portfolio에서 AI 선정으로 교체됨
+        ai_needed = 3 - len(self.core_positions)
+        for i in range(ai_needed):
+            ph = CorePosition("TBD", f"AI선정대기#{i+1}", initial_cash=0)
+            ph.status = "AI 선정 대기 🤖"
+            self.core_positions.append(ph)
             
         if self.kis:
             def _async_init_balance():
@@ -958,7 +961,10 @@ class KRBotController:
         self.cached_balance = None
         try: self.user_core_stocks = json.loads(core_stocks) if core_stocks else []
         except Exception: self.user_core_stocks = []
-        
+        _u = self.user_core_stocks[0] if self.user_core_stocks else None
+        self.core_ticker = _u['ticker'] if _u else ""
+        self.core_name   = _u['name']   if _u else ""
+
         self._init_api(kis_config)
         
         if telegram_config and telegram_config.get('token'):
@@ -1657,6 +1663,8 @@ class KRBotController:
 
         with self.lock: safe_core_positions = list(self.core_positions)
         for core in safe_core_positions:
+            if core.ticker == "TBD":  # AI 선정 대기 중 — 매매 스킵
+                continue
             cp = self.live_prices.get(core.ticker) or getattr(core, 'kis_current_price', 0) or (self.kis.get_current_price(core.ticker) if self.kis else 0)
             if not cp or cp <= 0: continue
             with self.lock: core._last_price = cp; c_sh = core.shares; c_fl = core.floor_shares; c_avg = core.avg_price; c_cash = core.cash; c_nm = core.name; c_tk = core.ticker
