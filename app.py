@@ -556,12 +556,12 @@ def ai_chat():
                         # 실행 중인 봇에 즉시 반영
                         for _is_mock_v in (True, False):
                             _b = manager.bots.get((current_user.id, _is_mock_v))
-                            if _b and hasattr(_b, 'reload_api_keys'):
-                                import json as _json
+                            if _b and hasattr(_b, '_init_dummy_cores'):
                                 _b.user_core_stocks = valid
-                                _u = valid[0]
-                                _b.core_ticker = _u['ticker']
-                                _b.core_name   = _u['name']
+                                # core_ticker / core_name은 첫 번째 종목 기준 (하위호환)
+                                _u = valid[0] if valid else {}
+                                _b.core_ticker = _u.get('ticker', '')
+                                _b.core_name   = _u.get('name', '')
                                 _b._init_dummy_cores()
                         names = ", ".join(s['name'] for s in valid)
                         applied_commands.append(f"✅ 코어 종목이 [{names}]로 업데이트되었습니다.")

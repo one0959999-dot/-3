@@ -439,14 +439,16 @@ class KRBotController:
     def _init_dummy_cores(self):
         """
         봇 초기화 시 임시 코어 포지션 생성 (initialize_portfolio 전 플레이스홀더).
-        구조: 사용자 지정 1개(선택) + AI 플레이스홀더 2개 = 최대 3개
+        구조: 사용자 지정 최대 3개 → 남은 자리만 TBD 플레이스홀더로 채움
         """
         self.core_positions = []
-        # 슬롯 0: 사용자 지정 (첫 번째만 사용)
-        if self.user_core_stocks:
-            c = self.user_core_stocks[0]
-            self.core_positions.append(CorePosition(c['ticker'], c['name'], initial_cash=0))
-        # AI 슬롯 플레이스홀더 — 실제 종목 없음, initialize_portfolio에서 AI 선정으로 교체됨
+        user_tickers_seen: set = set()
+        # 사용자 지정 종목 전부 사용 (최대 3개까지)
+        for c in self.user_core_stocks[:3]:
+            if c.get('ticker') and c['ticker'] not in user_tickers_seen:
+                self.core_positions.append(CorePosition(c['ticker'], c['name'], initial_cash=0))
+                user_tickers_seen.add(c['ticker'])
+        # 빈 슬롯만 TBD 플레이스홀더로 채움
         ai_needed = 3 - len(self.core_positions)
         for i in range(ai_needed):
             ph = CorePosition("TBD", f"AI선정대기#{i+1}", initial_cash=0)
@@ -470,7 +472,7 @@ class KRBotController:
     def _rebalance_ai_cores(self):
         """
         AI 코어 슬롯 재선정 (매주 월요일 자동 호출).
-        - 사용자 지정 슬롯(user_core_stocks[0])은 유지
+        - 사용자 지정 슬롯(user_core_stocks 전체)은 유지
         - AI 슬롯 중 보유 주식이 없는(shares==0) 슬롯만 교체
         - 보유 중인 AI 코어는 자연 청산 신호가 날 때까지 유지
         """
@@ -485,10 +487,8 @@ class KRBotController:
 
         self.add_log("📅 [주간 AI 코어 재선정] 월요일 — AI 코어 슬롯 재검토 시작")
 
-        # 사용자 지정 티커 파악
-        user_tickers: set = set()
-        if self.user_core_stocks:
-            user_tickers.add(self.user_core_stocks[0]['ticker'])
+        # 사용자 지정 티커 전체 파악 (1개가 아닌 최대 3개)
+        user_tickers: set = {s['ticker'] for s in self.user_core_stocks if s.get('ticker')}
 
         # 현재 코어 중 AI 슬롯(사용자 아닌 것) 파악
         with self.lock:
@@ -1031,22 +1031,23 @@ class KRBotController:
         n_sat       = len(self.satellite_info) if self.satellite_info else self.num_satellites
         per_sat     = sat_budget / n_sat if n_sat > 0 else 0
 
-        # ── 코어 구성: 사용자 지정 1개(선택) + AI 자동 선정 2개 = 최대 3개 ──
+        # ── 코어 구성: 사용자 지정 최대 3개 → 남은 자리만 AI 선정 ──
         self.core_positions = []
         user_tickers: set = set()
 
-        # 슬롯 0: 사용자 지정 (user_core_stocks 첫 번째만 사용)
-        if self.user_core_stocks:
-            user_pick = self.user_core_stocks[0]
-            self.core_positions.append(CorePosition(user_pick['ticker'], user_pick['name'], initial_cash=0))
-            user_tickers.add(user_pick['ticker'])
+        # 사용자 지정 종목 전부 등록 (최대 3개)
+        for user_pick in self.user_core_stocks[:3]:
+            if user_pick.get('ticker') and user_pick['ticker'] not in user_tickers:
+                self.core_positions.append(CorePosition(user_pick['ticker'], user_pick['name'], initial_cash=0))
+                user_tickers.add(user_pick['ticker'])
 
-        # AI 슬롯: 남은 자리 채우기 (최대 2개, 총 3개 목표)
+        # AI 슬롯: 빈 자리만 채우기 (사용자가 3개 다 지정하면 AI 선정 없음)
         ai_needed = 3 - len(self.core_positions)
-        self.add_log(f"🔍 AI 코어 종목 선정 중... (목표 {ai_needed}개, 섹터 분산 적용)")
-        ai_core_list = select_ai_core_stock(n=ai_needed, exclude_tickers=user_tickers, verbose=False)
-        for ai_core in ai_core_list:
-            self.core_positions.append(CorePosition(ai_core['ticker'], ai_core['name'], initial_cash=0))
+        if ai_needed > 0:
+            self.add_log(f"🔍 AI 코어 종목 선정 중... (목표 {ai_needed}개, 섹터 분산 적용)")
+            ai_core_list = select_ai_core_stock(n=ai_needed, exclude_tickers=user_tickers, verbose=False)
+            for ai_core in ai_core_list:
+                self.core_positions.append(CorePosition(ai_core['ticker'], ai_core['name'], initial_cash=0))
 
         # 코어 예산 균등 배분
         n_cores = max(1, len(self.core_positions))
@@ -1393,7 +1394,7 @@ class KRBotController:
                     vol_avg20 = float(vol.iloc[:-1].rolling(20, min_periods=5).mean().iloc[-1])
                     vol_today = float(vol.iloc[-1])
                     vol_ratio = vol_today / (vol_avg20 + 1) * 100
-                    vol_str = f"평소 대비 {vol_ratio:.0f}% ({'급증↑↑' if vol_ratio > 200 else '증가↑' if vol_ratio > 130 else '보통' if vol_ratio > 70 else '감소↓'})"
+                    vol_str = f"평소 대비 {vol_ratio:.0f}% ({'급증↑↑' if vol_ratio > 200 else '증가↑' if vol_ratio > 130 else '정상✅' if vol_ratio >= 100 else '보통' if vol_ratio > 70 else '감소↓'})"
                 except Exception:
                     pass
 

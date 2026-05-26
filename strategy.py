@@ -1442,15 +1442,15 @@ def calculate_entry_score(df, price: float, regime: str = 'NEUTRAL',
                 score += 1
                 reasons.append(f"RSI건강구간({rsi:.0f})")
 
-        # ⑥ 거래량 130% 이상 (+1)
+        # ⑥ 거래량 100% 이상 (+1) — 평소 거래량 이상이면 OK (완화: 130% → 100%)
         if 'volume' in df.columns:
             v = df['volume'].dropna()
             if len(v) >= 21:
                 avg_vol   = float(v.iloc[-21:-1].mean())
                 today_vol = float(v.iloc[-1])
-                if avg_vol > 0 and today_vol >= avg_vol * 1.30:
+                if avg_vol > 0 and today_vol >= avg_vol * 1.00:
                     score += 1
-                    reasons.append(f"거래량급증({today_vol / avg_vol * 100:.0f}%)")
+                    reasons.append(f"거래량정상({today_vol / avg_vol * 100:.0f}%)")
 
         # ⑦ 전일 종가 이상 (+1)
         if len(c) >= 2:
