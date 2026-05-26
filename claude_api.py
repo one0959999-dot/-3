@@ -881,7 +881,8 @@ REASON: (핵심 근거 2~3줄, 구체적 수치 포함)"""
 
     def ai_partial_exit(self, ticker: str, stock_name: str, price: float,
                         avg_price: float, pnl_pct: float, shares: int,
-                        partial_sold: bool, regime: str = "NEUTRAL") -> str:
+                        partial_sold: bool, regime: str = "NEUTRAL",
+                        news_headlines: str = "") -> str:
         """AI 익절 판단 — 백그라운드 스레드에서 호출됨.
 
         Returns: 'SELL_PARTIAL' | 'SELL_ALL' | 'HOLD'
@@ -890,12 +891,15 @@ REASON: (핵심 근거 2~3줄, 구체적 수치 포함)"""
             return "SELL_PARTIAL"
 
         stage = "2차(나머지 전량)" if partial_sold else "1차(50%)"
+        news_section = f"\n최신 뉴스 (호재 → HOLD 가중 / 악재 → SELL 가중):\n{news_headlines}" if news_headlines.strip() else ""
         prompt = f"""[익절 시점 판단 요청]
 종목: {stock_name}({ticker}) | {stage} 익절 검토 중
 보유주수: {shares}주 | 평균단가: {avg_price:,.0f} | 현재가: {price:,.0f} | 수익률: {pnl_pct:+.1f}%
-시장 국면: {regime}
+시장 국면: {regime}{news_section}
 
 【판단 기준】
+- 호재 뉴스(수주·계약·실적 상향 등) 있으면 → 추세 지속 가능성↑ HOLD 가중
+- 악재 뉴스(리콜·소송·실적 하향 등) 있으면 → 즉시 SELL 가중
 - 상승 추세가 강하고 모멘텀이 살아있다면 → 추가 상승 여지 있어 HOLD
 - 추세 약화 / RSI 과열(>70) / 거래량 감소 / 지지선 이탈 위험 → SELL
 - 시장이 BEAR 국면이거나 급격한 방향 전환 신호 → SELL

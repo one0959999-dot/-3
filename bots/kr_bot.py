@@ -3166,12 +3166,20 @@ class KRBotController:
 
         def _worker():
             try:
+                # 뉴스 fetch (NewsMonitor 우선, 없으면 빈 문자열)
+                _news = ""
+                if self.news_monitor:
+                    try:
+                        _news = self.news_monitor.get_news_summary(name, display=3)
+                    except Exception:
+                        pass
                 decision = self.gemini.ai_partial_exit(
                     ticker=ticker, stock_name=name, price=price,
                     avg_price=avg, pnl_pct=pnl_pct,
                     shares=int(getattr(pos, 'shares', 0)),
                     partial_sold=bool(getattr(pos, 'partial_sold', False)),
                     regime=regime,
+                    news_headlines=_news,
                 )
                 with self.lock:
                     pos.ai_exit_decision = decision

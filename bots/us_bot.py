@@ -608,20 +608,31 @@ class USBotController:
 
             # ── ATR 하드 손절 (전량) ────────────────────────────────────
             if pos.shares > 0 and avg > 0 and is_cd and price <= avg - (hard_mult * c_atr):
-                proceeds = self._sell(ticker, pos.name, pos.shares, price)
-                pnl      = _net_profit_usd(price, avg, pos.shares)
-                with self.lock:
-                    pos.shares             = 0.0
-                    pos.partial_sold       = False
-                    pos.partial_sold_2     = False
-                    pos.second_buy_price   = 0.0
-                    pos.second_buy_cash    = 0.0
-                    pos.second_buy_done    = False
-                    pos.bull_pyramid_done  = False
-                    pos.status             = "코어 손절 🚨"
-                self._record_pnl(pnl)
-                self.add_log(f"🚨 코어 손절 {pos.name}({ticker}) | ATR×{hard_mult:.1f} 이탈 | PnL ${pnl:+.0f}")
-                self._tg(f"🚨 [US 코어 손절] {pos.name}\nATR×{hard_mult:.1f} 이탈 | 재진입 타점 탐색 중\n손익: ${pnl:+,.0f}")
+                # 손절 전 뉴스 확인 — 호재면 일시 노이즈일 수 있어 1회 유예
+                _stop_news = self._fetch_us_news([ticker])
+                _stop_skip = False
+                if _stop_news and not getattr(pos, 'stop_news_checked', False):
+                    _positive_kw = ['beat', 'upgrade', 'buy', 'bullish', 'record', 'contract', 'deal', 'win']
+                    if any(kw in _stop_news.lower() for kw in _positive_kw):
+                        pos.stop_news_checked = True
+                        _stop_skip = True
+                        self.add_log(f"⚠️ [코어] {pos.name} ATR 손절 터치 but 호재 뉴스 감지 → 1회 유예\n{_stop_news[:120]}")
+                if not _stop_skip:
+                    pos.stop_news_checked = False
+                    proceeds = self._sell(ticker, pos.name, pos.shares, price)
+                    pnl      = _net_profit_usd(price, avg, pos.shares)
+                    with self.lock:
+                        pos.shares             = 0.0
+                        pos.partial_sold       = False
+                        pos.partial_sold_2     = False
+                        pos.second_buy_price   = 0.0
+                        pos.second_buy_cash    = 0.0
+                        pos.second_buy_done    = False
+                        pos.bull_pyramid_done  = False
+                        pos.status             = "코어 손절 🚨"
+                    self._record_pnl(pnl)
+                    self.add_log(f"🚨 코어 손절 {pos.name}({ticker}) | ATR×{hard_mult:.1f} 이탈 | PnL ${pnl:+.0f}")
+                    self._tg(f"🚨 [US 코어 손절] {pos.name}\nATR×{hard_mult:.1f} 이탈 | 재진입 타점 탐색 중\n손익: ${pnl:+,.0f}")
                 continue
 
             # ── 통합 진입 점수 + RSI 매수 신호 ─────────────────────────
@@ -878,12 +889,14 @@ class USBotController:
 
         def _worker():
             try:
+                _news = self._fetch_us_news([ticker])
                 decision = self.gemini.ai_partial_exit(
                     ticker=ticker, stock_name=name, price=price,
                     avg_price=avg, pnl_pct=pnl_pct,
                     shares=int(getattr(pos, 'shares', 0)),
                     partial_sold=bool(getattr(pos, 'partial_sold', False)),
                     regime=regime,
+                    news_headlines=_news,
                 )
                 with self.lock:
                     pos.ai_exit_decision = decision
@@ -1086,15 +1099,48 @@ class USBotController:
 
             budget_ratio = get_budget_ratio_from_score(entry_score, entry_threshold)
             # ── BEAR 국면: 진입 점수가 충분해도 포지션 크기 50% 제한 ──
-            # 하락장에서는 반등 신뢰도가 낮으므로 리스크 관리 강화
             if regime == "BEAR":
-                # 점수가 threshold + 3 이상일 때만 진입 (확신도 높은 신호만)
                 if entry_score < entry_threshold + 3:
                     with self.lock if pos else (lambda: None)():
                         if pos:
                             pos.status = f"BEAR 보류 — 점수 부족 ({entry_score}/{entry_threshold+3}pt) 🐻"
                     continue
-                budget_ratio = min(budget_ratio * 0.50, 0.50)  # 최대 50% 포지션
+                budget_ratio = min(budget_ratio * 0.50, 0.50)
+
+            # ── 실적 발표 D-3 이내 → 진입 차단 (깜짝 손실 방지) ───────
+            try:
+                _cal = yf.Ticker(ticker).calendar
+                if _cal is not None and not _cal.empty:
+                    _earn_col = next((c for c in _cal.columns if 'Earnings' in str(c)), None)
+                    if _earn_col:
+                        import datetime as _dt
+                        _earn_date = _cal[_earn_col].dropna()
+                        if len(_earn_date) > 0:
+                            _days_to_earn = (_earn_date.iloc[0].date() - _dt.date.today()).days
+                            if 0 <= _days_to_earn <= 3:
+                                _msg = f"실적발표 D-{_days_to_earn} 진입 차단 ({_earn_date.iloc[0].date()})"
+                                if pos:
+                                    with self.lock: pos.status = f"⚠️ {_msg}"
+                                self.add_log(f"⚠️ [{ticker}] {_msg}")
+                                continue
+            except Exception:
+                pass
+
+            # ── 52주 신고가 근접 체크 → AI 프롬프트에 전달용 플래그 ──
+            _near_52w_high = False
+            _52w_note = ""
+            try:
+                if df_raw is not None and not df_raw.empty and len(df_raw) >= 50:
+                    _52w_high = float(df_raw['high'].rolling(252, min_periods=50).max().iloc[-1])
+                    _52w_pct  = (price / _52w_high - 1) * 100
+                    if _52w_pct >= -3.0:   # 52주 고가 3% 이내 = 돌파 시도
+                        _near_52w_high = True
+                        _52w_note = f"52주 신고가 근접 ({_52w_pct:+.1f}%) — 돌파 시 강세 신호"
+                    elif _52w_pct <= -40.0:  # 52주 고가 대비 -40% 이하 = 추세 붕괴
+                        _52w_note = f"52주 고가 대비 {_52w_pct:.0f}% — 추세 붕괴 주의"
+            except Exception:
+                pass
+
             actual_budget = min(sat_budget_per * budget_ratio, self.cash_usd)
 
             # ── AI 매수 승인 심사 ────────────────────────────────────
@@ -1102,6 +1148,10 @@ class USBotController:
                 try:
                     # 종목 뉴스 헤드라인 fetch (yfinance, 무료)
                     _news_str = self._fetch_us_news([ticker])
+                    # 52주 신고가 정보 ai_reason에 포함
+                    _full_ai_reason = info.get("ai_reason", "")
+                    if _52w_note:
+                        _full_ai_reason = f"{_full_ai_reason} | {_52w_note}".strip(" |")
                     approved, ai_reason = self.gemini.ai_approve_us_trade(
                         signal         = 'BUY',
                         stock_name     = info["name"],
@@ -1111,7 +1161,7 @@ class USBotController:
                         hot_sectors    = self.hot_sectors,
                         momentum_20d   = momentum_20d,
                         rsi            = info.get("rsi", 50.0),
-                        ai_reason      = info.get("ai_reason", ""),
+                        ai_reason      = _full_ai_reason,
                         news_headlines = _news_str,
                     )
                     if not approved:
@@ -1206,10 +1256,20 @@ class USBotController:
                                 f"ATR 트레일링 익절 (고점${p_max:.2f}→${price:.2f})")
                 continue
 
-            # ② ATR 하드 손절 (전량)
+            # ② ATR 하드 손절 (전량) — 손절 전 뉴스 체크 (호재면 1회 유예)
             if price <= avg - (hard_mult * s_atr):
-                self._close_sat(ticker, pos, price,
-                                f"ATR 손절 (평단${avg:.2f}  ATR×{hard_mult:.1f})")
+                _stop_news_s = self._fetch_us_news([ticker])
+                _stop_skip_s = False
+                if _stop_news_s and not getattr(pos, 'stop_news_checked', False):
+                    _positive_kw = ['beat', 'upgrade', 'buy', 'bullish', 'record', 'contract', 'deal', 'win']
+                    if any(kw in _stop_news_s.lower() for kw in _positive_kw):
+                        pos.stop_news_checked = True
+                        _stop_skip_s = True
+                        self.add_log(f"⚠️ [위성] {pos.name} ATR 손절 but 호재 뉴스 → 1회 유예\n{_stop_news_s[:120]}")
+                if not _stop_skip_s:
+                    pos.stop_news_checked = False
+                    self._close_sat(ticker, pos, price,
+                                    f"ATR 손절 (평단${avg:.2f}  ATR×{hard_mult:.1f})")
                 continue
 
             # ③ 1차 부분 익절 (+10%(일반) / +15%(BULL)) — AI 판단
