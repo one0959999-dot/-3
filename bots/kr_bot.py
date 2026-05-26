@@ -1615,7 +1615,9 @@ class KRBotController:
         current_time_str = now.strftime('%H:%M')
         today_str        = now.strftime('%Y-%m-%d')
         # [BUG-N2] NXT 애프터마켓 종료(20:00)에 맞게 확장 — 15:30~20:00 구간도 매매 허용
-        is_golden_hours = ("09:01" <= current_time_str <= "20:00")
+        # 15:15~16:00: 장 마감 전후 변동성 구간 — 매매 정지 (모니터링만)
+        _is_pause = ("15:15" <= current_time_str < "16:00")
+        is_golden_hours = ("09:01" <= current_time_str <= "20:00") and not _is_pause
 
         # ── KST 기준 일일 리포트 발행 (시스템 타임존 무관) ──────────────
         # 리포트가 아직 생성 안 됐고 Claude API 설정 있을 때만 실행
@@ -1655,8 +1657,14 @@ class KRBotController:
         
         if not is_golden_hours:
             with self.lock:
-                for core in self.core_positions: core.status = "휴식 중 💤"; core.status_msg = "정규 장 및 대체거래소 마감"
-                for sat in self.satellite_positions.values(): sat.status = "휴식 중 💤"; sat.status_msg = "정규 장 및 대체거래소 마감"
+                if _is_pause:
+                    _pause_msg = "매매 정지 구간 (15:15~16:00) ⏸️"
+                    _pause_detail = "장 마감 전후 변동성 구간 — 16:00 이후 재개"
+                    for core in self.core_positions: core.status = _pause_msg; core.status_msg = _pause_detail
+                    for sat in self.satellite_positions.values(): sat.status = _pause_msg; sat.status_msg = _pause_detail
+                else:
+                    for core in self.core_positions: core.status = "휴식 중 💤"; core.status_msg = "정규 장 및 대체거래소 마감"
+                    for sat in self.satellite_positions.values(): sat.status = "휴식 중 💤"; sat.status_msg = "정규 장 및 대체거래소 마감"
             return  # W-08: 장외 시간엔 나머지 로직 스킵 (불필요한 API 호출 방지)
         else:
             self.add_log(f"--- 🎯 {self.mode_name} 실시간 점검 ({current_time_str}) ---")
