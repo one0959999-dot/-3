@@ -1903,7 +1903,7 @@ class KRBotController:
                             with self.lock:
                                 pos.last_order_time = time.time(); pos.status = "체결 대기 ⏳"
                                 pos.second_buy_done = True; pos.pyramid_done = True
-                                pos.partial_sold = False; pos.partial_sold_2 = False  # [C-NEW-01/W-NEW-02] 두 플래그 모두 리셋
+                                pos.partial_sold = False; pos.partial_sold_2 = False; pos.overext_sell_count = 0  # [C-NEW-01/W-NEW-02]
                                 pos.second_buy_price = 0; pos.second_buy_cash = 0
                                 pos.shares = 0  # [BUG-M5] 하드 손절 전량 매도 후 잔여주수 초기화
                             profit = _net_profit(price, p_avg, p_sh)
@@ -1937,7 +1937,7 @@ class KRBotController:
                         if _full_qty > 0 and self._sell_order(ticker, _full_qty, pos, p_nm):
                             with self.lock:
                                 pos.last_order_time = time.time(); pos.status = "과열 전량청산 🚨"
-                                pos.shares = 0; pos.partial_sold = False; pos.partial_sold_2 = False
+                                pos.shares = 0; pos.partial_sold = False; pos.partial_sold_2 = False; pos.overext_sell_count = 0
                                 p_sh = 0   # 이후 로직에서 0주로 인식
                             profit = _net_profit(price, p_avg, _full_qty)
                             self._log_trade(ticker, p_nm, 'SELL', price, st_nm, f"과열 전량청산 [{_fe_reason}]", profit=profit)
@@ -1964,18 +1964,46 @@ class KRBotController:
                             with self.lock: self.pnl_this_turn += profit
                             self._record_daily_pnl(profit)
 
-                    elif _fe_sig == 'PARTIAL_EXIT_30' and p_sh > 1:
-                        _q30 = max(1, int(p_sh * 0.30))
-                        if self._sell_order(ticker, _q30, pos, p_nm):
-                            with self.lock:
-                                pos.last_order_time = time.time(); pos.status = "과열 선익절 30% ✂️"
-                                pos.shares = max(0, pos.shares - _q30)
-                                p_sh = pos.shares   # 로컬 스냅샷 갱신
-                            profit = _net_profit(price, p_avg, _q30)
-                            self._log_trade(ticker, p_nm, 'SELL', price, st_nm, f"과열청산 30% [{_fe_reason}]", profit=profit)
-                            self._send_trade_telegram(self._fmt_trade_msg("✂️", "과열 선익절 30%", ticker, p_nm, price, _q30, profit=profit, strategy=st_nm, note=_fe_reason))
-                            with self.lock: self.pnl_this_turn += profit
-                            self._record_daily_pnl(profit)
+                    elif _fe_sig == 'PARTIAL_EXIT_30' and p_sh > 0:
+                        _oe_cnt = getattr(pos, 'overext_sell_count', 0)
+                        if _oe_cnt >= 3:
+                            pass  # 3차 완료 — 더 이상 매도 없음
+                        elif _oe_cnt < 2 and p_sh > 1:
+                            # 1차 / 2차: 30% 매도
+                            _q30 = max(1, int(p_sh * 0.30))
+                            if self._sell_order(ticker, _q30, pos, p_nm):
+                                with self.lock:
+                                    pos.last_order_time = time.time()
+                                    pos.overext_sell_count = _oe_cnt + 1
+                                    pos.status = f"과열 선익절 {_oe_cnt+1}차 30% ✂️"
+                                    pos.shares = max(0, pos.shares - _q30)
+                                    p_sh = pos.shares
+                                profit = _net_profit(price, p_avg, _q30)
+                                self._log_trade(ticker, p_nm, 'SELL', price, st_nm, f"과열청산 {_oe_cnt+1}차 30% [{_fe_reason}]", profit=profit)
+                                self._send_trade_telegram(self._fmt_trade_msg("✂️", f"과열 선익절 {_oe_cnt+1}차 30%", ticker, p_nm, price, _q30, profit=profit, strategy=st_nm, note=_fe_reason))
+                                with self.lock: self.pnl_this_turn += profit
+                                self._record_daily_pnl(profit)
+                        else:
+                            # 3차: 전량 매도
+                            _q_all = p_sh
+                            if _q_all > 0 and self._sell_order(ticker, _q_all, pos, p_nm):
+                                with self.lock:
+                                    pos.last_order_time = time.time()
+                                    pos.overext_sell_count = 3
+                                    pos.status = "과열 선익절 3차 전량 ✅"
+                                    pos.shares = 0; pos.partial_sold = False; pos.partial_sold_2 = False
+                                    p_sh = 0
+                                profit = _net_profit(price, p_avg, _q_all)
+                                self._log_trade(ticker, p_nm, 'SELL', price, st_nm, f"과열청산 3차 전량 [{_fe_reason}]", profit=profit)
+                                self._send_trade_telegram(self._fmt_trade_msg("✅", "과열 선익절 3차 전량", ticker, p_nm, price, _q_all, profit=profit, strategy=st_nm, note=_fe_reason))
+                                with self.lock:
+                                    self.pnl_this_turn += profit
+                                    if profit > 0 and self.core_positions:
+                                        reinvest_sat = profit * REINVEST_RATIO
+                                        for core in self.core_positions:
+                                            core.cash += reinvest_sat / len(self.core_positions)
+                                self._record_daily_pnl(profit)
+                                continue
 
                 # ── 부분 익절: +10% 도달 시 AI 판단 ─────────────────────
                 if (p_sh > 0 and p_avg > 0 and is_cd_passed

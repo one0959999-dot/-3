@@ -1577,6 +1577,7 @@ class Position:
         # 분할 익절: 1차 50% 선익절 후 나머지 ATR 트레일링
         self.partial_sold     = False # 1차 익절 완료 여부
         self.partial_sold_2   = False # 2차 익절 완료 여부
+        self.overext_sell_count = 0   # 과열 선익절 횟수 (최대 3차: 30%→30%→전량)
 
         # AI 익절 판단 (백그라운드 스레드)
         self.ai_exit_pending     = False  # AI 요청 진행 중
