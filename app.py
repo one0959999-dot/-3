@@ -9,7 +9,7 @@ from flask import Flask, render_template, jsonify, request, redirect, url_for, f
 from flask_login import LoginManager, UserMixin, login_user, logout_user, login_required, current_user
 
 from bots.bot_manager import manager
-from database import get_db_connection, verify_user, add_user, init_db, update_user_keys, init_default_ai_rules, set_user_initial_cash, get_news_api_keys, set_news_api_keys, get_sector_guide, set_sector_guide, load_chat_history, save_chat_history, clear_chat_history
+from database import get_db_connection, verify_user, add_user, init_db, update_user_keys, init_default_ai_rules, set_user_initial_cash, get_news_api_keys, set_news_api_keys, get_sector_guide, set_sector_guide, load_chat_history, save_chat_history, clear_chat_history, set_user_core_stocks
 
 # ── 통합 로깅 설정 (파일 + 콘솔) ──
 logging.basicConfig(
@@ -544,6 +544,31 @@ def ai_chat():
                     logging.getLogger('lassi_bot').info(
                         f"[AI봇명령] user={current_user.id} sector_guide 업데이트 ({len(new_guide)}자)"
                     )
+
+            elif cmd.get('action') == 'update_core_stocks':
+                # AI가 코어 종목 교체 명령 — [{"ticker":"005490","name":"POSCO홀딩스"}]
+                new_stocks = cmd.get('stocks', [])
+                if isinstance(new_stocks, list) and new_stocks:
+                    # ticker / name 필드 검증
+                    valid = [s for s in new_stocks if s.get('ticker') and s.get('name')]
+                    if valid:
+                        set_user_core_stocks(current_user.id, valid)
+                        # 실행 중인 봇에 즉시 반영
+                        for _is_mock_v in (True, False):
+                            _b = manager.bots.get((current_user.id, _is_mock_v))
+                            if _b and hasattr(_b, 'reload_api_keys'):
+                                import json as _json
+                                _b.user_core_stocks = valid
+                                _u = valid[0]
+                                _b.core_ticker = _u['ticker']
+                                _b.core_name   = _u['name']
+                                _b._init_dummy_cores()
+                        names = ", ".join(s['name'] for s in valid)
+                        applied_commands.append(f"✅ 코어 종목이 [{names}]로 업데이트되었습니다.")
+                        logging.getLogger('lassi_bot').info(
+                            f"[AI봇명령] user={current_user.id} core_stocks 교체: {valid}"
+                        )
+
         except Exception as _cmd_err:
             logging.getLogger('lassi_bot').warning(f"[AI봇명령] 파싱 오류: {_cmd_err}")
 

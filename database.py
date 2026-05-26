@@ -165,6 +165,24 @@ def update_user_keys(user_id, keys_dict):
         finally:
             conn.close()
 
+def set_user_core_stocks(user_id: int, stocks: list):
+    """코어 종목 리스트만 DB에 저장 (계좌 설정 전체 저장 없이 AI 명령으로 교체 가능).
+
+    Args:
+        stocks: [{"ticker": "005930", "name": "삼성전자"}, ...]  — 사용자 지정 슬롯
+    """
+    import json as _json
+    with db_lock:
+        conn = get_db_connection()
+        try:
+            conn.execute(
+                "UPDATE users SET core_stocks = ? WHERE id = ?",
+                (_json.dumps(stocks, ensure_ascii=False), user_id)
+            )
+            conn.commit()
+        finally:
+            conn.close()
+
 def update_bot_status(user_id, is_running, is_mock=None):
     """봇 실행 상태 DB 갱신.
     is_mock=None  → 레거시 단일 is_running 컬럼만 업데이트 (하위 호환)
