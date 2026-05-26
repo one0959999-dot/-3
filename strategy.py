@@ -52,6 +52,110 @@ DEFENSIVE_ASSETS = [
 ]
 
 
+def _calc_adx(df, period: int = 14) -> tuple:
+    """
+    ADX(14) 계산.
+    Returns: (adx, plus_di, minus_di)
+      adx      : 추세 강도 0~100 (방향 무관)
+      plus_di  : 상승 방향 강도
+      minus_di : 하락 방향 강도
+
+    해석 기준:
+      ADX < 20  → 추세 없음 (NEUTRAL 구간)
+      ADX 20~40 → 추세 형성 중
+      ADX > 40  → 추세 과열 (막바지 경고)
+      ADX > 60  → 극단적 과열 (반전 임박)
+    """
+    try:
+        if df is None or df.empty or len(df) < period * 2 + 1:
+            return 0.0, 0.0, 0.0
+        if not all(col in df.columns for col in ['high', 'low', 'close']):
+            return 0.0, 0.0, 0.0
+
+        high  = df['high'].astype(float)
+        low   = df['low'].astype(float)
+        close = df['close'].astype(float)
+
+        # True Range
+        tr = pd.concat([
+            high - low,
+            (high - close.shift(1)).abs(),
+            (low  - close.shift(1)).abs(),
+        ], axis=1).max(axis=1)
+
+        # Directional Movement: 겹치는 쪽은 0으로 처리
+        up_move   = high.diff()
+        down_move = (-low.diff())
+        plus_dm   = up_move.where((up_move > down_move) & (up_move > 0), 0.0)
+        minus_dm  = down_move.where((down_move > up_move) & (down_move > 0), 0.0)
+
+        atr14      = tr.rolling(period).mean()
+        plus_di14  = 100 * plus_dm.rolling(period).mean()  / (atr14 + 1e-10)
+        minus_di14 = 100 * minus_dm.rolling(period).mean() / (atr14 + 1e-10)
+
+        dx  = 100 * (plus_di14 - minus_di14).abs() / (plus_di14 + minus_di14 + 1e-10)
+        adx = dx.rolling(period).mean()
+
+        return (
+            round(float(adx.iloc[-1]),       1),
+            round(float(plus_di14.iloc[-1]), 1),
+            round(float(minus_di14.iloc[-1]),1),
+        )
+    except Exception:
+        return 0.0, 0.0, 0.0
+
+
+def _get_up_streak(close: pd.Series) -> int:
+    """최근 연속 상승일 수 반환 (전일 종가 기준 diff > 0)."""
+    try:
+        diffs = close.diff().dropna()
+        streak = 0
+        for d in reversed(diffs.values):
+            if d > 0:
+                streak += 1
+            else:
+                break
+        return streak
+    except Exception:
+        return 0
+
+
+def _calc_regime_score(c: pd.Series) -> tuple:
+    """
+    7신호 스코어 계산 (내부 공통 헬퍼).
+    Returns: (score, rsi, ret22)
+    """
+    price    = float(c.iloc[-1])
+    ma5      = c.rolling(5).mean()
+    ma20     = c.rolling(20).mean()
+    ma60     = c.rolling(60).mean()
+    m5_now   = float(ma5.iloc[-1])
+    m5_3ago  = float(ma5.iloc[-4])
+    m20_now  = float(ma20.iloc[-1])
+    m20_5ago = float(ma20.iloc[-6])
+    m60_now  = float(ma60.iloc[-1])
+    p22ago   = float(c.iloc[-23]) if len(c) >= 23 else float(c.iloc[0])
+
+    d   = c.diff()
+    g   = d.clip(lower=0).rolling(14).mean()
+    lo  = (-d.clip(upper=0)).rolling(14).mean()
+    rsi = float((100 - 100 / (1 + g / (lo + 1e-10))).iloc[-1])
+
+    score = 0
+    score += 1 if price > m5_now    else -1   # S1
+    score += 1 if m5_now > m5_3ago  else -1   # S2
+    score += 1 if price > m20_now   else -1   # M1
+    score += 1 if m20_now > m20_5ago else -1  # M2
+    if rsi > 55:   score += 1                  # M3
+    elif rsi < 45: score -= 1
+    score += 1 if m20_now > m60_now else -1   # L1
+    ret22 = (price / p22ago - 1) * 100 if p22ago > 0 else 0.0
+    if ret22 > 3.0:    score += 1             # L2
+    elif ret22 < -3.0: score -= 1
+
+    return score, round(rsi, 1), round(ret22, 2)
+
+
 def get_market_regime(kis_api) -> str:
     """
     KOSPI200 ETF(069500) 일봉 기준 시장 국면 판단.
@@ -72,7 +176,11 @@ def get_market_regime(kis_api) -> str:
       L1. 20일선 vs 60일선 : 골든크로스(위) +1 / 데드크로스(아래) -1
       L2. 최근 22일(≈1달) 수익률 : >+3% → +1 | <-3% → -1 | 그 외 → 0
 
-    최종 판정:  score ≥ +5 → BULL  |  score ≤ -4 → BEAR  |  그 외 → NEUTRAL
+    [과열 필터 — BULL 강등]
+      F1. ADX(14) ≥ 40  → 추세 막바지 → NEUTRAL 강등
+      F2. 연속 상승일 ≥ 8 → 단기 과열  → NEUTRAL 강등
+
+    최종 판정: score ≥ +5 → BULL (과열 필터 통과 시) | score ≤ -4 → BEAR | 그 외 → NEUTRAL
     """
     try:
         df = kis_api.get_ohlcv("069500", "D")
@@ -82,40 +190,87 @@ def get_market_regime(kis_api) -> str:
         if len(c) < 65:
             return "NEUTRAL"
 
-        price    = float(c.iloc[-1])
-        ma5      = c.rolling(5).mean()
-        ma20     = c.rolling(20).mean()
-        ma60     = c.rolling(60).mean()
-        m5_now   = float(ma5.iloc[-1])
-        m5_3ago  = float(ma5.iloc[-4])    # 3일 전 5일선
-        m20_now  = float(ma20.iloc[-1])
-        m20_5ago = float(ma20.iloc[-6])   # 5일 전 20일선
-        m60_now  = float(ma60.iloc[-1])
-        p22ago   = float(c.iloc[-23]) if len(c) >= 23 else float(c.iloc[0])
+        score, _, _ = _calc_regime_score(c)
 
-        # RSI(14)
-        d   = c.diff()
-        g   = d.clip(lower=0).rolling(14).mean()
-        lo  = (-d.clip(upper=0)).rolling(14).mean()
-        rsi = float((100 - 100 / (1 + g / (lo + 1e-10))).iloc[-1])
+        if score <= -4:
+            return "BEAR"
 
-        score = 0
-        score += 1 if price > m5_now   else -1          # S1
-        score += 1 if m5_now > m5_3ago else -1          # S2
-        score += 1 if price > m20_now  else -1          # M1
-        score += 1 if m20_now > m20_5ago else -1        # M2
-        if rsi > 55:   score += 1                        # M3
-        elif rsi < 45: score -= 1
-        score += 1 if m20_now > m60_now else -1         # L1
-        ret22 = (price / p22ago - 1) * 100 if p22ago > 0 else 0
-        if ret22 > 3.0:   score += 1                    # L2
-        elif ret22 < -3.0: score -= 1
+        if score >= 5:
+            # ── 과열 필터: BULL 점수를 충족해도 추세 막바지면 NEUTRAL 강등 ──
+            adx, _, _ = _calc_adx(df)
+            up_streak = _get_up_streak(c)
+            if adx >= 40:
+                return "NEUTRAL"   # 추세 강도 과열 — 고점 매수 위험
+            if up_streak >= 8:
+                return "NEUTRAL"   # 8일 연속 상승 — 단기 과열
+            return "BULL"
 
-        if score >= 5:  return "BULL"
-        if score <= -4: return "BEAR"   # -5→-4: 하락 초입 선제 감지 (60일선 데드크로스 전에 반응)
         return "NEUTRAL"
     except Exception:
         return "NEUTRAL"
+
+
+def get_market_regime_detail(kis_api) -> dict:
+    """
+    get_market_regime()의 상세 진단 버전.
+    국면 판단 근거(점수·ADX·연속일·RSI)를 함께 반환해 로그/알림에 활용.
+
+    Returns: {
+        'regime'          : 'BULL' | 'BEAR' | 'NEUTRAL',
+        'score'           : int,          # 7신호 합산 (-7 ~ +7)
+        'adx'             : float,        # ADX(14)
+        'plus_di'         : float,
+        'minus_di'        : float,
+        'up_streak'       : int,          # 연속 상승일
+        'rsi'             : float,        # RSI(14)
+        'ret22'           : float,        # 22일 수익률 %
+        'downgrade_reason': str,          # BULL→NEUTRAL 강등 이유 (없으면 '')
+    }
+    """
+    result = {
+        'regime': 'NEUTRAL', 'score': 0,
+        'adx': 0.0, 'plus_di': 0.0, 'minus_di': 0.0,
+        'up_streak': 0, 'rsi': 50.0, 'ret22': 0.0,
+        'downgrade_reason': '',
+    }
+    try:
+        df = kis_api.get_ohlcv("069500", "D")
+        if df is None or df.empty or len(df) < 65:
+            return result
+        c = df['close'].dropna()
+        if len(c) < 65:
+            return result
+
+        score, rsi, ret22     = _calc_regime_score(c)
+        adx, plus_di, minus_di = _calc_adx(df)
+        up_streak              = _get_up_streak(c)
+
+        result.update({
+            'score'    : score,
+            'adx'      : adx,
+            'plus_di'  : plus_di,
+            'minus_di' : minus_di,
+            'up_streak': up_streak,
+            'rsi'      : rsi,
+            'ret22'    : ret22,
+        })
+
+        if score <= -4:
+            result['regime'] = 'BEAR'
+        elif score >= 5:
+            if adx >= 40:
+                result['regime']           = 'NEUTRAL'
+                result['downgrade_reason'] = f'BULL→NEUTRAL 강등: ADX {adx:.1f} ≥ 40 (추세 막바지 과열)'
+            elif up_streak >= 8:
+                result['regime']           = 'NEUTRAL'
+                result['downgrade_reason'] = f'BULL→NEUTRAL 강등: {up_streak}일 연속 상승 (단기 과열, 조정 임박)'
+            else:
+                result['regime'] = 'BULL'
+        # else: NEUTRAL (기본값 유지)
+
+    except Exception:
+        pass
+    return result
 
 
 def get_bear_bounce_signal(df) -> bool:

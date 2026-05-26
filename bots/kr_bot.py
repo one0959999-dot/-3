@@ -21,7 +21,7 @@ def _now_kst():
     return datetime.now(_KST).replace(tzinfo=None)
 
 from telegram_bot import TelegramNotifier
-from strategy import CorePosition, Position, get_rsi_signal, get_signal_by_strategy, REINVEST_RATIO, get_market_regime, get_bear_bounce_signal, get_bear_bottom_score, get_bull_momentum_score, get_neutral_range_score, INVERSE_ETF_TICKER, INVERSE_ETF_NAME, INVERSE_BUDGET_RATIO, DEFENSIVE_ASSETS, check_giveback_stop, check_early_drop_stop, check_theme_overextension_exit, check_rsi_progressive_exit, calculate_entry_score, get_entry_threshold, get_budget_ratio_from_score, calc_rsi
+from strategy import CorePosition, Position, get_rsi_signal, get_signal_by_strategy, REINVEST_RATIO, get_market_regime, get_market_regime_detail, get_bear_bounce_signal, get_bear_bottom_score, get_bull_momentum_score, get_neutral_range_score, INVERSE_ETF_TICKER, INVERSE_ETF_NAME, INVERSE_BUDGET_RATIO, DEFENSIVE_ASSETS, check_giveback_stop, check_early_drop_stop, check_theme_overextension_exit, check_rsi_progressive_exit, calculate_entry_score, get_entry_threshold, get_budget_ratio_from_score, calc_rsi
 from stock_screener import select_satellites, generate_daily_market_report
 from hot_momentum_scanner import scan_hot_momentum, clear_expired_cache
 from upper_limit_pattern_scanner import collect_and_save_pattern, scan_pattern_matches
@@ -1235,23 +1235,48 @@ class KRBotController:
         if time.time() - self.last_regime_check < self._regime_check_interval:
             return self.market_regime
         try:
-            prev = self.market_regime
-            self.market_regime = get_market_regime(self.kis)
+            prev   = self.market_regime
+            detail = get_market_regime_detail(self.kis)
+            self.market_regime     = detail['regime']
             self.last_regime_check = time.time()
+
+            # ── 매번 현재 국면 진단 로그 (ADX·연속일·점수 포함) ──────────────
+            adx_str    = f"ADX={detail['adx']:.1f}"
+            streak_str = f"연속상승{detail['up_streak']}일"
+            rsi_str    = f"RSI={detail['rsi']:.1f}"
+            score_str  = f"점수{detail['score']:+d}"
+            diag_line  = f"{score_str} | {rsi_str} | {adx_str} | {streak_str} | 22일수익{detail['ret22']:+.1f}%"
+
+            if detail['downgrade_reason']:
+                self.add_log(f"⚠️ [{self.mode_name}] {detail['downgrade_reason']} | {diag_line}")
+
             if self.market_regime != prev:
                 icons = {"BULL": "🐂", "BEAR": "🐻", "NEUTRAL": "😐"}
-                # M-05: log용과 TG용 설명 분리 (동일 변수 이중 정의 제거)
-                log_regime_desc = {'BEAR': '📉 위성 신규 매수 중단, 인버스 ETF 진입', 'BULL': '📈 정상 매매 재개', 'NEUTRAL': '📊 혼조 — 기존 전략 유지'}
-                tg_regime_desc  = {'BEAR': '위성 신규 매수 중단\n인버스 ETF 자동 진입', 'BULL': '정상 매매 모드 재개', 'NEUTRAL': '혼조장 — 기존 전략 유지'}
-                msg = (f"{icons.get(self.market_regime,'📊')} [{self.mode_name}] "
-                       f"시장 국면 변경: {prev} → {self.market_regime}  {log_regime_desc.get(self.market_regime,'')}")
-                self.add_log(msg)
-                regime_desc = tg_regime_desc
+                log_regime_desc = {
+                    'BEAR':    '📉 위성 신규 매수 중단, 인버스 ETF 진입',
+                    'BULL':    '📈 BULL 매매 모드 — 불타기·눌림목 전략 활성화',
+                    'NEUTRAL': '📊 혼조 — 기존 전략 유지',
+                }
+                tg_regime_desc = {
+                    'BEAR':    '위성 신규 매수 중단\n인버스 ETF 자동 진입',
+                    'BULL':    'BULL 매매 모드 재개\n불타기 · 눌림목 전략 활성화',
+                    'NEUTRAL': '혼조장 — 기존 전략 유지',
+                }
+                self.add_log(
+                    f"{icons.get(self.market_regime,'📊')} [{self.mode_name}] "
+                    f"시장 국면 변경: {prev} → {self.market_regime}  "
+                    f"{log_regime_desc.get(self.market_regime,'')} | {diag_line}"
+                )
+                _dg = detail['downgrade_reason']
                 self._send_telegram(
                     f"{icons.get(self.market_regime,'📊')} <b>시장 국면 변경</b>  ·  {self.alert_icon} {self.mode_name}\n"
                     f"━━━━━━━━━━━━━━━━━━━━\n"
                     f"📊 <b>{prev}</b>  →  <b>{self.market_regime}</b>\n"
-                    f"📋 {regime_desc.get(self.market_regime,'')}\n"
+                    f"📋 {tg_regime_desc.get(self.market_regime,'')}\n"
+                    + (f"⚠️ {_dg}\n" if _dg else "")
+                    + f"━━━━━━━━━━━━━━━━━━━━\n"
+                    f"📈 {score_str}  |  {adx_str}  |  {streak_str}\n"
+                    f"📉 {rsi_str}  |  22일수익 {detail['ret22']:+.1f}%\n"
                     f"━━━━━━━━━━━━━━━━━━━━\n"
                     f"⏰ {_now_kst().strftime('%H:%M KST')}"
                 )
