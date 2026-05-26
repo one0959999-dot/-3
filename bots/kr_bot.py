@@ -1765,6 +1765,15 @@ class KRBotController:
                         logger.debug(f"BULL 코어 오버라이드 오류: {_be}")
                 # ─────────────────────────────────────────────────────────────
 
+                # ── BEAR 국면 조기 익절 오버라이드 ──────────────────────────
+                # BEAR 반등은 RSI 55~65 수준에서 꺾임 → RSI 70 기다리면 수익 반납
+                # 보유 중 + BEAR + RSI ≥ 60 → SELL 조기 트리거
+                if c_sig != 'SELL' and regime == "BEAR" and c_sh > 0 and c_avg > 0:
+                    if c_rsi >= 60:
+                        c_sig = 'SELL'
+                        self.add_log(f"🐻 [BEAR 코어 조기익절] {c_tk} RSI={c_rsi:.1f} ≥ 60 → SELL 오버라이드")
+                # ─────────────────────────────────────────────────────────────
+
                 # ── ATR(14) 코어 하드 손절 (전량 청산 — floor_shares 없음) ──
                 c_atr = c_avg * 0.02
                 if not ex_df.empty and all(col in ex_df.columns for col in ['high','low','close']):
@@ -1970,6 +1979,27 @@ class KRBotController:
                     trail_mult, trail_trigger, hard_mult = 1.5, 1.2, 3.0
                 else:
                     trail_mult, trail_trigger, hard_mult = 1.5, 1.0, 2.5
+
+                # ── BEAR 국면 위성 하드 익절 (+5%) ──────────────────────────
+                # 하락장 반등은 짧고 강함 — 트레일링 발동 전에 +5% 도달 시 즉시 전량 청산
+                if regime == "BEAR" and p_sh > 0 and p_avg > 0 and is_cd_passed:
+                    if price >= p_avg * 1.05:
+                        if self._sell_order(ticker, p_sh, pos, p_nm):
+                            with self.lock:
+                                pos.last_order_time = time.time(); pos.max_price = 0; pos.status = "체결 대기 ⏳"
+                                pos.shares = 0
+                            profit = _net_profit(price, p_avg, p_sh)
+                            self._log_trade(ticker, p_nm, 'SELL', price, st_nm, "BEAR +5% 하드 익절", profit=profit)
+                            self._send_trade_telegram(self._fmt_trade_msg("🐻", "BEAR 하드 익절 +5%", ticker, p_nm, price, p_sh, profit=profit, strategy=st_nm, note="하락장 반등 조기 수확"))
+                            with self.lock:
+                                self.pnl_this_turn += profit
+                                if profit > 0 and self.core_positions:
+                                    reinvest_bear = profit * REINVEST_RATIO
+                                    for core in self.core_positions:
+                                        core.cash += reinvest_bear / len(self.core_positions)
+                            self._record_daily_pnl(profit)
+                        continue
+                # ─────────────────────────────────────────────────────────────
 
                 if p_sh > 0 and price > 0 and is_cd_passed:
                     if price > p_max:
