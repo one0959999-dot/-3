@@ -2464,7 +2464,7 @@ class KRBotController:
                 mp['enter_time'] = None
         return mp
 
-    def _check_momentum_exit_one(self, slot_idx: int, mp: dict, now) -> bool:
+    def _check_momentum_exit_one(self, slot_idx: int, mp: dict, now, regime: str = "NEUTRAL") -> bool:
         """슬롯 idx의 모멘텀 포지션 청산 조건 체크. 청산 시 True 반환."""
         # C-01: kis가 None이면 체크 불가 → 청산 없이 리턴 (멀티스레드 재시작 타이밍 안전)
         if not self.kis:
@@ -2530,8 +2530,10 @@ class KRBotController:
             pass
 
         # W-06: enter_t가 None(역직렬화 실패)이면 timeout 체크 비활성화
+        # 국면별 최대 보유 시간: BULL 추세 추종 → 90분, NEUTRAL → 60분
+        _max_hold_min = 90 if regime == "BULL" else 60
         try:
-            time_over = enter_t is not None and (now - enter_t).total_seconds() / 60 > 60
+            time_over = enter_t is not None and (now - enter_t).total_seconds() / 60 > _max_hold_min
         except Exception:
             time_over = False
 
@@ -2577,12 +2579,15 @@ class KRBotController:
                 self._record_ticker_loss(ticker, partial_profit)  # [BUG-4] 부분 손실도 종목별 캡에 반영
             return False  # 슬롯 유지 (잔여 포지션 계속 관리)
 
-        # 모멘텀 슬롯 출구 전략:
-        # - 손절: 고정 -3% (급등 후 진입 특성상 타이트하게, 손익비 1:1.7)
-        # - 익절: +5% 전량 (단타 빠른 수익 실현)
-        # - 60분 초과: 강제 청산
-        MOMENTUM_STOP_PCT  = 0.97   # 진입가 대비 -3%
-        MOMENTUM_TARGET_PCT = 1.05  # 진입가 대비 +5%
+        # 모멘텀 슬롯 출구 전략 (국면별 차등 적용):
+        # BULL : 손절 -4% / 익절 +8% / 90분 → 추세 추종, 수익 극대화
+        # NEUTRAL: 손절 -3% / 익절 +5% / 60분 → 빠른 수익 실현 (기존)
+        if regime == "BULL":
+            MOMENTUM_STOP_PCT   = 0.96   # -4%  (추세장 정상 눌림에 손절 방지)
+            MOMENTUM_TARGET_PCT = 1.08   # +8%  (추세 올라타기)
+        else:  # NEUTRAL
+            MOMENTUM_STOP_PCT   = 0.97   # -3%
+            MOMENTUM_TARGET_PCT = 1.05   # +5%
 
         sell_reason = None
         if vol_fade:
@@ -2634,7 +2639,7 @@ class KRBotController:
         for i, mp in enumerate(self.momentum_positions):
             if mp is not None:
                 try:
-                    self._check_momentum_exit_one(i, mp, now)
+                    self._check_momentum_exit_one(i, mp, now, regime=regime)
                 except Exception as e:
                     logger.error(f"[{self.mode_name}] 모멘텀#{i+1} 청산 체크 오류: {e}", exc_info=True)
 
@@ -2723,7 +2728,9 @@ class KRBotController:
             b_name   = best['name']
             b_price  = best['price']
 
-            budget = total_assets * self.momentum_budget_ratio  # 총자산의 10%
+            # BULL 국면은 모멘텀 예산 12%로 상향 (추세장 확신 → 더 크게 베팅)
+            _mom_ratio = self.momentum_budget_ratio * 1.2 if regime == "BULL" else self.momentum_budget_ratio
+            budget = total_assets * _mom_ratio
             if available_cash < budget * 0.5:
                 break  # 현금 부족 → 나머지 슬롯도 포기
 
