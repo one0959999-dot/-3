@@ -36,7 +36,8 @@ from database import (
     add_user_initial_cash,
     get_sector_guide,
 )
-from strategy import calculate_entry_score, get_entry_threshold, get_budget_ratio_from_score, get_bull_momentum_score
+from strategy import (calculate_entry_score, get_entry_threshold, get_budget_ratio_from_score,
+                      get_bull_momentum_score, calc_rsi, _calc_adx, _get_up_streak)
 # bot_manager는 순환 임포트 방지를 위해 런타임에 참조
 import importlib
 
@@ -610,13 +611,14 @@ class USBotController:
                 proceeds = self._sell(ticker, pos.name, pos.shares, price)
                 pnl      = _net_profit_usd(price, avg, pos.shares)
                 with self.lock:
-                    pos.shares          = 0.0
-                    pos.partial_sold    = False
-                    pos.partial_sold_2  = False
-                    pos.second_buy_price= 0.0
-                    pos.second_buy_cash = 0.0
-                    pos.second_buy_done = False
-                    pos.status          = "코어 손절 🚨"
+                    pos.shares             = 0.0
+                    pos.partial_sold       = False
+                    pos.partial_sold_2     = False
+                    pos.second_buy_price   = 0.0
+                    pos.second_buy_cash    = 0.0
+                    pos.second_buy_done    = False
+                    pos.bull_pyramid_done  = False
+                    pos.status             = "코어 손절 🚨"
                 self._record_pnl(pnl)
                 self.add_log(f"🚨 코어 손절 {pos.name}({ticker}) | ATR×{hard_mult:.1f} 이탈 | PnL ${pnl:+.0f}")
                 self._tg(f"🚨 [US 코어 손절] {pos.name}\nATR×{hard_mult:.1f} 이탈 | 재진입 타점 탐색 중\n손익: ${pnl:+,.0f}")
@@ -646,14 +648,25 @@ class USBotController:
 
                 c_threshold = get_entry_threshold(regime, 'core')
 
-                # ── BULL 국면 진입 완화: 점수 1점 부족 + bull_momentum ≥ 1 → 허용
-                if c_score < c_threshold and regime == "BULL" and c_score >= c_threshold - 1:
+                # ── BULL 국면 진입 완화 ─────────────────────────────────
+                # 조건 A: RSI ≤ 65 + bull_score ≥ 1
+                # 조건 B: MA5 > MA20 정배열 + 현재가 MA5 이내(2%) 눌림목
+                if c_score < c_threshold and regime == "BULL" and df_raw is not None and not df_raw.empty:
                     try:
-                        if df_raw is not None and not df_raw.empty:
-                            _bull_sc, _ = get_bull_momentum_score(df_raw)
-                            if _bull_sc >= 1:
-                                c_score = c_threshold  # 임계값까지 끌어올려 진입 허용
-                                self.add_log(f"🚀 [BULL 코어 진입] {ticker} bull_score={_bull_sc} → 점수 완화 진입")
+                        _closes_b = df_raw['close'].dropna()
+                        _rsi_bull = float(calc_rsi(_closes_b).iloc[-1])
+                        _bull_sc, _ = get_bull_momentum_score(df_raw)
+                        _bull_cond_a = (_rsi_bull <= 65) and (_bull_sc >= 1)
+                        _bull_cond_b = False
+                        if len(_closes_b) >= 22:
+                            _ma5_b  = float(_closes_b.rolling(5).mean().iloc[-1])
+                            _ma20_b = float(_closes_b.rolling(20).mean().iloc[-1])
+                            _bull_cond_b = (_ma5_b > _ma20_b) and (price <= _ma5_b * 1.02)
+                        if _bull_cond_a or _bull_cond_b:
+                            c_score = c_threshold
+                            _why = (f"RSI={_rsi_bull:.1f} bull_score={_bull_sc}" if _bull_cond_a
+                                    else f"MA5눌림목(MA5={_closes_b.rolling(5).mean().iloc[-1]:.2f})")
+                            self.add_log(f"🚀 [BULL 코어 진입] {ticker} {_why} → 점수 완화 진입")
                     except Exception:
                         pass
 
@@ -732,6 +745,34 @@ class USBotController:
                     self.add_log(f"💎 코어 2차 매수 {pos.name}({ticker}) {sq}주 @ ${price:.2f} | 눌림목 -2%")
                     self._tg(f"💎 [US 코어 2차 매수] {pos.name}\n@ ${price:.2f}  눌림목 -2% 포착")
 
+            # ── BULL 불타기 (코어 피라미딩) — +3% 돌파 + MA5 정배열 ──
+            # BULL 장 + 보유 중 +3% 이상 + 정배열 확인 시 잔여현금 30% 추가 매수
+            if (regime == "BULL" and pos.shares > 0 and avg > 0 and is_cd
+                    and not getattr(pos, 'bull_pyramid_done', False)
+                    and price >= avg * 1.03):
+                try:
+                    _py_ok = False
+                    if df_raw is not None and not df_raw.empty and len(df_raw['close'].dropna()) >= 22:
+                        _cl_py  = df_raw['close'].dropna()
+                        _py_ok  = float(_cl_py.rolling(5).mean().iloc[-1]) > float(_cl_py.rolling(20).mean().iloc[-1])
+                    if _py_ok:
+                        _py_budget = min(core_budget_per * 0.30, self.cash_usd * 0.15)
+                        _py_qty = self._buy(ticker, pos.name, _py_budget, price)
+                        if _py_qty > 0:
+                            _py_pct = (price / avg - 1) * 100
+                            with self.lock:
+                                new_sh = pos.shares + _py_qty
+                                pos.avg_price_usd  = (pos.avg_price_usd * pos.shares + price * _py_qty) / new_sh if new_sh > 0 else price
+                                pos.shares         = new_sh
+                                pos.bull_pyramid_done = True
+                                pos.last_order_time= time.time()
+                                pos.status         = f"불타기 🔥 (+{_py_pct:.1f}%)"
+                            self.add_log(f"🔥 [BULL 불타기] {pos.name}({ticker}) +{_py_pct:.1f}% | {_py_qty}주 @ ${price:.2f} 추가")
+                            self._tg(f"🔥 [US BULL 불타기] {pos.name}\n+{_py_pct:.1f}% 추세 추종 | {_py_qty}주 @ ${price:.2f}")
+                except Exception as _pye:
+                    logger.debug(f"[US봇] BULL 불타기(코어) 오류: {_pye}")
+            # ─────────────────────────────────────────────────────────────
+
             # ── 코어 BEAR 조기 익절: +5% 도달 시 즉시 전량 청산 ──────
             if pos.shares > 0 and avg > 0 and is_cd and regime == "BEAR":
                 pnl_pct_bear = (price / avg - 1) * 100
@@ -740,13 +781,14 @@ class USBotController:
                     self._sell(ticker, pos.name, q, price)
                     pnl = _net_profit_usd(price, avg, q)
                     with self.lock:
-                        pos.shares          = 0.0
-                        pos.second_buy_price= 0.0
-                        pos.second_buy_cash = 0.0
-                        pos.second_buy_done = False
-                        pos.partial_sold    = False
-                        pos.partial_sold_2  = False
-                        pos.status          = "BEAR 조기익절 🐻"
+                        pos.shares            = 0.0
+                        pos.second_buy_price  = 0.0
+                        pos.second_buy_cash   = 0.0
+                        pos.second_buy_done   = False
+                        pos.partial_sold      = False
+                        pos.partial_sold_2    = False
+                        pos.bull_pyramid_done = False
+                        pos.status            = "BEAR 조기익절 🐻"
                     self._record_pnl(pnl)
                     self.add_log(f"🐻 코어 BEAR 조기익절 {pos.name}({ticker}) +{pnl_pct_bear:.1f}% | PnL ${pnl:+.0f}")
                     self._tg(f"🐻 [US 코어 BEAR 익절] {pos.name}\n+{pnl_pct_bear:.1f}% 하락장 반등 수확\nPnL ${pnl:+,.0f}")
@@ -1004,14 +1046,25 @@ class USBotController:
 
             entry_threshold = get_entry_threshold(regime, 'satellite')
 
-            # ── BULL 국면 진입 완화: 점수 1점 부족 + bull_momentum ≥ 1 → 허용
-            if entry_score < entry_threshold and regime == "BULL" and entry_score >= entry_threshold - 1:
+            # ── BULL 국면 진입 완화 ─────────────────────────────────
+            # 조건 A: RSI ≤ 65 + bull_score ≥ 1
+            # 조건 B: MA5 > MA20 정배열 + 현재가 MA5 이내(2%) 눌림목
+            if entry_score < entry_threshold and regime == "BULL" and df_raw is not None and not df_raw.empty:
                 try:
-                    if df_raw is not None and not df_raw.empty:
-                        _bull_sc, _ = get_bull_momentum_score(df_raw)
-                        if _bull_sc >= 1:
-                            entry_score = entry_threshold
-                            self.add_log(f"🚀 [BULL 위성 진입] {ticker} bull_score={_bull_sc} → 점수 완화 진입")
+                    _closes_b = df_raw['close'].dropna()
+                    _rsi_bull = float(calc_rsi(_closes_b).iloc[-1])
+                    _bull_sc, _ = get_bull_momentum_score(df_raw)
+                    _bull_cond_a = (_rsi_bull <= 65) and (_bull_sc >= 1)
+                    _bull_cond_b = False
+                    if len(_closes_b) >= 22:
+                        _ma5_b  = float(_closes_b.rolling(5).mean().iloc[-1])
+                        _ma20_b = float(_closes_b.rolling(20).mean().iloc[-1])
+                        _bull_cond_b = (_ma5_b > _ma20_b) and (price <= _ma5_b * 1.02)
+                    if _bull_cond_a or _bull_cond_b:
+                        entry_score = entry_threshold
+                        _why = (f"RSI={_rsi_bull:.1f} bull_score={_bull_sc}" if _bull_cond_a
+                                else f"MA5눌림목(MA5={_closes_b.rolling(5).mean().iloc[-1]:.2f})")
+                        self.add_log(f"🚀 [BULL 위성 진입] {ticker} {_why} → 점수 완화 진입")
                 except Exception:
                     pass
 
@@ -1201,7 +1254,33 @@ class USBotController:
                 self._tg(f"✅ [US 위성 전량익절] {pos.name} | +{pnl_pct:.1f}% | ${pnl:+,.0f}")
                 continue
 
-            # ⑤ 스크리너 제외 + 수익권 → 청산
+            # ⑤ BULL 불타기 (위성 피라미딩) — +3% + MA5 정배열 ────────
+            if (regime == "BULL" and not pos.partial_sold
+                    and not getattr(pos, 'bull_pyramid_done', False)
+                    and pnl_pct >= 3.0 and is_cd and self.cash_usd > price):
+                try:
+                    _py_ok = False
+                    if df_raw is not None and not df_raw.empty and len(df_raw['close'].dropna()) >= 22:
+                        _cl = df_raw['close'].dropna()
+                        _py_ok = float(_cl.rolling(5).mean().iloc[-1]) > float(_cl.rolling(20).mean().iloc[-1])
+                    if _py_ok:
+                        _py_budget = min(sat_budget_per * 0.30, self.cash_usd * 0.15)
+                        _py_qty = self._buy(ticker, pos.name, _py_budget, price)
+                        if _py_qty > 0:
+                            with self.lock:
+                                new_sh = pos.shares + _py_qty
+                                pos.avg_price_usd  = (pos.avg_price_usd * pos.shares + price * _py_qty) / new_sh if new_sh > 0 else price
+                                pos.shares         = new_sh
+                                pos.bull_pyramid_done = True
+                                pos.max_price_usd  = max(pos.max_price_usd, price)
+                                pos.last_order_time= time.time()
+                                pos.status         = f"불타기 🔥 (+{pnl_pct:.1f}%)"
+                            self.add_log(f"🔥 [BULL 위성 불타기] {pos.name}({ticker}) +{pnl_pct:.1f}% | {_py_qty}주 @ ${price:.2f} 추가")
+                            self._tg(f"🔥 [US BULL 위성 불타기] {pos.name}\n+{pnl_pct:.1f}% 추세 추종 | {_py_qty}주 @ ${price:.2f}")
+                except Exception as _pye:
+                    logger.debug(f"[US봇] BULL 불타기(위성) 오류: {_pye}")
+
+            # ⑥ 스크리너 제외 + 수익권 → 청산
             # 성장세 양호(+3% 이상)면 스크리너 제외여도 유지 — 자연 익절/손절 대기
             in_info = {i["ticker"] for i in self.satellite_info}
             if ticker not in in_info and pnl_pct > 0 and pnl_pct < self._GROWTH_KEEP_PCT:
@@ -1329,27 +1408,88 @@ class USBotController:
         ② NQ=F / ES=F / EWY 선물 스냅샷 (선행지표)
         ③ NASDAQ 섹터 추세 분석 → hot_sectors 업데이트
         """
-        # ── ① SPY 시장 국면 ──────────────────────────────────────────
+        # ── ① SPY 시장 국면 (KR과 동일한 7신호 + ADX 과열 필터) ─────
         try:
             import pandas as pd
-            df = yf.download("SPY", period="60d", interval="1d",
+            df = yf.download("SPY", period="120d", interval="1d",
                              progress=False, auto_adjust=True)
             if isinstance(df.columns, pd.MultiIndex):
                 df.columns = df.columns.get_level_values(0)
             df = df.dropna(subset=["Close"])
-            if len(df) >= 50:
-                close = df["Close"]
-                cur   = float(close.iloc[-1])
-                sma20 = float(close.rolling(20).mean().iloc[-1])
-                sma50 = float(close.rolling(50).mean().iloc[-1])
-                if cur > sma20 > sma50:
-                    regime = "BULL"
-                elif cur < sma20 < sma50:
-                    regime = "BEAR"
+            df.columns = [c.lower() for c in df.columns]
+            if len(df) >= 60:
+                close = df["close"]
+                cur      = float(close.iloc[-1])
+                sma5     = float(close.rolling(5).mean().iloc[-1])
+                sma5_3ago= float(close.rolling(5).mean().iloc[-4])
+                sma20    = float(close.rolling(20).mean().iloc[-1])
+                sma20_5ago=float(close.rolling(20).mean().iloc[-6])
+                sma50    = float(close.rolling(50).mean().iloc[-1])
+                p22ago   = float(close.iloc[-23]) if len(close) >= 23 else float(close.iloc[0])
+
+                # RSI(14)
+                d  = close.diff()
+                g  = d.clip(lower=0).rolling(14).mean()
+                lo = (-d.clip(upper=0)).rolling(14).mean()
+                rsi= float((100 - 100 / (1 + g / (lo + 1e-10))).iloc[-1])
+
+                # 7신호 점수 (SPY 기준 — KR과 동일 구조)
+                score = 0
+                score += 1 if cur > sma5       else -1   # S1
+                score += 1 if sma5 > sma5_3ago else -1   # S2
+                score += 1 if cur > sma20      else -1   # M1
+                score += 1 if sma20 > sma20_5ago else -1 # M2
+                if rsi > 55:   score += 1                 # M3
+                elif rsi < 45: score -= 1
+                score += 1 if sma20 > sma50    else -1   # L1
+                ret22 = (cur / p22ago - 1) * 100 if p22ago > 0 else 0
+                if ret22 > 3.0:    score += 1             # L2
+                elif ret22 < -3.0: score -= 1
+
+                # ADX 과열 필터
+                adx, plus_di, minus_di = _calc_adx(df)
+                up_streak = _get_up_streak(close)
+                downgrade_reason = ''
+
+                if score >= 5:
+                    base = "BULL"
+                    if adx >= 40:
+                        base = "NEUTRAL"
+                        downgrade_reason = f"BULL→NEUTRAL: ADX {adx:.1f}≥40 (추세 막바지)"
+                    elif up_streak >= 8:
+                        base = "NEUTRAL"
+                        downgrade_reason = f"BULL→NEUTRAL: {up_streak}일 연속 상승 (단기 과열)"
+                elif score <= -4:
+                    base = "BEAR"
+                    if adx < 20:
+                        base = "NEUTRAL"
+                        downgrade_reason = f"BEAR→NEUTRAL: ADX {adx:.1f}<20 (추세 미확인)"
+                    elif adx >= 50 and minus_di > 40:
+                        base = "NEUTRAL"
+                        downgrade_reason = f"BEAR→NEUTRAL: ADX {adx:.1f}≥50 패닉 저점 (낙폭 과대)"
                 else:
-                    regime = "NEUTRAL"
+                    base = "NEUTRAL"
+
+                regime = base
+                diag = (f"점수{score:+d} | ADX={adx:.1f} | +DI={plus_di:.1f}/-DI={minus_di:.1f} | "
+                        f"연속{up_streak}일 | RSI={rsi:.1f} | 22일{ret22:+.1f}%")
+
+                if downgrade_reason:
+                    self.add_log(f"⚠️ [US] {downgrade_reason}")
                 if regime != self.market_regime:
-                    self.add_log(f"📊 US 시장 국면 변경: {self.market_regime} → {regime}")
+                    icons = {"BULL": "🐂", "BEAR": "🐻", "NEUTRAL": "😐"}
+                    self.add_log(
+                        f"{icons.get(regime,'📊')} US 시장 국면 변경: "
+                        f"{self.market_regime} → {regime} | {diag}"
+                    )
+                    self._tg(
+                        f"{icons.get(regime,'📊')} <b>US 시장 국면 변경</b>\n"
+                        f"━━━━━━━━━━━━━━━━━━━━\n"
+                        f"📊 <b>{self.market_regime}</b>  →  <b>{regime}</b>\n"
+                        + (f"⚠️ {downgrade_reason}\n" if downgrade_reason else "")
+                        + f"━━━━━━━━━━━━━━━━━━━━\n"
+                        f"📈 {diag}"
+                    )
                 self.market_regime = regime
         except Exception as e:
             logger.debug(f"[US봇] 시장 국면 판단 실패: {e}")

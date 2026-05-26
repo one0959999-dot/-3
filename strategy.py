@@ -192,13 +192,19 @@ def get_market_regime(kis_api) -> str:
 
         score, _, _ = _calc_regime_score(c)
 
+        adx, plus_di, minus_di = _calc_adx(df)
+        up_streak = _get_up_streak(c)
+
         if score <= -4:
+            # ── 과열 필터: BEAR 점수 충족해도 추세 미확인/패닉 저점이면 NEUTRAL 강등 ──
+            if adx < 20:
+                return "NEUTRAL"   # 하락 추세 미확인 — 노이즈 가능성, 방어 포지션 자제
+            if adx >= 50 and minus_di > 40:
+                return "NEUTRAL"   # 패닉 클라이막스 — 낙폭 과대, 반등 임박 가능성
             return "BEAR"
 
         if score >= 5:
-            # ── 과열 필터: BULL 점수를 충족해도 추세 막바지면 NEUTRAL 강등 ──
-            adx, _, _ = _calc_adx(df)
-            up_streak = _get_up_streak(c)
+            # ── 과열 필터: BULL 점수 충족해도 추세 막바지면 NEUTRAL 강등 ──
             if adx >= 40:
                 return "NEUTRAL"   # 추세 강도 과열 — 고점 매수 위험
             if up_streak >= 8:
@@ -256,7 +262,14 @@ def get_market_regime_detail(kis_api) -> dict:
         })
 
         if score <= -4:
-            result['regime'] = 'BEAR'
+            if adx < 20:
+                result['regime']           = 'NEUTRAL'
+                result['downgrade_reason'] = f'BEAR→NEUTRAL 강등: ADX {adx:.1f} < 20 (하락 추세 미확인, 노이즈 가능성)'
+            elif adx >= 50 and minus_di > 40:
+                result['regime']           = 'NEUTRAL'
+                result['downgrade_reason'] = f'BEAR→NEUTRAL 강등: ADX {adx:.1f} ≥ 50 패닉 클라이막스 (낙폭 과대, 반등 임박)'
+            else:
+                result['regime'] = 'BEAR'
         elif score >= 5:
             if adx >= 40:
                 result['regime']           = 'NEUTRAL'
