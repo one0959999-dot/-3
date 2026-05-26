@@ -322,14 +322,27 @@ def get_futures_snapshot_api():
 def reset_initial_cash():
     """투자 원금 기준값 수동 리셋 — 재시작 후 수익률 왜곡 시 사용."""
     data = request.json or {}
-    is_mock = current_user.data.get('is_mock', 1)
-    # 요청에 amount가 있으면 그 값으로, 없으면 10,000,000 원으로 리셋
-    amount = float(data.get('amount', 10000000))
-    if amount <= 0:
-        return jsonify({"status": "error", "message": "금액은 0보다 커야 합니다."}), 400
-    set_user_initial_cash(current_user.id, amount, bool(is_mock))
-    # 봇 메모리 내 initial_capital_captured 재활성화 방지 — 이미 True이므로 DB 값만 변경
-    return jsonify({"status": "ok", "message": f"투자 원금 기준값이 {amount:,.0f}원으로 재설정되었습니다."})
+    # is_mock: 실전봇은 False(0), KR모의/US는 True(1)
+    is_mock = bool(current_user.data.get('is_mock', 0))
+
+    amount = float(data.get('amount', 0))
+    if amount > 0:
+        # 명시적 금액 → 직접 설정
+        set_user_initial_cash(current_user.id, amount, is_mock)
+        msg = f"투자 원금 기준값이 {amount:,.0f}원으로 재설정되었습니다."
+    else:
+        # amount 없음 → initial_capital_captured 리셋
+        # 다음 _sync_internal_balances에서 KIS 잔고 기준으로 자동 재측정
+        bot = manager.bots.get((current_user.id, is_mock))
+        if bot:
+            bot.initial_capital_captured = False
+            msg = "원금 기준값 재측정 예약 완료 — 1분 내 KIS 잔고 기준으로 자동 갱신됩니다."
+        else:
+            # 봇 없으면 DB 기본값(10M) 복원
+            set_user_initial_cash(current_user.id, 10_000_000, is_mock)
+            msg = "봇 미가동 상태 — 원금을 기본값(10,000,000원)으로 리셋했습니다."
+
+    return jsonify({"status": "ok", "message": msg})
 
 @app.route('/api/daily_report')
 @login_required

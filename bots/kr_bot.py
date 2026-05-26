@@ -3351,7 +3351,7 @@ class KRBotController:
                 core_val = float(core.shares) * cp
                 total_realtime_stock_val += core_val
                 tracked_tickers.add(core.ticker)
-                cores_data.append({"name": core.name, "ticker": core.ticker, "shares": core.shares, "floor": core.floor_shares, "price": cp, "value": core_val, "avg_price": float(getattr(core, 'avg_price', 0) or 0), "budget": getattr(core, 'initial_cash', 0), "strategy": "장기 우상향" if core.ticker != self.core_ticker else "RSI + floor 보호", "status": getattr(core, 'status', '감시 중 👀'), "status_msg": getattr(core, 'status_msg', '지표 점검 중...')})
+                cores_data.append({"name": core.name, "ticker": core.ticker, "shares": core.shares, "floor": core.floor_shares, "price": cp, "value": core_val, "avg_price": float(getattr(core, 'avg_price', 0) or 0), "budget": float(getattr(core, 'cash', 0) or 0), "strategy": "장기 우상향" if core.ticker != self.core_ticker else "RSI + floor 보호", "status": getattr(core, 'status', '감시 중 👀'), "status_msg": getattr(core, 'status_msg', '지표 점검 중...')})
 
             satellites = []
             # num_satellites 한도만큼만 UI에 표시 (보유 중인 종목 우선)
@@ -3374,7 +3374,7 @@ class KRBotController:
             for ticker, pos in capped_items:
                 sp = _sat_price_cache.get(ticker) or float(getattr(pos, '_last_price', 0) or self.live_prices.get(ticker, 0) or getattr(pos, 'kis_current_price', 0) or pos.avg_price or 0)
                 sat_val = float(pos.shares) * sp
-                satellites.append({"name": pos.name, "ticker": ticker, "strategy": self.satellite_strategies.get(ticker, '-'), "shares": pos.shares, "price": sp, "value": sat_val, "avg_price": float(getattr(pos, 'avg_price', 0) or 0), "budget": getattr(pos, 'initial_cash', getattr(pos, 'budget', 0)), "status": getattr(pos, 'status', '감시 중 👀'), "status_msg": getattr(pos, 'status_msg', '지표 점검 중...')})
+                satellites.append({"name": pos.name, "ticker": ticker, "strategy": self.satellite_strategies.get(ticker, '-'), "shares": pos.shares, "price": sp, "value": sat_val, "avg_price": float(getattr(pos, 'avg_price', 0) or 0), "budget": float(getattr(pos, 'cash', 0) or 0), "status": getattr(pos, 'status', '감시 중 👀'), "status_msg": getattr(pos, 'status_msg', '지표 점검 중...')})
 
             try:
                 current_initial_cash = get_user_initial_cash(self.user_id, self._is_mock)
