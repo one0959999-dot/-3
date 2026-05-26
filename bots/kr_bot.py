@@ -1931,6 +1931,33 @@ class KRBotController:
                         logger.debug(f"BULL 불타기(코어) 오류: {_pye}")
                 # ─────────────────────────────────────────────────────────────
 
+                # ── BEAR 국면 코어 조기 익절 (+5%) — 하락장 반등은 짧아 즉시 수확 ──
+                # US봇 동일 전략: BEAR+5% 도달 시 트레일링/AI 없이 전량 청산
+                if regime == "BEAR" and c_sh > 0 and c_avg > 0:
+                    is_core_cd_bear = time.time() - getattr(core, 'last_order_time', 0) > 300
+                    if is_core_cd_bear and cp >= c_avg * 1.05:
+                        if self._sell_order(c_tk, c_sh, core, c_nm):
+                            _bear_profit = _net_profit(cp, c_avg, c_sh)
+                            _bear_pct    = (cp / c_avg - 1) * 100
+                            with self.lock:
+                                core.last_order_time   = time.time()
+                                core.status            = "BEAR 조기익절 🐻"
+                                core.shares            = 0
+                                core._bought_val       = 0.0
+                                core.partial_sold      = False
+                                core.partial_sold_2    = False
+                                core.second_buy_price  = 0.0
+                                core.second_buy_cash   = 0.0
+                                core.second_buy_done   = False
+                                core.bull_pyramid_done = False
+                                self.pnl_this_turn    += _bear_profit
+                            self._record_daily_pnl(_bear_profit)
+                            self.add_log(f"🐻 {c_nm} 코어 BEAR 조기익절 +{_bear_pct:.1f}% | {c_sh}주 @ {cp:,}원 | 손익: {_bear_profit:+,.0f}원")
+                            self._log_trade(c_tk, c_nm, 'SELL', cp, "BEAR조기익절", f"BEAR 반등 +{_bear_pct:.1f}% 조기 수확", profit=_bear_profit)
+                            self._send_trade_telegram(self._fmt_trade_msg("🐻", "코어 BEAR 조기익절", c_tk, c_nm, cp, c_sh, profit=_bear_profit, strategy="BEAR 반등 수확", note="하락장 +5% 반등 즉시 수확"))
+                        continue
+                # ─────────────────────────────────────────────────────────────
+
                 # ── ATR(14) 코어 하드 손절 (전량 청산 — floor_shares 없음) ──
                 c_atr = c_avg * 0.02
                 if not ex_df.empty and all(col in ex_df.columns for col in ['high','low','close']):
@@ -1945,6 +1972,23 @@ class KRBotController:
                 is_core_cd = time.time() - getattr(core, 'last_order_time', 0) > 300
 
                 if c_sh > 0 and c_avg > 0 and is_core_cd and cp <= c_avg - (core_hard_mult * c_atr):
+                    # 손절 전 뉴스 확인 — 호재면 일시 노이즈일 수 있어 1회 유예 (US봇 동일)
+                    _stop_news_c = ""
+                    if self.news_monitor:
+                        try:
+                            _stop_news_c = self.news_monitor.get_news_summary(c_nm, display=3)
+                        except Exception:
+                            pass
+                    _stop_skip_c = False
+                    if _stop_news_c and not getattr(core, 'stop_news_checked', False):
+                        _pos_kw_c = ['계약', '수주', '호재', '신제품', '상향', '목표가', '매수', '기록', '최고', '상승']
+                        if any(kw in _stop_news_c for kw in _pos_kw_c):
+                            core.stop_news_checked = True
+                            _stop_skip_c = True
+                            self.add_log(f"⚠️ {c_nm} 코어 ATR 손절 터치 but 호재 뉴스 감지 → 1회 유예\n{_stop_news_c[:100]}")
+                    if _stop_skip_c:
+                        continue
+                    core.stop_news_checked = False
                     if self._sell_order(c_tk, c_sh, core, c_nm):
                         core_profit = _net_profit(cp, c_avg, c_sh)
                         with self.lock:

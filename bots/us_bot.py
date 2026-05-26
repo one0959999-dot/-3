@@ -37,7 +37,8 @@ from database import (
     get_sector_guide,
 )
 from strategy import (calculate_entry_score, get_entry_threshold, get_budget_ratio_from_score,
-                      get_bull_momentum_score, calc_rsi, _calc_adx, _get_up_streak)
+                      get_bull_momentum_score, calc_rsi, _calc_adx, _get_up_streak,
+                      check_theme_overextension_exit, check_rsi_progressive_exit)
 # bot_manager는 순환 임포트 방지를 위해 런타임에 참조
 import importlib
 
@@ -1292,7 +1293,50 @@ class USBotController:
                                     f"ATR 손절 (평단${avg:.2f}  ATR×{hard_mult:.1f})")
                 continue
 
-            # ③ 1차 부분 익절 (+10%(일반) / +15%(BULL)) — AI 판단
+            # ③ 테마주 과열 청산 & RSI 점진적 익절 (KR봇 동일 전략)
+            # 60일선 이격 과열 + RSI 베어다이버전스 + 거래량 소멸 → 급락 전 자동 청산
+            if pos.shares > 0 and avg > 0 and is_cd:
+                if df_raw is not None and not df_raw.empty:
+                    try:
+                        _sat_info_us   = next((s for s in self.satellite_info if s["ticker"] == ticker), None)
+                        _sector_us     = _sat_info_us.get("sector", "") if _sat_info_us else ""
+                        _sector_bonus_us = 10 if (_sector_us and _sector_us in (self.hot_sectors or [])) else 0
+
+                        _oe_sig, _oe_sc, _oe_reason  = check_theme_overextension_exit(df_raw, price, _sector_bonus_us)
+                        _rs_sig, _rs_val, _rs_reason = check_rsi_progressive_exit(df_raw, price, avg)
+
+                        _sig_rank = {'HOLD': 0, 'PARTIAL_EXIT_30': 1, 'PARTIAL_EXIT_60': 2, 'FULL_EXIT': 3}
+                        _fe_sig, _fe_reason = ((_oe_sig, _oe_reason) if _sig_rank.get(_oe_sig, 0) >= _sig_rank.get(_rs_sig, 0)
+                                               else (_rs_sig, _rs_reason))
+
+                        if _fe_sig == 'FULL_EXIT':
+                            self._close_sat(ticker, pos, price, f"과열 전량청산 [{_fe_reason[:50]}]")
+                            continue
+                        elif _fe_sig == 'PARTIAL_EXIT_60' and pos.shares > 1:
+                            _q60 = max(1.0, pos.shares * 0.60)
+                            self._sell(ticker, pos.name, _q60, price)
+                            _pnl60 = _net_profit_usd(price, avg, _q60)
+                            with self.lock:
+                                pos.shares -= _q60
+                                pos.status  = f"과열 선익절 60% ✂️"
+                            self._record_pnl(_pnl60)
+                            self.add_log(f"✂️ [US 과열청산 60%] {pos.name} | {_fe_reason[:50]} | ${_pnl60:+.0f}")
+                        elif _fe_sig == 'PARTIAL_EXIT_30' and pos.shares > 1:
+                            _oe_cnt = getattr(pos, 'overext_sell_count', 0)
+                            if _oe_cnt < 3:
+                                _q30 = max(1.0, pos.shares * 0.30)
+                                self._sell(ticker, pos.name, _q30, price)
+                                _pnl30 = _net_profit_usd(price, avg, _q30)
+                                with self.lock:
+                                    pos.shares -= _q30
+                                    pos.overext_sell_count = _oe_cnt + 1
+                                    pos.status = f"과열 선익절 {_oe_cnt+1}차 30% ✂️"
+                                self._record_pnl(_pnl30)
+                                self.add_log(f"✂️ [US 과열청산 30% {_oe_cnt+1}차] {pos.name} | {_fe_reason[:50]} | ${_pnl30:+.0f}")
+                    except Exception as _oe_err:
+                        logger.debug(f"[US봇] 과열청산 체크 오류 ({ticker}): {_oe_err}")
+
+            # ④ 1차 부분 익절 (+10%(일반) / +15%(BULL)) — AI 판단
             # BULL 장에서는 추세 지속 가능성이 높아 익절 기준 상향
             _sat_partial1 = 15.0 if regime == "BULL" else self.PARTIAL1_PCT
             _sat_partial2 = 30.0 if regime == "BULL" else self.PARTIAL2_PCT
