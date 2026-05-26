@@ -1480,14 +1480,17 @@ class USBotController:
                 "sector_trends":         self.sector_trends,
                 "cores": {
                     t: {
-                        "name":           p.name,
-                        "shares":         p.shares,
-                        "avg_price_usd":  p.avg_price_usd,
-                        "budget_usd":     p.budget_usd,
-                        "partial_sold":   p.partial_sold,
-                        "partial_sold_2": p.partial_sold_2,
-                        "max_price_usd":  p.max_price_usd,
-                        "status":         p.status,
+                        "name":             p.name,
+                        "shares":           p.shares,
+                        "avg_price_usd":    p.avg_price_usd,
+                        "budget_usd":       p.budget_usd,
+                        "partial_sold":     p.partial_sold,
+                        "partial_sold_2":   p.partial_sold_2,
+                        "max_price_usd":    p.max_price_usd,
+                        "status":           p.status,
+                        "second_buy_price": p.second_buy_price,
+                        "second_buy_cash":  p.second_buy_cash,
+                        "second_buy_done":  p.second_buy_done,
                     }
                     for t, p in self.core_positions.items()
                 },
@@ -1527,7 +1530,7 @@ class USBotController:
             self.futures_snapshot       = state.get("futures_snapshot", {})
             self.sector_trends          = state.get("sector_trends", [])
             for t, s in state.get("cores", {}).items():
-                self.core_positions[t] = USPosition(
+                pos = USPosition(
                     ticker         = t,
                     name           = s.get("name", t),
                     shares         = float(s.get("shares", 0)),
@@ -1538,6 +1541,10 @@ class USBotController:
                     max_price_usd  = float(s.get("max_price_usd", 0)),
                     status         = s.get("status", "코어 보유 💎"),
                 )
+                pos.second_buy_price = float(s.get("second_buy_price", 0.0))
+                pos.second_buy_cash  = float(s.get("second_buy_cash",  0.0))
+                pos.second_buy_done  = bool(s.get("second_buy_done",   False))
+                self.core_positions[t] = pos
             for t, s in state.get("satellites", {}).items():
                 self.satellite_positions[t] = USPosition(
                     ticker         = t,
