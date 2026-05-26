@@ -362,7 +362,6 @@ class KisRealApi:
 
                         # ord_psbl_cash(주문가능현금): 매수 주문 즉시 차감
                         # prvs_rcdl_excc_amt(전일주문가능금액) / dnca_tot_amt(예탁금총액): 실시간 미반영
-                        # nxdy_excc_amt(익일주문가능금액): T+1 기준 — T+2 매도 대금 포함 가능
                         _ord  = summary.get('ord_psbl_cash', '0') or '0'
                         _prvs = summary.get('prvs_rcdl_excc_amt', '0') or '0'
                         _dnca = summary.get('dnca_tot_amt', '0') or '0'
@@ -371,13 +370,10 @@ class KisRealApi:
                                      f"prvs_rcdl_excc_amt={_prvs} "
                                      f"nxdy_excc_amt={_nxdy} "
                                      f"dnca_tot_amt={_dnca}")
-                        # T+2 매도 대금 미반영 보정:
-                        # ord_psbl_cash가 0이면 nxdy_excc_amt(익일주문가능) 사용 — 당일 매도분 포함
-                        total_cash = (_safe_parse('ord_psbl_cash', 'prvs_rcdl_excc_amt')
-                                      or _safe_parse('nxdy_excc_amt', 'dnca_tot_amt'))
                         return {
                             "stocks": parsed_stocks,
-                            "total_cash": total_cash,
+                            "total_cash": (_safe_parse('ord_psbl_cash', 'prvs_rcdl_excc_amt')
+                                           or _safe_parse('dnca_tot_amt', 'dnca_tot_amt')),
                             "total_value": _safe_parse('scts_evlu_amt', 'evlu_amt_smtl_amt'),
                             "total_purchase": final_purchase
                         }
