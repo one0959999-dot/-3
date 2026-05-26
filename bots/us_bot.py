@@ -36,7 +36,7 @@ from database import (
     add_user_initial_cash,
     get_sector_guide,
 )
-from strategy import calculate_entry_score, get_entry_threshold, get_budget_ratio_from_score
+from strategy import calculate_entry_score, get_entry_threshold, get_budget_ratio_from_score, get_bull_momentum_score
 # bot_manager는 순환 임포트 방지를 위해 런타임에 참조
 import importlib
 
@@ -100,6 +100,9 @@ class USPosition:
     ai_exit_pending:     bool  = False
     ai_exit_decision:    str   = None   # 'SELL_PARTIAL' / 'SELL_ALL' / 'HOLD' / None
     ai_exit_asked_price: float = 0.0    # 마지막 AI 문의 시점 가격 (새 고점 갱신 시 재요청)
+    second_buy_price:    float = 0.0    # 2차 매수 발동가 (1차 진입가 × 0.98)
+    second_buy_cash:     float = 0.0    # 2차 매수 유보 예산 (USD)
+    second_buy_done:     bool  = False  # 2차 매수 완료 여부
 
 
 # ══════════════════════════════════════════════════════════════════════
@@ -607,10 +610,13 @@ class USBotController:
                 proceeds = self._sell(ticker, pos.name, pos.shares, price)
                 pnl      = _net_profit_usd(price, avg, pos.shares)
                 with self.lock:
-                    pos.shares         = 0.0
-                    pos.partial_sold   = False
-                    pos.partial_sold_2 = False
-                    pos.status         = "코어 손절 🚨"
+                    pos.shares          = 0.0
+                    pos.partial_sold    = False
+                    pos.partial_sold_2  = False
+                    pos.second_buy_price= 0.0
+                    pos.second_buy_cash = 0.0
+                    pos.second_buy_done = False
+                    pos.status          = "코어 손절 🚨"
                 self._record_pnl(pnl)
                 self.add_log(f"🚨 코어 손절 {pos.name}({ticker}) | ATR×{hard_mult:.1f} 이탈 | PnL ${pnl:+.0f}")
                 self._tg(f"🚨 [US 코어 손절] {pos.name}\nATR×{hard_mult:.1f} 이탈 | 재진입 타점 탐색 중\n손익: ${pnl:+,.0f}")
@@ -639,13 +645,28 @@ class USBotController:
                     c_score, c_reasons = 0, []
 
                 c_threshold = get_entry_threshold(regime, 'core')
+
+                # ── BULL 국면 진입 완화: 점수 1점 부족 + bull_momentum ≥ 1 → 허용
+                if c_score < c_threshold and regime == "BULL" and c_score >= c_threshold - 1:
+                    try:
+                        if df_raw is not None and not df_raw.empty:
+                            _bull_sc, _ = get_bull_momentum_score(df_raw)
+                            if _bull_sc >= 1:
+                                c_score = c_threshold  # 임계값까지 끌어올려 진입 허용
+                                self.add_log(f"🚀 [BULL 코어 진입] {ticker} bull_score={_bull_sc} → 점수 완화 진입")
+                    except Exception:
+                        pass
+
                 if c_score < c_threshold:
                     with self.lock:
                         pos.status = f"코어 진입 대기 ({c_score}/{c_threshold}pt) ⏳"
                     continue
 
-                budget_ratio = get_budget_ratio_from_score(c_score, c_threshold)
-                qty = int((budget * budget_ratio) // price)
+                budget_ratio  = get_budget_ratio_from_score(c_score, c_threshold)
+                # 75/25 분할: 1차 진입 후 나머지는 -2% 눌림목 예약
+                first_ratio   = budget_ratio * 0.75
+                reserve_usd   = budget * budget_ratio * 0.25
+                qty = int((budget * first_ratio) // price)
                 if qty > 0:
                     # AI 승인 (위성과 동일)
                     approved, ai_reason = True, "AI 미설정"
@@ -675,19 +696,61 @@ class USBotController:
                             pos.status = f"코어 AI 거절 🛑 ({c_score}pt)"
                         self.add_log(f"🛑 코어 AI 거절 {pos.name}({ticker}): {ai_reason[:60]}")
                     else:
-                        bought_qty = self._buy(ticker, pos.name, budget * budget_ratio, price)
+                        bought_qty = self._buy(ticker, pos.name, budget * first_ratio, price)
                         if bought_qty > 0:
                             with self.lock:
-                                pos.shares         = float(bought_qty)
-                                pos.avg_price_usd  = price
-                                pos.max_price_usd  = price
-                                pos.partial_sold   = False
-                                pos.partial_sold_2 = False
+                                pos.shares          = float(bought_qty)
+                                pos.avg_price_usd   = price
+                                pos.max_price_usd   = price
+                                pos.partial_sold    = False
+                                pos.partial_sold_2  = False
                                 pos.last_order_time = time.time()
-                                pos.status         = f"코어 보유 💎 ({c_score}pt)"
+                                pos.second_buy_price= price * 0.98
+                                pos.second_buy_cash = reserve_usd
+                                pos.second_buy_done = False
+                                pos.status          = f"코어 보유 💎 ({c_score}pt)"
                             score_str = " | ".join(c_reasons[:3])
-                            self.add_log(f"💎 코어 매수 {pos.name}({ticker}) {bought_qty}주 @ ${price:.2f} | {c_score}pt [{score_str}] | AI: {ai_reason[:40]}")
-                            self._tg(f"💎 [US 코어 매수] {pos.name} ({ticker})\n@ ${price:.2f}  점수 {c_score}pt")
+                            self.add_log(f"💎 코어 1차 매수 {pos.name}({ticker}) {bought_qty}주 @ ${price:.2f} | {c_score}pt [{score_str}] | 2차 예약 ${price*0.98:.2f} | AI: {ai_reason[:40]}")
+                            self._tg(f"💎 [US 코어 1차 매수] {pos.name} ({ticker})\n@ ${price:.2f}  점수 {c_score}pt\n2차 예약: ${price*0.98:.2f} (-2%)")
+
+            # ── 코어 2차 분할 매수: 1차 진입가 -2% 눌림목 ──────────────
+            if (pos.shares > 0 and avg > 0 and is_cd
+                    and not getattr(pos, 'second_buy_done', True)
+                    and getattr(pos, 'second_buy_price', 0) > 0
+                    and price <= pos.second_buy_price
+                    and getattr(pos, 'second_buy_cash', 0) >= price):
+                sq = self._buy(ticker, pos.name, pos.second_buy_cash, price)
+                if sq > 0:
+                    with self.lock:
+                        new_shares = pos.shares + sq
+                        pos.avg_price_usd  = (pos.avg_price_usd * pos.shares + price * sq) / new_shares if new_shares > 0 else price
+                        pos.shares         = new_shares
+                        pos.second_buy_done= True
+                        pos.second_buy_cash= 0.0
+                        pos.last_order_time= time.time()
+                        pos.status         = "2차 매수 ✅"
+                    self.add_log(f"💎 코어 2차 매수 {pos.name}({ticker}) {sq}주 @ ${price:.2f} | 눌림목 -2%")
+                    self._tg(f"💎 [US 코어 2차 매수] {pos.name}\n@ ${price:.2f}  눌림목 -2% 포착")
+
+            # ── 코어 BEAR 조기 익절: +5% 도달 시 즉시 전량 청산 ──────
+            if pos.shares > 0 and avg > 0 and is_cd and regime == "BEAR":
+                pnl_pct_bear = (price / avg - 1) * 100
+                if pnl_pct_bear >= 5.0:
+                    q   = pos.shares
+                    self._sell(ticker, pos.name, q, price)
+                    pnl = _net_profit_usd(price, avg, q)
+                    with self.lock:
+                        pos.shares          = 0.0
+                        pos.second_buy_price= 0.0
+                        pos.second_buy_cash = 0.0
+                        pos.second_buy_done = False
+                        pos.partial_sold    = False
+                        pos.partial_sold_2  = False
+                        pos.status          = "BEAR 조기익절 🐻"
+                    self._record_pnl(pnl)
+                    self.add_log(f"🐻 코어 BEAR 조기익절 {pos.name}({ticker}) +{pnl_pct_bear:.1f}% | PnL ${pnl:+.0f}")
+                    self._tg(f"🐻 [US 코어 BEAR 익절] {pos.name}\n+{pnl_pct_bear:.1f}% 하락장 반등 수확\nPnL ${pnl:+,.0f}")
+                    continue
 
             # ── 코어 부분 익절 (AI 판단) ──────────────────────────────
             elif pos.shares > 0 and avg > 0:
@@ -940,6 +1003,18 @@ class USBotController:
                 entry_score, entry_reasons = 0, []
 
             entry_threshold = get_entry_threshold(regime, 'satellite')
+
+            # ── BULL 국면 진입 완화: 점수 1점 부족 + bull_momentum ≥ 1 → 허용
+            if entry_score < entry_threshold and regime == "BULL" and entry_score >= entry_threshold - 1:
+                try:
+                    if df_raw is not None and not df_raw.empty:
+                        _bull_sc, _ = get_bull_momentum_score(df_raw)
+                        if _bull_sc >= 1:
+                            entry_score = entry_threshold
+                            self.add_log(f"🚀 [BULL 위성 진입] {ticker} bull_score={_bull_sc} → 점수 완화 진입")
+                except Exception:
+                    pass
+
             if entry_score < entry_threshold:
                 if pos is None:
                     self.satellite_positions[ticker] = USPosition(
@@ -1046,7 +1121,13 @@ class USBotController:
 
             p_max = pos.max_price_usd
 
-            # ① ATR 트레일링 익절 — KR과 동일
+            # ① BEAR 국면 하드 익절: +5% 도달 시 즉시 전량 청산
+            if regime == "BEAR" and price >= avg * 1.05:
+                self._close_sat(ticker, pos, price,
+                                f"BEAR +5% 하드 익절 (평단${avg:.2f}→${price:.2f})")
+                continue
+
+            # ② ATR 트레일링 익절 — KR과 동일
             if (p_max >= avg + (trail_trig * s_atr)
                     and price <= p_max - (trail_mult * s_atr)):
                 self._close_sat(ticker, pos, price,
