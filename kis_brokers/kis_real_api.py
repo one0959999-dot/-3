@@ -366,10 +366,9 @@ class KisRealApi:
                         _prvs = summary.get('prvs_rcdl_excc_amt', '0') or '0'
                         _dnca = summary.get('dnca_tot_amt', '0') or '0'
                         _nxdy = summary.get('nxdy_excc_amt', '0') or '0'
-                        logger.debug(f"[KIS 실전 잔고] ord_psbl_cash={_ord} "
-                                     f"prvs_rcdl_excc_amt={_prvs} "
-                                     f"nxdy_excc_amt={_nxdy} "
-                                     f"dnca_tot_amt={_dnca}")
+                        logger.info(f"[KIS 실전 잔고] ord_psbl_cash={_ord} "
+                                    f"prvs={_prvs} nxdy={_nxdy} dnca={_dnca} "
+                                    f"→ total_cash 사용값: {_safe_parse('ord_psbl_cash','prvs_rcdl_excc_amt') or _safe_parse('dnca_tot_amt','dnca_tot_amt'):.0f}")
                         return {
                             "stocks": parsed_stocks,
                             "total_cash": (_safe_parse('ord_psbl_cash', 'prvs_rcdl_excc_amt')
