@@ -1899,7 +1899,10 @@ class KRBotController:
                 logger.error(f"[{self.mode_name}] 코어 매매 오류 ({c_tk}): {e}", exc_info=True)
             time.sleep(0.2)
 
-        with self.lock: trading_sat_items = list(self.satellite_positions.items())
+        with self.lock:
+            trading_sat_items = list(self.satellite_positions.items())
+            # 위성 루프 전 보유 중인 슬롯 스냅샷 (루프 후 비교용)
+            _sat_full_before = {t for t, p in trading_sat_items if p.shares > 0}
 
         for ticker, pos in trading_sat_items:
             try:
@@ -2382,6 +2385,19 @@ class KRBotController:
             except Exception as e:
                 logger.error(f"[{self.mode_name}] 위성 매매 오류 ({ticker}): {e}", exc_info=True)
             time.sleep(0.2)
+
+        # ── 위성 매도 후 재스캔: 이번 턴에 빈 슬롯이 생겼으면 즉시 새 종목 탐색 ─
+        # 모멘텀은 매도 즉시 다음 분에 새 종목 스캔, 위성도 동일하게 대응.
+        # 쿨다운(120초): 잦은 스캔 방지 (AI 호출 비용, API 부하)
+        with self.lock:
+            _sat_full_after = {t for t, p in self.satellite_positions.items() if p.shares > 0}
+        _just_sold = _sat_full_before - _sat_full_after
+        if _just_sold:
+            _rescreen_cd = time.time() - getattr(self, '_last_rescreen_trigger_ts', 0)
+            if _rescreen_cd > 120:
+                self._last_rescreen_trigger_ts = time.time()
+                self.add_log(f"🔄 위성 전량 매도 감지 ({', '.join(_just_sold)}) → 즉시 재스캔")
+                threading.Thread(target=self._rescreen_satellites, daemon=True).start()
 
         # ── 🚀 테마·급등주 모멘텀 슬롯 매매 ─────────────────────────────
         if is_golden_hours:
