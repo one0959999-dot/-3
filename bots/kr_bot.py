@@ -103,6 +103,9 @@ class KRBotController:
         # KIS 모의 API는 체결 후 1~3분 지연이 있어 캐시 API 값 대신 내부 추적값 사용
         self.internal_cash = None          # 최초 KIS API 값으로 초기화 후 매수/매도마다 즉각 갱신
         self._last_trade_ts = 0.0          # 마지막 체결 타임스탬프 (KIS API 재동기화 시점 판단)
+        self._dca_prev_cash      = 0.0     # 전 턴 예수금 스냅샷 (입금 감지용)
+        self._dca_deposit_trigger= False   # 이번 턴 입금 감지 플래그
+        self._dca_deposit_amount = 0.0     # 감지된 입금액
         self.fundamental_cache = {}
 
         # ── 당일 블랙리스트 (날짜가 바뀌면 자동 초기화) ──────────────────
@@ -1746,6 +1749,21 @@ class KRBotController:
             except Exception as e:
                 logger.error(f"[{self.mode_name}] 서킷브레이커 잔고 조회 오류: {e}", exc_info=True)
 
+        # ── 예수금 입금 감지 → DCA 트리거 ──────────────────────────────
+        # 매매가 없는 상황에서 예수금이 200,000원 이상 증가 시 입금으로 판단
+        # (매도 후 15분 이내는 정상 매도 수익으로 간주, DCA 트리거 안 함)
+        _cur_cash  = float(self.internal_cash or 0)
+        _prev_cash = self._dca_prev_cash
+        _since_trade = time.time() - self._last_trade_ts
+        self._dca_deposit_trigger = False
+        self._dca_deposit_amount  = 0.0
+        if _prev_cash > 0 and (_cur_cash - _prev_cash) >= 200_000 and _since_trade > 900:
+            self._dca_deposit_trigger = True
+            self._dca_deposit_amount  = _cur_cash - _prev_cash
+            self.add_log(f"💵 예수금 입금 감지: +{self._dca_deposit_amount:,.0f}원 → DCA 적립 실행")
+        self._dca_prev_cash = _cur_cash
+        # ─────────────────────────────────────────────────────────────
+
         with self.lock: safe_core_positions = list(self.core_positions)
         for core in safe_core_positions:
             if core.ticker == "TBD":  # AI 선정 대기 중 — 매매 스킵
@@ -1878,26 +1896,31 @@ class KRBotController:
                 with self.lock: c_cash = core.cash
 
                 # ── 적립식(DCA) 매수 — 진입 점수 게이트 우회 ────────────────
-                # dca_mode=True 코어는 진입 점수/RSI 신호 무관하게
-                # ① 설정 주기(기본 3일) 도달 또는
-                # ② 48시간 경과 + 평단 대비 -dca_dip_pct% 이하 하락 시 소액 적립 매수
+                # dca_mode=True 코어: 진입 점수/RSI 신호 무관하게
+                # ① 예수금 입금 감지 시 → 입금액을 DCA 코어 수로 균등 분배해 적립
+                # ② 48시간 쿨다운 + 평단 대비 -dca_dip_pct% 하락 시 → 눌림목 추가 매수
                 _dca_bought_this_turn = False
                 if getattr(core, 'dca_mode', False) and c_cash >= cp and is_core_cd:
-                    _now_ts      = time.time()
-                    _elapsed     = _now_ts - getattr(core, 'last_dca_time', 0.0)
-                    _dca_int_sec = getattr(core, 'dca_interval_hours', 72) * 3600
-                    _dca_dip     = getattr(core, 'dca_dip_pct', 3.0)
-                    _dca_budget  = getattr(core, 'dca_amount', 0) or (c_cash * 0.10)
-                    _dca_budget  = min(_dca_budget, c_cash)
+                    _now_ts  = time.time()
+                    _elapsed = _now_ts - getattr(core, 'last_dca_time', 0.0)
+                    _dca_dip = getattr(core, 'dca_dip_pct', 3.0)
 
-                    _do_dca, _dca_reason = False, ""
-                    if _elapsed >= _dca_int_sec:                                          # 정기 적립
-                        _do_dca = True
-                        _dca_reason = f"정기 적립 ({int(getattr(core,'dca_interval_hours',72)//24)}일 주기)"
+                    _do_dca, _dca_reason, _dca_budget = False, "", 0.0
+
+                    # ① 예수금 입금 감지 트리거
+                    if self._dca_deposit_trigger and self._dca_deposit_amount > 0:
+                        _n_dca = sum(1 for _c in self.core_positions if getattr(_c, 'dca_mode', False))
+                        _dca_budget = self._dca_deposit_amount / max(1, _n_dca)
+                        _do_dca     = True
+                        _dca_reason = f"예수금 입금 ({self._dca_deposit_amount:,.0f}원 / {_n_dca}종목 분배)"
+
+                    # ② 눌림목: 48시간 쿨다운 + 평단 대비 -X% 하락
                     elif _elapsed >= 48 * 3600 and c_sh > 0 and c_avg > 0 and cp <= c_avg * (1 - _dca_dip / 100):
-                        _do_dca = True                                                    # 눌림목 추가 매수
+                        _dca_budget = getattr(core, 'dca_amount', 0) or (c_cash * 0.10)
+                        _do_dca     = True
                         _dca_reason = f"눌림목 추가 ({(cp/c_avg-1)*100:.1f}% 하락)"
 
+                    _dca_budget = min(_dca_budget, c_cash)
                     if _do_dca and _dca_budget >= cp:
                         _dca_qty = int((_dca_budget * 0.98) // cp)
                         if _dca_qty > 0 and self._buy_order(c_tk, _dca_qty, core, c_nm):
@@ -1907,17 +1930,15 @@ class KRBotController:
                                 core.shares         += _dca_qty
                                 core._bought_val    = getattr(core, '_bought_val', 0.0) + int(cp * _dca_qty)
                                 core.cash           = max(0.0, core.cash - int(cp * _dca_qty))
-                                core.status         = f"DCA 적립 💰"
+                                core.status         = "DCA 적립 💰"
                             self.add_log(f"💰 {c_nm} DCA 적립 | {_dca_qty}주 @ {cp:,}원 | {_dca_reason}")
                             self._log_trade(c_tk, c_nm, 'BUY', cp, "DCA적립", _dca_reason)
-                            self._send_trade_telegram(self._fmt_trade_msg("💰", f"DCA 적립 ({_dca_reason})", c_tk, c_nm, cp, _dca_qty, strategy="DCA적립"))
+                            self._send_trade_telegram(self._fmt_trade_msg("💰", f"DCA 적립", c_tk, c_nm, cp, _dca_qty, strategy="DCA적립", note=_dca_reason))
                             _dca_bought_this_turn = True
-                    elif getattr(core, 'dca_mode', False):
-                        _next_sec = max(0, _dca_int_sec - _elapsed)
-                        _next_h   = int(_next_sec // 3600)
+                    elif getattr(core, 'dca_mode', False) and not _do_dca:
                         with self.lock:
-                            core.status     = f"DCA 적립 대기 💰"
-                            core.status_msg = f"다음 정기 적립까지 {_next_h}시간 | 눌림목 트리거 -{_dca_dip:.0f}%"
+                            core.status     = "DCA 적립 대기 💰"
+                            core.status_msg = f"입금 감지 대기 | 눌림목 트리거 -{_dca_dip:.0f}% (평단 {c_avg:,.0f}원)"
                 # ─────────────────────────────────────────────────────────────
 
                 if c_sig == 'BUY' and c_cash >= cp and is_core_cd and not _dca_bought_this_turn:

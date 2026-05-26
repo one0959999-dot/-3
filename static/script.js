@@ -790,7 +790,9 @@ window.toggleCoreDCA = async function(ticker, name, currentlyOn) {
     const enable = !currentlyOn;
     const action = enable ? 'ON' : 'OFF';
     if (!confirm(`${name} 적립식 DCA를 ${action}으로 변경할까요?\n\n` +
-        (enable ? '✅ 3일마다 + 평단 -3% 눌림 시 자동 소액 적립 매수가 시작됩니다.\n(진입 점수/RSI 신호 무관)' : '❌ DCA 적립을 중단합니다.'))) return;
+        (enable
+            ? '✅ 예수금 입금 감지 시 + 평단 -3% 눌림 시 자동 적립 매수\n(진입 점수/RSI 신호 무관)'
+            : '❌ DCA 적립을 중단합니다.'))) return;
     try {
         const res = await fetch('/api/set_core_dca', {
             method: 'POST',
