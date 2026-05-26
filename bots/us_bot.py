@@ -721,6 +721,14 @@ class USBotController:
                         with self.lock:
                             pos.status = f"코어 AI 거절 🛑 ({c_score}pt)"
                         self.add_log(f"🛑 코어 AI 거절 {pos.name}({ticker}): {ai_reason[:60]}")
+                        self._tg(
+                            f"🛑 <b>[US 코어 매수 거절]</b>  {self.alert_icon}\n"
+                            f"━━━━━━━━━━━━━━━━━━━━\n"
+                            f"📌 <b>{pos.name}</b>  {ticker}\n"
+                            f"🤖 {ai_reason[:100]}\n"
+                            f"━━━━━━━━━━━━━━━━━━━━\n"
+                            f"⏰ {_now_et().strftime('%H:%M ET')}"
+                        )
                     else:
                         bought_qty = self._buy(ticker, pos.name, budget * first_ratio, price)
                         if bought_qty > 0:
@@ -1170,6 +1178,15 @@ class USBotController:
                     if not approved:
                         self._satellite_rejects[ticker] = ai_reason
                         self.add_log(f"🤖 AI 매수 거절: {info['name']}({ticker}) — {ai_reason[:80]}")
+                        self._tg(
+                            f"🛑 <b>[US 위성 매수 거절]</b>  {self.alert_icon}\n"
+                            f"━━━━━━━━━━━━━━━━━━━━\n"
+                            f"📌 <b>{info['name']}</b>  {ticker}\n"
+                            f"🤖 {ai_reason[:100]}\n"
+                            f"➡️ 당일 블랙리스트 등록\n"
+                            f"━━━━━━━━━━━━━━━━━━━━\n"
+                            f"⏰ {_now_et().strftime('%H:%M ET')}"
+                        )
                         continue
                     self.add_log(f"🤖 AI 매수 승인: {info['name']}({ticker}) | 점수 {entry_score}pt")
                 except Exception as e:

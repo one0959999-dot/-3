@@ -1150,6 +1150,8 @@ class KRBotController:
                 "bl_date":              self._bl_date,
                 "satellite_rejects":    dict(self._satellite_rejects),
                 "momentum_ai_rejects":  dict(self._momentum_ai_rejects),
+                # 모멘텀 당일 차단 타임스탬프 — 재시작 후에도 3회 거절 차단이 해제되지 않도록
+                "momentum_exit_times":  {k: float(v) for k, v in self._momentum_exit_times.items()},
             }
             save_portfolio_state(self.user_id, state, self._is_mock)
         except Exception as e: logger.error(f"[{self.mode_name}] 상태 저장 실패: {e}", exc_info=True)
@@ -1203,9 +1205,12 @@ class KRBotController:
                 self._bl_date             = saved_bl_date
                 self._satellite_rejects   = state.get("satellite_rejects",   {})
                 self._momentum_ai_rejects = state.get("momentum_ai_rejects", {})
+                # 모멘텀 당일 차단 타임스탬프 복원 — 재시작 후에도 3회 거절 종목이 재심사받지 않도록
+                self._momentum_exit_times = {k: float(v) for k, v in state.get("momentum_exit_times", {}).items()}
                 n_rej = len(self._satellite_rejects)
-                if n_rej:
-                    self.add_log(f"🚫 당일 AI 거절 블랙리스트 복원: {n_rej}개 종목 재심사 제외")
+                n_mom = len(self._momentum_ai_rejects)
+                if n_rej or n_mom:
+                    self.add_log(f"🚫 당일 AI 거절 블랙리스트 복원: 위성 {n_rej}개 / 모멘텀 {n_mom}개 재심사 제외")
             # 모멘텀 슬롯 복원 (구버전 단일 포지션 호환)
             # __init__ 에서 설정한 슬롯 수를 먼저 저장 (덮어쓰기 전)
             target_slots = len(self.momentum_positions)
@@ -2274,6 +2279,23 @@ class KRBotController:
 
                 if p_sh > 0 and p_avg > 0 and is_cd_passed:
                     if price <= p_avg - (hard_mult * atr_14):
+                        # 손절 전 뉴스 확인 — 호재면 일시 노이즈일 수 있어 1회 유예 (US봇 동일)
+                        _stop_news_kr = ""
+                        if self.news_monitor:
+                            try:
+                                _stop_news_kr = self.news_monitor.get_news_summary(p_nm, display=3)
+                            except Exception:
+                                pass
+                        _stop_skip_kr = False
+                        if _stop_news_kr and not getattr(pos, 'stop_news_checked', False):
+                            _pos_kw_kr = ['계약', '수주', '호재', '신제품', '상향', '목표가', '매수', '기록', '최고', '상승']
+                            if any(kw in _stop_news_kr for kw in _pos_kw_kr):
+                                pos.stop_news_checked = True
+                                _stop_skip_kr = True
+                                self.add_log(f"⚠️ {p_nm} ATR 손절 터치 but 호재 뉴스 감지 → 1회 유예\n{_stop_news_kr[:100]}")
+                        if _stop_skip_kr:
+                            continue
+                        pos.stop_news_checked = False
                         if self._sell_order(ticker, p_sh, pos, p_nm):
                             with self.lock:
                                 pos.last_order_time = time.time(); pos.status = "체결 대기 ⏳"
@@ -2494,6 +2516,19 @@ class KRBotController:
                     pos.status_msg = f"오늘 거절됨: {self._satellite_rejects.get(ticker, '')[:30]}"
                     continue
 
+                # 실적 발표 D-3 이내 → 신규 진입 차단 (깜짝 손실 방지) — US봇 동일
+                if sig == 'BUY' and p_sh == 0 and is_cd_passed and is_golden_hours and self.news_monitor:
+                    try:
+                        _earn_kr = self.news_monitor.get_upcoming_earnings(ticker)
+                        if _earn_kr and _earn_kr.get('days_until', 99) <= 3:
+                            _dti_kr = _earn_kr['days_until']
+                            pos.status = f"⚠️ 실적발표 D-{_dti_kr} 진입 차단"
+                            pos.status_msg = f"실적 발표 예정: {_earn_kr.get('expected_date','')} — 발표 후 진입 검토"
+                            self.add_log(f"⚠️ [{ticker}] {p_nm} 실적발표 D-{_dti_kr} — 신규 진입 차단")
+                            continue
+                    except Exception:
+                        pass
+
                 if sig == 'BUY' and p_sh == 0 and is_cd_passed and is_golden_hours:
                     # ── 통합 진입 점수 체크 (1차 게이트) ──
                     _frgn_net = 0
@@ -2612,10 +2647,25 @@ class KRBotController:
                     except Exception:
                         pass
 
+                    # 52주 신고가 근접 체크 → AI 판단 맥락에 추가 (US봇 동일)
+                    _52w_note_kr = ""
+                    try:
+                        if not ex_df.empty and 'high' in ex_df.columns and len(ex_df) >= 50:
+                            _52w_high_kr = float(ex_df['high'].rolling(252, min_periods=50).max().iloc[-1])
+                            _52w_pct_kr  = (price / _52w_high_kr - 1) * 100
+                            if _52w_pct_kr >= -3.0:
+                                _52w_note_kr = f"52주 신고가 근접 ({_52w_pct_kr:+.1f}%) — 돌파 시 강세 신호"
+                            elif _52w_pct_kr <= -40.0:
+                                _52w_note_kr = f"52주 고가 대비 {_52w_pct_kr:.0f}% — 추세 붕괴 주의"
+                    except Exception:
+                        pass
+
                     if self.gemini:
                         pos.status     = "AI 심사 중 🤖"
                         pos.status_msg = f"매수 신호 발생 | {st_nm} | RSI {ind_val:.1f} — AI 최종 승인 대기 중..."
                         trade_ctx = self._build_trade_context(ticker, p_nm, price, ex_df, st_nm, regime)
+                        if _52w_note_kr:
+                            trade_ctx += f"\n[52주 신고가] {_52w_note_kr}"
                         decision, ai_reason = self.gemini.ai_approve_trade(sig, p_nm, ticker, price, st_nm, ind_val, self.hot_sectors, get_recent_trades(self.user_id, ticker), load_ai_rules(self.user_id) + "\n" + getattr(self, 'current_ai_market_view', '') + ("\n\n[📊 섹터 가이드 / 커스텀 전략]\n" + self.sector_guide if self.sector_guide else ''), context=trade_ctx)
                         if decision:
                             qty = int((entry_cash * 0.98) // price)
