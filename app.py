@@ -9,7 +9,7 @@ from flask import Flask, render_template, jsonify, request, redirect, url_for, f
 from flask_login import LoginManager, UserMixin, login_user, logout_user, login_required, current_user
 
 from bots.bot_manager import manager
-from database import get_db_connection, verify_user, add_user, init_db, update_user_keys, init_default_ai_rules, set_user_initial_cash, get_news_api_keys, set_news_api_keys, get_sector_guide, set_sector_guide, load_chat_history, save_chat_history, clear_chat_history, set_user_core_stocks
+from database import get_db_connection, verify_user, add_user, init_db, update_user_keys, init_default_ai_rules, set_user_initial_cash, get_news_api_keys, set_news_api_keys, get_sector_guide, set_sector_guide, load_chat_history, save_chat_history, clear_chat_history, set_user_core_stocks, set_user_satellite_stocks, set_us_core_stocks
 
 # ── 통합 로깅 설정 (파일 + 콘솔) ──
 logging.basicConfig(
@@ -546,27 +546,53 @@ def ai_chat():
                     )
 
             elif cmd.get('action') == 'update_core_stocks':
-                # AI가 코어 종목 교체 명령 — [{"ticker":"005490","name":"POSCO홀딩스"}]
+                # AI가 코어 종목 교체 명령 — KR: [{"ticker":"005490","name":"POSCO홀딩스"}]
+                #                              US: [{"ticker":"NVDA","name":"Nvidia"}]
                 new_stocks = cmd.get('stocks', [])
+                target = cmd.get('market', 'KR').upper()  # 'KR' or 'US'
                 if isinstance(new_stocks, list) and new_stocks:
-                    # ticker / name 필드 검증
                     valid = [s for s in new_stocks if s.get('ticker') and s.get('name')]
                     if valid:
-                        set_user_core_stocks(current_user.id, valid)
-                        # 실행 중인 봇에 즉시 반영
-                        for _is_mock_v in (True, False):
-                            _b = manager.bots.get((current_user.id, _is_mock_v))
+                        if target == 'US':
+                            set_us_core_stocks(current_user.id, valid)
+                            _b = manager.bots.get((current_user.id, True))  # US = is_mock=True
+                            if _b and hasattr(_b, 'user_core_stocks'):
+                                _b.user_core_stocks = valid
+                                _b._inject_user_cores()
+                        else:
+                            set_user_core_stocks(current_user.id, valid)
+                            _b = manager.bots.get((current_user.id, False))  # KR = is_mock=False
                             if _b and hasattr(_b, '_init_dummy_cores'):
                                 _b.user_core_stocks = valid
-                                # core_ticker / core_name은 첫 번째 종목 기준 (하위호환)
                                 _u = valid[0] if valid else {}
                                 _b.core_ticker = _u.get('ticker', '')
                                 _b.core_name   = _u.get('name', '')
                                 _b._init_dummy_cores()
                         names = ", ".join(s['name'] for s in valid)
-                        applied_commands.append(f"✅ 코어 종목이 [{names}]로 업데이트되었습니다.")
+                        applied_commands.append(f"✅ [{target}] 코어 종목이 [{names}]로 업데이트되었습니다.")
                         logging.getLogger('lassi_bot').info(
-                            f"[AI봇명령] user={current_user.id} core_stocks 교체: {valid}"
+                            f"[AI봇명령] user={current_user.id} {target} core_stocks 교체: {valid}"
+                        )
+
+            elif cmd.get('action') == 'update_satellite_stocks':
+                # AI가 위성 종목 교체 명령 — KR: [{"ticker":"005930","name":"삼성전자"}]
+                #                              US: [{"ticker":"TSLA","name":"Tesla"}]
+                new_stocks = cmd.get('stocks', [])
+                target = cmd.get('market', 'KR').upper()
+                if isinstance(new_stocks, list) and new_stocks:
+                    valid = [s for s in new_stocks if s.get('ticker') and s.get('name')]
+                    if valid:
+                        is_us = (target == 'US')
+                        set_user_satellite_stocks(current_user.id, valid, is_us=is_us)
+                        _is_mock_v = True if is_us else False
+                        _b = manager.bots.get((current_user.id, _is_mock_v))
+                        if _b and hasattr(_b, 'user_satellite_stocks'):
+                            _b.user_satellite_stocks = valid
+                            _b._inject_user_satellites()
+                        names = ", ".join(s['name'] for s in valid)
+                        applied_commands.append(f"✅ [{target}] 위성 종목이 [{names}]로 업데이트되었습니다.")
+                        logging.getLogger('lassi_bot').info(
+                            f"[AI봇명령] user={current_user.id} {target} satellite_stocks 교체: {valid}"
                         )
 
         except Exception as _cmd_err:

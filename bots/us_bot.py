@@ -119,7 +119,7 @@ class USBotController:
     PARTIAL2_PCT    = 20.0   # 2차 익절 기준 (%)
     PARTIAL2_QTY    = 1.00   # 2차: 나머지 전량
 
-    def __init__(self, user_id, kis_config=None, telegram_config=None, core_stocks=None):
+    def __init__(self, user_id, kis_config=None, telegram_config=None, core_stocks=None, satellite_stocks=None):
         self.user_id    = user_id
         self.is_running = False
         self.thread     = None
@@ -134,6 +134,16 @@ class USBotController:
         # ── KIS 해외주식 API ──────────────────────────────────────────
         self.kis_overseas: KisOverseasApi | None = None
         self._init_api(kis_config)
+
+        # ── 사용자 지정 종목 (AI 선정 대신 고정) ────────────────────────
+        try:
+            self.user_core_stocks = json.loads(core_stocks) if core_stocks else []
+        except Exception:
+            self.user_core_stocks = []
+        try:
+            self.user_satellite_stocks = json.loads(satellite_stocks) if satellite_stocks else []
+        except Exception:
+            self.user_satellite_stocks = []
 
         # ── 포트폴리오 ────────────────────────────────────────────────
         self.core_positions:      dict[str, USPosition] = {}  # 코어 40%
@@ -457,6 +467,32 @@ class USBotController:
     # 코어 스크리닝 (주 1회 — 월요일 KR 봇과 동일 패턴)
     # ─────────────────────────────────────────────────────────────────
 
+    def _inject_user_cores(self):
+        """user_core_stocks를 core_info 앞 슬롯에 고정 (KR 봇 패턴 동일)."""
+        if not self.user_core_stocks:
+            return
+        user_tickers = {s['ticker'] for s in self.user_core_stocks if s.get('ticker')}
+        filtered = [c for c in self.core_info if c['ticker'] not in user_tickers]
+        pinned = [
+            {'ticker': s['ticker'], 'name': s.get('name', s['ticker']),
+             'ai_reason': '사용자지정', 'score': 999}
+            for s in self.user_core_stocks if s.get('ticker')
+        ]
+        self.core_info = (pinned + filtered)[:self.num_cores]
+
+    def _inject_user_satellites(self):
+        """user_satellite_stocks를 satellite_info 앞 슬롯에 고정 (KR 봇 패턴 동일)."""
+        if not self.user_satellite_stocks:
+            return
+        user_tickers = {s['ticker'] for s in self.user_satellite_stocks if s.get('ticker')}
+        filtered = [c for c in self.satellite_info if c['ticker'] not in user_tickers]
+        pinned = [
+            {'ticker': s['ticker'], 'name': s.get('name', s['ticker']),
+             'sector': '', 'score': 999, 'ai_reason': '사용자지정'}
+            for s in self.user_satellite_stocks if s.get('ticker')
+        ]
+        self.satellite_info = (pinned + filtered)[:self.num_satellites]
+
     def _screen_cores(self):
         """월요일 1회 AI가 코어 종목 선정 (장기 우량주)."""
         now = _now_et()
@@ -493,6 +529,7 @@ class USBotController:
                 self.core_info = candidates[:self.num_cores]
                 self.add_log(f"✅ 코어 종목: {[c['ticker'] for c in self.core_info]}")
 
+            self._inject_user_cores()   # 사용자 지정 코어 우선 고정
             self.last_core_screen_date = today
         except Exception as e:
             logger.warning(f"[US봇] 코어 스캔 오류: {e}")
@@ -767,6 +804,7 @@ class USBotController:
         if slots_needed <= 0:
             self.add_log(f"✅ 위성 {len(strong_keep_tickers)}개 성장세 양호 — 재스크리닝 스킵")
             self.satellite_info   = strong_keep_info
+            self._inject_user_satellites()
             self.last_screen_date = today
             return
 
@@ -778,6 +816,7 @@ class USBotController:
             self.add_log("⚠️ 스캔 결과 없음 — 기존 위성 유지")
             self.satellite_info   = strong_keep_info + [i for i in self.satellite_info
                                                         if i["ticker"] not in strong_keep_tickers]
+            self._inject_user_satellites()
             self.last_screen_date = today
             return
 
@@ -816,6 +855,7 @@ class USBotController:
             self.add_log(f"✅ 위성 종목 선정 (신규): {', '.join(names)}")
 
         self.satellite_info   = strong_keep_info + new_info
+        self._inject_user_satellites()
         self.hot_sectors      = list({c["sector"] for c in self.satellite_info if c.get("sector")})
         self.last_screen_date = today
 

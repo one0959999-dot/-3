@@ -31,7 +31,8 @@ class BotManager:
                     user_id,
                     kis_config=us_kis_config,
                     telegram_config=tele_config,
-                    core_stocks=user_data.get('core_stocks'),
+                    core_stocks=user_data.get('us_core_stocks'),
+                    satellite_stocks=user_data.get('us_satellite_stocks'),
                 )
             else:
                 # ── KR 모드 (is_mock=False) → 한국 실전 봇 ──
@@ -43,6 +44,7 @@ class BotManager:
                 self.bots[bot_key] = KRBotController(
                     user_id, kis_config, tele_config,
                     core_stocks=user_data.get('core_stocks'),
+                    satellite_stocks=user_data.get('satellite_stocks'),
                 )
 
         bot = self.bots[bot_key]

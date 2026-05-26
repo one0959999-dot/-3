@@ -57,7 +57,7 @@ def fetch_recent_news(stock_name):
 
 class KRBotController:
     """KR 실전 매매 봇 — KIS 국내주식 API"""
-    def __init__(self, user_id, kis_config=None, telegram_config=None, core_stocks=None):
+    def __init__(self, user_id, kis_config=None, telegram_config=None, core_stocks=None, satellite_stocks=None):
         self.user_id = user_id
         self.is_running = False
         self.thread = None
@@ -77,6 +77,11 @@ class KRBotController:
             self.user_core_stocks = json.loads(core_stocks) if core_stocks else []
         except Exception:
             self.user_core_stocks = []
+
+        try:
+            self.user_satellite_stocks = json.loads(satellite_stocks) if satellite_stocks else []
+        except Exception:
+            self.user_satellite_stocks = []
 
         # 사용자 지정 코어 종목 (첫 번째만 사용) — DB에서 동적으로 읽음
         _u = self.user_core_stocks[0] if self.user_core_stocks else None
@@ -366,7 +371,17 @@ class KRBotController:
                     # total_equity 기반 목표치가 코어 투자분 포함 총 자산에서 계산되므로
                     # 실제 현금 < 위성 예산 → "주문가능금액 초과" 주문 실패 방지.
                     core_reserved = sum(getattr(c, 'cash', 0.0) for c in self.core_positions)
-                    avail_for_sat = max(0.0, real_cash - core_reserved)
+                    # T+2 보정: 매수가능조회(007) → nrcvb_buy_amt 는 당일 매도대금 포함
+                    # 잔고조회의 ord_psbl_cash는 T+2 정산 전 0으로 나올 수 있어 위성 매수 차단됨
+                    buyable_cash = real_cash
+                    if self.kis and hasattr(self.kis, 'get_buyable_cash'):
+                        try:
+                            _bc = float(self.kis.get_buyable_cash() or 0)
+                            if _bc > 0:
+                                buyable_cash = _bc
+                        except Exception:
+                            pass
+                    avail_for_sat = max(0.0, buyable_cash - core_reserved)
                     total_sat_cash = min(
                         max(0.0, target_sat_pool - current_sat_stock_val),
                         avail_for_sat
@@ -469,6 +484,26 @@ class KRBotController:
                 except Exception as e:
                     logger.warning(f"[{self.mode_name}] 초기 잔고 조회 실패: {e}")
             threading.Thread(target=_async_init_balance, daemon=True).start()
+
+    def _inject_user_satellites(self):
+        """user_satellite_stocks를 satellite_info 앞 슬롯에 고정 (코어의 _init_dummy_cores와 동일 패턴).
+        - 사용자 지정 종목은 screener 결과보다 우선 배치
+        - 중복 제거 후 num_satellites 한도 적용
+        """
+        if not self.user_satellite_stocks:
+            return
+        user_tickers = {s['ticker'] for s in self.user_satellite_stocks if s.get('ticker')}
+        # screener 결과에서 사용자 종목 제거 (중복 방지)
+        filtered = [c for c in self.satellite_info if c['ticker'] not in user_tickers]
+        pinned = [
+            {'ticker': s['ticker'], 'name': s['name'],
+             'strategy_name': '사용자지정', 'return_pct': 0.0, 'sector': '-'}
+            for s in self.user_satellite_stocks if s.get('ticker') and s.get('name')
+        ]
+        self.satellite_info = (pinned + filtered)[:self.num_satellites]
+        # satellite_strategies 동기화
+        for s in pinned:
+            self.satellite_strategies[s['ticker']] = '사용자지정'
 
     def _rebalance_ai_cores(self):
         """
@@ -1014,6 +1049,7 @@ class KRBotController:
         # AI 검토: 부적합 종목 제거 후 num_satellites 개수만 사용
         filtered_info = self._ai_filter_satellites(raw_info)
         self.satellite_info = filtered_info[:self.num_satellites]
+        self._inject_user_satellites()  # 사용자 지정 종목 우선 고정
         from stock_screener import select_ai_core_stock
         self.satellite_strategies = {c['ticker']: c['strategy_name'] for c in self.satellite_info}
         log_lines = [f"  {i+1}. {c['name']} ({c['ticker']}) → [{c['strategy_name']}] {c['return_pct']:+.1f}%" for i, c in enumerate(self.satellite_info)]
@@ -2964,6 +3000,7 @@ class KRBotController:
                         self.satellite_positions[c['ticker']] = Position(c['ticker'], c['name'], alloc)
                         self.satellite_strategies[c['ticker']] = c['strategy_name']
                 self.satellite_info = [c for c in self.satellite_info if c['ticker'] in keep_tickers] + new_info
+                self._inject_user_satellites()  # 사용자 지정 종목 우선 고정
 
             self.last_screen_date = now.date()
             self._save_state()

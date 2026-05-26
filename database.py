@@ -183,6 +183,45 @@ def set_user_core_stocks(user_id: int, stocks: list):
         finally:
             conn.close()
 
+def _ensure_extra_stock_columns(conn):
+    """위성/US 전용 컬럼이 없으면 자동 추가 (SQLite ALTER TABLE은 이미 있으면 오류 → 무시)"""
+    for col in ['satellite_stocks', 'us_core_stocks', 'us_satellite_stocks']:
+        try:
+            conn.execute(f'ALTER TABLE users ADD COLUMN {col} TEXT DEFAULT NULL')
+            conn.commit()
+        except Exception:
+            pass
+
+def set_user_satellite_stocks(user_id: int, stocks: list, is_us: bool = False):
+    """위성 종목 리스트 DB 저장.
+    is_us=False → KR 봇 (satellite_stocks 컬럼)
+    is_us=True  → US 봇 (us_satellite_stocks 컬럼)
+    """
+    import json as _json
+    col = 'us_satellite_stocks' if is_us else 'satellite_stocks'
+    with db_lock:
+        conn = get_db_connection()
+        try:
+            _ensure_extra_stock_columns(conn)
+            conn.execute(f"UPDATE users SET {col} = ? WHERE id = ?",
+                         (_json.dumps(stocks, ensure_ascii=False), user_id))
+            conn.commit()
+        finally:
+            conn.close()
+
+def set_us_core_stocks(user_id: int, stocks: list):
+    """US 봇 코어 종목 리스트 DB 저장 (us_core_stocks 컬럼)."""
+    import json as _json
+    with db_lock:
+        conn = get_db_connection()
+        try:
+            _ensure_extra_stock_columns(conn)
+            conn.execute("UPDATE users SET us_core_stocks = ? WHERE id = ?",
+                         (_json.dumps(stocks, ensure_ascii=False), user_id))
+            conn.commit()
+        finally:
+            conn.close()
+
 def update_bot_status(user_id, is_running, is_mock=None):
     """봇 실행 상태 DB 갱신.
     is_mock=None  → 레거시 단일 is_running 컬럼만 업데이트 (하위 호환)
