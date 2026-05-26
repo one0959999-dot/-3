@@ -1139,7 +1139,7 @@ class KRBotController:
     def _save_state(self):
         try:
             state = {
-                "cores": [{"ticker": c.ticker, "name": c.name, "shares": int(c.shares), "floor_shares": int(c.floor_shares), "cash": float(c.cash), "initial_cash": float(c.initial_cash), "avg_price": float(c.avg_price), "dca_mode": bool(getattr(c, 'dca_mode', False)), "dca_amount": float(getattr(c, 'dca_amount', 0)), "dca_interval_hours": int(getattr(c, 'dca_interval_hours', 72)), "dca_dip_pct": float(getattr(c, 'dca_dip_pct', 3.0)), "last_dca_time": float(getattr(c, 'last_dca_time', 0.0))} for c in self.core_positions],
+                "cores": [{"ticker": c.ticker, "name": c.name, "shares": int(c.shares), "floor_shares": int(c.floor_shares), "cash": float(c.cash), "initial_cash": float(c.initial_cash), "avg_price": float(c.avg_price), "dca_mode": bool(getattr(c, 'dca_mode', False)), "dca_amount": float(getattr(c, 'dca_amount', 0)), "dca_interval_hours": int(getattr(c, 'dca_interval_hours', 72)), "dca_dip_pct": float(getattr(c, 'dca_dip_pct', 3.0)), "last_dca_time": float(getattr(c, 'last_dca_time', 0.0)), "second_buy_price": float(getattr(c, 'second_buy_price', 0.0)), "second_buy_cash": float(getattr(c, 'second_buy_cash', 0.0)), "second_buy_done": bool(getattr(c, 'second_buy_done', False))} for c in self.core_positions],
                 "satellites": {ticker: {"name": pos.name, "shares": int(pos.shares), "cash": float(pos.cash), "initial_cash": float(pos.initial_cash), "avg_price": float(pos.avg_price), "partial_sold": bool(getattr(pos, 'partial_sold', False)), "partial_sold_2": bool(getattr(pos, 'partial_sold_2', False)), "second_buy_done": bool(getattr(pos, 'second_buy_done', False)), "pyramid_done": bool(getattr(pos, 'pyramid_done', False)), "second_buy_price": float(getattr(pos, 'second_buy_price', 0)), "second_buy_cash": float(getattr(pos, 'second_buy_cash', 0)), "max_price": float(getattr(pos, 'max_price', 0))} for ticker, pos in self.satellite_positions.items()},
                 "satellite_info": self.satellite_info, "satellite_strategies": self.satellite_strategies, "hot_sectors": self.hot_sectors, "num_satellites": self.num_satellites,
                 "last_screen_month": getattr(self, 'last_screen_month', None), "last_screen_date": self.last_screen_date.strftime('%Y-%m-%d') if getattr(self, 'last_screen_date', None) else None,
@@ -1168,6 +1168,9 @@ class KRBotController:
                 pos.dca_interval_hours = int(c.get("dca_interval_hours", 72))
                 pos.dca_dip_pct        = float(c.get("dca_dip_pct", 3.0))
                 pos.last_dca_time      = float(c.get("last_dca_time", 0.0))
+                pos.second_buy_price   = float(c.get("second_buy_price", 0.0))
+                pos.second_buy_cash    = float(c.get("second_buy_cash", 0.0))
+                pos.second_buy_done    = bool(c.get("second_buy_done", False))
                 self.core_positions.append(pos)
             self.satellite_positions = {}
             for ticker, s in state["satellites"].items():
@@ -1803,6 +1806,29 @@ class KRBotController:
                         self.add_log(f"🐻 [BEAR 코어 조기익절] {c_tk} RSI={c_rsi:.1f} ≥ 60 → SELL 오버라이드")
                 # ─────────────────────────────────────────────────────────────
 
+                # ── 코어 2차 분할 매수: 1차 진입가 -2% 눌림목 ─────────────────
+                if (c_sh > 0 and is_core_cd
+                        and not getattr(core, 'second_buy_done', True)
+                        and getattr(core, 'second_buy_price', 0) > 0
+                        and cp <= core.second_buy_price
+                        and getattr(core, 'second_buy_cash', 0) >= cp
+                        and c_sig != 'SELL'):
+                    sq = int((core.second_buy_cash * 0.98) // cp)
+                    if sq > 0 and self._buy_order(c_tk, sq, core, c_nm):
+                        with self.lock:
+                            core.last_order_time = time.time()
+                            core.second_buy_done = True
+                            core.second_buy_cash = 0.0
+                            core.status          = "2차 매수 ✅"
+                            new_shares = core.shares + sq
+                            if new_shares > 0:
+                                core.avg_price = round((core.avg_price * core.shares + cp * sq) / new_shares, 2)
+                            core.shares = new_shares
+                        self.add_log(f"💎 {c_nm} 코어 2차 매수 | {sq}주 @ {cp:,}원 | 눌림목 -2%")
+                        self._log_trade(c_tk, c_nm, 'BUY', cp, "RSI코어", f"코어 2차 분할 매수 눌림목 ({sq}주)")
+                        self._send_trade_telegram(self._fmt_trade_msg("💎", "코어 2차 매수", c_tk, c_nm, cp, sq, strategy="RSI코어", note="-2% 눌림목 포착"))
+                # ─────────────────────────────────────────────────────────────
+
                 # ── ATR(14) 코어 하드 손절 (전량 청산 — floor_shares 없음) ──
                 c_atr = c_avg * 0.02
                 if not ex_df.empty and all(col in ex_df.columns for col in ['high','low','close']):
@@ -1821,12 +1847,15 @@ class KRBotController:
                         core_profit = _net_profit(cp, c_avg, c_sh)
                         with self.lock:
                             core.last_order_time = time.time()
-                            core.status         = "코어 손절 🚨"
-                            core.shares         = 0
-                            core._bought_val    = 0.0
-                            core.partial_sold   = False
-                            core.partial_sold_2 = False
-                            self.pnl_this_turn += core_profit
+                            core.status          = "코어 손절 🚨"
+                            core.shares          = 0
+                            core._bought_val     = 0.0
+                            core.partial_sold    = False
+                            core.partial_sold_2  = False
+                            core.second_buy_price= 0.0
+                            core.second_buy_cash = 0.0
+                            core.second_buy_done = False
+                            self.pnl_this_turn  += core_profit
                         self._record_daily_pnl(core_profit)
                         self.add_log(f"🚨 {c_nm} 코어 ATR 손절 전량 | {c_sh}주 @ {cp:,}원 | 손익: {core_profit:+,.0f}원")
                         self._log_trade(c_tk, c_nm, 'SELL', cp, "코어 ATR 손절", f"평단 {c_avg:,.0f} 대비 ATR×{core_hard_mult} 이탈", profit=core_profit)
@@ -1950,8 +1979,13 @@ class KRBotController:
                             core.status = "감시 중 👀"
                             core.status_msg = f"코어 진입 점수 부족 ({c_score}/{c_threshold}) — 신호 강화 대기"
                     else:
-                        budget_ratio = get_budget_ratio_from_score(c_score, c_threshold)
-                        qty = int((c_cash * budget_ratio * 0.98) // cp)
+                        budget_ratio  = get_budget_ratio_from_score(c_score, c_threshold)
+                        # 위성과 동일하게 75/25 분할: 1차 진입 후 나머지는 -2% 눌림목 예약
+                        first_ratio   = budget_ratio * 0.75
+                        reserve_ratio = budget_ratio * 0.25
+                        first_cash    = c_cash * first_ratio
+                        reserve_cash  = c_cash * reserve_ratio
+                        qty = int((first_cash * 0.98) // cp)
                         if qty > 0:
                             # ② AI 승인 (위성과 동일)
                             approved, ai_reason = True, "AI 미설정"
@@ -1969,17 +2003,20 @@ class KRBotController:
                                 self.add_log(f"🛑 {c_nm} 코어 AI 거절: {ai_reason[:60]}")
                             elif self._buy_order(c_tk, qty, core, c_nm):
                                 with self.lock:
-                                    core.last_order_time = time.time()
-                                    core.status         = "체결 대기 ⏳"
-                                    core.shares         += qty
-                                    core._bought_val    = getattr(core, '_bought_val', 0.0) + int(cp * qty)
-                                    core.cash           = max(0.0, core.cash - int(cp * qty))
-                                    core.partial_sold   = False
-                                    core.partial_sold_2 = False
+                                    core.last_order_time  = time.time()
+                                    core.status           = "체결 대기 ⏳"
+                                    core.shares          += qty
+                                    core._bought_val      = getattr(core, '_bought_val', 0.0) + int(cp * qty)
+                                    core.cash             = max(0.0, core.cash - int(cp * qty))
+                                    core.partial_sold     = False
+                                    core.partial_sold_2   = False
+                                    core.second_buy_price = cp * 0.98   # 1차 진입가 -2%
+                                    core.second_buy_cash  = reserve_cash
+                                    core.second_buy_done  = False
                                 score_str = " | ".join(c_score_reasons[:3])
-                                self.add_log(f"💎 {c_nm} 코어 매수 | {qty}주 @ {cp:,}원 | 점수 {c_score}점 ({int(budget_ratio*100)}%) | AI: {ai_reason[:40]}")
-                                self._log_trade(c_tk, c_nm, 'BUY', cp, "RSI+멀티점수 코어", f"RSI골든크로스 + 점수{c_score}pt [{score_str}] AI승인")
-                                self._send_trade_telegram(self._fmt_trade_msg("💎", f"코어 매수 ({int(budget_ratio*100)}%)", c_tk, c_nm, cp, qty, strategy=f"RSI코어 · {c_score}pt/{c_threshold}pt", ai_reason=ai_reason))
+                                self.add_log(f"💎 {c_nm} 코어 1차 매수 | {qty}주 @ {cp:,}원 | 점수 {c_score}점 ({int(first_ratio*100)}%) | 2차 예약 {cp*0.98:,.0f}원 | AI: {ai_reason[:40]}")
+                                self._log_trade(c_tk, c_nm, 'BUY', cp, "RSI+멀티점수 코어", f"RSI골든크로스 + 점수{c_score}pt [{score_str}] AI승인 — 1차({int(first_ratio*100)}%)")
+                                self._send_trade_telegram(self._fmt_trade_msg("💎", f"코어 1차 매수 ({int(first_ratio*100)}%)", c_tk, c_nm, cp, qty, strategy=f"RSI코어 · {c_score}pt/{c_threshold}pt", ai_reason=ai_reason, note=f"2차 예약: {cp*0.98:,.0f}원 (-2%)"))
 
                 elif c_sig == 'SELL' and c_sh > 0 and is_core_cd:
                     # RSI 데드크로스 → 전량 매도 (floor_shares 제거)
@@ -1989,10 +2026,13 @@ class KRBotController:
                             core.last_order_time = time.time()
                             core.status         = "체결 대기 ⏳"
                             core.shares         = 0
-                            core._bought_val    = 0.0
-                            core.partial_sold   = False
-                            core.partial_sold_2 = False
-                            self.pnl_this_turn += core_profit
+                            core._bought_val     = 0.0
+                            core.partial_sold    = False
+                            core.partial_sold_2  = False
+                            core.second_buy_price= 0.0
+                            core.second_buy_cash = 0.0
+                            core.second_buy_done = False
+                            self.pnl_this_turn  += core_profit
                         self._record_daily_pnl(core_profit)
                         self.add_log(f"💎 {c_nm} 코어 매도 전량 | {c_sh}주 @ {cp:,}원 | 손익: {core_profit:+,.0f}원")
                         self._log_trade(c_tk, c_nm, 'SELL', cp, "RSI 코어 전량매도", "RSI 데드크로스 — 재진입 타점 탐색", profit=core_profit)

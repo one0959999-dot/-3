@@ -1670,6 +1670,11 @@ class CorePosition:
         self.ai_exit_decision  = None   # 'SELL_PARTIAL' / 'HOLD' / None
         self.ai_exit_hold_until= 0.0    # HOLD 판단 후 재요청 금지 시각
 
+        # ── 2차 분할 매수 (위성과 동일 구조) ────────────────────────
+        self.second_buy_price  = 0.0    # 2차 매수 발동가 (1차 진입가 × 0.98)
+        self.second_buy_cash   = 0.0    # 2차 매수 유보 예산
+        self.second_buy_done   = False  # 2차 매수 완료 여부
+
         # ── 적립식(DCA) 모드 ─────────────────────────────────────────
         self.dca_mode           = False   # 적립식 모드 활성화 여부
         self.dca_amount         = 0       # 1회 적립 금액 (0=잔여 예산의 10%)
