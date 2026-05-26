@@ -1670,6 +1670,13 @@ class CorePosition:
         self.ai_exit_decision  = None   # 'SELL_PARTIAL' / 'HOLD' / None
         self.ai_exit_hold_until= 0.0    # HOLD 판단 후 재요청 금지 시각
 
+        # ── 적립식(DCA) 모드 ─────────────────────────────────────────
+        self.dca_mode           = False   # 적립식 모드 활성화 여부
+        self.dca_amount         = 0       # 1회 적립 금액 (0=잔여 예산의 10%)
+        self.dca_interval_hours = 72      # 정기 적립 주기 (기본 3일 = 72시간)
+        self.dca_dip_pct        = 3.0     # 눌림목 트리거: 평단 대비 -X% 하락 시 추가 매수
+        self.last_dca_time      = 0.0     # 마지막 DCA 매수 시각 (unix timestamp)
+
     def buy(self, price, cash_to_use=None):
         """매수 (cash_to_use 미지정 시 전액 매수)"""
         # [C-06] cash_to_use=0.0 → 'if cash_to_use' 는 False → 전액 매수 오인.

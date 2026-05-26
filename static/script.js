@@ -583,6 +583,12 @@ document.addEventListener('DOMContentLoaded', () => {
             }
 
             const div = document.createElement('div');
+            const isDca = !!core.dca_mode;
+            const dcaBtnStyle = isDca
+                ? 'background:rgba(16,185,129,0.25);color:#34d399;border:1px solid rgba(16,185,129,0.5);'
+                : 'background:rgba(255,255,255,0.07);color:#64748b;border:1px solid rgba(255,255,255,0.15);';
+            const dcaLabel = isDca ? '💰 DCA ON' : '💰 DCA';
+
             div.className = 'info-card glass-card core-card';
             div.innerHTML = `
                 <div style="display: flex; justify-content: space-between; align-items: flex-start;">
@@ -590,7 +596,11 @@ document.addEventListener('DOMContentLoaded', () => {
                         💎 ${core.name} (Core)
                         <span onclick="showStatusModal('${core.name}', '${sMsg.replace(/'/g, "\\'")}')" class="badge" style="cursor:pointer; ${badgeStyle}">${sText}</span>
                     </h3>
-                    <button onclick="openCoreModal()" style="background:none; border:none; color:var(--text-dim); cursor:pointer; font-size:1.1rem;" title="코어 설정 변경">⚙️</button>
+                    <div style="display:flex;gap:6px;align-items:center;">
+                        <button onclick="toggleCoreDCA('${core.ticker}', '${core.name}', ${isDca})"
+                            style="font-size:0.7rem;padding:3px 8px;border-radius:6px;cursor:pointer;${dcaBtnStyle}" title="적립식 자동매수 ON/OFF">${dcaLabel}</button>
+                        <button onclick="openCoreModal()" style="background:none; border:none; color:var(--text-dim); cursor:pointer; font-size:1.1rem;" title="코어 설정 변경">⚙️</button>
+                    </div>
                 </div>
                 <div class="card-value highlight">${(core.shares || 0).toLocaleString()} 주</div>
                 <div class="card-subvalue">
@@ -774,6 +784,28 @@ window.openSettingsModal = async function () {
 }
 window.closeSettingsModal = function () {
     document.getElementById('settingsModal').style.display = 'none';
+}
+
+window.toggleCoreDCA = async function(ticker, name, currentlyOn) {
+    const enable = !currentlyOn;
+    const action = enable ? 'ON' : 'OFF';
+    if (!confirm(`${name} 적립식 DCA를 ${action}으로 변경할까요?\n\n` +
+        (enable ? '✅ 3일마다 + 평단 -3% 눌림 시 자동 소액 적립 매수가 시작됩니다.\n(진입 점수/RSI 신호 무관)' : '❌ DCA 적립을 중단합니다.'))) return;
+    try {
+        const res = await fetch('/api/set_core_dca', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({ ticker, dca: enable })
+        });
+        const d = await res.json();
+        if (d.status === 'ok') {
+            showToast(`💰 ${d.message}`, 'success');
+        } else {
+            showToast(`오류: ${d.message}`, 'error');
+        }
+    } catch(e) {
+        showToast('DCA 설정 실패', 'error');
+    }
 }
 
 window.openCoreModal = function () {

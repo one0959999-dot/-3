@@ -462,7 +462,13 @@ class KRBotController:
         # 사용자 지정 종목 전부 사용 (최대 3개까지)
         for c in self.user_core_stocks[:3]:
             if c.get('ticker') and c['ticker'] not in user_tickers_seen:
-                self.core_positions.append(CorePosition(c['ticker'], c['name'], initial_cash=0))
+                pos = CorePosition(c['ticker'], c['name'], initial_cash=0)
+                if c.get('dca'):
+                    pos.dca_mode           = True
+                    pos.dca_amount         = float(c.get('dca_amount', 0))
+                    pos.dca_interval_hours = int(c.get('dca_hours', 72))
+                    pos.dca_dip_pct        = float(c.get('dca_dip_pct', 3.0))
+                self.core_positions.append(pos)
                 user_tickers_seen.add(c['ticker'])
         # 빈 슬롯만 TBD 플레이스홀더로 채움
         ai_needed = 3 - len(self.core_positions)
@@ -1130,7 +1136,7 @@ class KRBotController:
     def _save_state(self):
         try:
             state = {
-                "cores": [{"ticker": c.ticker, "name": c.name, "shares": int(c.shares), "floor_shares": int(c.floor_shares), "cash": float(c.cash), "initial_cash": float(c.initial_cash), "avg_price": float(c.avg_price)} for c in self.core_positions],
+                "cores": [{"ticker": c.ticker, "name": c.name, "shares": int(c.shares), "floor_shares": int(c.floor_shares), "cash": float(c.cash), "initial_cash": float(c.initial_cash), "avg_price": float(c.avg_price), "dca_mode": bool(getattr(c, 'dca_mode', False)), "dca_amount": float(getattr(c, 'dca_amount', 0)), "dca_interval_hours": int(getattr(c, 'dca_interval_hours', 72)), "dca_dip_pct": float(getattr(c, 'dca_dip_pct', 3.0)), "last_dca_time": float(getattr(c, 'last_dca_time', 0.0))} for c in self.core_positions],
                 "satellites": {ticker: {"name": pos.name, "shares": int(pos.shares), "cash": float(pos.cash), "initial_cash": float(pos.initial_cash), "avg_price": float(pos.avg_price), "partial_sold": bool(getattr(pos, 'partial_sold', False)), "partial_sold_2": bool(getattr(pos, 'partial_sold_2', False)), "second_buy_done": bool(getattr(pos, 'second_buy_done', False)), "pyramid_done": bool(getattr(pos, 'pyramid_done', False)), "second_buy_price": float(getattr(pos, 'second_buy_price', 0)), "second_buy_cash": float(getattr(pos, 'second_buy_cash', 0)), "max_price": float(getattr(pos, 'max_price', 0))} for ticker, pos in self.satellite_positions.items()},
                 "satellite_info": self.satellite_info, "satellite_strategies": self.satellite_strategies, "hot_sectors": self.hot_sectors, "num_satellites": self.num_satellites,
                 "last_screen_month": getattr(self, 'last_screen_month', None), "last_screen_date": self.last_screen_date.strftime('%Y-%m-%d') if getattr(self, 'last_screen_date', None) else None,
@@ -1154,6 +1160,11 @@ class KRBotController:
             for c in state["cores"]:
                 pos = CorePosition(c["ticker"], c["name"], initial_cash=c.get("initial_cash", 3000000))
                 pos.shares = c["shares"]; pos.floor_shares = c["floor_shares"]; pos.cash = c["cash"]; pos.avg_price = c.get("avg_price", 0)
+                pos.dca_mode           = bool(c.get("dca_mode", False))
+                pos.dca_amount         = float(c.get("dca_amount", 0))
+                pos.dca_interval_hours = int(c.get("dca_interval_hours", 72))
+                pos.dca_dip_pct        = float(c.get("dca_dip_pct", 3.0))
+                pos.last_dca_time      = float(c.get("last_dca_time", 0.0))
                 self.core_positions.append(pos)
             self.satellite_positions = {}
             for ticker, s in state["satellites"].items():
@@ -1866,7 +1877,50 @@ class KRBotController:
                 # c_cash를 락 안에서 최신값으로 재확인 (스냅샷 후 _sync_internal_balances가 변경 가능)
                 with self.lock: c_cash = core.cash
 
-                if c_sig == 'BUY' and c_cash >= cp and is_core_cd:
+                # ── 적립식(DCA) 매수 — 진입 점수 게이트 우회 ────────────────
+                # dca_mode=True 코어는 진입 점수/RSI 신호 무관하게
+                # ① 설정 주기(기본 3일) 도달 또는
+                # ② 48시간 경과 + 평단 대비 -dca_dip_pct% 이하 하락 시 소액 적립 매수
+                _dca_bought_this_turn = False
+                if getattr(core, 'dca_mode', False) and c_cash >= cp and is_core_cd:
+                    _now_ts      = time.time()
+                    _elapsed     = _now_ts - getattr(core, 'last_dca_time', 0.0)
+                    _dca_int_sec = getattr(core, 'dca_interval_hours', 72) * 3600
+                    _dca_dip     = getattr(core, 'dca_dip_pct', 3.0)
+                    _dca_budget  = getattr(core, 'dca_amount', 0) or (c_cash * 0.10)
+                    _dca_budget  = min(_dca_budget, c_cash)
+
+                    _do_dca, _dca_reason = False, ""
+                    if _elapsed >= _dca_int_sec:                                          # 정기 적립
+                        _do_dca = True
+                        _dca_reason = f"정기 적립 ({int(getattr(core,'dca_interval_hours',72)//24)}일 주기)"
+                    elif _elapsed >= 48 * 3600 and c_sh > 0 and c_avg > 0 and cp <= c_avg * (1 - _dca_dip / 100):
+                        _do_dca = True                                                    # 눌림목 추가 매수
+                        _dca_reason = f"눌림목 추가 ({(cp/c_avg-1)*100:.1f}% 하락)"
+
+                    if _do_dca and _dca_budget >= cp:
+                        _dca_qty = int((_dca_budget * 0.98) // cp)
+                        if _dca_qty > 0 and self._buy_order(c_tk, _dca_qty, core, c_nm):
+                            with self.lock:
+                                core.last_order_time = time.time()
+                                core.last_dca_time   = _now_ts
+                                core.shares         += _dca_qty
+                                core._bought_val    = getattr(core, '_bought_val', 0.0) + int(cp * _dca_qty)
+                                core.cash           = max(0.0, core.cash - int(cp * _dca_qty))
+                                core.status         = f"DCA 적립 💰"
+                            self.add_log(f"💰 {c_nm} DCA 적립 | {_dca_qty}주 @ {cp:,}원 | {_dca_reason}")
+                            self._log_trade(c_tk, c_nm, 'BUY', cp, "DCA적립", _dca_reason)
+                            self._send_trade_telegram(self._fmt_trade_msg("💰", f"DCA 적립 ({_dca_reason})", c_tk, c_nm, cp, _dca_qty, strategy="DCA적립"))
+                            _dca_bought_this_turn = True
+                    elif getattr(core, 'dca_mode', False):
+                        _next_sec = max(0, _dca_int_sec - _elapsed)
+                        _next_h   = int(_next_sec // 3600)
+                        with self.lock:
+                            core.status     = f"DCA 적립 대기 💰"
+                            core.status_msg = f"다음 정기 적립까지 {_next_h}시간 | 눌림목 트리거 -{_dca_dip:.0f}%"
+                # ─────────────────────────────────────────────────────────────
+
+                if c_sig == 'BUY' and c_cash >= cp and is_core_cd and not _dca_bought_this_turn:
                     # ① 통합 진입 점수 체크
                     c_score, c_score_reasons = calculate_entry_score(ex_df, cp, regime)
                     c_threshold = get_entry_threshold(regime, 'core')
@@ -3424,7 +3478,7 @@ class KRBotController:
                 core_val = float(core.shares) * cp
                 total_realtime_stock_val += core_val
                 tracked_tickers.add(core.ticker)
-                cores_data.append({"name": core.name, "ticker": core.ticker, "shares": core.shares, "floor": core.floor_shares, "price": cp, "value": core_val, "avg_price": float(getattr(core, 'avg_price', 0) or 0), "budget": float(getattr(core, 'cash', 0) or 0), "strategy": "장기 우상향" if core.ticker != self.core_ticker else "RSI + floor 보호", "status": getattr(core, 'status', '감시 중 👀'), "status_msg": getattr(core, 'status_msg', '지표 점검 중...')})
+                cores_data.append({"name": core.name, "ticker": core.ticker, "shares": core.shares, "floor": core.floor_shares, "price": cp, "value": core_val, "avg_price": float(getattr(core, 'avg_price', 0) or 0), "budget": float(getattr(core, 'cash', 0) or 0), "strategy": "장기 우상향" if core.ticker != self.core_ticker else "RSI + floor 보호", "status": getattr(core, 'status', '감시 중 👀'), "status_msg": getattr(core, 'status_msg', '지표 점검 중...'), "dca_mode": bool(getattr(core, 'dca_mode', False))})
 
             satellites = []
             # num_satellites 한도만큼만 UI에 표시 (보유 중인 종목 우선)

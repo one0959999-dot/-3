@@ -344,6 +344,62 @@ def reset_initial_cash():
 
     return jsonify({"status": "ok", "message": msg})
 
+
+@app.route('/api/set_core_dca', methods=['POST'])
+@login_required
+def set_core_dca():
+    """코어 종목 DCA 적립식 모드 토글."""
+    data   = request.json or {}
+    ticker = data.get('ticker', '').strip()
+    enable = bool(data.get('dca', False))
+    if not ticker:
+        return jsonify({"status": "error", "message": "ticker 누락"}), 400
+
+    is_mock = bool(current_user.data.get('is_mock', 0))
+    bot = manager.bots.get((current_user.id, is_mock))
+
+    # 1) 메모리 봇의 코어 포지션에 즉시 반영
+    changed_name = ticker
+    if bot:
+        with bot.lock:
+            for core in bot.core_positions:
+                if core.ticker == ticker:
+                    core.dca_mode = enable
+                    if enable:
+                        core.dca_amount         = float(data.get('dca_amount', 0))
+                        core.dca_interval_hours = int(data.get('dca_hours', 72))
+                        core.dca_dip_pct        = float(data.get('dca_dip_pct', 3.0))
+                        if not enable:
+                            core.last_dca_time = 0.0  # 비활성화 시 타이머 초기화
+                    changed_name = core.name
+                    break
+
+    # 2) DB의 user_core_stocks에도 dca 플래그 저장
+    stocks = []
+    if bot and hasattr(bot, 'user_core_stocks'):
+        stocks = bot.user_core_stocks or []
+    else:
+        import json
+        _row = get_db_connection().execute(
+            "SELECT core_stocks FROM users WHERE id=?", (current_user.id,)
+        ).fetchone()
+        if _row and _row['core_stocks']:
+            try: stocks = json.loads(_row['core_stocks'])
+            except Exception: stocks = []
+    for s in stocks:
+        if s.get('ticker') == ticker:
+            s['dca'] = enable
+            if enable:
+                if data.get('dca_amount'): s['dca_amount'] = float(data['dca_amount'])
+                if data.get('dca_hours'):  s['dca_hours']  = int(data['dca_hours'])
+                if data.get('dca_dip_pct'):s['dca_dip_pct']= float(data['dca_dip_pct'])
+    set_user_core_stocks(current_user.id, stocks)
+
+    action = "활성화" if enable else "비활성화"
+    msg = f"{changed_name}({ticker}) 적립식 DCA {action} 완료"
+    return jsonify({"status": "ok", "message": msg, "dca": enable})
+
+
 @app.route('/api/daily_report')
 @login_required
 def get_daily_report():
