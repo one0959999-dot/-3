@@ -1627,7 +1627,7 @@ def calculate_entry_score(df, price: float, regime: str = 'NEUTRAL',
                 score += 1
                 reasons.append("전일종가회복")
 
-        # ⑧ 볼린저밴드 25~75% 구간 (+1) — 극단 회피
+        # ⑧ 볼린저밴드 25~75% 구간 (+1) — 극단 회피 (BULL 장에서는 상단 90%까지 허용)
         if len(c) >= 22:
             ma20_bb = float(c.rolling(20).mean().iloc[-1])
             std20   = float(c.rolling(20).std().iloc[-1])
@@ -1636,7 +1636,8 @@ def calculate_entry_score(df, price: float, regime: str = 'NEUTRAL',
             bb_range = bb_upper - bb_lower
             if bb_range > 0:
                 bb_pct = (price - bb_lower) / bb_range * 100
-                if 25 <= bb_pct <= 75:
+                bb_upper_limit = 90 if regime == 'BULL' else 75
+                if 25 <= bb_pct <= bb_upper_limit:
                     score += 1
                     reasons.append(f"BB내위치({bb_pct:.0f}%)")
 

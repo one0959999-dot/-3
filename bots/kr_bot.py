@@ -1851,6 +1851,21 @@ class KRBotController:
                         self.add_log(f"🐻 [BEAR 코어 조기익절] {c_tk} RSI={c_rsi:.1f} ≥ 60 → SELL 오버라이드")
                 # ─────────────────────────────────────────────────────────────
 
+                # ── BULL 장에서 RSI 70 SELL 억제 → MA5 이탈 시만 매도 ────────
+                # BULL 추세에서는 RSI가 오래 고공행진 → RSI 70 신호로 팔면 수익 조기 반납
+                # 현재가가 MA5 * 0.99 이상이면 추세 유지 → SELL을 NEUTRAL로 되돌림
+                if c_sig == 'SELL' and regime == "BULL" and c_sh > 0:
+                    try:
+                        _closes_bull = ex_df['close'].dropna()
+                        if len(_closes_bull) >= 5:
+                            _ma5_sell = float(_closes_bull.rolling(5).mean().iloc[-1])
+                            if cp >= _ma5_sell * 0.99:
+                                c_sig = 'NEUTRAL'
+                                self.add_log(f"🐂 [BULL 코어] {c_tk} RSI SELL 억제 (RSI={c_rsi:.1f}) — MA5({_ma5_sell:,.0f}) 위 보유 유지")
+                    except Exception:
+                        pass
+                # ─────────────────────────────────────────────────────────────
+
                 # ── 코어 2차 분할 매수: 1차 진입가 -2% 눌림목 ─────────────────
                 if (c_sh > 0 and is_core_cd
                         and not getattr(core, 'second_buy_done', True)
@@ -1949,9 +1964,12 @@ class KRBotController:
                 if c_sh > 0 and c_avg > 0 and is_core_cd:
                     c_pnl_pct = (cp / c_avg - 1) * 100
                     c_decision = getattr(core, 'ai_exit_decision', None)
+                    # BULL 장에서는 추세가 강하므로 익절 기준 상향 (+15%/+30%)
+                    _core_partial1 = 15.0 if regime == "BULL" else 10.0
+                    _core_partial2 = 30.0 if regime == "BULL" else 20.0
 
-                    # 1차: +10% 도달 → AI에 익절 여부 문의
-                    if not core.partial_sold and c_pnl_pct >= 10.0 and c_sh > 1:
+                    # 1차: +10%(일반) / +15%(BULL) 도달 → AI에 익절 여부 문의
+                    if not core.partial_sold and c_pnl_pct >= _core_partial1 and c_sh > 1:
                         if c_decision is None:
                             if self.gemini:
                                 self._trigger_ai_partial_exit(core, c_tk, c_nm, cp, c_avg, c_pnl_pct, regime)
@@ -1977,8 +1995,8 @@ class KRBotController:
                                 self._send_trade_telegram(self._fmt_trade_msg("✂️", "코어 1차익절(50%)", c_tk, c_nm, cp, partial_qty, profit=core_profit, strategy="코어 AI 익절"))
                         continue
 
-                    # 2차: +20% 도달 → AI에 전량 익절 여부 문의
-                    elif core.partial_sold and not core.partial_sold_2 and c_pnl_pct >= 20.0:
+                    # 2차: +20%(일반) / +30%(BULL) 도달 → AI에 전량 익절 여부 문의
+                    elif core.partial_sold and not core.partial_sold_2 and c_pnl_pct >= _core_partial2:
                         if c_decision is None:
                             if self.gemini:
                                 self._trigger_ai_partial_exit(core, c_tk, c_nm, cp, c_avg, c_pnl_pct, regime)
@@ -2362,10 +2380,13 @@ class KRBotController:
                                 self._record_daily_pnl(profit)
                                 continue
 
-                # ── 부분 익절: +10% 도달 시 AI 판단 ─────────────────────
+                # ── 부분 익절: +10%(일반) / +15%(BULL) 도달 시 AI 판단 ─────
+                # BULL 장에서는 추세 지속 가능성이 높아 익절 기준 상향
+                _sat_partial1_mult = 1.15 if regime == "BULL" else 1.10
+                _sat_partial2_mult = 1.30 if regime == "BULL" else 1.20
                 if (p_sh > 0 and p_avg > 0 and is_cd_passed
                         and not getattr(pos, 'partial_sold', False)
-                        and price >= p_avg * 1.10):
+                        and price >= p_avg * _sat_partial1_mult):
                     s_decision = getattr(pos, 'ai_exit_decision', None)
                     if s_decision is None:
                         if self.gemini:
@@ -2387,16 +2408,18 @@ class KRBotController:
                                 pos.status            = "부분익절 ✅"
                                 pos.shares            = max(0, pos.shares - sell_qty)
                             profit = _net_profit(price, p_avg, sell_qty)
-                            self._log_trade(ticker, p_nm, 'SELL', price, st_nm, f"부분 익절 +10% ({sell_qty}주)", profit=profit)
-                            self._send_trade_telegram(self._fmt_trade_msg("🎯", "부분 익절", ticker, p_nm, price, sell_qty, profit=profit, strategy=st_nm, note=f"나머지 {p_sh - sell_qty}주는 AI 판단 트레일링"))
+                            _pnl_s1 = (price / p_avg - 1) * 100
+                            _thr_s1 = "15%(BULL)" if regime == "BULL" else "10%"
+                            self._log_trade(ticker, p_nm, 'SELL', price, st_nm, f"부분 익절 +{_thr_s1} ({sell_qty}주)", profit=profit)
+                            self._send_trade_telegram(self._fmt_trade_msg("🎯", f"부분 익절 +{_thr_s1}", ticker, p_nm, price, sell_qty, profit=profit, strategy=st_nm, note=f"나머지 {p_sh - sell_qty}주는 AI 판단 트레일링"))
                             with self.lock: self.pnl_this_turn += profit
                             self._record_daily_pnl(profit)
 
-                # ── 2차 분할 익절: +20% 도달 시 AI 판단 ──────────────────
+                # ── 2차 분할 익절: +20%(일반) / +30%(BULL) 도달 시 AI 판단 ──
                 if (p_sh > 0 and p_avg > 0 and is_cd_passed
                         and getattr(pos, 'partial_sold', False)
                         and not getattr(pos, 'partial_sold_2', False)
-                        and price >= p_avg * 1.20):
+                        and price >= p_avg * _sat_partial2_mult):
                     s_decision = getattr(pos, 'ai_exit_decision', None)
                     if s_decision is None:
                         if self.gemini:
@@ -2418,8 +2441,9 @@ class KRBotController:
                                 pos.status            = "2차익절 ✅"
                                 pos.shares            = 0
                             profit = _net_profit(price, p_avg, sell_qty)
-                            self._log_trade(ticker, p_nm, 'SELL', price, st_nm, f"2차 전량 익절 +20% ({sell_qty}주)", profit=profit)
-                            self._send_trade_telegram(self._fmt_trade_msg("🏆", "2차 전량 익절", ticker, p_nm, price, sell_qty, profit=profit, strategy=st_nm, note="AI 판단 익절"))
+                            _thr_s2 = "30%(BULL)" if regime == "BULL" else "20%"
+                            self._log_trade(ticker, p_nm, 'SELL', price, st_nm, f"2차 전량 익절 +{_thr_s2} ({sell_qty}주)", profit=profit)
+                            self._send_trade_telegram(self._fmt_trade_msg("🏆", f"2차 전량 익절 +{_thr_s2}", ticker, p_nm, price, sell_qty, profit=profit, strategy=st_nm, note="AI 판단 익절"))
                             with self.lock: self.pnl_this_turn += profit
                             self._record_daily_pnl(profit)
 
@@ -2489,18 +2513,19 @@ class KRBotController:
                     score_ratio = get_budget_ratio_from_score(entry_score, entry_threshold)
 
                     # ── BEAR 국면: 10개 저점 전략 스코어 기반 차등 진입 + AI 최종 심사 ──
+                    # bear_score ≥ 3 이상만 진입 (반등 확신도 높을 때만 → 오진입 방지)
                     if regime == "BEAR":
                         bear_score, bear_reasons = get_bear_bottom_score(ex_df)
-                        if bear_score == 0:
-                            pos.status = "하락장 매수 보류 🐻"
-                            pos.status_msg = "BEAR 국면 — 저점 신호 없음, 매수 차단"
+                        if bear_score < 3:
+                            pos.status = f"하락장 매수 보류 🐻 (저점신호 {bear_score}/3)"
+                            pos.status_msg = f"BEAR 국면 — 저점 신호 부족 ({bear_score}개), 최소 3개 필요"
                             continue
                         # 신호 강도에 따른 차등 포지션 사이징
-                        # BEAR 시 위성 저점매수 = 총예산의 50% 기준 배분
-                        # (방어헤지 50% + 위성저점 50% 대칭 구조)
-                        # 하락장: 통합 점수(score_ratio)와 저점 타이밍 신호 합산
-                        bear_timing_bonus = 0.15 if bear_score >= 3 else (0.10 if bear_score == 2 else 0.05)
-                        bear_ratio  = min(0.90, score_ratio + bear_timing_bonus)
+                        # BEAR 시 위성 저점매수 = bear_score ≥ 3 확인 후 진입
+                        # 하락장 특성상 포지션은 통상 50%로 제한 (리스크 관리)
+                        # score 5개 → 보너스 20%, 3~4개 → 보너스 15%
+                        bear_timing_bonus = 0.20 if bear_score >= 5 else 0.15
+                        bear_ratio  = min(0.50, score_ratio * 0.5 + bear_timing_bonus)  # BEAR: 최대 50% 포지션
                         bear_label  = f"BEAR·점수{entry_score}pt+저점{bear_score}개"
                         bear_reason_str = " | ".join(bear_reasons)
                         bounce_cash = p_cash * bear_ratio

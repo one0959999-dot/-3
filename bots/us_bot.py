@@ -798,9 +798,12 @@ class USBotController:
             elif pos.shares > 0 and avg > 0:
                 pnl_pct = (price / avg - 1) * 100
                 decision = getattr(pos, 'ai_exit_decision', None)
+                # BULL 장에서는 추세가 강하므로 익절 기준 상향 (+15%/+30%)
+                _core_partial1 = 15.0 if regime == "BULL" else self.PARTIAL1_PCT
+                _core_partial2 = 30.0 if regime == "BULL" else self.PARTIAL2_PCT
 
-                # 1차: +10% 도달 → AI에 익절 여부 문의
-                if not pos.partial_sold and pnl_pct >= self.PARTIAL1_PCT and pos.shares > 1:
+                # 1차: +10%(일반) / +15%(BULL) 도달 → AI에 익절 여부 문의
+                if not pos.partial_sold and pnl_pct >= _core_partial1 and pos.shares > 1:
                     if decision is None:
                         if self.gemini:
                             self._trigger_ai_partial_exit(pos, ticker, pos.name, price, avg, pnl_pct, regime)
@@ -822,8 +825,8 @@ class USBotController:
                         self._record_pnl(pnl)
                         self.add_log(f"✂️  코어 1차익절 {pos.name} | PnL ${pnl:+.0f}")
 
-                # 2차: +20% 도달 → AI에 전량 익절 여부 문의
-                elif pos.partial_sold and not pos.partial_sold_2 and pnl_pct >= self.PARTIAL2_PCT and pos.shares > 0:
+                # 2차: +20%(일반) / +30%(BULL) 도달 → AI에 전량 익절 여부 문의
+                elif pos.partial_sold and not pos.partial_sold_2 and pnl_pct >= _core_partial2 and pos.shares > 0:
                     if decision is None:
                         if self.gemini:
                             self._trigger_ai_partial_exit(pos, ticker, pos.name, price, avg, pnl_pct, regime)
@@ -1080,6 +1083,16 @@ class USBotController:
                 continue
 
             budget_ratio = get_budget_ratio_from_score(entry_score, entry_threshold)
+            # ── BEAR 국면: 진입 점수가 충분해도 포지션 크기 50% 제한 ──
+            # 하락장에서는 반등 신뢰도가 낮으므로 리스크 관리 강화
+            if regime == "BEAR":
+                # 점수가 threshold + 3 이상일 때만 진입 (확신도 높은 신호만)
+                if entry_score < entry_threshold + 3:
+                    with self.lock if pos else (lambda: None)():
+                        if pos:
+                            pos.status = f"BEAR 보류 — 점수 부족 ({entry_score}/{entry_threshold+3}pt) 🐻"
+                    continue
+                budget_ratio = min(budget_ratio * 0.50, 0.50)  # 최대 50% 포지션
             actual_budget = min(sat_budget_per * budget_ratio, self.cash_usd)
 
             # ── AI 매수 승인 심사 ────────────────────────────────────
@@ -1194,8 +1207,11 @@ class USBotController:
                                 f"ATR 손절 (평단${avg:.2f}  ATR×{hard_mult:.1f})")
                 continue
 
-            # ③ 1차 부분 익절 (+10%) — AI 판단
-            if not pos.partial_sold and pnl_pct >= self.PARTIAL1_PCT and pos.shares > 1:
+            # ③ 1차 부분 익절 (+10%(일반) / +15%(BULL)) — AI 판단
+            # BULL 장에서는 추세 지속 가능성이 높아 익절 기준 상향
+            _sat_partial1 = 15.0 if regime == "BULL" else self.PARTIAL1_PCT
+            _sat_partial2 = 30.0 if regime == "BULL" else self.PARTIAL2_PCT
+            if not pos.partial_sold and pnl_pct >= _sat_partial1 and pos.shares > 1:
                 decision = getattr(pos, 'ai_exit_decision', None)
                 if decision is None:
                     if self.gemini:
@@ -1223,9 +1239,9 @@ class USBotController:
                 self.add_log(f"✂️  1차익절 {pos.name} | PnL ${pnl:+.0f}")
                 continue
 
-            # ④ 2차 전량 익절 (+20%) — AI 판단
+            # ④ 2차 전량 익절 (+20%(일반) / +30%(BULL)) — AI 판단
             if (pos.partial_sold and not pos.partial_sold_2
-                    and pnl_pct >= self.PARTIAL2_PCT and pos.shares > 0):
+                    and pnl_pct >= _sat_partial2 and pos.shares > 0):
                 decision = getattr(pos, 'ai_exit_decision', None)
                 if decision is None:
                     if self.gemini:
