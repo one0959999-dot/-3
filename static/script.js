@@ -303,6 +303,13 @@ document.addEventListener('DOMContentLoaded', () => {
             }
         }
 
+        // 테마 클래스 먼저 적용 — renderDefensiveAssets가 isLightTheme 체크 전에 세팅돼야 함
+        if (isLive) {
+            document.body.classList.remove('theme-us');
+        } else {
+            document.body.classList.add('theme-us');
+        }
+
         // 방어자산 섹션: KR/US 모두 표시 (US도 PSQ/GLD/UUP 방어 전략 있음)
         renderDefensiveAssets(data.defensive_list, data.market_regime);
 
@@ -316,12 +323,6 @@ document.addEventListener('DOMContentLoaded', () => {
         }
         if (!isUS) {
             renderMomentumSlots(data.momentum_list);
-        }
-
-        if (isLive) {
-            document.body.classList.remove('theme-us');
-        } else {
-            document.body.classList.add('theme-us');
         }
 
         const pnlTitle = document.getElementById('pnl-title');
