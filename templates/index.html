@@ -574,26 +574,30 @@
     <div class="dashboard-container">
 
         <header>
+            <!-- 1행: 타이틀 중앙 -->
             <div class="title-area">
                 <h1>Trading Bot</h1>
                 <p>AI Automated Trading Assistant</p>
                 <div id="hot-sectors" class="hot-sectors">🔥 강세 섹터: 분석 대기중...</div>
             </div>
-            <div class="mini-log glass-card" id="mini-log">
-                <div class="mini-log-entry muted">봇을 시작하면 로그가 표시됩니다...</div>
-            </div>
-            <div class="header-right">
-                <div class="sat-controls">
-                    <span>📡 위성</span>
-                    <button class="sat-adj-btn" onclick="adjustSat(-1)">−</button>
-                    <span class="sat-count-val" id="sat-num-display">5</span>
-                    <button class="sat-adj-btn" onclick="adjustSat(1)">+</button>
-                    <span>종목</span>
+            <!-- 2행: 로그 + 컨트롤 -->
+            <div class="header-bottom">
+                <div class="mini-log glass-card" id="mini-log">
+                    <div class="mini-log-entry muted">봇을 시작하면 로그가 표시됩니다...</div>
                 </div>
-                <button id="btn-toggle" class="btn-toggle btn-stopped" title="클릭하여 봇 시작/정지">
-                    <span class="toggle-dot"></span>
-                    <span id="toggle-label">Stopped</span>
-                </button>
+                <div class="header-right">
+                    <div class="sat-controls">
+                        <span>📡 위성</span>
+                        <button class="sat-adj-btn" onclick="adjustSat(-1)">−</button>
+                        <span class="sat-count-val" id="sat-num-display">5</span>
+                        <button class="sat-adj-btn" onclick="adjustSat(1)">+</button>
+                        <span>종목</span>
+                    </div>
+                    <button id="btn-toggle" class="btn-toggle btn-stopped" title="클릭하여 봇 시작/정지">
+                        <span class="toggle-dot"></span>
+                        <span id="toggle-label">Stopped</span>
+                    </button>
+                </div>
             </div>
         </header>
 

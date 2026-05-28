@@ -134,14 +134,20 @@ body {
 }
 
 /* ═══════════════════════════════════════════
-   HEADER
+   HEADER — 2행 구조
+   1행: .title-area  (중앙)
+   2행: .header-bottom  (로그 + 컨트롤)
 ═══════════════════════════════════════════ */
 header {
     display: flex;
+    flex-direction: column;
     align-items: center;
-    justify-content: space-between;
-    gap: 20px;
-    flex-wrap: wrap;
+    gap: 14px;
+}
+
+.title-area {
+    text-align: center;
+    width: 100%;
 }
 
 .title-area h1 {
@@ -171,7 +177,15 @@ header {
     display: inline-block;
 }
 
-/* header right: sat-controls + toggle btn (mini-log은 header 직접 자식으로 분리됨) */
+/* 2행: 로그 + 컨트롤 */
+.header-bottom {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    width: 100%;
+}
+
+/* sat-controls + toggle btn */
 .header-right {
     display: flex;
     align-items: center;
@@ -181,8 +195,7 @@ header {
 
 /* ─── Mini Log Panel ─── */
 .mini-log {
-    flex: 1;               /* title-area와 header-right 사이 빈 공간 채움 */
-    max-width: 440px;      /* 너무 넓어지지 않게 제한 */
+    flex: 1;
     min-width: 180px;
     height: 72px;
     overflow-y: auto;
@@ -192,7 +205,6 @@ header {
     scrollbar-color: rgba(255, 255, 255, 0.1) transparent;
     border-radius: 12px;
     line-height: 1.5;
-    /* 글씨 수직 중앙 */
     display: flex;
     flex-direction: column;
     justify-content: center;
@@ -906,9 +918,6 @@ header {
 
     /* 3. 헤더 및 제어 컴포넌트 세로 배치 */
     header {
-        flex-direction: column;
-        align-items: stretch;
-        text-align: center;
         gap: 10px;
     }
 
@@ -921,6 +930,11 @@ header {
         padding: 4px 8px;
         display: block;
         word-break: keep-all;
+    }
+
+    .header-bottom {
+        flex-direction: column;
+        gap: 8px;
     }
 
     .header-right {
