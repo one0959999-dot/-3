@@ -324,6 +324,8 @@
   <span class="nav-logo">라씨 매매비서</span>
   <div class="nav-right">
     <span class="nav-user">{{ user.username }}</span>
+    <a href="/report"   style="color:#93c5fd;font-size:0.82rem;text-decoration:none;padding:6px 12px;border:1px solid rgba(147,197,253,0.25);border-radius:8px;">📊 리포트</a>
+    <a href="/backtest" style="color:#86efac;font-size:0.82rem;text-decoration:none;padding:6px 12px;border:1px solid rgba(134,239,172,0.25);border-radius:8px;">🔬 백테스트</a>
     <a href="/logout" class="nav-logout">로그아웃</a>
   </div>
 </nav>
@@ -337,12 +339,6 @@
   </div>
 
   <div id="error-banner"></div>
-
-  <!-- 리포트 / 백테스트 바로가기 -->
-  <div style="display:flex;gap:8px;margin-bottom:1rem;">
-    <a href="/report"   style="color:#93c5fd;font-size:0.82rem;text-decoration:none;padding:7px 16px;border:1px solid rgba(147,197,253,0.25);border-radius:8px;background:rgba(147,197,253,0.07);transition:background .15s;" onmouseover="this.style.background='rgba(147,197,253,0.14)'" onmouseout="this.style.background='rgba(147,197,253,0.07)'">📊 성과 리포트</a>
-    <a href="/backtest" style="color:#86efac;font-size:0.82rem;text-decoration:none;padding:7px 16px;border:1px solid rgba(134,239,172,0.25);border-radius:8px;background:rgba(134,239,172,0.07);transition:background .15s;" onmouseover="this.style.background='rgba(134,239,172,0.14)'" onmouseout="this.style.background='rgba(134,239,172,0.07)'">🔬 백테스트</a>
-  </div>
 
   <!-- 총자산 배지 -->
   <div class="total-asset-badge">
