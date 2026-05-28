@@ -3298,7 +3298,10 @@ class KRBotController:
     def _rescreen_satellites(self):
         try:
             now = _now_kst()
-            if not ("09:01" <= now.strftime('%H:%M') <= "20:00") or now.weekday() >= 5: return  # [BUG-M4] trading_job과 시간 가드 통일
+            # 위성은 "오늘 하루 들고 갈 종목"을 장 초반에 결정 → 10:30 이후 신규 선정 금지.
+            # 10:30 이후 빈 슬롯 발생 시 당일 캐시 보유, 다음 날 08:50 사전 스크리닝에서 보충.
+            if not ("09:00" <= now.strftime('%H:%M') <= "10:30") or now.weekday() >= 5:
+                return
             self.add_log(f"🦅 {self.mode_name} 위성 실시간 교체 탐색 중...")
             keep_tickers = set()      # 유지 티커 (교체 슬롯으로 계산하지 않음)
             strong_keeps = set()      # 성장세 양호 — 절대 교체 대상 제외
@@ -3629,7 +3632,8 @@ class KRBotController:
         # 리포트는 trading_job 안에서 _now_kst() 시간을 직접 체크해 발행 → 시스템 타임존 무관
         self.scheduler.every(1).minutes.do(self.trading_job)
         self.scheduler.every(30).minutes.do(lambda: self._run_threaded(self.analyze_continuous_market_flow))
-        self.scheduler.every(1).hours.do(lambda: self._run_threaded(self._rescreen_satellites))
+        # 위성 재스크리닝은 08:50 사전 스크리닝(아래 _kst_morning_prescreen)으로 커버.
+        # 1시간마다 자동 재스크리닝은 제거 — 10:30 이후 새 위성 선정은 의미 없음.
         self.scheduler.every(30).minutes.do(clear_expired_cache)
 
         # ⚠️ [BUG-FIX] schedule.at()은 시스템 로컬 시간 기준으로 발동 (UTC EC2 서버 대응).
