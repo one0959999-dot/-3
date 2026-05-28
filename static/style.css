@@ -135,7 +135,7 @@ body {
 
 /* ═══════════════════════════════════════════
    HEADER — 2행 구조
-   1행: .title-area  (타이틀 좌 + 자산숫자 우)
+   1행: .header-top  (타이틀 좌 + 자산숫자 우)
    2행: .header-bottom  (로그 + 컨트롤)
 ═══════════════════════════════════════════ */
 header {
@@ -145,39 +145,69 @@ header {
     gap: 14px;
 }
 
-/* 1행: 타이틀(좌) + 자산숫자(우) */
-.title-area {
+/* 1행 */
+.header-top {
     display: flex;
     align-items: flex-start;
     justify-content: space-between;
     width: 100%;
 }
 
-.title-left {
-    /* 제목 블록 — 왼쪽 정렬 */
-}
+/* 타이틀 블록 (좌) */
+.title-left { /* 기본 block */ }
 
-/* 자산 숫자 블록 — 오른쪽 끝 */
+/* 자산 숫자 블록 (우) */
 .header-stats {
     text-align: right;
     flex-shrink: 0;
-    padding-top: 2px;
+    padding-top: 4px;
+    line-height: 1.55;
 }
 
-.header-stats-top {
+.header-stats-value {
     display: flex;
     align-items: center;
     justify-content: flex-end;
     gap: 6px;
 }
 
-.header-stats .card-value {
-    font-size: 1.6rem;
+.header-total-val {
+    font-size: 1.55rem;
     font-weight: 800;
-    line-height: 1.1;
+    color: var(--text-primary);
+    letter-spacing: -0.5px;
 }
 
-.title-area h1 {
+#available-cash-row {
+    font-size: 0.8rem;
+    color: var(--text-secondary);
+}
+
+#available-cash-val {
+    font-weight: 600;
+}
+
+#total-pnl {
+    font-size: 0.85rem;
+    font-weight: 700;
+}
+
+#reset-principal-btn {
+    margin-top: 4px;
+    font-size: 0.63rem;
+    padding: 2px 7px;
+    background: rgba(255,255,255,0.06);
+    border: 1px solid rgba(255,255,255,0.12);
+    border-radius: 4px;
+    color: #64748b;
+    cursor: pointer;
+    display: inline-block;
+}
+
+/* .title-area 하위 호환 (레거시 선택자 방어) */
+.title-area { }
+
+.title-area h1, .title-left h1 {
     font-size: 1.9rem;
     font-weight: 800;
     background: linear-gradient(135deg, var(--accent-blue), var(--accent-purple));
@@ -187,7 +217,7 @@ header {
     letter-spacing: -0.5px;
 }
 
-.title-area p {
+.title-area p, .title-left p {
     color: var(--text-secondary);
     font-size: 0.88rem;
     margin-top: 2px;
@@ -948,20 +978,20 @@ header {
         gap: 10px;
     }
 
-    .title-area {
+    .header-top {
         flex-direction: column;
-        gap: 10px;
+        gap: 8px;
     }
 
     .header-stats {
         text-align: left;
     }
 
-    .header-stats-top {
+    .header-stats-value {
         justify-content: flex-start;
     }
 
-    .title-area h1 {
+    .title-area h1, .title-left h1 {
         font-size: 1.5rem;
     }
 
@@ -1241,7 +1271,8 @@ body.theme-us .btn-settings:hover {
 
 /* 4. 그라데이션 텍스트(제목, 강조 숫자) 배경 텍스처만 선택적 삭제하여 블랙 텍스트화 */
 body.theme-us h1,
-body.theme-us .card-value.highlight {
+body.theme-us .card-value.highlight,
+body.theme-us .header-total-val {
     background: none !important;
     -webkit-text-fill-color: var(--text-primary) !important;
 }
