@@ -48,14 +48,11 @@
         /* 중앙 위젯 그룹 */
         .nav-center { display: flex; align-items: center; gap: clamp(6px, 0.8vw, 10px); flex-wrap: nowrap; }
 
-        /* 선물 사이클링 ticker — pill은 고정, 내부 텍스트만 슬라이드 */
-        #nav-fut-ticker {
-            min-width: clamp(180px,20vw,270px) !important;  /* USD/KRW 위젯과 동일 너비 */
+        /* 환율·선물 위젯 고정 너비 — 두 칸 동일 크기 */
+        .nav-fx {
+            width: clamp(200px, 22vw, 280px) !important;
+            justify-content: space-between;
             overflow: hidden;
-        }
-        /* USD/KRW 위젯도 동일 min-width */
-        .nav-fx:not(#nav-fut-ticker) {
-            min-width: clamp(180px,20vw,270px);
         }
         #fut-inner { display:flex; align-items:center; gap:clamp(4px,0.5vw,8px); width:100%; }
         @keyframes fut-in  { from { opacity:0; transform:translateY(-6px); } to { opacity:1; transform:translateY(0); } }
