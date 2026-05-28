@@ -1025,6 +1025,20 @@ class USBotController:
         self.hot_sectors      = list({c["sector"] for c in self.satellite_info if c.get("sector")})
         self.last_screen_date = today
 
+        # 신규 종목 선정 시 텔레그램 알림 (KR봇 initialize_portfolio 동일)
+        if new_info:
+            _lines = "\n".join([
+                f"• <b>{c.get('name', c['ticker'])}</b>  <code>{c['ticker']}</code>  [{c.get('sector','')}]"
+                for c in self.satellite_info
+            ])
+            self._tg(
+                f"🔍 <b>US 위성 종목 선정{'(AI 검토)' if self.gemini else ''}</b>  {self.alert_icon}\n"
+                f"━━━━━━━━━━━━━━━━━━━━\n"
+                f"{_lines}\n"
+                f"━━━━━━━━━━━━━━━━━━━━\n"
+                f"⏰ {_now_et().strftime('%H:%M ET')}"
+            )
+
     # ─────────────────────────────────────────────────────────────────
     # 위성 관리 (매수 + 청산 조건)
     # ─────────────────────────────────────────────────────────────────
@@ -1184,10 +1198,12 @@ class USBotController:
                             f"━━━━━━━━━━━━━━━━━━━━\n"
                             f"📌 <b>{info['name']}</b>  {ticker}\n"
                             f"🤖 {ai_reason[:100]}\n"
-                            f"➡️ 당일 블랙리스트 등록\n"
+                            f"➡️ 당일 블랙리스트 등록 후 대체 종목 탐색\n"
                             f"━━━━━━━━━━━━━━━━━━━━\n"
                             f"⏰ {_now_et().strftime('%H:%M ET')}"
                         )
+                        # 즉시 대체 종목 탐색 (KR봇 동일)
+                        self._run_threaded(self._rescreen_satellites)
                         continue
                     self.add_log(f"🤖 AI 매수 승인: {info['name']}({ticker}) | 점수 {entry_score}pt")
                 except Exception as e:
@@ -1454,6 +1470,32 @@ class USBotController:
     # ─────────────────────────────────────────────────────────────────
     # 메인 루프
     # ─────────────────────────────────────────────────────────────────
+    # 위성 즉시 재스크리닝 (KR봇 _rescreen_satellites 동일 패턴)
+    # ─────────────────────────────────────────────────────────────────
+
+    def _rescreen_satellites(self):
+        """위성 빈 슬롯 발생 / 주기적 교체 탐색 (KR봇 동일 패턴).
+        last_screen_date를 초기화해 _screen_satellites()를 강제 재실행."""
+        if not _is_us_market_open():
+            return
+        self.add_log("🦅 [US] 위성 실시간 교체 탐색 중...")
+        # 성장세 양호(+3%) 종목 유지 여부 사전 체크
+        strong_keep: set = set()
+        for t, p in list(self.satellite_positions.items()):
+            if p.shares > 0 and p.avg_price_usd > 0:
+                price = self._price(t)
+                if price > 0 and (price / p.avg_price_usd - 1) * 100 >= self._GROWTH_KEEP_PCT:
+                    strong_keep.add(t)
+                    self.add_log(f"🌱 {p.name}({t}) 성장세 양호 — 교체 없이 유지")
+        # 전 슬롯이 성장세 양호하면 재스크리닝 불필요
+        if len(strong_keep) >= self.num_satellites:
+            self.add_log(f"✅ 위성 {len(strong_keep)}개 성장세 양호 — 재스크리닝 스킵")
+            return
+        # last_screen_date 초기화 → _screen_satellites() 강제 재실행
+        self.last_screen_date = None
+        self._screen_satellites()
+
+    # ─────────────────────────────────────────────────────────────────
 
     def _run_loop(self, total_cash: float):
         self.add_log("🚀 US 실전 봇 루프 시작")
@@ -1464,13 +1506,47 @@ class USBotController:
         if self.kis_overseas:
             self._sync_balance_from_kis()
 
-        _save_interval    = 300
-        _bal_interval     = 300
-        _regime_interval  = 3600   # 1시간마다 시장 국면 갱신
-        _REPORT_SLOT      = "16:10"
-        _last_save_ts     = 0.0
-        _last_bal_ts      = 0.0
-        _last_regime_ts   = 0.0
+        # ── 초기 종목 스크리닝 (KR봇 initialize_portfolio 동일 패턴) ──
+        # satellite_info / core_info 가 비어 있으면 즉시 스크리닝 후 텔레그램 알림
+        if not self.satellite_info or not self.core_info:
+            self.add_log("🔍 US 초기 종목 스크리닝 시작...")
+            self._screen_cores()
+            self._screen_satellites()
+            if self.core_info:
+                _c_lines = "\n".join([
+                    f"• <b>{c.get('name', c['ticker'])}</b>  <code>{c['ticker']}</code>"
+                    for c in self.core_info
+                ])
+                self._tg(
+                    f"💎 <b>US 코어 종목 선정 완료</b>  {self.alert_icon}\n"
+                    f"━━━━━━━━━━━━━━━━━━━━\n"
+                    f"{_c_lines}\n"
+                    f"━━━━━━━━━━━━━━━━━━━━\n"
+                    f"⏰ {_now_et().strftime('%H:%M ET')}"
+                )
+            if self.satellite_info:
+                _s_lines = "\n".join([
+                    f"• <b>{c.get('name', c['ticker'])}</b>  <code>{c['ticker']}</code>"
+                    f"  [{c.get('sector', '')}]"
+                    for c in self.satellite_info
+                ])
+                self._tg(
+                    f"🔍 <b>US 위성 종목 선정 완료</b>  {self.alert_icon}\n"
+                    f"━━━━━━━━━━━━━━━━━━━━\n"
+                    f"{_s_lines}\n"
+                    f"━━━━━━━━━━━━━━━━━━━━\n"
+                    f"⏰ {_now_et().strftime('%H:%M ET')}"
+                )
+
+        _save_interval     = 300
+        _bal_interval      = 300
+        _regime_interval   = 3600   # 1시간마다 시장 국면 갱신
+        _rescreen_interval = 3600   # 1시간마다 위성 재스크리닝 (KR봇 동일)
+        _REPORT_SLOT       = "16:10"
+        _last_save_ts      = 0.0
+        _last_bal_ts       = 0.0
+        _last_regime_ts    = 0.0
+        _last_rescreen_ts  = 0.0
 
         while self.is_running:
             try:
@@ -1519,6 +1595,12 @@ class USBotController:
                 # ── 종목 스크리닝 (코어: 주 1회 / 위성: 하루 1회) ────
                 self._screen_cores()
                 self._screen_satellites()
+
+                # ── 위성 재스크리닝 (1시간마다 — KR봇 동일) ──────────
+                if time.time() - _last_rescreen_ts >= _rescreen_interval:
+                    if _is_us_market_open():
+                        self._run_threaded(self._rescreen_satellites)
+                    _last_rescreen_ts = time.time()
 
                 # ── 코어·위성 매매 (KIS 연결 시에만) ────────────────
                 if self.kis_overseas:
