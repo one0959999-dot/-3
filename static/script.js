@@ -312,9 +312,17 @@ document.addEventListener('DOMContentLoaded', () => {
 
         container.innerHTML = defensiveList.map(asset => {
             const holding  = asset.shares > 0;
-            const priceStr = asset.price > 0 ? fmtPrice(asset.price) : '조회 중';
+            const priceStr = asset.price > 0 ? fmtPrice(asset.price) : null;
             const valueStr = holding ? fmtMoney(asset.value) : '-';
             const ratioStr = (asset.ratio * 100).toFixed(0) + '% 배정';
+
+            // 등락률 — 상승 빨강, 하락 파랑 (한국 주식 색 기준)
+            const chg = asset.change_pct || 0;
+            const chgColor = chg > 0 ? '#f85149' : (chg < 0 ? '#58a6ff' : '#6b7280');
+            const chgSign  = chg > 0 ? '+' : '';
+            const chgStr   = priceStr && chg !== 0
+                ? `<span style="color:${chgColor};font-size:0.78rem;margin-left:5px;">${chgSign}${chg.toFixed(2)}%</span>`
+                : '';
 
             let borderColor, bgColor, statusText, statusColor;
             if (isBear && holding) {
@@ -333,8 +341,12 @@ document.addEventListener('DOMContentLoaded', () => {
                 <div style="font-size:0.72rem;color:#6b7280;margin-bottom:6px;">${asset.emoji} ${ratioStr}</div>
                 <div style="font-size:0.95rem;font-weight:700;color:#e6edf3;margin-bottom:4px;">${asset.name}</div>
                 <div style="font-size:0.78rem;color:#64748b;margin-bottom:8px;">${asset.ticker}</div>
-                <div style="font-size:0.88rem;color:#94a3b8;">현재가 ${priceStr}</div>
-                ${holding ? `<div style="font-size:0.82rem;color:#94a3b8;">평가 ${valueStr}</div>` : ''}
+                <div style="font-size:0.88rem;color:#94a3b8;">
+                    ${priceStr
+                        ? `<span style="color:#e6edf3;font-weight:600;">${priceStr}</span>${chgStr}`
+                        : '현재가 조회 중'}
+                </div>
+                ${holding ? `<div style="font-size:0.82rem;color:#94a3b8;margin-top:2px;">평가 ${valueStr}</div>` : ''}
                 <div style="margin-top:8px;font-size:0.78rem;font-weight:600;color:${statusColor};">${statusText}</div>
             </div>`;
         }).join('');

@@ -271,6 +271,10 @@ class KRBotController:
                             for idx_ticker, _ in self.market_indices:
                                 if idx_ticker not in current_tickers:
                                     current_tickers.append(idx_ticker)
+                            # 방어자산 항상 구독 — 대기 상태에도 현재가 표시
+                            for _da in DEFENSIVE_ASSETS:
+                                if _da['ticker'] not in current_tickers:
+                                    current_tickers.append(_da['ticker'])
 
                         # [BUG-FIX] subscribed_tickers는 ws_client 내부 set — 반복 중 수정 방지용 스냅샷
                         try:
@@ -3892,15 +3896,27 @@ class KRBotController:
                 d_ticker = asset['ticker']
                 d_price  = self.live_prices.get(d_ticker, 0)
                 d_shares = bal_stocks.get(d_ticker, 0)
+                # 전일 종가 대비 등락률 — ohlcv_cache에서 조회 (API 추가 호출 없음)
+                d_change_pct = 0.0
+                if d_price > 0:
+                    try:
+                        _df = self._get_cached_base_ohlcv(d_ticker)
+                        if not _df.empty and 'close' in _df.columns:
+                            _prev = float(_df['close'].iloc[-1])
+                            if _prev > 0:
+                                d_change_pct = (d_price - _prev) / _prev * 100
+                    except Exception:
+                        pass
                 defensive_list.append({
-                    "ticker": d_ticker,
-                    "name":   asset['name'],
-                    "emoji":  asset['emoji'],
-                    "ratio":  asset['ratio'],
-                    "price":  d_price,
-                    "shares": d_shares,
-                    "value":  d_shares * d_price,
-                    "active": is_bear,
+                    "ticker":     d_ticker,
+                    "name":       asset['name'],
+                    "emoji":      asset['emoji'],
+                    "ratio":      asset['ratio'],
+                    "price":      d_price,
+                    "shares":     d_shares,
+                    "value":      d_shares * d_price,
+                    "active":     is_bear,
+                    "change_pct": round(d_change_pct, 2),
                 })
 
             # BUG-FIX: deque는 슬라이싱 불가 → list()로 변환 후 슬라이스 (TypeError 방지)
