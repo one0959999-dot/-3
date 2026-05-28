@@ -574,11 +574,31 @@
     <div class="dashboard-container">
 
         <header>
-            <!-- 1행: 타이틀 중앙 -->
+            <!-- 1행: 타이틀(좌) + 자산 숫자(우) -->
             <div class="title-area">
-                <h1>Trading Bot</h1>
-                <p>AI Automated Trading Assistant</p>
-                <div id="hot-sectors" class="hot-sectors">🔥 강세 섹터: 분석 대기중...</div>
+                <div class="title-left">
+                    <h1>Trading Bot</h1>
+                    <p>AI Automated Trading Assistant</p>
+                    <div id="hot-sectors" class="hot-sectors">🔥 강세 섹터: 분석 대기중...</div>
+                </div>
+                <div class="header-stats">
+                    <div class="header-stats-top">
+                        <div class="card-value highlight" id="total-value">-</div>
+                        <span id="currency-toggle-wrap" style="display:none; margin-left:8px; vertical-align:middle;">
+                            <button id="btn-currency-krw" onclick="setCurrency('KRW')"
+                                style="font-size:0.65rem;padding:2px 6px;border-radius:4px 0 0 4px;border:1px solid rgba(255,255,255,0.18);background:rgba(255,255,255,0.12);color:#f1f5f9;cursor:pointer;font-weight:700;">₩</button><button id="btn-currency-usd" onclick="setCurrency('USD')"
+                                style="font-size:0.65rem;padding:2px 6px;border-radius:0 4px 4px 0;border:1px solid rgba(255,255,255,0.18);border-left:none;background:rgba(255,255,255,0.04);color:#94a3b8;cursor:pointer;font-weight:700;">$</button>
+                        </span>
+                    </div>
+                    <div id="available-cash-row" style="font-size:0.8rem; color:#8b949e; margin:2px 0;">
+                        예수금 <span id="available-cash-val" style="font-weight:600;">-</span>
+                    </div>
+                    <div id="total-pnl" style="font-size:0.85rem; font-weight:700;">수익: -</div>
+                    <button id="reset-principal-btn" onclick="resetInitialCash()"
+                        style="margin-top:5px;font-size:0.65rem;padding:2px 7px;background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.12);border-radius:4px;color:#64748b;cursor:pointer;">
+                        ⚙ 원금 리셋
+                    </button>
+                </div>
             </div>
             <!-- 2행: 로그 + 컨트롤 -->
             <div class="header-bottom">
@@ -602,23 +622,6 @@
         </header>
 
         <div class="grid-container" id="top-cards-container">
-            <div class="info-card glass-card">
-                <h3>📊 총 평가금액
-                    <span id="currency-toggle-wrap" style="float:right; margin-top:-2px;">
-                        <button id="btn-currency-krw" onclick="setCurrency('KRW')"
-                            style="font-size:0.7rem;padding:2px 7px;border-radius:4px 0 0 4px;border:1px solid rgba(255,255,255,0.18);background:rgba(255,255,255,0.12);color:#f1f5f9;cursor:pointer;font-weight:700;">₩</button><button id="btn-currency-usd" onclick="setCurrency('USD')"
-                            style="font-size:0.7rem;padding:2px 7px;border-radius:0 4px 4px 0;border:1px solid rgba(255,255,255,0.18);border-left:none;background:rgba(255,255,255,0.04);color:#94a3b8;cursor:pointer;font-weight:700;">$</button>
-                    </span>
-                </h3>
-                <div class="card-value highlight" id="total-value">-</div>
-                <div id="available-cash-row" style="font-size:0.78rem; color:#8b949e; margin:4px 0 2px; letter-spacing:0.3px;">
-                    예수금 <span id="available-cash-val" style="color:#94a3b8; font-weight:600;">-</span>
-                </div>
-                <div class="card-subvalue" id="total-pnl">수익: -</div>
-                <div style="margin-top:6px;">
-                    <button id="reset-principal-btn" onclick="resetInitialCash()" style="font-size:0.7rem;padding:2px 8px;background:rgba(255,255,255,0.07);border:1px solid rgba(255,255,255,0.15);border-radius:4px;color:#8b949e;cursor:pointer;" title="수익률 기준 원금을 현재 총자산으로 재설정합니다">⚙ 원금 기준 리셋</button>
-                </div>
-            </div>
         </div>
 
         <div class="satellite-card glass-card">

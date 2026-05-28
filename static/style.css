@@ -135,19 +135,46 @@ body {
 
 /* ═══════════════════════════════════════════
    HEADER — 2행 구조
-   1행: .title-area  (중앙)
+   1행: .title-area  (타이틀 좌 + 자산숫자 우)
    2행: .header-bottom  (로그 + 컨트롤)
 ═══════════════════════════════════════════ */
 header {
     display: flex;
     flex-direction: column;
-    align-items: center;
+    align-items: stretch;
     gap: 14px;
 }
 
+/* 1행: 타이틀(좌) + 자산숫자(우) */
 .title-area {
-    text-align: center;
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
     width: 100%;
+}
+
+.title-left {
+    /* 제목 블록 — 왼쪽 정렬 */
+}
+
+/* 자산 숫자 블록 — 오른쪽 끝 */
+.header-stats {
+    text-align: right;
+    flex-shrink: 0;
+    padding-top: 2px;
+}
+
+.header-stats-top {
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 6px;
+}
+
+.header-stats .card-value {
+    font-size: 1.6rem;
+    font-weight: 800;
+    line-height: 1.1;
 }
 
 .title-area h1 {
@@ -919,6 +946,19 @@ header {
     /* 3. 헤더 및 제어 컴포넌트 세로 배치 */
     header {
         gap: 10px;
+    }
+
+    .title-area {
+        flex-direction: column;
+        gap: 10px;
+    }
+
+    .header-stats {
+        text-align: left;
+    }
+
+    .header-stats-top {
+        justify-content: flex-start;
     }
 
     .title-area h1 {
