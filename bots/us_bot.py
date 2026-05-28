@@ -22,7 +22,7 @@ import yfinance as yf
 
 from telegram_bot import TelegramNotifier
 from us_screener import (
-    scan_us_satellites, scan_us_satellites_kis,
+    scan_us_satellites, scan_us_satellites_kis, scan_us_cores,
     get_us_prices_batch, generate_us_daily_report,
     get_futures_snapshot, get_sector_trends,
 )
@@ -551,9 +551,8 @@ class USBotController:
         self.add_log("🔍 US 코어 종목 스캔 시작…")
 
         try:
-            from us_screener import scan_us_satellites
-            # 코어는 더 넓게 스캔 후 AI에게 넘김
-            candidates = scan_us_satellites(n=self.num_cores * 3, exclude=holding)
+            # 코어 전용 유니버스(우량 대형주)에서 스캔 후 AI에게 넘김
+            candidates = scan_us_cores(n=self.num_cores * 3, exclude=holding)
             if not candidates:
                 self.add_log("⚠️ 코어 스캔 결과 없음 — 기존 유지")
                 return

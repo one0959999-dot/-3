@@ -15,20 +15,36 @@ import pandas as pd
 
 logger = logging.getLogger('lassi_bot')
 
-# ── 스캔 유니버스: 섹터별 대표 종목 ─────────────────────────────────
-US_UNIVERSE: dict[str, list[str]] = {
-    "AI/반도체":    ["NVDA", "AMD", "AVGO", "ARM", "SMCI", "MRVL", "AMAT", "LRCX", "QCOM"],
-    "빅테크":       ["MSFT", "AAPL", "META", "GOOGL", "AMZN", "ORCL", "CRM", "PLTR", "SNOW"],
-    "우주/방산":    ["RKLB", "LMT", "NOC", "RTX", "HII", "ACHR"],
-    "바이오/헬스":  ["LLY", "NVO", "ABBV", "MRNA", "REGN", "ISRG"],
-    "에너지":       ["XOM", "CVX", "SLB", "HAL", "OXY"],
-    "금융":         ["JPM", "GS", "V", "MA", "COIN"],
-    "소비/유통":    ["TSLA", "HD", "COST", "MCD", "NKE", "ULTA"],
-    "ETF 레버리지": ["TQQQ", "SOXL", "UPRO", "TNA"],
+# ── 코어 유니버스: 이미 증명된 우량 대형주 ──────────────────────────────
+# 장기 보유에 적합한 섹터 리더십 + 탄탄한 펀더멘털 보유 종목
+CORE_UNIVERSE: dict[str, list[str]] = {
+    "AI/반도체":   ["NVDA", "AMD", "AVGO", "AMAT", "LRCX", "QCOM"],
+    "빅테크":      ["MSFT", "AAPL", "META", "GOOGL", "AMZN", "ORCL", "CRM"],
+    "바이오/헬스": ["LLY", "NVO", "ABBV", "ISRG", "REGN"],
+    "금융":        ["JPM", "GS", "V", "MA"],
+    "소비/유통":   ["COST", "HD", "MCD", "NKE"],
+    "에너지":      ["XOM", "CVX"],
 }
 
-# 코어 ETF — 위성 스캔에서 제외
-CORE_ETF_EXCLUDE = {"SPY", "QQQ", "IWM", "VTI", "VOO"}
+# ── 위성 유니버스: 제2의 엔비디아·테슬라가 될 고성장 후보군 ───────────────
+# 폭발적 성장 가능성이 높은 신흥 대형주 / 테마 선도주
+SATELLITE_UNIVERSE: dict[str, list[str]] = {
+    "AI/반도체 신흥":  ["ARM", "SMCI", "MRVL", "PLTR", "SNOW", "MU"],
+    "우주/방산":       ["RKLB", "ACHR", "LMT", "NOC", "RTX", "HII"],
+    "핀테크/크립토":   ["COIN", "SQ", "HOOD", "SOFI"],
+    "바이오 신흥":     ["MRNA", "RXRX", "NVAX"],
+    "소비/성장":       ["TSLA", "UBER", "SHOP", "CELH"],
+    "클라우드/SaaS":   ["DDOG", "NET", "ZS", "GTLB"],
+}
+
+# ── 하위 호환: 기존 코드가 US_UNIVERSE 참조하는 경우 대비 ────────────────
+US_UNIVERSE: dict[str, list[str]] = {
+    **CORE_UNIVERSE,
+    **SATELLITE_UNIVERSE,
+}
+
+# 코어 ETF — 스캔에서 제외
+CORE_ETF_EXCLUDE = {"SPY", "QQQ", "IWM", "VTI", "VOO", "TQQQ", "SOXL", "UPRO", "TNA"}
 
 # 종목명 캐시 (yfinance info 조회 비용 절감)
 _name_cache: dict[str, str] = {}
@@ -59,19 +75,13 @@ def _get_name(ticker: str) -> str:
     return name
 
 
-def scan_us_satellites(n: int = 5, exclude: set = None) -> list[dict]:
-    """
-    미국 위성 종목 스캔.
-
-    Returns list of dicts:
-      ticker, name, sector, score, price, momentum_20d, rsi, golden, vol_ratio
-    """
+def _scan_universe(universe: dict, n: int, exclude: set, score_fn) -> list[dict]:
+    """공통 스캔 엔진 — 유니버스와 스코어 함수를 받아 상위 N개 반환."""
     exclude = (exclude or set()) | CORE_ETF_EXCLUDE
 
-    # 전체 티커 리스트 + 섹터 맵 구성
     all_tickers: list[str] = []
     ticker_sector: dict[str, str] = {}
-    for sector, tickers in US_UNIVERSE.items():
+    for sector, tickers in universe.items():
         for t in tickers:
             if t not in exclude:
                 all_tickers.append(t)
@@ -80,39 +90,29 @@ def scan_us_satellites(n: int = 5, exclude: set = None) -> list[dict]:
     if not all_tickers:
         return []
 
-    # ── 배치 다운로드 (6개월치 일봉) ────────────────────────────────
     logger.info(f"[US스크리너] {len(all_tickers)}개 종목 다운로드 시작...")
     try:
         raw = yf.download(
-            all_tickers,
-            period="6mo",
-            interval="1d",
-            progress=False,
-            auto_adjust=True,
+            all_tickers, period="6mo", interval="1d",
+            progress=False, auto_adjust=True,
         )
     except Exception as e:
         logger.error(f"[US스크리너] 배치 다운로드 실패: {e}")
         return []
 
     if raw is None or raw.empty:
-        logger.warning("[US스크리너] 다운로드 결과 없음")
         return []
 
-    # Close / Volume DataFrame 추출
-    # yfinance ≥0.2: columns = MultiIndex (field, ticker) or (ticker, field)
     try:
         if isinstance(raw.columns, pd.MultiIndex):
             lv0 = raw.columns.get_level_values(0).unique().tolist()
-            # (field, ticker) 형태
             if "Close" in lv0:
                 closes  = raw["Close"]
                 volumes = raw["Volume"]
-            # (ticker, field) 형태
             else:
                 closes  = raw.xs("Close",  axis=1, level=1, drop_level=True)
                 volumes = raw.xs("Volume", axis=1, level=1, drop_level=True)
         else:
-            # 단일 종목일 때 → Series 형태
             closes  = raw[["Close"]].rename(columns={"Close": all_tickers[0]})
             volumes = raw[["Volume"]].rename(columns={"Volume": all_tickers[0]})
     except Exception as e:
@@ -120,60 +120,36 @@ def scan_us_satellites(n: int = 5, exclude: set = None) -> list[dict]:
         return []
 
     results: list[dict] = []
-
     for ticker in all_tickers:
         try:
-            # 해당 티커 Close/Volume 추출
             if ticker not in closes.columns:
                 continue
             close  = closes[ticker].dropna()
             volume = volumes[ticker].dropna() if ticker in volumes.columns else pd.Series(dtype=float)
-
             if len(close) < 60:
                 continue
-
-            price    = float(close.iloc[-1])
+            price = float(close.iloc[-1])
             if price <= 0:
                 continue
 
-            # ── 지표 계산 ──────────────────────────────────────────
-            # 모멘텀
-            mom_20 = (price / float(close.iloc[-20]) - 1) * 100 if len(close) >= 20 else 0.0
-            mom_60 = (price / float(close.iloc[-60]) - 1) * 100 if len(close) >= 60 else 0.0
-
-            # 이동평균
-            sma50  = float(close.rolling(50).mean().iloc[-1])  if len(close) >= 50  else price
-            sma200 = float(close.rolling(200).mean().iloc[-1]) if len(close) >= 200 else price
-            # 골든크로스: 현재가 > 50일 > 200일×0.98(근접 허용)
-            golden = price > sma50 > sma200 * 0.98
-
-            # RSI
-            rsi = float(_calc_rsi(close).iloc[-1]) if len(close) >= 20 else 50.0
-
-            # 거래량 서지
+            mom_20  = (price / float(close.iloc[-20]) - 1) * 100 if len(close) >= 20 else 0.0
+            mom_60  = (price / float(close.iloc[-60]) - 1) * 100 if len(close) >= 60 else 0.0
+            sma50   = float(close.rolling(50).mean().iloc[-1])  if len(close) >= 50  else price
+            sma200  = float(close.rolling(200).mean().iloc[-1]) if len(close) >= 200 else price
+            golden  = price > sma50 > sma200 * 0.98
+            rsi     = float(_calc_rsi(close).iloc[-1]) if len(close) >= 20 else 50.0
             if len(volume) >= 60:
-                vol_recent = float(volume.iloc[-5:].mean())
-                vol_base   = float(volume.iloc[-60:-5].mean())
-                vol_ratio  = vol_recent / (vol_base + 1)
+                vol_ratio = float(volume.iloc[-5:].mean()) / (float(volume.iloc[-60:-5].mean()) + 1)
             else:
-                vol_ratio  = 1.0
+                vol_ratio = 1.0
 
-            # ── 스코어 (0~100) ─────────────────────────────────────
-            score = 0.0
-            score += min(40.0, max(0.0, mom_20 * 2.0))   # 20일 모멘텀 (20%↑=40점)
-            if golden:                score += 20.0                            # 골든크로스
-            if 40 <= rsi <= 65:       score += 15.0                           # RSI 적정구간
-            elif 35 <= rsi <= 70:     score += 8.0
-            score += min(15.0, (vol_ratio - 1) * 10.0)   # 거래량 서지
-            if mom_60 > 0:            score += min(10.0, mom_60 * 0.5)        # 60일 모멘텀 플러스
-
-            # ── 최소 필터: 과매수·급락 제외 ────────────────────────
-            if rsi > 82 or mom_20 < -8:
+            score = score_fn(mom_20, mom_60, golden, rsi, vol_ratio)
+            if score is None:
                 continue
 
             results.append({
                 "ticker":       ticker,
-                "name":         ticker,        # 빠른 반환 — 이름은 나중에 채움
+                "name":         ticker,
                 "sector":       ticker_sector[ticker],
                 "score":        round(score, 1),
                 "price":        round(price, 2),
@@ -182,15 +158,11 @@ def scan_us_satellites(n: int = 5, exclude: set = None) -> list[dict]:
                 "golden":       golden,
                 "vol_ratio":    round(vol_ratio, 2),
             })
-
         except Exception as e:
             logger.debug(f"[US스크리너] {ticker} 처리 실패: {e}")
             continue
 
-    # 스코어 내림차순 정렬
     results.sort(key=lambda x: x["score"], reverse=True)
-
-    # 상위 결과에만 종목명 채우기 (API 호출 최소화)
     top = results[:n * 2]
     for r in top:
         r["name"] = _get_name(r["ticker"])
@@ -199,13 +171,67 @@ def scan_us_satellites(n: int = 5, exclude: set = None) -> list[dict]:
     logger.info(f"[US스크리너] 스캔 완료: {len(results)}개 통과 → 상위 {n}개 선정")
     for r in top[:n]:
         logger.info(
-            f"  {r['ticker']:6s}  {r['sector']:12s}  스코어:{r['score']:5.1f}"
+            f"  {r['ticker']:6s}  {r['sector']:14s}  스코어:{r['score']:5.1f}"
             f"  RSI:{r['rsi']:4.1f}  20d:{r['momentum_20d']:+5.1f}%"
             f"  {'🟡골든' if r['golden'] else '  '}"
             f"  거래량:{r['vol_ratio']:.1f}x"
         )
-
     return top[:n]
+
+
+def _core_score(mom_20, mom_60, golden, rsi, vol_ratio):
+    """
+    코어 스코어링 — 안정적 우상향 우선.
+    과열(RSI>75) 또는 급락(20d<-8%) 제외.
+    장기 모멘텀(60d)에 더 큰 가중치.
+    """
+    if rsi > 75 or mom_20 < -8:
+        return None
+    score = 0.0
+    score += min(30.0, max(0.0, mom_60 * 1.5))    # 60일 장기 모멘텀 (주요 지표)
+    score += min(20.0, max(0.0, mom_20 * 1.0))    # 20일 단기 모멘텀
+    if golden:          score += 25.0              # 골든크로스 (우상향 구조)
+    if 40 <= rsi <= 65: score += 15.0              # RSI 적정 구간
+    elif 35 <= rsi <= 70: score += 8.0
+    score += min(10.0, (vol_ratio - 1) * 5.0)     # 거래량 (보조 지표)
+    return score
+
+
+def _satellite_score(mom_20, mom_60, golden, rsi, vol_ratio):
+    """
+    위성 스코어링 — 단기 폭발력 우선.
+    과매수(RSI>82) 또는 급락(20d<-8%) 제외.
+    단기 모멘텀 + 거래량 서지에 더 큰 가중치.
+    """
+    if rsi > 82 or mom_20 < -8:
+        return None
+    score = 0.0
+    score += min(40.0, max(0.0, mom_20 * 2.0))    # 20일 단기 모멘텀 (주요 지표)
+    if golden:          score += 20.0
+    if 40 <= rsi <= 65: score += 15.0
+    elif 35 <= rsi <= 70: score += 8.0
+    score += min(15.0, (vol_ratio - 1) * 10.0)    # 거래량 서지 (폭발력)
+    if mom_60 > 0:      score += min(10.0, mom_60 * 0.5)
+    return score
+
+
+def scan_us_cores(n: int = 3, exclude: set = None) -> list[dict]:
+    """
+    미국 코어 종목 스캔 — 우량 대형주 유니버스에서 장기 우상향 종목 선정.
+    장기 모멘텀(60d) + 골든크로스 위주 스코어링.
+    """
+    return _scan_universe(CORE_UNIVERSE, n, exclude or set(), _core_score)
+
+
+def scan_us_satellites(n: int = 5, exclude: set = None) -> list[dict]:
+    """
+    미국 위성 종목 스캔 — 고성장 신흥주 유니버스에서 단기 폭발력 종목 선정.
+    제2의 엔비디아·테슬라·로켓랩 후보군.
+
+    Returns list of dicts:
+      ticker, name, sector, score, price, momentum_20d, rsi, golden, vol_ratio
+    """
+    return _scan_universe(SATELLITE_UNIVERSE, n, exclude or set(), _satellite_score)
 
 
 # ── KIS 기반 스크리너 ─────────────────────────────────────────────────
