@@ -669,36 +669,24 @@ class USBotController:
                         _stop_skip = True
                         self.add_log(f"⚠️ [코어] {pos.name} ATR 손절 터치 but 호재 뉴스 감지 → 1회 유예\n{_stop_news[:120]}")
                 if not _stop_skip:
+                    # ATR 하드 손절 — 전량 청산 (floor_shares 무시).
+                    # 추세 붕괴 시 floor 보호 없이 100% 청산 (KR봇 동일 원칙)
                     pos.stop_news_checked = False
-                    sellable_stop = max(0.0, pos.shares - pos.floor_shares)
-                    if sellable_stop <= 0:
-                        self.add_log(
-                            f"🛡️ [코어 floor] {pos.name}({ticker}) "
-                            f"floor={int(pos.floor_shares)}주 — ATR 손절 차단"
-                        )
-                        with self.lock:
-                            pos.status = f"코어 floor 보호 🛡️ (손절 차단)"
-                    else:
-                        proceeds = self._sell(ticker, pos.name, sellable_stop, price)
-                        pnl      = _net_profit_usd(price, avg, sellable_stop)
-                        with self.lock:
-                            pos.shares            -= sellable_stop  # floor_shares 잔량 보존
-                            pos.partial_sold       = False
-                            pos.partial_sold_2     = False
-                            pos.second_buy_price   = 0.0
-                            pos.second_buy_cash    = 0.0
-                            pos.second_buy_done    = False
-                            pos.bull_pyramid_done  = False
-                            if pos.shares > 0:
-                                pos.status = f"코어 floor 보유 🛡️ ({int(pos.shares)}주)"
-                            else:
-                                pos.status = "코어 손절 🚨"
-                        self._record_pnl(pnl)
-                        self.add_log(
-                            f"🚨 코어 손절 {pos.name}({ticker}) | ATR×{hard_mult:.1f} 이탈 | PnL ${pnl:+.0f}"
-                            + (f" | 🛡️ {int(pos.floor_shares)}주 floor 유지" if pos.floor_shares > 0 else "")
-                        )
-                        self._tg(f"🚨 [US 코어 손절] {pos.name}\nATR×{hard_mult:.1f} 이탈 | 재진입 타점 탐색 중\n손익: ${pnl:+,.0f}")
+                    proceeds = self._sell(ticker, pos.name, pos.shares, price)
+                    pnl      = _net_profit_usd(price, avg, pos.shares)
+                    with self.lock:
+                        pos.shares             = 0.0
+                        pos.floor_shares       = 0.0   # floor 리셋 — 재진입 시 새로 설정
+                        pos.partial_sold       = False
+                        pos.partial_sold_2     = False
+                        pos.second_buy_price   = 0.0
+                        pos.second_buy_cash    = 0.0
+                        pos.second_buy_done    = False
+                        pos.bull_pyramid_done  = False
+                        pos.status             = "코어 손절 🚨"
+                    self._record_pnl(pnl)
+                    self.add_log(f"🚨 코어 손절 {pos.name}({ticker}) | ATR×{hard_mult:.1f} 이탈 | PnL ${pnl:+.0f}")
+                    self._tg(f"🚨 [US 코어 손절] {pos.name}\nATR×{hard_mult:.1f} 이탈 | 재진입 타점 탐색 중\n손익: ${pnl:+,.0f}")
                 continue
 
             # ── 통합 진입 점수 + RSI 매수 신호 ─────────────────────────
@@ -866,33 +854,77 @@ class USBotController:
                     logger.debug(f"[US봇] BULL 불타기(코어) 오류: {_pye}")
             # ─────────────────────────────────────────────────────────────
 
-            # ── 코어 BEAR 조기 익절: +5% 도달 시 즉시 청산 (floor 보호) ──────
+            # ── 코어 복합 SELL 신호 → 전량 청산 (floor_shares 무시) ──────────
+            # KR봇: 'RSI 데드크로스 → 전량 매도 (floor_shares 제거)' 동일 원칙
+            # 추세 붕괴 확인 시 floor를 포함한 전량 청산 후 재진입 타점 탐색
+            if pos.shares > 0 and avg > 0 and is_cd and df_raw is not None and not df_raw.empty:
+                try:
+                    _core_sig, _core_buy_sc, _core_sell_sc, _core_sig_reasons = get_composite_signal(df_raw)
+                    if _core_sig == 'SELL' and _core_sell_sc >= 2:
+                        # 뉴스 유예 (호재 뉴스 있으면 1회 건너뜀)
+                        _core_sell_news = self._fetch_us_news([ticker])
+                        _core_sell_skip = False
+                        if _core_sell_news and not getattr(pos, 'sell_news_checked', False):
+                            _positive_kw = ['beat', 'upgrade', 'buy', 'bullish', 'record', 'contract', 'deal', 'win']
+                            if any(kw in _core_sell_news.lower() for kw in _positive_kw):
+                                pos.sell_news_checked = True
+                                _core_sell_skip = True
+                                self.add_log(
+                                    f"⚠️ [코어 SELL신호] {pos.name} 복합신호 SELL but 호재 뉴스 → 1회 유예\n"
+                                    f"{_core_sell_news[:120]}"
+                                )
+                        if not _core_sell_skip:
+                            pos.sell_news_checked = False
+                            q   = pos.shares
+                            self._sell(ticker, pos.name, q, price)
+                            pnl = _net_profit_usd(price, avg, q)
+                            with self.lock:
+                                pos.shares            = 0.0
+                                pos.floor_shares      = 0.0   # floor 리셋 — 재진입 시 새로 설정
+                                pos.partial_sold      = False
+                                pos.partial_sold_2    = False
+                                pos.second_buy_price  = 0.0
+                                pos.second_buy_cash   = 0.0
+                                pos.second_buy_done   = False
+                                pos.bull_pyramid_done = False
+                                pos.ai_exit_decision  = None
+                                pos.status            = "코어 추세청산 📉"
+                            self._record_pnl(pnl)
+                            self.add_log(
+                                f"📉 코어 복합신호 전량청산 {pos.name}({ticker}) "
+                                f"| SELL {_core_sell_sc}pt [{' '.join(_core_sig_reasons[:2])}] "
+                                f"| PnL ${pnl:+.0f}"
+                            )
+                            self._tg(
+                                f"📉 [US 코어 추세청산] {pos.name}\n"
+                                f"복합신호 SELL {_core_sell_sc}pt — 재진입 타점 탐색\n"
+                                f"손익: ${pnl:+,.0f}"
+                            )
+                            continue
+                except Exception as _csig_err:
+                    logger.debug(f"[US봇] 코어 복합신호 체크 오류 ({ticker}): {_csig_err}")
+
+            # ── 코어 BEAR 조기 익절: +5% 도달 시 즉시 전량 청산 (floor_shares 무시) ──────
+            # 하락장 반등은 짧고 강함 — 수익이 난 순간 전량 회수 (KR봇 동일 원칙)
             if pos.shares > 0 and avg > 0 and is_cd and regime == "BEAR":
                 pnl_pct_bear = (price / avg - 1) * 100
                 if pnl_pct_bear >= 5.0:
-                    sellable_bear = max(0.0, pos.shares - pos.floor_shares)
-                    if sellable_bear <= 0:
-                        with self.lock:
-                            pos.status = f"BEAR floor 보호 (+{pnl_pct_bear:.1f}%) 🛡️"
-                    else:
-                        q   = sellable_bear
-                        self._sell(ticker, pos.name, q, price)
-                        pnl = _net_profit_usd(price, avg, q)
-                        with self.lock:
-                            pos.shares            -= q
-                            pos.second_buy_price  = 0.0
-                            pos.second_buy_cash   = 0.0
-                            pos.second_buy_done   = False
-                            pos.partial_sold      = False
-                            pos.partial_sold_2    = False
-                            pos.bull_pyramid_done = False
-                            if pos.shares > 0:
-                                pos.status = f"BEAR 조기익절 🐻 (floor {int(pos.shares)}주 유지)"
-                            else:
-                                pos.status = "BEAR 조기익절 🐻"
-                        self._record_pnl(pnl)
-                        self.add_log(f"🐻 코어 BEAR 조기익절 {pos.name}({ticker}) +{pnl_pct_bear:.1f}% | PnL ${pnl:+.0f}")
-                        self._tg(f"🐻 [US 코어 BEAR 익절] {pos.name}\n+{pnl_pct_bear:.1f}% 하락장 반등 수확\nPnL ${pnl:+,.0f}")
+                    q   = pos.shares
+                    self._sell(ticker, pos.name, q, price)
+                    pnl = _net_profit_usd(price, avg, q)
+                    with self.lock:
+                        pos.shares            = 0.0
+                        pos.floor_shares      = 0.0   # floor 리셋 — 재진입 시 새로 설정
+                        pos.second_buy_price  = 0.0
+                        pos.second_buy_cash   = 0.0
+                        pos.second_buy_done   = False
+                        pos.partial_sold      = False
+                        pos.partial_sold_2    = False
+                        pos.bull_pyramid_done = False
+                        pos.status            = "BEAR 조기익절 🐻"
+                    self._record_pnl(pnl)
+                    self.add_log(f"🐻 코어 BEAR 조기익절 {pos.name}({ticker}) +{pnl_pct_bear:.1f}% | PnL ${pnl:+.0f}")
+                    self._tg(f"🐻 [US 코어 BEAR 익절] {pos.name}\n+{pnl_pct_bear:.1f}% 하락장 반등 수확\nPnL ${pnl:+,.0f}")
                     continue
 
             # ── 코어 부분 익절 (AI 판단) ──────────────────────────────
@@ -1535,33 +1567,22 @@ class USBotController:
                 pos.status = f"보유 중 🛰️ ({pnl_pct:+.1f}%)"
 
     def _close_sat(self, ticker: str, pos: USPosition, price: float, reason: str):
-        """위성 청산 — floor_shares 이하로는 매도 차단 (주식 수 축적 원칙)"""
-        sellable = max(0.0, pos.shares - pos.floor_shares)
-        if sellable <= 0:
-            with self.lock:
-                pos.status = f"floor 보호 🛡️ ({int(pos.floor_shares)}주)"
-            self.add_log(
-                f"🛡️ [floor 보호] {pos.name}({ticker}) "
-                f"floor={int(pos.floor_shares)}주 — 매도 차단 | 사유: {reason}"
-            )
-            return
-        shares   = sellable
+        """위성 전량 청산 — ATR 손절·트레일링·과열 등 응급 청산 (floor_shares 무시).
+        부분 익절(PARTIAL1)만 별도 floor 보호를 적용. 응급 청산 후 floor도 리셋.
+        KR봇: 'ATR 손절 전량 청산 — floor_shares 없음' 동일 원칙."""
+        shares   = pos.shares
         proceeds = self._sell(ticker, pos.name, shares, price)
         pnl      = _net_profit_usd(price, pos.avg_price_usd, shares)
         with self.lock:
-            pos.shares -= shares   # floor_shares 잔량 보존
-            if pos.shares > 0:
-                pos.status = f"floor 보유 🛡️ ({int(pos.shares)}주)"
-            else:
-                pos.status = f"청산: {reason}"
+            pos.shares       = 0.0
+            pos.floor_shares = 0.0   # 응급 청산 후 floor 리셋 — 재진입 시 새로 설정
+            pos.status       = f"청산: {reason}"
         self._record_pnl(pnl)
         icon = "🔴" if pnl < 0 else "🟢"
-        floor_note = f" | 🛡️ {int(pos.floor_shares)}주 floor 유지" if pos.floor_shares > 0 else ""
-        self.add_log(f"{icon} 청산 {pos.name}({ticker}) | {reason} | PnL ${pnl:+.0f}{floor_note}")
+        self.add_log(f"{icon} 청산 {pos.name}({ticker}) | {reason} | PnL ${pnl:+.0f}")
         self._tg(
             f"{icon} [US 위성 청산] {pos.name}\n"
             f"사유: {reason}\n손익: ${pnl:+,.0f}"
-            + (f"\n🛡️ floor {int(pos.floor_shares)}주 보유 유지" if pos.floor_shares > 0 else "")
         )
 
     # ─────────────────────────────────────────────────────────────────
