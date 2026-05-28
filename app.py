@@ -305,6 +305,36 @@ def get_exchange_rate():
     except Exception as e:
         return jsonify({'error': str(e)})
 
+@app.route('/api/home/toggle', methods=['POST'])
+@login_required
+def home_toggle_bot():
+    """홈 화면에서 KR/US 봇 개별 운영·정지."""
+    data   = request.json or {}
+    market = data.get('market', '').upper()   # 'KR' or 'US'
+    if market not in ('KR', 'US'):
+        return jsonify({"status": "error", "message": "market은 KR 또는 US이어야 합니다."}), 400
+
+    is_mock = (market == 'US')   # KR=False, US=True
+    bot = manager.bots.get((current_user.id, is_mock))
+    if bot is None:
+        user_data = dict(current_user.data)
+        user_data['is_mock'] = 1 if is_mock else 0
+        bot = manager.get_bot(current_user.id, user_data)
+    if bot is None:
+        return jsonify({"status": "error", "message": "봇 인스턴스를 생성할 수 없습니다."}), 500
+
+    if bot.is_running:
+        bot.stop()
+        return jsonify({"status": "stopped", "market": market})
+    else:
+        cash_key = 'us_initial_cash' if is_mock else 'real_initial_cash'
+        total_cash = current_user.data.get(cash_key, current_user.data.get('initial_cash', 10_000_000))
+        success = bot.start(total_cash=float(total_cash))
+        if success:
+            return jsonify({"status": "started", "market": market})
+        return jsonify({"status": "error", "message": f"{market} 봇 시작 실패 — API 키를 확인하세요."}), 400
+
+
 @app.route('/api/home_summary')
 @login_required
 def home_summary():

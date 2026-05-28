@@ -186,7 +186,7 @@
 
     .card-enter-btn {
       display: block;
-      width: 100%;
+      flex: 1;
       padding: 10px 0;
       background: linear-gradient(135deg, #1d4ed8, #2563eb);
       border: none;
@@ -204,6 +204,29 @@
     .card-enter-btn:active { transform: translateY(0); }
     .card-enter-btn.kr { background: linear-gradient(135deg, #b91c1c, #dc2626); }
     .card-enter-btn.us { background: linear-gradient(135deg, #1d4ed8, #2563eb); }
+
+    /* ── 카드 액션 행 (토글 + 대시보드 버튼) ─────────────────── */
+    .card-actions {
+      display: flex;
+      gap: 8px;
+      margin-top: 0;
+    }
+    .toggle-btn {
+      flex-shrink: 0;
+      padding: 10px 16px;
+      border: none;
+      border-radius: 10px;
+      font-size: 0.82rem;
+      font-weight: 700;
+      cursor: pointer;
+      transition: opacity .2s, transform .1s;
+      white-space: nowrap;
+    }
+    .toggle-btn:hover  { opacity: 0.85; transform: translateY(-1px); }
+    .toggle-btn:active { transform: translateY(0); }
+    .toggle-btn.start  { background: rgba(34,197,94,0.18); color: #4ade80; border: 1px solid rgba(34,197,94,0.35); }
+    .toggle-btn.stop   { background: rgba(239,68,68,0.15);  color: #f87171; border: 1px solid rgba(239,68,68,0.3); }
+    .toggle-btn.loading{ background: rgba(100,116,139,0.15); color: #94a3b8; border: 1px solid rgba(100,116,139,0.2); cursor: not-allowed; }
 
     /* ── 차트 카드 ────────────────────────────────────────── */
     .chart-card {
@@ -291,7 +314,7 @@
     <!-- KR 카드 -->
     <div class="bot-card">
       <div class="card-header">
-        <span class="card-market"><span class="flag">🇰🇷</span> KR 봇</span>
+        <span class="card-market">KR 봇</span>
         <span class="status-badge stopped" id="kr-status-badge">
           <span class="status-dot stopped" id="kr-dot"></span>
           <span id="kr-status-text">확인 중...</span>
@@ -312,15 +335,16 @@
           <span class="stat-value flat" id="kr-positions">—</span>
         </div>
       </div>
-      <a href="/dashboard" id="kr-enter-btn"
-         onclick="setMode(0)"
-         class="card-enter-btn kr">KR 대시보드 →</a>
+      <div class="card-actions">
+        <button class="toggle-btn" id="kr-toggle-btn" onclick="toggleBot('KR')">—</button>
+        <a href="/dashboard" onclick="setMode(0)" class="card-enter-btn kr">대시보드 →</a>
+      </div>
     </div>
 
     <!-- US 카드 -->
     <div class="bot-card">
       <div class="card-header">
-        <span class="card-market"><span class="flag">🇺🇸</span> US 봇</span>
+        <span class="card-market">US 봇</span>
         <span class="status-badge stopped" id="us-status-badge">
           <span class="status-dot stopped" id="us-dot"></span>
           <span id="us-status-text">확인 중...</span>
@@ -341,9 +365,10 @@
           <span class="stat-value flat" id="us-positions">—</span>
         </div>
       </div>
-      <a href="/dashboard" id="us-enter-btn"
-         onclick="setMode(1)"
-         class="card-enter-btn us">US 대시보드 →</a>
+      <div class="card-actions">
+        <button class="toggle-btn" id="us-toggle-btn" onclick="toggleBot('US')">—</button>
+        <a href="/dashboard" onclick="setMode(1)" class="card-enter-btn us">대시보드 →</a>
+      </div>
     </div>
 
   </div><!-- /.cards-grid -->
@@ -367,14 +392,41 @@
    링크 클릭 시 mode를 먼저 설정 → 대시보드 진입
 ────────────────────────────────────────────────────────────── */
 function setMode(isMock) {
-  // 비동기 fire-and-forget: 페이지 이동보다 먼저 mode 설정을 시도
   fetch('/api/settings/mode', {
     method: 'POST',
     headers: {'Content-Type': 'application/json'},
     body: JSON.stringify({is_mock: isMock}),
     keepalive: true,
   }).catch(() => {});
-  // 실제 이동은 href가 처리 (onclick 반환값 true)
+}
+
+/* ──────────────────────────────────────────────────────────────
+   toggleBot: 홈 화면에서 KR/US 봇 운영·정지 직접 제어
+────────────────────────────────────────────────────────────── */
+async function toggleBot(market) {
+  const btn = document.getElementById(`${market.toLowerCase()}-toggle-btn`);
+  if (!btn || btn.classList.contains('loading')) return;
+
+  btn.classList.add('loading');
+  btn.textContent = '처리 중...';
+
+  try {
+    const res = await fetch('/api/home/toggle', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({market}),
+    });
+    const data = await res.json();
+    if (data.status === 'error') {
+      alert(data.message || '오류가 발생했습니다.');
+    }
+    // 결과는 loadSummary 갱신으로 반영
+    await loadSummary();
+  } catch(e) {
+    console.error('toggleBot 오류:', e);
+  } finally {
+    btn.classList.remove('loading');
+  }
 }
 
 /* ──────────────────────────────────────────────────────────────
@@ -525,17 +577,24 @@ async function loadSummary() {
 function renderCard(market, data) {
   if (!data) return;
 
+  const m = market.toLowerCase();
   const running = data.running;
-  const badgeEl = document.getElementById(`${market}-status-badge`);
-  const dotEl   = document.getElementById(`${market}-dot`);
-  const textEl  = document.getElementById(`${market}-status-text`);
+  const badgeEl  = document.getElementById(`${m}-status-badge`);
+  const dotEl    = document.getElementById(`${m}-dot`);
+  const textEl   = document.getElementById(`${m}-status-text`);
+  const toggleEl = document.getElementById(`${m}-toggle-btn`);
 
   badgeEl.className = `status-badge ${running ? 'running' : 'stopped'}`;
   dotEl.className   = `status-dot   ${running ? 'running' : 'stopped'}`;
   textEl.textContent = running ? '운영 중' : '정지';
 
+  if (toggleEl && !toggleEl.classList.contains('loading')) {
+    toggleEl.className = `toggle-btn ${running ? 'stop' : 'start'}`;
+    toggleEl.textContent = running ? '⏹ 정지' : '▶ 시작';
+  }
+
   const total = data.total_krw || 0;
-  document.getElementById(`${market}-total`).innerHTML =
+  document.getElementById(`${m}-total`).innerHTML =
     total > 0
       ? `${total.toLocaleString('ko-KR')}<span class="unit">원</span>`
       : `<span style="color:#4b5563;font-size:1rem;">미설정</span>`;
@@ -544,17 +603,17 @@ function renderCard(market, data) {
   const pnlPct   = data.pnl_pct   || 0;
   const pos      = data.positions  || 0;
 
-  const todayEl = document.getElementById(`${market}-pnl-today`);
+  const todayEl = document.getElementById(`${m}-pnl-today`);
   todayEl.textContent = todayPnl !== 0
     ? `${sign(todayPnl)}${fmtKrw(todayPnl)}`
     : '0원';
   todayEl.className = `stat-value ${colorClass(todayPnl)}`;
 
-  const pctEl = document.getElementById(`${market}-pnl-pct`);
+  const pctEl = document.getElementById(`${m}-pnl-pct`);
   pctEl.textContent = `${sign(pnlPct)}${pnlPct.toFixed(2)}%`;
   pctEl.className = `stat-value ${colorClass(pnlPct)}`;
 
-  document.getElementById(`${market}-positions`).textContent = `${pos}종목`;
+  document.getElementById(`${m}-positions`).textContent = `${pos}종목`;
 }
 
 // 최초 로드 + 30초 자동 갱신
