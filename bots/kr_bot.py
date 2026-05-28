@@ -64,7 +64,7 @@ class KRBotController:
         self.logs = collections.deque(maxlen=100)   # 스레드 안전 + O(1) 순환 버퍼
         self.num_satellites = 3  # 위성 3개 고정
         self._is_mock = False     # KR 봇은 항상 실전
-        self.mode_name = "실전"
+        self.mode_name = "KR"
         self.alert_icon = "🔴"
 
         self.core_ratio = 0.40        # 코어 40% — 중기 누적 매수
@@ -202,7 +202,7 @@ class KRBotController:
 
         self.perpetual_thread = threading.Thread(target=self._perpetual_sync_loop, daemon=True)
         self.perpetual_thread.start()
-        self.add_log(f"User {user_id} {self.mode_name}투자 전용 Bot Controller 가동 완료.")
+        self.add_log(f"User {user_id} [{self.mode_name}] Bot Controller 가동 완료.")
 
     def _init_api(self, kis_config):
         """KIS 실전투자 API 초기화."""
@@ -1020,7 +1020,7 @@ class KRBotController:
             self.telegram = TelegramNotifier(token=telegram_config.get('token', '').strip(), chat_id=telegram_config.get('chat_id', '').strip())
         else: self.telegram = None
         self._init_dummy_cores()
-        self.add_log(f"🔑 {self.mode_name}투자 API 키 및 계좌 설정이 시스템에 반영되었습니다.")
+        self.add_log(f"🔑 [{self.mode_name}] API 키 및 계좌 설정이 시스템에 반영되었습니다.")
 
     def update_mode(self, is_mock, total_cash=10000000):
         pass
@@ -3719,7 +3719,7 @@ class KRBotController:
             self.thread = threading.Thread(target=self._run_loop, args=(total_cash,), daemon=True)
             self.thread.start()
             update_bot_status(self.user_id, True, is_mock=self._is_mock)
-            self.add_log(f"▶️ [{self.mode_name}투자] 매매 봇이 시작되었습니다.")
+            self.add_log(f"▶️ [{self.mode_name}] 매매 봇이 시작되었습니다.")
             return True
         return False
 
