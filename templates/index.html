@@ -659,32 +659,6 @@
             <div id="momentum-slots" style="display:grid; grid-template-columns: repeat(3, 1fr); gap:12px; margin-top:10px;"></div>
         </div>
 
-        <div class="chart-card glass-card">
-            <div class="chart-header" style="flex-wrap: wrap; gap: 10px;">
-                <h2>📈 실현 손익</h2>
-                <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap;">
-                    <!-- 탭 버튼 -->
-                    <div class="pnl-tabs" style="display:flex; gap:4px;">
-                        <button class="pnl-tab-btn active" data-tab="daily"   style="padding:3px 10px;border-radius:6px;border:1px solid rgba(255,255,255,0.15);background:rgba(248,81,73,0.2);color:#e6edf3;cursor:pointer;font-size:0.78rem;">일</button>
-                        <button class="pnl-tab-btn"        data-tab="weekly"  style="padding:3px 10px;border-radius:6px;border:1px solid rgba(255,255,255,0.1);background:transparent;color:#8b949e;cursor:pointer;font-size:0.78rem;">주</button>
-                        <button class="pnl-tab-btn"        data-tab="monthly" style="padding:3px 10px;border-radius:6px;border:1px solid rgba(255,255,255,0.1);background:transparent;color:#8b949e;cursor:pointer;font-size:0.78rem;">월</button>
-                        <button class="pnl-tab-btn"        data-tab="yearly"  style="padding:3px 10px;border-radius:6px;border:1px solid rgba(255,255,255,0.1);background:transparent;color:#8b949e;cursor:pointer;font-size:0.78rem;">년</button>
-                    </div>
-                    <div class="pnl-summaries" style="display:flex; gap:12px;">
-                        <span class="chart-subtitle" id="chart-monthly-pnl">이번달: -</span>
-                        <span class="chart-subtitle" id="chart-yearly-pnl">올해: -</span>
-                        <span class="chart-subtitle" id="chart-total-pnl" style="color: var(--accent-green);">누적: -</span>
-                    </div>
-                </div>
-            </div>
-            <div class="chart-wrapper">
-                <canvas id="pnl-chart"></canvas>
-                <div id="chart-empty" class="chart-empty">
-                    <div class="chart-empty-icon">📉📈</div>
-                    <p>거래 체결 후 손익 그래프가 표시됩니다</p>
-                </div>
-            </div>
-        </div>
 
     </div>
     <div id="settingsModal" class="modal">

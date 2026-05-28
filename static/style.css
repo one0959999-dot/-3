@@ -351,8 +351,7 @@ header {
 /* ═══════════════════════════════════════════
    SATELLITE TABLE
 ═══════════════════════════════════════════ */
-.satellite-card h2,
-.chart-card h2 {
+.satellite-card h2 {
     font-size: 0.95rem;
     font-weight: 700;
     margin-bottom: 18px;
@@ -427,55 +426,6 @@ header {
     padding: 3px 8px;
 }
 
-/* ═══════════════════════════════════════════
-   P&L CHART
-═══════════════════════════════════════════ */
-.chart-card {}
-
-.chart-header {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    margin-bottom: 16px;
-}
-
-.chart-subtitle {
-    font-size: 0.85rem;
-    color: var(--text-secondary);
-    font-weight: 600;
-}
-
-.chart-wrapper {
-    position: relative;
-    height: 220px;
-}
-
-#pnl-chart {
-    width: 100% !important;
-    height: 100% !important;
-}
-
-.chart-empty {
-    position: absolute;
-    inset: 0;
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    justify-content: center;
-    color: var(--text-secondary);
-    font-size: 0.88rem;
-    gap: 10px;
-    pointer-events: none;
-}
-
-.chart-empty-icon {
-    font-size: 2.2rem;
-    opacity: 0.4;
-}
-
-.chart-empty p {
-    opacity: 0.6;
-}
 
 /* ═══════════════════════════════════════════
    AI CHAT FLOATING BUTTON & PANEL
@@ -1124,12 +1074,7 @@ header {
         font-size: 0.7rem;
     }
 
-    /* 7. 차트 영역 높이 축소 */
-    .chart-wrapper {
-        height: 170px;
-    }
-
-    /* 8. AI 플로팅 패널 모바일 화면 맞춤 */
+    /* 7. AI 플로팅 패널 모바일 화면 맞춤 */
     #ai-chat-panel {
         width: calc(100vw - 24px);
         right: 12px;
