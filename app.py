@@ -79,6 +79,12 @@ def get_current_bot():
 
 @app.route('/')
 @login_required
+def home():
+    """홈 화면 — 총자산 추이 + KR/US 진입 버튼."""
+    return render_template('home.html', user=current_user)
+
+@app.route('/dashboard')
+@login_required
 def index():
     user_data = current_user.data
     ai_enabled = bool(user_data.get('claude_api_key'))
@@ -100,7 +106,7 @@ def login():
                 init_default_ai_rules(user_data['id'])
             except Exception:
                 pass
-            return redirect(url_for('index'))
+            return redirect(url_for('home'))
         flash('아이디 또는 비밀번호가 올바르지 않습니다.')
     return render_template('login.html')
 
@@ -298,6 +304,99 @@ def get_exchange_rate():
         return jsonify(data)
     except Exception as e:
         return jsonify({'error': str(e)})
+
+@app.route('/api/home_summary')
+@login_required
+def home_summary():
+    """홈 화면용 KR+US 합산 요약 데이터."""
+    kr_bot = manager.bots.get((current_user.id, False))   # KR = is_mock=False
+    us_bot = manager.bots.get((current_user.id, True))    # US = is_mock=True
+
+    # ── 환율 (캐시 활용) ─────────────────────────────────────────────
+    usd_krw = 1350.0
+    try:
+        if _fx_cache['data']:
+            usd_krw = float(_fx_cache['data']['rate'])
+    except Exception:
+        pass
+
+    # ── KST 오늘 날짜 ────────────────────────────────────────────────
+    from datetime import timezone as _tz, timedelta as _tdd
+    _kst_now = datetime.now(_tz(_tdd(hours=9)))
+    today_str = _kst_now.strftime('%Y-%m-%d')
+
+    def _kr_card() -> dict:
+        if kr_bot is None:
+            return {"market": "KR", "running": False, "total_krw": 0,
+                    "pnl_today": 0, "pnl_pct": 0.0, "positions": 0}
+        try:
+            st = kr_bot.get_status()
+            total_krw = float(st.get('mock_total_asset', 0))
+            init_cash = float(st.get('initial_cash', 1))
+            pnl_pct   = float(st.get('mock_pnl_rt', 0))
+            pnl_today = float(kr_bot.daily_pnl.get(today_str, 0.0))
+            positions = (
+                sum(1 for c in st.get('cores', []) if float(c.get('shares', 0)) > 0)
+                + sum(1 for p in st.get('satellites', []) if int(p.get('shares', 0)) > 0)
+                + sum(1 for m in st.get('momentum_list', []) if m and int(m.get('shares', 0)) > 0)
+            )
+            return {"market": "KR", "running": bool(kr_bot.is_running),
+                    "total_krw": round(total_krw), "pnl_today": round(pnl_today),
+                    "pnl_pct": round(pnl_pct, 2), "positions": positions}
+        except Exception as e:
+            logger.warning(f"home_summary KR 오류: {e}")
+            return {"market": "KR", "running": False, "total_krw": 0,
+                    "pnl_today": 0, "pnl_pct": 0.0, "positions": 0}
+
+    def _us_card() -> dict:
+        if us_bot is None:
+            return {"market": "US", "running": False, "total_krw": 0,
+                    "pnl_today": 0, "pnl_pct": 0.0, "positions": 0}
+        try:
+            st = us_bot.get_status()
+            total_krw = float(st.get('us_total_asset', 0))
+            init_cash = float(st.get('initial_cash', 1))
+            pnl_pct   = float(st.get('us_pnl_rt', 0))
+            # US daily_pnl은 USD 단위 → KRW 환산
+            pnl_today = float(us_bot.daily_pnl.get(today_str, 0.0)) * usd_krw
+            positions = sum(1 for p in st.get('satellites', []) if int(p.get('shares', 0)) > 0)
+            return {"market": "US", "running": bool(us_bot.is_running),
+                    "total_krw": round(total_krw), "pnl_today": round(pnl_today),
+                    "pnl_pct": round(pnl_pct, 2), "positions": positions}
+        except Exception as e:
+            logger.warning(f"home_summary US 오류: {e}")
+            return {"market": "US", "running": False, "total_krw": 0,
+                    "pnl_today": 0, "pnl_pct": 0.0, "positions": 0}
+
+    kr_card = _kr_card()
+    us_card = _us_card()
+
+    # ── 합산 일별 PnL 차트 (최근 30일, 누적 기준) ──────────────────────
+    from collections import defaultdict
+    combined: dict = defaultdict(float)
+
+    if kr_bot:
+        for d, v in kr_bot.daily_pnl.items():
+            combined[d] += float(v)
+    if us_bot:
+        for d, v in us_bot.daily_pnl.items():
+            combined[d] += float(v) * usd_krw
+
+    sorted_days = sorted(combined.keys())[-30:]
+    cumulative = 0.0
+    chart_values = []
+    for d in sorted_days:
+        cumulative += combined[d]
+        chart_values.append(round(cumulative))
+
+    return jsonify({
+        "kr": kr_card,
+        "us": us_card,
+        "combined_total_krw": kr_card["total_krw"] + us_card["total_krw"],
+        "chart": {"labels": sorted_days, "values": chart_values},
+        "usd_krw": usd_krw,
+    })
+
 
 @app.route('/api/futures_snapshot')
 @login_required
