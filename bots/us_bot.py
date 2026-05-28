@@ -38,7 +38,8 @@ from database import (
 )
 from strategy import (calculate_entry_score, get_entry_threshold, get_budget_ratio_from_score,
                       get_bull_momentum_score, calc_rsi, _calc_adx, _get_up_streak,
-                      check_theme_overextension_exit, check_rsi_progressive_exit)
+                      check_theme_overextension_exit, check_rsi_progressive_exit,
+                      get_composite_signal)
 # bot_manager는 순환 임포트 방지를 위해 런타임에 참조
 import importlib
 
@@ -1099,6 +1100,21 @@ class USBotController:
                 entry_score, entry_reasons = 0, []
 
             entry_threshold = get_entry_threshold(regime, 'satellite')
+
+            # ── 복합 타이밍 신호 체크 ────────────────────────────────────
+            # 봇이 매수 타이밍을 잡고, AI가 매매 판단을 심사하는 역할 분리
+            _comp_sig, _buy_sc, _sell_sc, _sig_reasons = get_composite_signal(df_raw) if df_raw is not None else ('HOLD', 0, 0, [])
+            if _comp_sig != 'BUY':
+                _timing_status = f"타이밍 대기 ({_buy_sc}/2점) ⏳"
+                if pos is None:
+                    self.satellite_positions[ticker] = USPosition(
+                        ticker=ticker, name=info["name"], budget_usd=sat_budget_per,
+                        status=_timing_status
+                    )
+                else:
+                    with self.lock:
+                        pos.status = _timing_status
+                continue
 
             # 위성은 entry_score 게이트 제거 — AI 최종 심사로 충분
             # (단타 모멘텀 기준 지표가 1-3달 보유 위성에 맞지 않음; RSI 30 신호 vs 40 요구 등 구조적 충돌)

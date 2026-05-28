@@ -1299,6 +1299,108 @@ def get_signal_by_strategy(ticker, strategy_name, kis_api=None, df=None):
         return 'HOLD', price, 0
 
 
+def get_composite_signal(df) -> tuple:
+    """
+    5개 지표를 동시 평가해 매수/매도 타이밍 점수를 집계.
+    단일 전략 의존 탈피 — 2개 이상 동의 시 BUY, 3개 이상 동의 시 SELL.
+
+    매수 신호 (과매도·반등 포착):
+      ① RSI(9) ≤ 35  ② MACD 히스토그램 개선  ③ BB 하단 30% 이하
+      ④ Stochastic K ≤ 25  ⑤ 60MA 위
+
+    매도 신호 (과매수·추세 이탈):
+      ① RSI(9) ≥ 70  ② MACD 히스토그램 악화(음수)  ③ BB 상단 80% 이상
+      ④ Stochastic K ≥ 75  ⑤ 60MA 이탈
+
+    Returns: ('BUY'|'SELL'|'HOLD', buy_score: int, sell_score: int, reasons: list[str])
+    """
+    if df is None or df.empty or 'close' not in df.columns:
+        return 'HOLD', 0, 0, []
+
+    df = df.copy()
+    df.columns = [str(col).lower() for col in df.columns]
+    c = df['close'].dropna()
+    h = df['high'].dropna() if 'high' in df.columns else c
+    l = df['low'].dropna()  if 'low'  in df.columns else c
+
+    if len(c) < 26:
+        return 'HOLD', 0, 0, []
+
+    buy_hits  = []
+    sell_hits = []
+
+    try:
+        # ① RSI(9)
+        d    = c.diff()
+        gain = d.clip(lower=0).rolling(9).mean()
+        loss = (-d.clip(upper=0)).rolling(9).mean()
+        rsi9 = float((100 - 100 / (1 + gain / (loss + 1e-10))).iloc[-1])
+        if rsi9 <= 35:
+            buy_hits.append(f"RSI(9)={rsi9:.0f} 과매도")
+        if rsi9 >= 70:
+            sell_hits.append(f"RSI(9)={rsi9:.0f} 과매수")
+
+        # ② MACD 히스토그램 방향
+        ema12     = c.ewm(span=12, adjust=False).mean()
+        ema26     = c.ewm(span=26, adjust=False).mean()
+        macd_line = ema12 - ema26
+        sig_line  = macd_line.ewm(span=9, adjust=False).mean()
+        hist_now  = float(macd_line.iloc[-1] - sig_line.iloc[-1])
+        hist_prev = float(macd_line.iloc[-2] - sig_line.iloc[-2])
+        if hist_now > hist_prev:                         # 히스토그램 개선 중
+            buy_hits.append(f"MACD히스토그램 상승({hist_now:+.3f})")
+        if hist_now < hist_prev and hist_now < 0:        # 히스토그램 악화 + 음수
+            sell_hits.append(f"MACD히스토그램 하락({hist_now:+.3f})")
+
+        # ③ 볼린저밴드 위치
+        if len(c) >= 22:
+            ma20  = float(c.rolling(20).mean().iloc[-1])
+            std20 = float(c.rolling(20).std().iloc[-1])
+            bb_up = ma20 + 2 * std20
+            bb_lo = ma20 - 2 * std20
+            bb_rng = bb_up - bb_lo
+            if bb_rng > 0:
+                bb_pct = (float(c.iloc[-1]) - bb_lo) / bb_rng * 100
+                if bb_pct <= 30:
+                    buy_hits.append(f"BB하단근접({bb_pct:.0f}%)")
+                if bb_pct >= 80:
+                    sell_hits.append(f"BB상단근접({bb_pct:.0f}%)")
+
+        # ④ Stochastic K(14)
+        if len(c) >= 14:
+            lo14    = float(l.rolling(14).min().iloc[-1])
+            hi14    = float(h.rolling(14).max().iloc[-1])
+            stoch_k = 100 * (float(c.iloc[-1]) - lo14) / (hi14 - lo14 + 1e-10)
+            if stoch_k <= 25:
+                buy_hits.append(f"Stochastic K={stoch_k:.0f} 과매도")
+            if stoch_k >= 75:
+                sell_hits.append(f"Stochastic K={stoch_k:.0f} 과매수")
+
+        # ⑤ 60MA 지지/이탈
+        if len(c) >= 62:
+            ma60 = float(c.rolling(60).mean().iloc[-1])
+            px   = float(c.iloc[-1])
+            if px >= ma60:
+                buy_hits.append(f"60MA 위({px:,.0f}≥{ma60:,.0f})")
+            else:
+                sell_hits.append(f"60MA 이탈({px:,.0f}<{ma60:,.0f})")
+
+    except Exception:
+        pass
+
+    buy_score  = len(buy_hits)
+    sell_score = len(sell_hits)
+
+    BUY_THRESHOLD  = 2   # 5개 중 2개 이상 → 매수 타이밍
+    SELL_THRESHOLD = 3   # 5개 중 3개 이상 → 매도 타이밍 (1-3달 보유 취지 보호)
+
+    if buy_score >= BUY_THRESHOLD and buy_score >= sell_score:
+        return 'BUY', buy_score, sell_score, buy_hits + sell_hits
+    if sell_score >= SELL_THRESHOLD:
+        return 'SELL', buy_score, sell_score, sell_hits + buy_hits
+    return 'HOLD', buy_score, sell_score, buy_hits + sell_hits
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # 실전 원칙 기반 5분봉 반납률 이탈 신호
 # (출처: 실전 매매 원칙 — 02_intraday_operating_rules.md / 03_sell_and_reentry_rules.md)

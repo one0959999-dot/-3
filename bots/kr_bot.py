@@ -2217,41 +2217,17 @@ class KRBotController:
 
         for ticker, pos in trading_sat_items:
             try:
-                with self.lock: st_nm = self.satellite_strategies.get(ticker, 'RSI'); p_sh = pos.shares; p_avg = pos.avg_price; p_max = pos.max_price; p_cash = pos.cash; p_nm = pos.name
+                with self.lock: p_sh = pos.shares; p_avg = pos.avg_price; p_max = pos.max_price; p_cash = pos.cash; p_nm = pos.name
                 price = self.live_prices.get(ticker) or getattr(pos, 'kis_current_price', 0) or (self.kis.get_current_price(ticker) if self.kis else 0)
                 if not price or price <= 0: continue
                 with self.lock: pos._last_price = price
-                    
-                from strategy import get_signal_by_strategy
-                ex_df = self._get_extended_ohlcv(ticker, price)
-                sig, _, ind_val = get_signal_by_strategy(ticker, st_nm, kis_api=self.kis, df=ex_df)
-                if price <= 0: continue
 
-                # ── BULL 국면 진입 신호 보완 ────────────────────────────────
-                # RSI 30/70 전략은 BULL 장에서 RSI 50~70이 대부분이라 BUY 신호가 거의 안 뜸.
-                # 조건 A: RSI ≤ 65 + bull_score ≥ 1 (BULL에서 50~65도 매수 구간)
-                # 조건 B: MA5 > MA20 정배열 + 현재가가 MA5 이내(2%) 눌림목
-                if sig != 'BUY' and regime == "BULL" and p_sh == 0:
-                    try:
-                        if not ex_df.empty and 'close' in ex_df.columns:
-                            _closes_b  = ex_df['close'].dropna()
-                            _rsi_bull  = float(calc_rsi(_closes_b).iloc[-1])
-                            _bull_sc, _bull_reasons = get_bull_momentum_score(ex_df)
-                            _bull_cond_a = (_rsi_bull <= 65) and (_bull_sc >= 1)
-                            _bull_cond_b = False
-                            if len(_closes_b) >= 22:
-                                _ma5_b  = float(_closes_b.rolling(5).mean().iloc[-1])
-                                _ma20_b = float(_closes_b.rolling(20).mean().iloc[-1])
-                                _bull_cond_b = (_ma5_b > _ma20_b) and (price <= _ma5_b * 1.02)
-                            if _bull_cond_a or _bull_cond_b:
-                                sig = 'BUY'
-                                ind_val = _rsi_bull
-                                _bull_why = (f"RSI={_rsi_bull:.1f} bull_score={_bull_sc}" if _bull_cond_a
-                                             else f"MA5눌림목(MA5={_closes_b.rolling(5).mean().iloc[-1]:,.0f})")
-                                self.add_log(f"🚀 [BULL 위성 진입] {ticker} {_bull_why} → BUY 오버라이드")
-                    except Exception as _be:
-                        logger.debug(f"BULL 위성 오버라이드 오류: {_be}")
-                # ─────────────────────────────────────────────────────────────
+                from strategy import get_composite_signal
+                ex_df = self._get_extended_ohlcv(ticker, price)
+                sig, buy_sc, sell_sc, sig_reasons = get_composite_signal(ex_df)
+                st_nm   = f"복합신호(매수{buy_sc}/매도{sell_sc})"
+                ind_val = {"buy": buy_sc, "sell": sell_sc, "signals": sig_reasons}
+                if price <= 0: continue
 
                 if ex_df.empty or not all(c in ex_df.columns for c in ['high', 'low', 'close']):
                     atr_14 = p_avg * 0.02
@@ -2716,7 +2692,7 @@ class KRBotController:
 
                     if self.gemini:
                         pos.status     = "AI 심사 중 🤖"
-                        pos.status_msg = f"매수 신호 발생 | {st_nm} | RSI {ind_val:.1f} — AI 최종 승인 대기 중..."
+                        pos.status_msg = f"매수 신호 발생 | {st_nm} — AI 최종 승인 대기 중..."
                         trade_ctx = self._build_trade_context(ticker, p_nm, price, ex_df, st_nm, regime)
                         if _52w_note_kr:
                             trade_ctx += f"\n[52주 신고가] {_52w_note_kr}"
@@ -2765,7 +2741,7 @@ class KRBotController:
                 elif sig == 'SELL' and p_sh > 0 and is_cd_passed:
                     if self.gemini:
                         pos.status     = "AI 심사 중 🤖"
-                        pos.status_msg = f"매도 신호 발생 | RSI {ind_val:.1f} — AI 최종 승인 대기 중..."
+                        pos.status_msg = f"매도 신호 발생 | {st_nm} — AI 최종 승인 대기 중..."
                         trade_ctx = self._build_trade_context(ticker, p_nm, price, ex_df, st_nm, regime)
                         decision, ai_reason = self.gemini.ai_approve_trade(sig, p_nm, ticker, price, st_nm, ind_val, self.hot_sectors, get_recent_trades(self.user_id, ticker), load_ai_rules(self.user_id) + "\n" + getattr(self, 'current_ai_market_view', '') + ("\n\n[📊 섹터 가이드 / 커스텀 전략]\n" + self.sector_guide if self.sector_guide else ''), context=trade_ctx)
                         if decision:
