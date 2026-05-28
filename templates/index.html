@@ -48,12 +48,15 @@
         /* 중앙 위젯 그룹 */
         .nav-center { display: flex; align-items: center; gap: clamp(6px, 0.8vw, 10px); flex-wrap: nowrap; }
 
-        /* 환율·선물 위젯 고정 너비 — 두 칸 동일 크기 */
+        /* 환율·선물 위젯 고정 크기 — 두 칸 동일 */
         .nav-fx {
             width: clamp(200px, 22vw, 280px) !important;
+            height: clamp(28px, 3vw, 34px) !important;
+            box-sizing: border-box !important;
             justify-content: space-between;
             overflow: hidden;
         }
+        #fut-inner { height: 100%; }
         #fut-inner { display:flex; align-items:center; gap:clamp(4px,0.5vw,8px); width:100%; }
         @keyframes fut-in  { from { opacity:0; transform:translateY(-6px); } to { opacity:1; transform:translateY(0); } }
         @keyframes fut-out { from { opacity:1; transform:translateY(0);    } to { opacity:0; transform:translateY(6px); } }
