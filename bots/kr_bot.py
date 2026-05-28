@@ -1050,7 +1050,9 @@ class KRBotController:
 
     def initialize_portfolio(self, total_cash):
         self.add_log("포트폴리오 초기화 중...")
-        raw_info, self.hot_sectors = select_satellites(kis=self.kis, n=self.num_satellites * 2, verbose=False, claude_client=self.claude, sector_guide=self.sector_guide, real_kis=self.real_kis)
+        raw_info, _new_hot = select_satellites(kis=self.kis, n=self.num_satellites * 2, verbose=False, claude_client=self.claude, sector_guide=self.sector_guide, real_kis=self.real_kis)
+        if _new_hot:
+            self.hot_sectors = _new_hot
         if self.hot_sectors:
             self.add_log(f"🔥 강세 섹터: {', '.join(self.hot_sectors[:4])}")
         else:
@@ -1436,9 +1438,8 @@ class KRBotController:
                 news = "뉴스 조회 실패"
             lines.append(f"[최근 뉴스] {news}")
 
-        # ── 2. 재무제표 (캐시에 있으면 사용) ─────────────────────
-        today_str = _now_kst().strftime('%Y-%m-%d')
-        fundamental = self.fundamental_cache.get(f"{ticker}_{today_str}", "")
+        # ── 2. 재무지표 (PER·PBR·ROE — yfinance .info, 일 1회 캐싱) ──
+        fundamental = self._fetch_fundamental(ticker, stock_name)
         if fundamental:
             lines.append(f"[재무지표] {fundamental}")
 
@@ -1624,6 +1625,32 @@ class KRBotController:
             lines.append(f"[강세 섹터] {', '.join(self.hot_sectors[:5])}")
 
         return "\n".join(lines)
+
+    def _fetch_fundamental(self, ticker: str, stock_name: str) -> str:
+        """yfinance .info로 PER·PBR·ROE를 조회하고 오늘 날짜 키로 캐싱 (일 1회).
+        반환: "PER 15.3x | PBR 2.1x | ROE 12.5%" 형태 문자열, 실패 시 ""
+        """
+        today_str = _now_kst().strftime('%Y-%m-%d')
+        cache_key = f"{ticker}_{today_str}"
+        if cache_key in self.fundamental_cache:
+            return self.fundamental_cache[cache_key]
+        try:
+            import yfinance as yf
+            yfk = ticker + ".KS" if not ticker.endswith((".KS", ".KQ")) else ticker
+            info = yf.Ticker(yfk).info
+            parts = []
+            pe  = info.get("trailingPE")
+            pb  = info.get("priceToBook")
+            roe = info.get("returnOnEquity")
+            if pe  and pe  > 0:  parts.append(f"PER {pe:.1f}x")
+            if pb  and pb  > 0:  parts.append(f"PBR {pb:.2f}x")
+            if roe and roe != 0: parts.append(f"ROE {roe*100:.1f}%")
+            result = " | ".join(parts) if parts else ""
+            self.fundamental_cache[cache_key] = result
+        except Exception:
+            result = ""
+            self.fundamental_cache[cache_key] = result
+        return result
 
     def _check_minute_trend_up(self, ticker: str) -> bool:
         """최근 5개 분봉 종가 기울기가 양수(상승 추세)이면 True."""
@@ -3408,11 +3435,13 @@ class KRBotController:
             # [W-NEW-08] _satellite_rejects 를 락 안에서 스냅샷으로 읽어 경합 방지
             with self.lock:
                 n_rejects = len(self._satellite_rejects)
-            raw_info, self.hot_sectors = select_satellites(
+            raw_info, _new_hot = select_satellites(
                 kis=self.kis, n=self.num_satellites + n_needed + n_rejects + 3,
                 verbose=False, claude_client=self.claude, bear_mode=(self.market_regime == "BEAR"),
                 sector_guide=self.sector_guide, real_kis=self.real_kis
             )
+            if _new_hot:
+                self.hot_sectors = _new_hot
             if self.hot_sectors:
                 self.add_log(f"🔥 강세 섹터 감지: {', '.join(self.hot_sectors[:4])}")
             else:

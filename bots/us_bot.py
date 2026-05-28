@@ -777,6 +777,10 @@ class USBotController:
                         except Exception:
                             pass
                         _core_news = self._fetch_us_news([ticker])
+                        _core_fundamental = self._fetch_fundamental(ticker)
+                        _core_ai_reason = info.get("ai_reason", "")
+                        if _core_fundamental:
+                            _core_ai_reason = f"{_core_ai_reason} | [{_core_fundamental}]".strip(" |")
                         approved, ai_reason = self.claude.ai_approve_us_trade(
                             signal         = 'BUY',
                             stock_name     = pos.name,
@@ -786,7 +790,7 @@ class USBotController:
                             hot_sectors    = self.hot_sectors,
                             momentum_20d   = momentum_20d,
                             rsi            = info.get("rsi", 50.0),
-                            ai_reason      = info.get("ai_reason", ""),
+                            ai_reason      = _core_ai_reason,
                             news_headlines = _core_news,
                         )
                     if not approved:
@@ -807,6 +811,12 @@ class USBotController:
                             f"⏰ {_now_et().strftime('%H:%M ET')}"
                         )
                     else:
+                        # ── 코어 분봉 확인 (BULL 제외, 5분봉 하락 추세면 대기) ──
+                        if not self._check_minute_trend_up_us(ticker):
+                            with self.lock:
+                                pos.status = "분봉 하락 📉"
+                            self.add_log(f"⏸ 코어 분봉 하락 보류: {pos.name}({ticker}) — 다음 턴 재시도")
+                            continue
                         bought_qty = self._buy(ticker, pos.name, budget * first_ratio, price)
                         if bought_qty > 0:
                             with self.lock:
@@ -1197,7 +1207,9 @@ class USBotController:
 
         self.satellite_info   = strong_keep_info + new_info
         self._inject_user_satellites()
-        self.hot_sectors      = list({c["sector"] for c in self.satellite_info if c.get("sector")})
+        _new_hot = list({c["sector"] for c in self.satellite_info if c.get("sector")})
+        if _new_hot:
+            self.hot_sectors = _new_hot
         self.last_screen_date = today
 
         # satellite_info 에 선정된 종목 중 positions 에 없는 것 → 즉시 빈 포지션 생성
@@ -1353,12 +1365,15 @@ class USBotController:
             # ── AI 매수 승인 심사 ────────────────────────────────────
             if self.claude:
                 try:
-                    # 종목 뉴스 헤드라인 fetch (yfinance, 무료)
+                    # 종목 뉴스 헤드라인 + 재무지표 fetch
                     _news_str = self._fetch_us_news([ticker])
-                    # 52주 신고가 정보 ai_reason에 포함
+                    _fundamental = self._fetch_fundamental(ticker)
+                    # 52주 신고가 + 재무지표 정보 ai_reason에 포함
                     _full_ai_reason = info.get("ai_reason", "")
                     if _52w_note:
                         _full_ai_reason = f"{_full_ai_reason} | {_52w_note}".strip(" |")
+                    if _fundamental:
+                        _full_ai_reason = f"{_full_ai_reason} | [{_fundamental}]".strip(" |")
                     approved, ai_reason = self.claude.ai_approve_us_trade(
                         signal         = 'BUY',
                         stock_name     = info["name"],
@@ -1393,6 +1408,16 @@ class USBotController:
                     self.add_log(f"🤖 AI 매수 승인: {info['name']}({ticker}) | 점수 {entry_score}pt")
                 except Exception as e:
                     logger.warning(f"[US봇] AI 승인 심사 오류 ({ticker}): {e} — 알고리즘 신호 허용")
+
+            # ── 분봉 추세 확인 (NEUTRAL/BEAR 국면: 5분봉 하락 추세면 대기) ──
+            if not self._check_minute_trend_up_us(ticker):
+                with self.lock:
+                    pos_obj = self.satellite_positions.get(ticker)
+                    if pos_obj:
+                        pos_obj.status = "분봉 하락 📉"
+                        pos_obj.status_msg = "5분봉 하락 추세 — 다음 턴 재시도"
+                self.add_log(f"⏸ 분봉 하락 추세 보류: {info['name']}({ticker}) — 다음 턴 재시도")
+                continue
 
             qty = self._buy(ticker, info["name"], actual_budget, price)
             if qty > 0:
@@ -2047,13 +2072,70 @@ class USBotController:
             # 스크리닝 선정 종목의 섹터와 병합 (순서 유지, 중복 제거)
             screen_hot = list({c["sector"] for c in self.satellite_info})
             merged = list(dict.fromkeys(trend_hot + screen_hot))
-            self.hot_sectors = merged
+            if merged:
+                self.hot_sectors = merged
 
             up_str   = ", ".join(trend_hot)  or "없음"
             down_str = ", ".join(trend_cold) or "없음"
             self.add_log(f"🏭 섹터 추세 — 상승: [{up_str}]  하락: [{down_str}]")
         except Exception as e:
             logger.debug(f"[US봇] 섹터 추세 분석 실패: {e}")
+
+    # ─────────────────────────────────────────────────────────────────
+    # US 분봉 진입 타이밍 (yfinance 5분봉, BULL 국면 제외 게이트)
+    # ─────────────────────────────────────────────────────────────────
+
+    def _check_minute_trend_up_us(self, ticker: str) -> bool:
+        """최근 5개 5분봉 종가 기울기가 양수(상승 추세)이면 True.
+        BULL 국면에서는 항상 True 반환 (상승 중 진입 기회 놓치지 않기 위해).
+        데이터 조회 실패 시에도 True 반환 (차단하지 않음).
+        """
+        if self.market_regime == "BULL":
+            return True
+        try:
+            import yfinance as yf
+            df = yf.download(ticker, period="1d", interval="5m",
+                             progress=False, auto_adjust=True)
+            if hasattr(df.columns, "get_level_values"):
+                df.columns = df.columns.get_level_values(0)
+            df = df.dropna(subset=["Close"])
+            if len(df) < 3:
+                return True
+            closes = df["Close"].iloc[-5:].tolist()
+            # 마지막 종가가 첫 종가 이상이면 상승 추세
+            return float(closes[-1]) >= float(closes[0])
+        except Exception:
+            return True
+
+    # ─────────────────────────────────────────────────────────────────
+    # US 기본적 분석 (PER·PBR·ROE — yfinance .info, 일 1회 캐싱)
+    # ─────────────────────────────────────────────────────────────────
+
+    def _fetch_fundamental(self, ticker: str) -> str:
+        """yfinance .info로 PER·PBR·ROE를 조회하고 오늘 날짜 키로 캐싱 (일 1회).
+        반환: "PER 25.3x | PBR 8.1x | ROE 42.5%" 형태 문자열, 실패 시 ""
+        """
+        import datetime as _dt
+        today_str = _dt.date.today().strftime('%Y-%m-%d')
+        cache_key = f"{ticker}_{today_str}"
+        if cache_key in self.fundamental_cache:
+            return self.fundamental_cache[cache_key]
+        try:
+            import yfinance as yf
+            info = yf.Ticker(ticker).info
+            parts = []
+            pe  = info.get("trailingPE")
+            pb  = info.get("priceToBook")
+            roe = info.get("returnOnEquity")
+            if pe  and pe  > 0:  parts.append(f"PER {pe:.1f}x")
+            if pb  and pb  > 0:  parts.append(f"PBR {pb:.2f}x")
+            if roe and roe != 0: parts.append(f"ROE {roe*100:.1f}%")
+            result = " | ".join(parts) if parts else ""
+            self.fundamental_cache[cache_key] = result
+        except Exception:
+            result = ""
+            self.fundamental_cache[cache_key] = result
+        return result
 
     # ─────────────────────────────────────────────────────────────────
     # US 뉴스 수집 (yfinance 무료 — API 키 불필요)
