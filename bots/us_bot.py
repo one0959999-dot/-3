@@ -698,6 +698,10 @@ class USBotController:
                     self._record_pnl(pnl)
                     self.add_log(f"🚨 코어 손절 {pos.name}({ticker}) | ATR×{hard_mult:.1f} 이탈 | PnL ${pnl:+.0f}")
                     self._tg(f"🚨 [US 코어 손절] {pos.name}\nATR×{hard_mult:.1f} 이탈 | 재진입 타점 탐색 중\n손익: ${pnl:+,.0f}")
+                    if self.claude:
+                        self.claude.record_trade_event(
+                            f"코어 손절 🚨 {pos.name}({ticker}) | ATR×{hard_mult:.1f} 이탈 | 손익 ${pnl:+.0f}"
+                        )
                 continue
 
             # ── 통합 진입 점수 + RSI 매수 신호 (정규장만 매수) ────────────
@@ -789,6 +793,11 @@ class USBotController:
                         with self.lock:
                             pos.status = f"코어 AI 거절 🛑 ({c_score}pt)"
                         self.add_log(f"🛑 코어 AI 거절 {pos.name}({ticker}): {ai_reason[:60]}")
+                        if self.claude:
+                            self.claude.record_trade_event(
+                                f"코어 매수 거절 🛑 {pos.name}({ticker}) @ ${price:.2f} | "
+                                f"거절이유: {ai_reason[:80]}"
+                            )
                         self._tg(
                             f"🛑 <b>[US 코어 매수 거절]</b>  {self.alert_icon}\n"
                             f"━━━━━━━━━━━━━━━━━━━━\n"
@@ -816,6 +825,11 @@ class USBotController:
                             score_str = " | ".join(c_reasons[:3])
                             self.add_log(f"💎 코어 1차 매수 {pos.name}({ticker}) {bought_qty}주 @ ${price:.2f} | {c_score}pt [{score_str}] | 2차 예약 ${price*0.98:.2f} | AI: {ai_reason[:40]}")
                             self._tg(f"💎 [US 코어 1차 매수] {pos.name} ({ticker})\n@ ${price:.2f}  점수 {c_score}pt\n2차 예약: ${price*0.98:.2f} (-2%)")
+                            if self.claude:
+                                self.claude.record_trade_event(
+                                    f"코어 매수 ✅ {pos.name}({ticker}) {bought_qty}주 @ ${price:.2f} | "
+                                    f"진입점수 {c_score}pt | 근거: {score_str} | AI승인: {ai_reason[:60]}"
+                                )
 
             # ── 코어 2차 분할 매수: 1차 진입가 -2% 눌림목 ──────────────
             if (pos.shares > 0 and avg > 0 and is_cd
@@ -1360,6 +1374,10 @@ class USBotController:
                     if not approved:
                         self._satellite_rejects[ticker] = ai_reason
                         self.add_log(f"🤖 AI 매수 거절: {info['name']}({ticker}) — {ai_reason[:80]}")
+                        if self.claude:
+                            self.claude.record_trade_event(
+                                f"위성 매수 거절 🛑 {info['name']}({ticker}) @ ${price:.2f} | 거절이유: {ai_reason[:80]}"
+                            )
                         self._tg(
                             f"🛑 <b>[US 위성 매수 거절]</b>  {self.alert_icon}\n"
                             f"━━━━━━━━━━━━━━━━━━━━\n"
@@ -1396,6 +1414,11 @@ class USBotController:
                     f"🛰️ [US 위성 매수] {info['name']} ({ticker})\n"
                     f"@ ${price:.2f}  점수 {entry_score}pt  섹터: {info.get('sector','')}"
                 )
+                if self.claude:
+                    self.claude.record_trade_event(
+                        f"위성 매수 ✅ {info['name']}({ticker}) {qty}주 @ ${price:.2f} | "
+                        f"점수 {entry_score}pt | 근거: {score_str}"
+                    )
 
         # ── 보유 중 청산 조건 체크 (ATR 기반 — KR 동일) ─────────────
         for ticker, pos in list(self.satellite_positions.items()):
@@ -1614,6 +1637,10 @@ class USBotController:
             f"{icon} [US 위성 청산] {pos.name}\n"
             f"사유: {reason}\n손익: ${pnl:+,.0f}"
         )
+        if self.claude:
+            self.claude.record_trade_event(
+                f"위성 청산 {icon} {pos.name}({ticker}) | {reason} | 손익 ${pnl:+.0f}"
+            )
 
     # ─────────────────────────────────────────────────────────────────
     # 메인 루프

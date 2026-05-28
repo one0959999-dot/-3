@@ -788,6 +788,15 @@ REASON: (핵심 근거 1~2줄)"""
                 f"[ClaudeAPI] ai_approve_us_trade 오류 — 자동 허용: {type(e).__name__}: {e}")
             return True, "AI 일시 오류 — 알고리즘 신호 허용"
 
+    def record_trade_event(self, event: str) -> None:
+        """매매 결정을 대화 히스토리에 기록 — 채팅 AI가 매매 맥락을 기억하도록.
+        매수/매도/거절/손절 등 주요 이벤트 발생 시 호출.
+        assistant 역할로 기록해 AI 자신의 결정처럼 취급."""
+        from datetime import datetime, timezone, timedelta
+        _kst = datetime.now(timezone(timedelta(hours=9))).strftime('%m/%d %H:%M')
+        record = f"[매매기록] {_kst} | {event}"
+        self._conversation_history.append({"role": "assistant", "content": record})
+
     def chat(self, user_message: str, portfolio_context=None, stock_analysis_context=None) -> str:
         """대화 히스토리를 유지하는 채팅 기능 — GeminiApi.chat 호환"""
         if not self.client:
@@ -815,9 +824,13 @@ REASON: (핵심 근거 1~2줄)"""
 
         self._conversation_history.append({"role": "user", "content": full_message})
 
-        # 히스토리 최대 20개 메시지 유지
-        if len(self._conversation_history) > 20:
-            self._conversation_history = self._conversation_history[-20:]
+        # 히스토리 최대 40개 메시지 유지 (매매 기록 포함하므로 여유 확보)
+        if len(self._conversation_history) > 40:
+            # 앞쪽 매매기록은 보존, 오래된 일반 대화만 제거
+            trade_logs = [m for m in self._conversation_history if m.get('content','').startswith('[매매기록]')]
+            chat_msgs  = [m for m in self._conversation_history if not m.get('content','').startswith('[매매기록]')]
+            # 최근 매매기록 10개 + 최근 대화 20개
+            self._conversation_history = trade_logs[-10:] + chat_msgs[-20:]
 
         try:
             # 채팅은 Sonnet + 채팅 전용 시스템 프롬프트 (매매 심사 프롬프트 X)
