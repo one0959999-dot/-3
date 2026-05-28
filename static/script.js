@@ -881,6 +881,10 @@ window.saveAccountSettings = async function () {
     const isMock = document.getElementById('modeSwitch').checked ? 1 : 0;
     const coreJsonStr = JSON.stringify(_coreStockList);
 
+    // US 운용 자본 — 0 포함 유효 (미운용 의미)
+    const usInitialCashEl = document.getElementById('usInitialCash');
+    const usInitialCash = usInitialCashEl ? Number(usInitialCashEl.value) : 0;
+
     const data = {
         real_app_key: document.getElementById('realAppKey').value,
         real_app_secret: document.getElementById('realAppSecret').value,
@@ -893,7 +897,8 @@ window.saveAccountSettings = async function () {
         telegram_chat_id: document.getElementById('teleChatId').value,
         claude_api_key: document.getElementById('claudeApiKey').value,
         core_stocks: coreJsonStr,
-        is_mock: isMock
+        is_mock: isMock,
+        initial_cash: usInitialCash,   // US 모드일 때 us_initial_cash 컬럼에 저장됨
     };
     try {
         const res = await fetch('/api/settings/keys', {
@@ -1192,8 +1197,8 @@ window.resetInitialCash = async function () {
         '10000000'
     );
     if (input === null) return;
-    const amount = parseInt(input.replace(/[^0-9]/g, ''));
-    if (!amount || amount <= 0) { alert('올바른 금액을 입력해주세요.'); return; }
+    const amount = parseInt(input.replace(/[^0-9]/g, '') || '0');
+    if (isNaN(amount) || amount < 0) { alert('올바른 금액을 입력해주세요. (0원 입력 가능)'); return; }
     try {
         const res = await fetch('/api/reset_initial_cash', {
             method: 'POST',
