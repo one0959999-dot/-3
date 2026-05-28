@@ -1224,6 +1224,17 @@ class KRBotController:
             else:
                 old_single = state.get("momentum_position")
                 self.momentum_positions = [self._deserialize_one_momentum(old_single)] + [None] * (target_slots - 1)
+
+            # satellite_info에 선정된 종목 중 positions에 없는 것 → 빈 포지션 생성
+            # 대시보드에 "감시 중" 상태로 표시되고, 다음 매매 턴에 즉시 진입 시도 가능
+            _existing_tickers = set(self.satellite_positions.keys())
+            for _sat in self.satellite_info:
+                _t = _sat.get('ticker')
+                if _t and _t not in _existing_tickers:
+                    self.satellite_positions[_t] = Position(_t, _sat.get('name', _t), 0.0)
+                    self.satellite_strategies[_t] = _sat.get('strategy_name', 'RSI(9) 30/70')
+                    _existing_tickers.add(_t)
+
             return True
         except Exception as e:
             logger.error(f"[{self.mode_name}] 상태 복구 실패: {e}", exc_info=True)

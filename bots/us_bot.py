@@ -1025,6 +1025,16 @@ class USBotController:
         self.hot_sectors      = list({c["sector"] for c in self.satellite_info if c.get("sector")})
         self.last_screen_date = today
 
+        # satellite_info 에 선정된 종목 중 positions 에 없는 것 → 즉시 빈 포지션 생성
+        # 대시보드에 "감시 중" 상태로 표시되고, 다음 매매 턴에 즉시 진입 시도
+        for _sat in self.satellite_info:
+            _t = _sat.get("ticker")
+            if _t and _t not in self.satellite_positions:
+                self.satellite_positions[_t] = USPosition(
+                    ticker=_t, name=_sat.get("name", _t),
+                    status="감시 중 👀"
+                )
+
         # 신규 종목 선정 시 텔레그램 알림 (KR봇 initialize_portfolio 동일)
         if new_info:
             _lines = "\n".join([
@@ -1937,6 +1947,17 @@ class USBotController:
                     max_price_usd  = float(s.get("max_price_usd", 0)),
                     status         = s.get("status", "보유 중 🛰️"),
                 )
+            # satellite_info에 선정된 종목 중 positions에 없는 것 → 빈 포지션 생성 (대시보드 표시용)
+            _existing_us = set(self.satellite_positions.keys())
+            for _sat in self.satellite_info:
+                _t = _sat.get("ticker")
+                if _t and _t not in _existing_us:
+                    self.satellite_positions[_t] = USPosition(
+                        ticker=_t, name=_sat.get("name", _t),
+                        status="감시 중 👀"
+                    )
+                    _existing_us.add(_t)
+
             self.add_log("📂 이전 상태 복원 완료")
         except Exception as e:
             logger.warning(f"[US봇] 상태 복원 실패: {e}")
