@@ -45,6 +45,30 @@ import importlib
 
 logger = logging.getLogger('lassi_bot')
 
+# ── US 방어 자산 포트폴리오 (BEAR 국면 자동 편입) ────────────────────────
+# KR 봇의 DEFENSIVE_ASSETS와 동일 구조 — 총 배분 40%
+# PSQ 20% (나스닥 1x 인버스) + GLD 13% (금 ETF) + UUP 7% (달러 강세 ETF)
+US_DEFENSIVE_ASSETS = [
+    {
+        "ticker": "PSQ",
+        "name":   "ProShares Short QQQ",
+        "ratio":  0.20,    # 총자산의 20% — 나스닥 1배 인버스
+        "emoji":  "📉",
+    },
+    {
+        "ticker": "GLD",
+        "name":   "SPDR Gold Shares",
+        "ratio":  0.13,    # 총자산의 13% — 금 안전자산
+        "emoji":  "🥇",
+    },
+    {
+        "ticker": "UUP",
+        "name":   "Invesco DB USD Bull",
+        "ratio":  0.07,    # 총자산의 7% — 달러 강세 헤지
+        "emoji":  "💵",
+    },
+]
+
 # ── 미국 동부 시간 (EDT = UTC-4, 서머타임 기준) ─────────────────────
 _ET = timezone(timedelta(hours=-4))
 
@@ -178,6 +202,11 @@ class USBotController:
         self.futures_snapshot: dict = {}     # 야간선물 스냅샷 (NQ=F / ES=F / EWY)
         self.sector_trends:    list = []     # NASDAQ 섹터 추세 리스트
 
+        # ── 방어 자산 ─────────────────────────────────────────────────
+        self._last_defensive_check = 0.0          # 5분 캐시
+        self._defensive_sold_ts:   dict = {}      # 종목별 청산 타임스탬프 (24h 쿨다운)
+        self._defensive_shares:    dict = {}      # 종목별 보유 수량 캐시
+
         # ── 블랙리스트 ────────────────────────────────────────────────
         self._bl_date           = ""
         self._satellite_rejects: dict = {}
@@ -204,7 +233,6 @@ class USBotController:
         self.live_prices     = {}
         self.gemini          = None
         self.sector_guide    = get_sector_guide(user_id) or ""
-        self.core_positions  = []
         self.fundamental_cache: dict = {}
 
         self.lock = threading.RLock()
@@ -1599,8 +1627,9 @@ class USBotController:
                             self._run_threaded(self._rescreen_satellites)
                     _last_rescreen_ts = time.time()
 
-                # ── 코어·위성 매매 (KIS 연결 시에만) ────────────────
+                # ── 코어·위성·방어자산 매매 (KIS 연결 시에만) ──────────
                 if self.kis_overseas:
+                    self._handle_defensive_assets(self.market_regime)
                     self._manage_cores()
                     self._manage_satellites()
                 else:
@@ -1619,6 +1648,112 @@ class USBotController:
 
         self._save_state()
         self.add_log("⏹️ US 봇 루프 종료")
+
+    # ─────────────────────────────────────────────────────────────────
+    # 방어 자산 관리 (KR 봇 _handle_defensive_assets 동일 패턴)
+    # ─────────────────────────────────────────────────────────────────
+
+    def _handle_defensive_assets(self, regime: str):
+        """
+        BEAR 국면: US_DEFENSIVE_ASSETS 3종 자동 매수 (PSQ 20%, GLD 13%, UUP 7%).
+        BULL/NEUTRAL 국면: 보유 중이면 각 자산 전량 청산.
+        종목별 독립 24h 재매수 쿨다운 (휩쏘 방지).
+        5분마다 한 번만 실행.
+        """
+        if not self.kis_overseas:
+            return
+        if time.time() - self._last_defensive_check < 300:
+            return
+        self._last_defensive_check = time.time()
+
+        try:
+            bal = self.kis_overseas.get_balance()
+            if not bal:
+                return
+
+            cash_usd     = float(bal.get("cash_usd", 0))
+            stocks       = bal.get("stocks", [])
+            total_val_usd = cash_usd + sum(float(s.get("value", 0)) for s in stocks)
+            stocks_map   = {s["ticker"]: s for s in stocks}
+
+            # 방어자산 보유 수량 캐시 갱신
+            for asset in US_DEFENSIVE_ASSETS:
+                t = asset["ticker"]
+                s = stocks_map.get(t)
+                self._defensive_shares[t] = int(s.get("shares", 0)) if s else 0
+
+            for asset in US_DEFENSIVE_ASSETS:
+                ticker = asset["ticker"]
+                name   = asset["name"]
+                ratio  = asset["ratio"]
+                emoji  = asset["emoji"]
+                shares_held = self._defensive_shares.get(ticker, 0)
+                has_pos     = shares_held > 0
+
+                if regime == "BEAR" and not has_pos:
+                    # 휩쏘 방지: 청산 후 24h 이내 재매수 금지
+                    sold_ts = self._defensive_sold_ts.get(ticker, 0.0)
+                    cooldown = 86400 - (time.time() - sold_ts)
+                    if sold_ts > 0 and cooldown > 0:
+                        self.add_log(f"⏳ [US방어] {name} 재매수 쿨다운 ({cooldown/3600:.1f}h) — 휩쏘 방지")
+                        continue
+
+                    budget_usd = total_val_usd * ratio
+                    price_usd  = self._price_cache.get(ticker, 0.0)
+                    if price_usd <= 0:
+                        try:
+                            import yfinance as yf
+                            hist = yf.Ticker(ticker).history(period="2d")
+                            if not hist.empty:
+                                price_usd = float(hist["Close"].iloc[-1])
+                                self._price_cache[ticker] = price_usd
+                        except Exception:
+                            pass
+                    if price_usd <= 0:
+                        continue
+
+                    qty = int(budget_usd // price_usd)
+                    if qty > 0 and cash_usd >= qty * price_usd * 1.003:
+                        if self.kis_overseas.buy_market_order(ticker, qty):
+                            cash_usd -= qty * price_usd
+                            self._defensive_shares[ticker] = qty
+                            fx = _get_fx_rate()
+                            self.add_log(
+                                f"🐻 [US방어 매수] {emoji} {name}({ticker}) "
+                                f"{qty}주 @ ${price_usd:.2f} | 총자산 {ratio*100:.0f}% 헤지"
+                            )
+                            self._tg(
+                                f"🐻 <b>US 방어 자산 매수</b>  {self.alert_icon}\n"
+                                f"━━━━━━━━━━━━━━━━━━━━\n"
+                                f"{emoji} <b>{name}</b>  <code>{ticker}</code>\n"
+                                f"💰 <b>${price_usd:.2f}</b> × <b>{qty}주</b>"
+                                f"  =  <b>₩{round(qty*price_usd*fx):,}</b>\n"
+                                f"📋 BEAR 국면  ·  총자산 {ratio*100:.0f}% 헤지\n"
+                                f"━━━━━━━━━━━━━━━━━━━━\n"
+                                f"⏰ {_now_et().strftime('%H:%M ET')}"
+                            )
+
+                elif regime != "BEAR" and has_pos:
+                    if self.kis_overseas.sell_market_order(ticker, shares_held):
+                        self._defensive_sold_ts[ticker] = time.time()
+                        self._defensive_shares[ticker]  = 0
+                        price_usd = self._price_cache.get(ticker, 0.0)
+                        self.add_log(
+                            f"🐂 [US방어 청산] 국면→{regime} | {emoji} {name}({ticker}) "
+                            f"{shares_held}주 전량 (24h 재매수 대기)"
+                        )
+                        self._tg(
+                            f"🐂 <b>US 방어 자산 청산</b>  {self.alert_icon}\n"
+                            f"━━━━━━━━━━━━━━━━━━━━\n"
+                            f"{emoji} <b>{name}</b>  <code>{ticker}</code>\n"
+                            f"💰 <b>{shares_held}주</b> 전량 청산\n"
+                            f"📋 국면 전환: BEAR → <b>{regime}</b>  ·  헤지 해제\n"
+                            f"━━━━━━━━━━━━━━━━━━━━\n"
+                            f"⏰ {_now_et().strftime('%H:%M ET')}"
+                        )
+
+        except Exception as e:
+            logger.error(f"[US봇] 방어 자산 처리 오류: {e}", exc_info=True)
 
     # ─────────────────────────────────────────────────────────────────
     # 시장 국면 판단 (SPY/QQQ 기반)
@@ -2039,6 +2174,35 @@ class USBotController:
         try:
             fx = _get_fx_rate()
 
+            # ── 코어 포지션 ───────────────────────────────────────────
+            total_core_usd = 0.0
+            cores_data = []
+            with self.lock:
+                core_items = list(self.core_positions.items()) if isinstance(self.core_positions, dict) else []
+            for t, pos in core_items:
+                sp_usd  = self._price_cache.get(t, pos.avg_price_usd)
+                val_usd = pos.shares * sp_usd
+                total_core_usd += val_usd
+                avg_p   = pos.avg_price_usd
+                pnl_pct = ((sp_usd / avg_p) - 1) * 100 if avg_p > 0 else 0.0
+                cores_data.append({
+                    "name":       pos.name,
+                    "ticker":     t,
+                    "strategy":   next(
+                        (i.get("ai_reason", "US 코어") for i in self.core_info if i["ticker"] == t),
+                        "US 코어 💎",
+                    ),
+                    "shares":     pos.shares,
+                    "price":      round(sp_usd * fx),
+                    "value":      round(val_usd * fx),
+                    "avg_price":  round(avg_p * fx),
+                    "budget":     round(pos.budget_usd * fx),
+                    "floor":      0,
+                    "status":     pos.status,
+                    "status_msg": f"${sp_usd:.2f} | {pnl_pct:+.1f}%",
+                    "dca_mode":   False,
+                })
+
             # ── 위성 포지션 ───────────────────────────────────────────
             total_sat_usd = 0.0
             satellites    = []
@@ -2074,8 +2238,31 @@ class USBotController:
                     sp_usd = self._price_cache.get(t, pos.avg_price_usd)
                     total_sat_usd += pos.shares * sp_usd
 
-            # ── 총 평가금액 ───────────────────────────────────────────
-            total_usd   = self.cash_usd + total_sat_usd
+            # ── 방어 자산 상태 ─────────────────────────────────────────
+            is_bear = (self.market_regime == "BEAR")
+            defensive_list = []
+            for asset in US_DEFENSIVE_ASSETS:
+                t        = asset["ticker"]
+                sp_usd   = self._price_cache.get(t, 0.0)
+                d_shares = self._defensive_shares.get(t, 0)
+                defensive_list.append({
+                    "ticker":     t,
+                    "name":       asset["name"],
+                    "emoji":      asset["emoji"],
+                    "ratio":      asset["ratio"],
+                    "price":      round(sp_usd * fx),
+                    "shares":     d_shares,
+                    "value":      round(d_shares * sp_usd * fx),
+                    "active":     is_bear,
+                    "change_pct": 0.0,
+                })
+
+            # ── 총 평가금액 (코어 + 위성 + 방어 + 현금) ──────────────
+            total_def_usd = sum(
+                self._defensive_shares.get(a["ticker"], 0) * self._price_cache.get(a["ticker"], 0.0)
+                for a in US_DEFENSIVE_ASSETS
+            )
+            total_usd   = self.cash_usd + total_core_usd + total_sat_usd + total_def_usd
             total_krw   = round(total_usd * fx)
             initial_krw = get_user_initial_cash(self.user_id, self._is_mock)
             pnl_krw     = total_krw - initial_krw
@@ -2088,10 +2275,10 @@ class USBotController:
                 "logs":             list(self.logs)[-30:],
                 "hot_sectors":      self.hot_sectors,
                 "num_satellites":   self.num_satellites,
-                "cores":            [],
+                "cores":            cores_data,
                 "satellites":       satellites,
                 "momentum_list":    [],
-                "defensive_list":   [],
+                "defensive_list":   defensive_list,
                 "market_regime":    self.market_regime,
                 "us_total_asset": total_krw,
                 "us_pnl":         pnl_krw,

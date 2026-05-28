@@ -296,7 +296,7 @@ document.addEventListener('DOMContentLoaded', () => {
             }
         }
 
-        // 방어자산 렌더링 (KR 전용)
+        // 방어자산 섹션: KR/US 모두 표시 (US도 PSQ/GLD/UUP 방어 전략 있음)
         renderDefensiveAssets(data.defensive_list, data.market_regime);
 
         // 선물 위젯 가시성 (모드별 다름)
