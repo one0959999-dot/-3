@@ -688,6 +688,30 @@ def ai_chat():
 
         target_tickers = list(dict.fromkeys(target_tickers))[:5]
 
+        if target_tickers and is_us_mode:
+            # US 봇 전용: 보유 포지션 현황 + 실시간 가격 컨텍스트
+            us_lines = ["[📊 US봇 보유 포지션 실시간 현황]"]
+            status_data = bot.get_status()
+            fx = status_data.get('fx_rate', 1400)
+            for c in status_data.get('cores', []):
+                if c['ticker'] in [t for t, _ in target_tickers]:
+                    pnl_pct = ((c['price'] / c['avg_price'] - 1) * 100) if c.get('avg_price', 0) > 0 and c.get('price', 0) > 0 else 0
+                    us_lines.append(
+                        f"  코어 {c['name']}({c['ticker']}): {c['shares']}주 | "
+                        f"단가 ${c.get('avg_price',0)/fx:.2f} → 현재 ${c.get('price',0)/fx:.2f} | "
+                        f"수익률 {pnl_pct:+.2f}% | 상태: {c.get('status','')}"
+                    )
+            for s in status_data.get('satellites', []):
+                if s['ticker'] in [t for t, _ in target_tickers]:
+                    pnl_pct = ((s['price'] / s['avg_price'] - 1) * 100) if s.get('avg_price', 0) > 0 and s.get('price', 0) > 0 else 0
+                    us_lines.append(
+                        f"  위성 {s['name']}({s['ticker']}): {s['shares']}주 | "
+                        f"수익률 {pnl_pct:+.2f}% | 전략: {s.get('strategy','')} | 상태: {s.get('status','')}"
+                    )
+            us_lines.append(f"  시장국면: {status_data.get('market_regime','?')} | 현금: ${bot.cash_usd:,.0f}")
+            if len(us_lines) > 1:
+                stock_analysis_context += "\n".join(us_lines) + "\n\n"
+
         if target_tickers and not is_us_mode:
             # KR 봇 전용: pykrx OHLCV 기반 종목 분석 컨텍스트
             context_lines = ["[📈 회원님이 궁금해하시는 종목의 실시간 데이터 분석 장부]"]

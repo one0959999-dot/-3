@@ -84,6 +84,16 @@ def _is_us_market_open() -> bool:
     t_close = now.replace(hour=16, minute=0,  second=0, microsecond=0)
     return t_open <= now < t_close
 
+def _is_us_sell_hours() -> bool:
+    """매도 허용 시간 — 정규장 + 시간외(프리마켓 04:00~09:30, 애프터마켓 16:00~20:00).
+    매수는 정규장(_is_us_market_open)만, 매도(손절)는 이 함수로 판단."""
+    now = _now_et()
+    if now.weekday() >= 5:
+        return False
+    t_pre_open  = now.replace(hour=4,  minute=0,  second=0, microsecond=0)
+    t_after_end = now.replace(hour=20, minute=0,  second=0, microsecond=0)
+    return t_pre_open <= now < t_after_end
+
 # ── USD/KRW 환율 캐시 (60초) ────────────────────────────────────────
 _fx_cache: dict = {"rate": 1400.0, "ts": 0.0}
 _fx_lock  = threading.Lock()
@@ -603,8 +613,9 @@ class USBotController:
     # 코어 관리 (KR 코어와 동일 로직: RSI + ATR 손절 + 통합 점수)
     # ─────────────────────────────────────────────────────────────────
 
-    def _manage_cores(self):
-        """코어 포지션 매수/손절 — KR 코어와 동일 전략."""
+    def _manage_cores(self, buy_allowed: bool = True):
+        """코어 포지션 매수/손절 — KR 코어와 동일 전략.
+        buy_allowed=False 시 매수 로직 건너뜀 (시간외 손절 전용 모드)."""
         if not self.kis_overseas or not self.core_info:
             return
 
@@ -689,7 +700,10 @@ class USBotController:
                     self._tg(f"🚨 [US 코어 손절] {pos.name}\nATR×{hard_mult:.1f} 이탈 | 재진입 타점 탐색 중\n손익: ${pnl:+,.0f}")
                 continue
 
-            # ── 통합 진입 점수 + RSI 매수 신호 ─────────────────────────
+            # ── 통합 진입 점수 + RSI 매수 신호 (정규장만 매수) ────────────
+            if not buy_allowed:
+                continue   # 시간외 → 매수 건너뜀 (손절은 위에서 이미 처리됨)
+
             if pos.shares == 0 and is_cd:
                 available_cash = self.cash_usd
                 budget = min(core_budget_per, available_cash)
@@ -1200,7 +1214,9 @@ class USBotController:
     # 위성 관리 (매수 + 청산 조건)
     # ─────────────────────────────────────────────────────────────────
 
-    def _manage_satellites(self):
+    def _manage_satellites(self, buy_allowed: bool = True):
+        """위성 포지션 매수/손절.
+        buy_allowed=False 시 매수 로직 건너뜀 (시간외 손절 전용 모드)."""
         if not self.kis_overseas:
             return
 
@@ -1210,8 +1226,8 @@ class USBotController:
         sat_budget_per = (total_usd * self.SAT_RATIO) / max(1, self.num_satellites)
         regime         = self.market_regime
 
-        # ── 미보유 후보 매수 ─────────────────────────────────────────
-        for info in self.satellite_info:
+        # ── 미보유 후보 매수 (정규장만) ──────────────────────────────
+        for info in (self.satellite_info if buy_allowed else []):
             ticker = info["ticker"]
             pos    = self.satellite_positions.get(ticker)
             if pos and pos.shares > 0:
@@ -1305,6 +1321,20 @@ class USBotController:
                 pass
 
             actual_budget = min(sat_budget_per * budget_ratio, self.cash_usd)
+
+            # ── AI 심사 전: 대시보드에 즉시 표시 (심사 중 상태) ──────
+            if ticker not in self.satellite_positions:
+                with self.lock:
+                    self.satellite_positions[ticker] = USPosition(
+                        ticker        = ticker,
+                        name          = info["name"],
+                        shares        = 0.0,
+                        avg_price_usd = price,
+                        status        = "AI 심사 중 🤖",
+                    )
+            else:
+                with self.lock:
+                    self.satellite_positions[ticker].status = "AI 심사 중 🤖"
 
             # ── AI 매수 승인 심사 ────────────────────────────────────
             if self.claude:
@@ -1672,19 +1702,38 @@ class USBotController:
                 cur_time_str = now.strftime("%H:%M")
                 today_str    = now.strftime("%Y-%m-%d")
 
-                # ── 장 밖이면 대기 ────────────────────────────────────
-                if not _is_us_market_open():
-                    h, m = now.hour, now.minute
-                    api_hint = "" if self.kis_overseas else " (⚠️ KIS 미연결)"
+                # ── 장 상태 판단 ─────────────────────────────────────
+                _mkt_open   = _is_us_market_open()
+                _sell_ok    = _is_us_sell_hours()   # 프리/애프터 포함
+                api_hint    = "" if self.kis_overseas else " (⚠️ KIS 미연결)"
+
+                if not _sell_ok:
+                    # 완전 장외 (20:00~04:00 ET) → 대기
                     self.add_log(
                         f"💤 장 외 시간 ({now.strftime('%a %H:%M ET')})"
-                        f" — 09:30 개장 대기 중{api_hint}"
+                        f" — 04:00 프리마켓 대기 중{api_hint}"
                     )
-                    # 장 시작 전 → 종목 사전 스캔
+                    time.sleep(300)
+                    continue
+
+                if not _mkt_open:
+                    # 시간외(프리/애프터) → 가격 갱신 + 손절 체크만
+                    h, m = now.hour, now.minute
+                    session = "프리마켓" if h < 9 or (h == 9 and m < 30) else "애프터마켓"
+                    self.add_log(
+                        f"🌙 {session} ({now.strftime('%a %H:%M ET')})"
+                        f" — 손절 감시 중{api_hint}"
+                    )
+                    # 장 시작 전 사전 스캔
                     if h < 9 or (h == 9 and m < 30):
                         self._screen_satellites()
                         self._screen_cores()
-                    time.sleep(300)
+                    # 가격 갱신 후 매도(손절)만 실행
+                    self._refresh_prices()
+                    if self.kis_overseas:
+                        self._manage_cores(buy_allowed=False)
+                        self._manage_satellites(buy_allowed=False)
+                    time.sleep(60)
                     continue
 
                 # ── 가격 갱신 ─────────────────────────────────────────
