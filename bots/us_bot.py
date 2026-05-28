@@ -117,6 +117,7 @@ class USPosition:
     ticker:         str
     name:           str
     shares:         float = 0.0
+    floor_shares:   float = 0.0   # 최소 보유 주식 수 — 이 이하로 절대 안 팜 (주식 수 축적)
     avg_price_usd:  float = 0.0
     budget_usd:     float = 0.0
     partial_sold:   bool  = False
@@ -669,20 +670,35 @@ class USBotController:
                         self.add_log(f"⚠️ [코어] {pos.name} ATR 손절 터치 but 호재 뉴스 감지 → 1회 유예\n{_stop_news[:120]}")
                 if not _stop_skip:
                     pos.stop_news_checked = False
-                    proceeds = self._sell(ticker, pos.name, pos.shares, price)
-                    pnl      = _net_profit_usd(price, avg, pos.shares)
-                    with self.lock:
-                        pos.shares             = 0.0
-                        pos.partial_sold       = False
-                        pos.partial_sold_2     = False
-                        pos.second_buy_price   = 0.0
-                        pos.second_buy_cash    = 0.0
-                        pos.second_buy_done    = False
-                        pos.bull_pyramid_done  = False
-                        pos.status             = "코어 손절 🚨"
-                    self._record_pnl(pnl)
-                    self.add_log(f"🚨 코어 손절 {pos.name}({ticker}) | ATR×{hard_mult:.1f} 이탈 | PnL ${pnl:+.0f}")
-                    self._tg(f"🚨 [US 코어 손절] {pos.name}\nATR×{hard_mult:.1f} 이탈 | 재진입 타점 탐색 중\n손익: ${pnl:+,.0f}")
+                    sellable_stop = max(0.0, pos.shares - pos.floor_shares)
+                    if sellable_stop <= 0:
+                        self.add_log(
+                            f"🛡️ [코어 floor] {pos.name}({ticker}) "
+                            f"floor={int(pos.floor_shares)}주 — ATR 손절 차단"
+                        )
+                        with self.lock:
+                            pos.status = f"코어 floor 보호 🛡️ (손절 차단)"
+                    else:
+                        proceeds = self._sell(ticker, pos.name, sellable_stop, price)
+                        pnl      = _net_profit_usd(price, avg, sellable_stop)
+                        with self.lock:
+                            pos.shares            -= sellable_stop  # floor_shares 잔량 보존
+                            pos.partial_sold       = False
+                            pos.partial_sold_2     = False
+                            pos.second_buy_price   = 0.0
+                            pos.second_buy_cash    = 0.0
+                            pos.second_buy_done    = False
+                            pos.bull_pyramid_done  = False
+                            if pos.shares > 0:
+                                pos.status = f"코어 floor 보유 🛡️ ({int(pos.shares)}주)"
+                            else:
+                                pos.status = "코어 손절 🚨"
+                        self._record_pnl(pnl)
+                        self.add_log(
+                            f"🚨 코어 손절 {pos.name}({ticker}) | ATR×{hard_mult:.1f} 이탈 | PnL ${pnl:+.0f}"
+                            + (f" | 🛡️ {int(pos.floor_shares)}주 floor 유지" if pos.floor_shares > 0 else "")
+                        )
+                        self._tg(f"🚨 [US 코어 손절] {pos.name}\nATR×{hard_mult:.1f} 이탈 | 재진입 타점 탐색 중\n손익: ${pnl:+,.0f}")
                 continue
 
             # ── 통합 진입 점수 + RSI 매수 신호 ─────────────────────────
@@ -784,6 +800,8 @@ class USBotController:
                         if bought_qty > 0:
                             with self.lock:
                                 pos.shares          = float(bought_qty)
+                                # floor_shares: 첫 매수 수량의 50% — 이 이하로 절대 매도 안 함
+                                pos.floor_shares    = max(pos.floor_shares, float(bought_qty) * 0.5)
                                 pos.avg_price_usd   = price
                                 pos.max_price_usd   = price
                                 pos.partial_sold    = False
@@ -809,6 +827,8 @@ class USBotController:
                         new_shares = pos.shares + sq
                         pos.avg_price_usd  = (pos.avg_price_usd * pos.shares + price * sq) / new_shares if new_shares > 0 else price
                         pos.shares         = new_shares
+                        # floor_shares는 오직 증가 방향으로만 (주식 수 축적 원칙)
+                        pos.floor_shares   = max(pos.floor_shares, pos.shares * 0.5)
                         pos.second_buy_done= True
                         pos.second_buy_cash= 0.0
                         pos.last_order_time= time.time()
@@ -835,6 +855,8 @@ class USBotController:
                                 new_sh = pos.shares + _py_qty
                                 pos.avg_price_usd  = (pos.avg_price_usd * pos.shares + price * _py_qty) / new_sh if new_sh > 0 else price
                                 pos.shares         = new_sh
+                                # floor_shares 갱신 (항상 증가 방향)
+                                pos.floor_shares   = max(pos.floor_shares, pos.shares * 0.5)
                                 pos.bull_pyramid_done = True
                                 pos.last_order_time= time.time()
                                 pos.status         = f"불타기 🔥 (+{_py_pct:.1f}%)"
@@ -844,25 +866,33 @@ class USBotController:
                     logger.debug(f"[US봇] BULL 불타기(코어) 오류: {_pye}")
             # ─────────────────────────────────────────────────────────────
 
-            # ── 코어 BEAR 조기 익절: +5% 도달 시 즉시 전량 청산 ──────
+            # ── 코어 BEAR 조기 익절: +5% 도달 시 즉시 청산 (floor 보호) ──────
             if pos.shares > 0 and avg > 0 and is_cd and regime == "BEAR":
                 pnl_pct_bear = (price / avg - 1) * 100
                 if pnl_pct_bear >= 5.0:
-                    q   = pos.shares
-                    self._sell(ticker, pos.name, q, price)
-                    pnl = _net_profit_usd(price, avg, q)
-                    with self.lock:
-                        pos.shares            = 0.0
-                        pos.second_buy_price  = 0.0
-                        pos.second_buy_cash   = 0.0
-                        pos.second_buy_done   = False
-                        pos.partial_sold      = False
-                        pos.partial_sold_2    = False
-                        pos.bull_pyramid_done = False
-                        pos.status            = "BEAR 조기익절 🐻"
-                    self._record_pnl(pnl)
-                    self.add_log(f"🐻 코어 BEAR 조기익절 {pos.name}({ticker}) +{pnl_pct_bear:.1f}% | PnL ${pnl:+.0f}")
-                    self._tg(f"🐻 [US 코어 BEAR 익절] {pos.name}\n+{pnl_pct_bear:.1f}% 하락장 반등 수확\nPnL ${pnl:+,.0f}")
+                    sellable_bear = max(0.0, pos.shares - pos.floor_shares)
+                    if sellable_bear <= 0:
+                        with self.lock:
+                            pos.status = f"BEAR floor 보호 (+{pnl_pct_bear:.1f}%) 🛡️"
+                    else:
+                        q   = sellable_bear
+                        self._sell(ticker, pos.name, q, price)
+                        pnl = _net_profit_usd(price, avg, q)
+                        with self.lock:
+                            pos.shares            -= q
+                            pos.second_buy_price  = 0.0
+                            pos.second_buy_cash   = 0.0
+                            pos.second_buy_done   = False
+                            pos.partial_sold      = False
+                            pos.partial_sold_2    = False
+                            pos.bull_pyramid_done = False
+                            if pos.shares > 0:
+                                pos.status = f"BEAR 조기익절 🐻 (floor {int(pos.shares)}주 유지)"
+                            else:
+                                pos.status = "BEAR 조기익절 🐻"
+                        self._record_pnl(pnl)
+                        self.add_log(f"🐻 코어 BEAR 조기익절 {pos.name}({ticker}) +{pnl_pct_bear:.1f}% | PnL ${pnl:+.0f}")
+                        self._tg(f"🐻 [US 코어 BEAR 익절] {pos.name}\n+{pnl_pct_bear:.1f}% 하락장 반등 수확\nPnL ${pnl:+,.0f}")
                     continue
 
             # ── 코어 부분 익절 (AI 판단) ──────────────────────────────
@@ -885,16 +915,23 @@ class USBotController:
                         with self.lock:
                             pos.status = f"AI 홀드 ({pnl_pct:+.1f}%) ⏳"
                     else:
-                        q   = max(1.0, pos.shares * self.PARTIAL1_QTY)
-                        self._sell(ticker, pos.name, q, price)
-                        pnl = _net_profit_usd(price, avg, q)
+                        # floor_shares 보호: floor 이하로는 매도 안 함
+                        sellable_p1 = max(0.0, pos.shares - pos.floor_shares)
+                        if sellable_p1 > 0:
+                            q   = min(max(1.0, pos.shares * self.PARTIAL1_QTY), sellable_p1)
+                            self._sell(ticker, pos.name, q, price)
+                            pnl = _net_profit_usd(price, avg, q)
+                            with self.lock:
+                                pos.shares           -= q
+                                pos.ai_exit_decision  = None
+                                pos.status            = f"코어 1차익절({pnl_pct:+.1f}%) ✂️"
+                            self._record_pnl(pnl)
+                            self.add_log(f"✂️  코어 1차익절 {pos.name} | PnL ${pnl:+.0f}")
                         with self.lock:
-                            pos.shares           -= q
-                            pos.partial_sold      = True
-                            pos.ai_exit_decision  = None
-                            pos.status            = f"코어 1차익절({pnl_pct:+.1f}%) ✂️"
-                        self._record_pnl(pnl)
-                        self.add_log(f"✂️  코어 1차익절 {pos.name} | PnL ${pnl:+.0f}")
+                            pos.partial_sold = True
+                            if sellable_p1 <= 0:
+                                pos.ai_exit_decision = None
+                                pos.status = f"코어 floor 보호 ({pnl_pct:+.1f}%) 🛡️"
 
                 # 2차: +20%(일반) / +30%(BULL) 도달 → AI에 전량 익절 여부 문의
                 elif pos.partial_sold and not pos.partial_sold_2 and pnl_pct >= _core_partial2 and pos.shares > 0:
@@ -908,17 +945,23 @@ class USBotController:
                         with self.lock:
                             pos.status = f"AI 홀드 ({pnl_pct:+.1f}%) ⏳"
                     else:
-                        q   = pos.shares
-                        self._sell(ticker, pos.name, q, price)
-                        pnl = _net_profit_usd(price, avg, q)
+                        # floor_shares 보호: floor 이하로는 매도 안 함
+                        sellable_p2 = max(0.0, pos.shares - pos.floor_shares)
+                        if sellable_p2 > 0:
+                            q   = sellable_p2
+                            self._sell(ticker, pos.name, q, price)
+                            pnl = _net_profit_usd(price, avg, q)
+                            self._record_pnl(pnl)
+                            self.add_log(f"✅ 코어 2차익절 {pos.name} | PnL ${pnl:+.0f}")
+                            self._tg(f"✅ [US 코어 전량익절] {pos.name} | +{pnl_pct:.1f}% | ${pnl:+,.0f}")
                         with self.lock:
-                            pos.shares            = 0.0
+                            pos.shares           -= sellable_p2 if sellable_p2 > 0 else 0
                             pos.partial_sold_2    = True
                             pos.ai_exit_decision  = None
-                            pos.status            = f"코어 2차익절({pnl_pct:+.1f}%) ✅"
-                        self._record_pnl(pnl)
-                        self.add_log(f"✅ 코어 2차익절(전량) {pos.name} | PnL ${pnl:+.0f}")
-                        self._tg(f"✅ [US 코어 전량익절] {pos.name} | +{pnl_pct:.1f}% | ${pnl:+,.0f}")
+                            if pos.floor_shares > 0 and pos.shares > 0:
+                                pos.status = f"코어 floor 보호 ({pnl_pct:+.1f}%) 🛡️"
+                            else:
+                                pos.status = f"코어 2차익절({pnl_pct:+.1f}%) ✅"
 
                 else:
                     with self.lock:
@@ -1279,6 +1322,7 @@ class USBotController:
                         ticker         = ticker,
                         name           = info["name"],
                         shares         = float(qty),
+                        floor_shares   = float(qty) * 0.5,  # 첫 매수 50% floor — 이 이하로 절대 안 팜
                         avg_price_usd  = price,
                         budget_usd     = sat_budget_per,
                         status         = f"보유 중 🛰️ ({entry_score}pt)",
@@ -1416,8 +1460,8 @@ class USBotController:
 
             # ④ 1차 부분 익절 (+10%(일반) / +15%(BULL)) — AI 판단
             # BULL 장에서는 추세 지속 가능성이 높아 익절 기준 상향
+            # 위성 2차 전량익절(PARTIAL2) 제거 → ATR 트레일링으로 무한 보유 (제2의 엔비디아 전략)
             _sat_partial1 = 15.0 if regime == "BULL" else self.PARTIAL1_PCT
-            _sat_partial2 = 30.0 if regime == "BULL" else self.PARTIAL2_PCT
             if not pos.partial_sold and pnl_pct >= _sat_partial1 and pos.shares > 1:
                 decision = getattr(pos, 'ai_exit_decision', None)
                 if decision is None:
@@ -1433,48 +1477,23 @@ class USBotController:
                         pos.ai_exit_decision   = None
                         pos.status = f"AI 홀드 ({pnl_pct:+.1f}%) ⏳"
                     continue
-                # SELL_PARTIAL 또는 SELL_ALL → 1차 익절 실행
-                q   = max(1.0, pos.shares * self.PARTIAL1_QTY)
-                self._sell(ticker, pos.name, q, price)
-                pnl = _net_profit_usd(price, avg, q)
-                with self.lock:
-                    pos.shares           -= q
-                    pos.partial_sold      = True
-                    pos.ai_exit_decision  = None
-                    pos.status            = f"1차익절({pnl_pct:+.1f}%) ✂️"
-                self._record_pnl(pnl)
-                self.add_log(f"✂️  1차익절 {pos.name} | PnL ${pnl:+.0f}")
-                continue
-
-            # ④ 2차 전량 익절 (+20%(일반) / +30%(BULL)) — AI 판단
-            if (pos.partial_sold and not pos.partial_sold_2
-                    and pnl_pct >= _sat_partial2 and pos.shares > 0):
-                decision = getattr(pos, 'ai_exit_decision', None)
-                if decision is None:
-                    if self.gemini:
-                        self._trigger_ai_partial_exit(pos, ticker, pos.name, price, avg, pnl_pct, regime)
-                        with self.lock: pos.status = f"AI 익절 검토 중 ({pnl_pct:+.1f}%) 🤖"
-                    else:
-                        with self.lock: pos.ai_exit_decision = "SELL_ALL"
-                    continue
-                if decision == "HOLD":
+                # SELL_PARTIAL 또는 SELL_ALL → 1차 익절 실행 (floor_shares 보호)
+                sellable_s1 = max(0.0, pos.shares - pos.floor_shares)
+                if sellable_s1 > 0:
+                    q   = min(max(1.0, pos.shares * self.PARTIAL1_QTY), sellable_s1)
+                    self._sell(ticker, pos.name, q, price)
+                    pnl = _net_profit_usd(price, avg, q)
                     with self.lock:
-                        pos.ai_exit_hold_until = time.time() + 300
-                        pos.ai_exit_decision   = None
-                        pos.status = f"AI 홀드 ({pnl_pct:+.1f}%) ⏳"
-                    continue
-                # SELL_PARTIAL 또는 SELL_ALL → 2차 전량 익절 실행
-                q   = pos.shares
-                self._sell(ticker, pos.name, q, price)
-                pnl = _net_profit_usd(price, avg, q)
+                        pos.shares           -= q
+                        pos.ai_exit_decision  = None
+                        pos.status            = f"1차익절({pnl_pct:+.1f}%) ✂️"
+                    self._record_pnl(pnl)
+                    self.add_log(f"✂️  1차익절 {pos.name} | PnL ${pnl:+.0f}")
                 with self.lock:
-                    pos.shares            = 0.0
-                    pos.partial_sold_2    = True
-                    pos.ai_exit_decision  = None
-                    pos.status            = f"2차익절({pnl_pct:+.1f}%) ✅"
-                self._record_pnl(pnl)
-                self.add_log(f"✅ 2차익절(전량) {pos.name} | PnL ${pnl:+.0f}")
-                self._tg(f"✅ [US 위성 전량익절] {pos.name} | +{pnl_pct:.1f}% | ${pnl:+,.0f}")
+                    pos.partial_sold = True
+                    if sellable_s1 <= 0:
+                        pos.ai_exit_decision = None
+                        pos.status = f"floor 보호 ({pnl_pct:+.1f}%) 🛡️"
                 continue
 
             # ⑤ BULL 불타기 (위성 피라미딩) — +3% + MA5 정배열 ────────
@@ -1494,6 +1513,8 @@ class USBotController:
                                 new_sh = pos.shares + _py_qty
                                 pos.avg_price_usd  = (pos.avg_price_usd * pos.shares + price * _py_qty) / new_sh if new_sh > 0 else price
                                 pos.shares         = new_sh
+                                # floor_shares 갱신 (항상 증가 방향 — 주식 수 축적 원칙)
+                                pos.floor_shares   = max(pos.floor_shares, pos.shares * 0.5)
                                 pos.bull_pyramid_done = True
                                 pos.max_price_usd  = max(pos.max_price_usd, price)
                                 pos.last_order_time= time.time()
@@ -1514,19 +1535,33 @@ class USBotController:
                 pos.status = f"보유 중 🛰️ ({pnl_pct:+.1f}%)"
 
     def _close_sat(self, ticker: str, pos: USPosition, price: float, reason: str):
-        """위성 전량 청산"""
-        shares   = pos.shares
+        """위성 청산 — floor_shares 이하로는 매도 차단 (주식 수 축적 원칙)"""
+        sellable = max(0.0, pos.shares - pos.floor_shares)
+        if sellable <= 0:
+            with self.lock:
+                pos.status = f"floor 보호 🛡️ ({int(pos.floor_shares)}주)"
+            self.add_log(
+                f"🛡️ [floor 보호] {pos.name}({ticker}) "
+                f"floor={int(pos.floor_shares)}주 — 매도 차단 | 사유: {reason}"
+            )
+            return
+        shares   = sellable
         proceeds = self._sell(ticker, pos.name, shares, price)
         pnl      = _net_profit_usd(price, pos.avg_price_usd, shares)
         with self.lock:
-            pos.shares = 0.0
-            pos.status = f"청산: {reason}"
+            pos.shares -= shares   # floor_shares 잔량 보존
+            if pos.shares > 0:
+                pos.status = f"floor 보유 🛡️ ({int(pos.shares)}주)"
+            else:
+                pos.status = f"청산: {reason}"
         self._record_pnl(pnl)
         icon = "🔴" if pnl < 0 else "🟢"
-        self.add_log(f"{icon} 청산 {pos.name}({ticker}) | {reason} | PnL ${pnl:+.0f}")
+        floor_note = f" | 🛡️ {int(pos.floor_shares)}주 floor 유지" if pos.floor_shares > 0 else ""
+        self.add_log(f"{icon} 청산 {pos.name}({ticker}) | {reason} | PnL ${pnl:+.0f}{floor_note}")
         self._tg(
             f"{icon} [US 위성 청산] {pos.name}\n"
             f"사유: {reason}\n손익: ${pnl:+,.0f}"
+            + (f"\n🛡️ floor {int(pos.floor_shares)}주 보유 유지" if pos.floor_shares > 0 else "")
         )
 
     # ─────────────────────────────────────────────────────────────────
@@ -2028,6 +2063,7 @@ class USBotController:
                     t: {
                         "name":             p.name,
                         "shares":           p.shares,
+                        "floor_shares":     p.floor_shares,
                         "avg_price_usd":    p.avg_price_usd,
                         "budget_usd":       p.budget_usd,
                         "partial_sold":     p.partial_sold,
@@ -2044,6 +2080,7 @@ class USBotController:
                     t: {
                         "name":           p.name,
                         "shares":         p.shares,
+                        "floor_shares":   p.floor_shares,
                         "avg_price_usd":  p.avg_price_usd,
                         "budget_usd":     p.budget_usd,
                         "partial_sold":   p.partial_sold,
@@ -2089,6 +2126,7 @@ class USBotController:
                     ticker         = t,
                     name           = s.get("name", t),
                     shares         = float(s.get("shares", 0)),
+                    floor_shares   = float(s.get("floor_shares", 0.0)),
                     avg_price_usd  = float(s.get("avg_price_usd", 0)),
                     budget_usd     = float(s.get("budget_usd", 0)),
                     partial_sold   = bool(s.get("partial_sold", False)),
@@ -2105,6 +2143,7 @@ class USBotController:
                     ticker         = t,
                     name           = s.get("name", t),
                     shares         = float(s.get("shares", 0)),
+                    floor_shares   = float(s.get("floor_shares", 0.0)),
                     avg_price_usd  = float(s.get("avg_price_usd", 0)),
                     budget_usd     = float(s.get("budget_usd", 0)),
                     partial_sold   = bool(s.get("partial_sold", False)),
@@ -2236,11 +2275,12 @@ class USBotController:
                         "US 코어 💎",
                     ),
                     "shares":     pos.shares,
+                    "floor_shares": pos.floor_shares,
                     "price":      round(sp_usd * fx),
                     "value":      round(val_usd * fx),
                     "avg_price":  round(avg_p * fx),
                     "budget":     round(pos.budget_usd * fx),
-                    "floor":      0,
+                    "floor":      round(pos.floor_shares * avg_p * fx) if avg_p > 0 else 0,
                     "status":     pos.status,
                     "status_msg": f"${sp_usd:.2f} | {pnl_pct:+.1f}%",
                     "dca_mode":   False,
