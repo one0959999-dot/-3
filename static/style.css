@@ -471,6 +471,32 @@ header {
     padding: 28px;
 }
 
+/* ── US Holdings 그룹 헤더 ────────────────────────── */
+.holdings-group-header td {
+    padding: 8px 14px 6px;
+    background: rgba(255, 255, 255, 0.03);
+    border-bottom: 1px solid rgba(255, 255, 255, 0.06) !important;
+}
+
+.holdings-group-label {
+    font-size: 0.78rem;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+}
+
+.holdings-core-label {
+    color: #c084fc;
+}
+
+.holdings-growth-label {
+    color: #34d399;
+}
+
+.sat-table tbody tr.holdings-group-header:hover {
+    background: rgba(255, 255, 255, 0.03) !important;
+}
+
 /* BADGES */
 .badge {
     display: inline-block;

@@ -814,6 +814,8 @@ class KRBotController:
                                         self._log_trade(ticker, name, 'SELL', price_now, "공시감지", f"악재공시 AI 손절: {report_nm}", profit=profit)  # [BUG-C2]
                                         self._record_daily_pnl(profit)  # [BUG-C2]
                                         self.add_log(f"🚨 {name}({ticker}) 악재 공시 AI 손절 완료")
+                                        if self.claude:
+                                            self.claude.record_trade_event(f"KR 악재공시 손절: {name}({ticker}) {sell_shares}주 @ {price_now:,.0f}원 | 손익: {profit:+,.0f}원 | 공시: {report_nm}")
                                         self._send_telegram(
                                             f"🚨 <b>악재공시 손절 완료</b>  {self.alert_icon}\n"
                                             f"📌 <b>{name}</b> | 손익: {profit:+,.0f}원\n"
@@ -2020,6 +2022,8 @@ class KRBotController:
                             self.pnl_this_turn   += core_profit
                         self._record_daily_pnl(core_profit)
                         self.add_log(f"🚨 {c_nm} 코어 ATR 손절 전량 | {c_sh}주 @ {cp:,}원 | 손익: {core_profit:+,.0f}원")
+                        if self.claude:
+                            self.claude.record_trade_event(f"KR 코어 ATR 손절: {c_nm}({c_tk}) {c_sh}주 @ {cp:,}원 | 손익: {core_profit:+,.0f}원")
                         self._log_trade(c_tk, c_nm, 'SELL', cp, "코어 ATR 손절", f"평단 {c_avg:,.0f} 대비 ATR×{core_hard_mult} 이탈", profit=core_profit)
                         self._send_trade_telegram(self._fmt_trade_msg("🚨", "코어 손절 전량", c_tk, c_nm, cp, c_sh, profit=core_profit, strategy="코어 ATR 손절", note=f"재진입 대기 — 더 좋은 타점 탐색 중"))
                     continue  # 손절 후 이번 턴 추가 로직 스킵
@@ -2173,6 +2177,8 @@ class KRBotController:
                                     core.status     = f"코어 AI 거절 🛑 ({c_score}pt)"
                                     core.status_msg = f"거절 이유: {ai_reason}"
                                 self.add_log(f"🛑 {c_nm} 코어 AI 거절: {ai_reason[:60]}")
+                                if self.claude:
+                                    self.claude.record_trade_event(f"KR 코어 AI 매수 거절: {c_nm}({c_tk}) @ {cp:,}원 | 사유: {ai_reason[:80]}")
                             elif self._buy_order(c_tk, qty, core, c_nm):
                                 with self.lock:
                                     core.last_order_time  = time.time()
@@ -2187,6 +2193,8 @@ class KRBotController:
                                     core.second_buy_done  = False
                                 score_str = " | ".join(c_score_reasons[:3])
                                 self.add_log(f"💎 {c_nm} 코어 1차 매수 | {qty}주 @ {cp:,}원 | 점수 {c_score}점 ({int(first_ratio*100)}%) | 2차 예약 {cp*0.98:,.0f}원 | AI: {ai_reason[:40]}")
+                                if self.claude:
+                                    self.claude.record_trade_event(f"KR 코어 1차 매수: {c_nm}({c_tk}) {qty}주 @ {cp:,}원 | 점수 {c_score}pt | AI: {ai_reason[:60]}")
                                 self._log_trade(c_tk, c_nm, 'BUY', cp, "RSI+멀티점수 코어", f"RSI골든크로스 + 점수{c_score}pt [{score_str}] AI승인 — 1차({int(first_ratio*100)}%)")
                                 self._send_trade_telegram(self._fmt_trade_msg("💎", f"코어 1차 매수 ({int(first_ratio*100)}%)", c_tk, c_nm, cp, qty, strategy=f"RSI코어 · {c_score}pt/{c_threshold}pt", ai_reason=ai_reason, note=f"2차 예약: {cp*0.98:,.0f}원 (-2%)"))
 
@@ -2208,6 +2216,8 @@ class KRBotController:
                             self.pnl_this_turn   += core_profit
                         self._record_daily_pnl(core_profit)
                         self.add_log(f"💎 {c_nm} 코어 매도 전량 | {c_sh}주 @ {cp:,}원 | 손익: {core_profit:+,.0f}원")
+                        if self.claude:
+                            self.claude.record_trade_event(f"KR 코어 전량매도(RSI 데드크로스): {c_nm}({c_tk}) {c_sh}주 @ {cp:,}원 | 손익: {core_profit:+,.0f}원")
                         self._log_trade(c_tk, c_nm, 'SELL', cp, "RSI 코어 전량매도", "RSI 데드크로스 — 재진입 타점 탐색", profit=core_profit)
                         self._send_trade_telegram(self._fmt_trade_msg("💎", "코어 전량매도", c_tk, c_nm, cp, c_sh, profit=core_profit, strategy="RSI 데드크로스 → 재진입 대기"))
             except Exception as e:
@@ -2340,6 +2350,8 @@ class KRBotController:
                             profit = _net_profit(price, p_avg, p_sh)
                             self._log_trade(ticker, p_nm, 'SELL', price, st_nm, "ATR 하드 손절", profit=profit)
                             self._send_trade_telegram(self._fmt_trade_msg("💥", "손절 체결", ticker, p_nm, price, p_sh, profit=profit, strategy=st_nm, note="ATR 하드 손절선 이탈"))
+                            if self.claude:
+                                self.claude.record_trade_event(f"KR 위성 ATR 손절: {p_nm}({ticker}) {p_sh}주 @ {price:,.0f}원 | 손익: {profit:+,.0f}원")
                             with self.lock: self.pnl_this_turn += profit
                             self._record_daily_pnl(profit)
                         continue
@@ -2612,10 +2624,12 @@ class KRBotController:
                                             pos.status_msg      = f"AI 승인: {ai_reason}"
                                         self._log_trade(ticker, p_nm, 'BUY', price, st_nm, f"하락장 저점포착 AI승인 [{bear_reason_str}]")
                                         self._send_trade_telegram(self._fmt_trade_msg("🎣", f"하락장 저점 매수 ({bear_label})", ticker, p_nm, price, qty, strategy=st_nm, ai_reason=ai_reason, note=bear_reason_str))
+                                        self.claude.record_trade_event(f"KR 위성 BEAR 저점매수: {p_nm}({ticker}) {qty}주 @ {price:,.0f}원 | {bear_label} | AI: {ai_reason[:60]}")
                                 else:
                                     pos.status     = "AI 거절(하락장) 🛑"
                                     pos.status_msg = f"거절 이유: {ai_reason}"
                                     self._add_satellite_reject(ticker, ai_reason)
+                                    self.claude.record_trade_event(f"KR 위성 AI 거절(BEAR): {p_nm}({ticker}) @ {price:,.0f}원 | 사유: {ai_reason[:80]}")
                                     self._send_reject_telegram(
                                         f"🛑 <b>매수 거절</b>  ·  {self.alert_icon} {self.mode_name}\n"
                                         f"━━━━━━━━━━━━━━━━━━━━\n"
@@ -2714,11 +2728,13 @@ class KRBotController:
                                     pos.partial_sold_2   = False  # [C-NEW-01] 신규 진입 시 반드시 초기화
                                 self._log_trade(ticker, p_nm, 'BUY', price, st_nm, f"AI 승인 [{regime_label}] 1차({int(first_ratio*100)}%) ({ai_reason})")
                                 self._send_trade_telegram(self._fmt_trade_msg("📈", f"AI 매수 승인  ({int(first_ratio*100)}% 1차)", ticker, p_nm, price, qty, strategy=f"{st_nm}  ·  {regime_label}", ai_reason=ai_reason, note=regime_reason_str))
+                                self.claude.record_trade_event(f"KR 위성 매수: {p_nm}({ticker}) {qty}주 @ {price:,.0f}원 | {regime_label} | AI: {ai_reason[:60]}")
                         else:
                             pos.status     = "AI 거절 🛑"
                             pos.status_msg = f"거절 이유: {ai_reason}"
                             # 당일 블랙리스트 등록 — 같은 이유로 재편입 금지
                             self._add_satellite_reject(ticker, ai_reason)
+                            self.claude.record_trade_event(f"KR 위성 AI 매수 거절: {p_nm}({ticker}) @ {price:,.0f}원 | 사유: {ai_reason[:80]}")
                             self._send_reject_telegram(
                                 f"🛑 <b>매수 거절</b>  ·  {self.alert_icon} {self.mode_name}\n"
                                 f"━━━━━━━━━━━━━━━━━━━━\n"
@@ -2979,6 +2995,8 @@ class KRBotController:
                 self.pnl_this_turn += profit  # [BUG-9] 두 번의 락 취득 → 하나로 합침 (레이스 컨디션 방지)
             self._log_trade(ticker, name, 'SELL', price, "모멘텀슬롯", sell_reason, profit=profit)
             self.add_log(f"🏁 모멘텀#{slot_idx+1} 청산 | {name}({ticker}) {shares}주 @ {price:,.0f}원 | {sell_reason} | 손익: {profit:+,.0f}원")
+            if self.claude:
+                self.claude.record_trade_event(f"KR 모멘텀 청산: {name}({ticker}) {shares}주 @ {price:,.0f}원 | 손익: {profit:+,.0f}원 | 사유: {sell_reason[:60]}")
             self._send_trade_telegram(self._fmt_trade_msg("🏁", f"모멘텀#{slot_idx+1} 청산", ticker, name, price, shares, profit=profit, strategy="모멘텀슬롯", note=sell_reason))
             self._record_daily_pnl(profit)
             self._record_ticker_loss(ticker, profit)   # 종목별 일일 손실 추적
@@ -3215,6 +3233,8 @@ class KRBotController:
                 continue
             self._log_trade(b_ticker, b_name, 'BUY', b_price, "모멘텀슬롯", m_buy_note)
             self.add_log(f"{buy_label} | {b_name}({b_ticker}) {qty}주 @ {b_price:,.0f}원 | {best['trigger_reason']}")
+            if self.claude:
+                self.claude.record_trade_event(f"KR 모멘텀 매수: {b_name}({b_ticker}) {qty}주 @ {b_price:,.0f}원 | {best['trigger_reason']} | 점수: {best['momentum_score']:.1f}")
             self._send_trade_telegram(
                 f"{buy_label} 진입!  ·  {self.alert_icon} {self.mode_name}\n"
                 f"━━━━━━━━━━━━━━━━━━━━\n"

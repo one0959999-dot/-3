@@ -386,111 +386,105 @@ document.addEventListener('DOMContentLoaded', () => {
         }
 
         const topCardsContainer = document.getElementById('top-cards-container');
-        const satCard = topCardsContainer.lastElementChild;
-        document.querySelectorAll('.core-card').forEach(e => e.remove());
 
-        const fragment = document.createDocumentFragment();
-        let totalCoreValue = 0;
+        // ── 포지션 뱃지 스타일 공통 헬퍼 ──────────────────────────────
+        function _positionBadgeStyle(sText) {
+            if (sText.includes('AI') || sText.includes('심사')) return "background:rgba(168,85,247,0.2); color:#c084fc; border:1px solid rgba(168,85,247,0.4); animation:pulse 2s infinite;";
+            if (sText.includes('주문') || sText.includes('대기')) return "background:rgba(245,158,11,0.2); color:#fcd34d; border:1px solid rgba(245,158,11,0.4); animation:pulse 2s infinite;";
+            if (sText.includes('거절') || sText.includes('손절') || sText.includes('청산') || sText.includes('보류')) return "background:rgba(239,68,68,0.2); color:#fca5a5; border:1px solid rgba(239,68,68,0.4);";
+            return "background:rgba(255,255,255,0.1); color:#94a3b8; border:1px solid rgba(255,255,255,0.2);";
+        }
 
-        cores.forEach((core) => {
-            totalCoreValue += (core.value || 0);
+        // ── 수익률 셀 공통 헬퍼 ──────────────────────────────────────
+        function _pnlCell(shares, avgP, curP) {
+            if (!(shares > 0)) return '';
+            if (avgP > 0 && curP > 0) {
+                const pct = ((curP / avgP) - 1) * 100;
+                const state = pct > 0 ? 'profit' : (pct < 0 ? 'loss' : 'neutral');
+                const clr   = pct > 0 ? '#f85149' : (pct < 0 ? '#58a6ff' : '#8b949e');
+                const sign  = pct >= 0 ? '+' : '';
+                return `<div class="pnl-rate" data-pnl="${state}" style="font-size:0.75rem;color:${clr};margin-top:3px;font-weight:700;">${sign}${pct.toFixed(2)}%</div>`;
+            }
+            return `<div class="pnl-rate" data-pnl="neutral" style="font-size:0.75rem;color:#64748b;margin-top:3px;">수익률 계산 중...</div>`;
+        }
 
-            const sText = core.status || "감시 중 👀";
-            const sMsg = core.status_msg || "지표 점검 중...";
-            let badgeStyle = "background:rgba(255,255,255,0.1); color:#94a3b8; border:1px solid rgba(255,255,255,0.2);";
-            if (sText.includes('AI') || sText.includes('심사')) badgeStyle = "background:rgba(168,85,247,0.2); color:#c084fc; border:1px solid rgba(168,85,247,0.4); animation:pulse 2s infinite;";
-            if (sText.includes('주문') || sText.includes('대기')) badgeStyle = "background:rgba(245,158,11,0.2); color:#fcd34d; border:1px solid rgba(245,158,11,0.4); animation:pulse 2s infinite;";
-            if (sText.includes('거절') || sText.includes('손절') || sText.includes('청산')) badgeStyle = "background:rgba(239,68,68,0.2); color:#fca5a5; border:1px solid rgba(239,68,68,0.4);";
+        if (isUS) {
+            // ══════════════════════════════════════════════════════════
+            // US 모드: 코어 카드 섹션 숨기고 US Holdings 통합 테이블
+            // ══════════════════════════════════════════════════════════
+            topCardsContainer.style.display = 'none';
+            document.querySelectorAll('.core-card').forEach(e => e.remove());
 
-            // 코어 수익률 계산
-            const coreAvgP = core.avg_price || 0;
-            const coreCurP = core.price || 0;
-            let corePnlHtml = '';
-            if (core.shares > 0 && coreAvgP > 0 && coreCurP > 0) {
-                const corePnlPct = ((coreCurP / coreAvgP) - 1) * 100;
-                const corePnlState = corePnlPct > 0 ? 'profit' : (corePnlPct < 0 ? 'loss' : 'neutral');
-                const corePnlClr  = corePnlPct > 0 ? '#f85149' : (corePnlPct < 0 ? '#58a6ff' : '#8b949e');
-                const corePnlSign = corePnlPct >= 0 ? '+' : '';
-                corePnlHtml = `<div class="pnl-rate" data-pnl="${corePnlState}" style="font-size:0.85rem;font-weight:700;margin-top:3px;color:${corePnlClr};">${corePnlSign}${corePnlPct.toFixed(2)}%</div>`;
-            } else if (core.shares > 0) {
-                corePnlHtml = `<div class="pnl-rate" data-pnl="neutral" style="font-size:0.8rem;color:#8b949e;margin-top:3px;">수익률 계산 중...</div>`;
+            // 섹션 타이틀 & 헤더 변경
+            const satSection = document.querySelector('.satellite-card:not(#defensive-section):not(#momentum-section)');
+            if (satSection) {
+                const h2 = satSection.querySelector('h2');
+                if (h2) h2.innerHTML = '📊 US Holdings';
+                const thead = satSection.querySelector('thead tr');
+                if (thead) thead.innerHTML = '<th>종목</th><th>전략</th><th>보유주식</th><th>평가금액</th><th>상태</th>';
             }
 
-            const div = document.createElement('div');
-            const isDca = !!core.dca_mode;
-            const dcaBtnStyle = isDca
-                ? 'background:rgba(16,185,129,0.25);color:#34d399;border:1px solid rgba(16,185,129,0.5);'
-                : 'background:rgba(255,255,255,0.07);color:#64748b;border:1px solid rgba(255,255,255,0.15);';
-            const dcaLabel = isDca ? '💰 DCA ON' : '💰 DCA';
+            let buf = '';
 
-            div.className = 'info-card glass-card core-card';
-            div.innerHTML = `
-                <div style="display: flex; justify-content: space-between; align-items: flex-start;">
-                    <h3 style="margin: 0; display:flex; align-items:center; gap:8px;">
-                        💎 ${core.name} (Core)
-                        <span onclick="showStatusModal('${core.name}', '${sMsg.replace(/'/g, "\\'")}')" class="badge" style="cursor:pointer; ${badgeStyle}">${sText}</span>
-                    </h3>
-                    <div style="display:flex;gap:6px;align-items:center;">
-                        <button onclick="toggleCoreDCA('${core.ticker}', '${core.name}', ${isDca})"
-                            style="font-size:0.7rem;padding:3px 8px;border-radius:6px;cursor:pointer;${dcaBtnStyle}" title="적립식 자동매수 ON/OFF">${dcaLabel}</button>
-                        <button onclick="openCoreModal()" style="background:none; border:none; color:var(--text-dim); cursor:pointer; font-size:1.1rem;" title="코어 설정 변경">⚙️</button>
-                    </div>
-                </div>
-                <div class="card-value highlight">${(core.shares || 0).toLocaleString()} 주</div>
-                <div class="card-subvalue">
-                    평가금액 ${fmtMoney(core.value || 0)}<br>
-                    <span style="color:#64748b;font-size:0.8rem;">(배정 예산: ${fmtMoney(core.budget || 0)})</span>
-                </div>
-                ${corePnlHtml}
-                <div class="card-subvalue" style="color:#f59e0b;font-size:0.8rem;margin-top:4px">🔒 floor: ${core.floor}주 보호</div>
-            `;
-            fragment.appendChild(div);
-        });
-        topCardsContainer.insertBefore(fragment, satCard);
+            // ── 🏛️ Core 그룹 ──────────────────────────────────────────
+            buf += `<tr class="holdings-group-header">
+                <td colspan="5"><span class="holdings-group-label holdings-core-label">🏛️ Core</span></td>
+            </tr>`;
 
-        if (sats.length > 0) {
-            let satHtmlBuffer = '';
-            sats.forEach(s => {
-                const isHolding = s.shares > 0;
+            if (cores.length === 0) {
+                buf += `<tr><td colspan="5" class="muted-center" style="padding:10px 0;">코어 종목 선정 중...</td></tr>`;
+            } else {
+                cores.forEach(core => {
+                    const sText = core.status || "감시 중 👀";
+                    const sMsg  = core.status_msg || "지표 점검 중...";
+                    const isDca = !!core.dca_mode;
+                    const dcaBtnStyle = isDca
+                        ? 'background:rgba(16,185,129,0.18);color:#34d399;border:1px solid rgba(16,185,129,0.4);'
+                        : 'background:rgba(255,255,255,0.05);color:#475569;border:1px solid rgba(255,255,255,0.12);';
+                    const sharesCell = core.shares > 0
+                        ? `${(core.shares).toLocaleString()}주`
+                        : `<span style="color:#64748b">-</span>`;
+                    const valueCell = core.shares > 0
+                        ? `<span style="font-weight:600;">${fmtMoney(core.value || 0)}</span>`
+                        : `<span style="color:#64748b">-</span>`;
+                    buf += `<tr>
+                        <td>
+                            <b>${core.name}</b>
+                            <span style="color:#64748b;font-size:0.78rem;margin-left:5px">${core.ticker}</span>
+                            <button onclick="toggleCoreDCA('${core.ticker}', '${core.name}', ${isDca})"
+                                style="margin-left:6px;font-size:0.65rem;padding:2px 6px;border-radius:5px;cursor:pointer;${dcaBtnStyle}" title="DCA ON/OFF">${isDca ? '💰 DCA' : '💰'}</button>
+                        </td>
+                        <td><span class="badge" style="color:#94a3b8;">RSI 코어</span></td>
+                        <td>${sharesCell}</td>
+                        <td>
+                            <div>${valueCell}</div>
+                            ${_pnlCell(core.shares, core.avg_price, core.price)}
+                        </td>
+                        <td>
+                            <span class="badge" onclick="showStatusModal('${core.name}', '${sMsg.replace(/'/g, "\\'")}')" style="cursor:pointer; ${_positionBadgeStyle(sText)}">${sText}</span>
+                        </td>
+                    </tr>`;
+                });
+            }
 
-                const sText = s.status || "감시 중 👀";
-                const sMsg = s.status_msg || "지표 점검 중...";
-                let badgeStyle = "background:rgba(255,255,255,0.1); color:#94a3b8; border:1px solid rgba(255,255,255,0.2);";
-                if (sText.includes('AI') || sText.includes('심사')) badgeStyle = "background:rgba(168,85,247,0.2); color:#c084fc; border:1px solid rgba(168,85,247,0.4); animation:pulse 2s infinite;";
-                if (sText.includes('주문') || sText.includes('대기')) badgeStyle = "background:rgba(245,158,11,0.2); color:#fcd34d; border:1px solid rgba(245,158,11,0.4); animation:pulse 2s infinite;";
-                if (sText.includes('거절') || sText.includes('손절') || sText.includes('청산') || sText.includes('보류')) badgeStyle = "background:rgba(239,68,68,0.2); color:#fca5a5; border:1px solid rgba(239,68,68,0.4);";
+            // ── 🚀 Growth 그룹 ────────────────────────────────────────
+            buf += `<tr class="holdings-group-header">
+                <td colspan="5"><span class="holdings-group-label holdings-growth-label">🚀 Growth</span></td>
+            </tr>`;
 
-                const statusBadge = `<span class="badge" onclick="showStatusModal('${s.name}', '${sMsg.replace(/'/g, "\\'")}')" style="cursor:pointer; ${badgeStyle}">${sText}</span>`;
-
-                const stratBadge = s.strategy
-                    ? `<span class="badge badge-strategy" style="cursor:pointer;" onclick="showStrategyInfo('${s.strategy}')" title="클릭하여 전략 상세 설명 보기">${s.strategy}</span>`
-                    : '<span style="color:#8b949e">-</span>';
-                const sharesCell = isHolding ? `${s.shares.toLocaleString()}주` : `<span style="color:#64748b">-</span>`;
-
-                // 평가금액: 실시간 live_prices 기반 (3초 폴링)
-                const valueCell = isHolding
-                    ? `<span style="font-weight:600;">${fmtMoney(s.value || 0)}</span>`
-                    : `<span style="color:#64748b">-</span>`;
-
-                // 수익률: avg_price 기반 계산 (고점 갱신대기 대체)
-                // data-pnl 속성 사용 — warm-beige td { -webkit-text-fill-color: !important } 상속 극복
-                let pnlCell = '';
-                if (isHolding) {
-                    const avgP = s.avg_price || 0;
-                    const curP = s.price || 0;
-                    if (avgP > 0 && curP > 0) {
-                        const pnlPct = ((curP / avgP) - 1) * 100;
-                        const pnlState = pnlPct > 0 ? 'profit' : (pnlPct < 0 ? 'loss' : 'neutral');
-                        const pnlColor = pnlPct > 0 ? '#f85149' : (pnlPct < 0 ? '#58a6ff' : '#8b949e');
-                        const pnlSign = pnlPct >= 0 ? '+' : '';
-                        pnlCell = `<div class="pnl-rate" data-pnl="${pnlState}" style="font-size:0.75rem;color:${pnlColor};margin-top:3px;font-weight:700;">${pnlSign}${pnlPct.toFixed(2)}%</div>`;
-                    } else {
-                        pnlCell = `<div class="pnl-rate" data-pnl="neutral" style="font-size:0.75rem;color:#64748b;margin-top:3px;">수익률 계산 중...</div>`;
-                    }
-                }
-
-                satHtmlBuffer += `
-                    <tr>
+            if (sats.length === 0) {
+                buf += `<tr><td colspan="5" class="muted-center" style="padding:10px 0;">위성 종목 탐색 중...</td></tr>`;
+            } else {
+                sats.forEach(s => {
+                    const isHolding = s.shares > 0;
+                    const sText = s.status || "감시 중 👀";
+                    const sMsg  = s.status_msg || "지표 점검 중...";
+                    const stratBadge = s.strategy
+                        ? `<span class="badge badge-strategy" style="cursor:pointer;" onclick="showStrategyInfo('${s.strategy}')">${s.strategy}</span>`
+                        : '<span style="color:#8b949e">-</span>';
+                    const sharesCell = isHolding ? `${s.shares.toLocaleString()}주` : `<span style="color:#64748b">-</span>`;
+                    const valueCell  = isHolding ? `<span style="font-weight:600;">${fmtMoney(s.value || 0)}</span>` : `<span style="color:#64748b">-</span>`;
+                    buf += `<tr>
                         <td><b>${s.name}</b>
                             <span style="color:#64748b;font-size:0.78rem;margin-left:5px">${s.ticker}</span>
                         </td>
@@ -498,12 +492,106 @@ document.addEventListener('DOMContentLoaded', () => {
                         <td>${sharesCell}</td>
                         <td>
                             <div>${valueCell}</div>
-                            ${pnlCell}
+                            ${_pnlCell(s.shares, s.avg_price, s.price)}
                         </td>
-                        <td>${statusBadge}</td>
+                        <td><span class="badge" onclick="showStatusModal('${s.name}', '${sMsg.replace(/'/g, "\\'")}')" style="cursor:pointer; ${_positionBadgeStyle(sText)}">${sText}</span></td>
                     </tr>`;
+                });
+            }
+
+            satTbody.innerHTML = buf;
+
+        } else {
+            // ══════════════════════════════════════════════════════════
+            // KR 모드: 기존 코어 카드 + 위성 테이블
+            // ══════════════════════════════════════════════════════════
+            topCardsContainer.style.display = '';
+
+            // 섹션 타이틀 & 헤더 원복
+            const satSection = document.querySelector('.satellite-card:not(#defensive-section):not(#momentum-section)');
+            if (satSection) {
+                const h2 = satSection.querySelector('h2');
+                if (h2) h2.innerHTML = '📡 Satellite Positions';
+                const thead = satSection.querySelector('thead tr');
+                if (thead) thead.innerHTML = '<th>종목</th><th>적용 전략</th><th>보유주식</th><th>평가금액</th><th>상태</th>';
+            }
+
+            // 코어 카드 렌더
+            const satCard = topCardsContainer.lastElementChild;
+            document.querySelectorAll('.core-card').forEach(e => e.remove());
+            const fragment = document.createDocumentFragment();
+
+            cores.forEach((core) => {
+                const sText = core.status || "감시 중 👀";
+                const sMsg  = core.status_msg || "지표 점검 중...";
+                const isDca = !!core.dca_mode;
+                const dcaBtnStyle = isDca
+                    ? 'background:rgba(16,185,129,0.25);color:#34d399;border:1px solid rgba(16,185,129,0.5);'
+                    : 'background:rgba(255,255,255,0.07);color:#64748b;border:1px solid rgba(255,255,255,0.15);';
+                let corePnlHtml = '';
+                const coreAvgP = core.avg_price || 0, coreCurP = core.price || 0;
+                if (core.shares > 0 && coreAvgP > 0 && coreCurP > 0) {
+                    const pct = ((coreCurP / coreAvgP) - 1) * 100;
+                    const state = pct > 0 ? 'profit' : (pct < 0 ? 'loss' : 'neutral');
+                    const clr   = pct > 0 ? '#f85149' : (pct < 0 ? '#58a6ff' : '#8b949e');
+                    corePnlHtml = `<div class="pnl-rate" data-pnl="${state}" style="font-size:0.85rem;font-weight:700;margin-top:3px;color:${clr};">${pct >= 0 ? '+' : ''}${pct.toFixed(2)}%</div>`;
+                } else if (core.shares > 0) {
+                    corePnlHtml = `<div class="pnl-rate" data-pnl="neutral" style="font-size:0.8rem;color:#8b949e;margin-top:3px;">수익률 계산 중...</div>`;
+                }
+                const div = document.createElement('div');
+                div.className = 'info-card glass-card core-card';
+                div.innerHTML = `
+                    <div style="display:flex;justify-content:space-between;align-items:flex-start;">
+                        <h3 style="margin:0;display:flex;align-items:center;gap:8px;">
+                            💎 ${core.name} (Core)
+                            <span onclick="showStatusModal('${core.name}', '${sMsg.replace(/'/g, "\\'")}')" class="badge" style="cursor:pointer; ${_positionBadgeStyle(sText)}">${sText}</span>
+                        </h3>
+                        <div style="display:flex;gap:6px;align-items:center;">
+                            <button onclick="toggleCoreDCA('${core.ticker}', '${core.name}', ${isDca})"
+                                style="font-size:0.7rem;padding:3px 8px;border-radius:6px;cursor:pointer;${dcaBtnStyle}" title="적립식 자동매수 ON/OFF">${isDca ? '💰 DCA ON' : '💰 DCA'}</button>
+                            <button onclick="openCoreModal()" style="background:none;border:none;color:var(--text-dim);cursor:pointer;font-size:1.1rem;" title="코어 설정 변경">⚙️</button>
+                        </div>
+                    </div>
+                    <div class="card-value highlight">${(core.shares || 0).toLocaleString()} 주</div>
+                    <div class="card-subvalue">
+                        평가금액 ${fmtMoney(core.value || 0)}<br>
+                        <span style="color:#64748b;font-size:0.8rem;">(배정 예산: ${fmtMoney(core.budget || 0)})</span>
+                    </div>
+                    ${corePnlHtml}
+                    <div class="card-subvalue" style="color:#f59e0b;font-size:0.8rem;margin-top:4px">🔒 floor: ${core.floor}주 보호</div>
+                `;
+                fragment.appendChild(div);
             });
-            satTbody.innerHTML = satHtmlBuffer;
+            topCardsContainer.insertBefore(fragment, satCard);
+
+            // 위성 테이블 렌더
+            if (sats.length > 0) {
+                let satHtmlBuffer = '';
+                sats.forEach(s => {
+                    const isHolding = s.shares > 0;
+                    const sText = s.status || "감시 중 👀";
+                    const sMsg  = s.status_msg || "지표 점검 중...";
+                    const stratBadge = s.strategy
+                        ? `<span class="badge badge-strategy" style="cursor:pointer;" onclick="showStrategyInfo('${s.strategy}')" title="클릭하여 전략 상세 설명 보기">${s.strategy}</span>`
+                        : '<span style="color:#8b949e">-</span>';
+                    const sharesCell = isHolding ? `${s.shares.toLocaleString()}주` : `<span style="color:#64748b">-</span>`;
+                    const valueCell  = isHolding ? `<span style="font-weight:600;">${fmtMoney(s.value || 0)}</span>` : `<span style="color:#64748b">-</span>`;
+                    satHtmlBuffer += `
+                        <tr>
+                            <td><b>${s.name}</b>
+                                <span style="color:#64748b;font-size:0.78rem;margin-left:5px">${s.ticker}</span>
+                            </td>
+                            <td>${stratBadge}</td>
+                            <td>${sharesCell}</td>
+                            <td>
+                                <div>${valueCell}</div>
+                                ${_pnlCell(s.shares, s.avg_price, s.price)}
+                            </td>
+                            <td><span class="badge" onclick="showStatusModal('${s.name}', '${sMsg.replace(/'/g, "\\'")}')" style="cursor:pointer; ${_positionBadgeStyle(sText)}">${sText}</span></td>
+                        </tr>`;
+                });
+                satTbody.innerHTML = satHtmlBuffer;
+            }
         }
 
         if (data.logs && data.logs.length > 0) {
