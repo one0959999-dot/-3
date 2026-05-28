@@ -904,9 +904,21 @@ def select_satellites(kis=None, n=NUM_SATELLITES, verbose=True, gemini_client=No
     results = []
     processed = 0
 
+    # 레버리지/인버스 ETF 이름 키워드 — 위성 포트폴리오 편입 금지
+    _ETF_EXCLUDE_KEYWORDS = (
+        "레버리지", "인버스", "2X", "3X", "2배", "3배",
+        "선물인버스", "인버스(합성)", "레버리지(합성)",
+    )
+
     for ticker in candidate_pool:
         try:
             name = stock.get_market_ticker_name(ticker)
+
+            # ── 레버리지/인버스 ETF 자동 제외 ──────────────────────────
+            if any(kw in name for kw in _ETF_EXCLUDE_KEYWORDS):
+                logger.debug(f"[스크리너] ETF 제외: {name}({ticker})")
+                continue
+
             df   = fetch_ohlcv(ticker, days=BACKTEST_DAYS, kis=kis)
             if len(df) < 40 or 'close' not in df.columns:
                 continue

@@ -202,6 +202,11 @@ def scan_hot_momentum(
             except Exception:
                 name = ticker
 
+            # 레버리지/인버스 ETF 제외 — 모멘텀 슬롯에 ETF 편입 방지
+            _ETF_KW = ("레버리지", "인버스", "2X", "3X", "2배", "3배", "선물인버스")
+            if any(kw in name for kw in _ETF_KW):
+                continue
+
             # 테마 가중치
             theme_bonus, theme_name = _theme_bonus(name)
 
