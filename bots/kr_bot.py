@@ -2596,11 +2596,10 @@ class KRBotController:
                         pass
                     entry_score, entry_reasons = calculate_entry_score(ex_df, price, regime, frgn_net=_frgn_net)
                     entry_threshold = get_entry_threshold(regime, 'satellite')
-                    if entry_score < entry_threshold:
-                        pos.status = f"진입 점수 부족 ({entry_score}/{entry_threshold}) ⏳"
-                        pos.status_msg = f"현재 {entry_score}점 — {entry_threshold}점 이상 필요 | 부족 항목: {', '.join(set(['①20MA','②60MA','③정배열','④MACD','⑤RSI','⑥거래량','⑦전일종가','⑧BB위치','⑨수급','⑩120MA']) - set([r[:4] for r in entry_reasons]))}"
-                        continue
-                    score_ratio = get_budget_ratio_from_score(entry_score, entry_threshold)
+                    # 위성은 entry_score 게이트 제거 — AI 최종 심사로 충분
+                    # (단타 모멘텀 기준 지표가 1-3달 보유 위성에 맞지 않음; RSI 30 신호 vs 40 요구 등 구조적 충돌)
+                    # score_ratio는 포지션 사이징에만 활용, 최소 60% floor 보장
+                    score_ratio = max(0.6, get_budget_ratio_from_score(entry_score, entry_threshold))
 
                     # ── BEAR 국면: 10개 저점 전략 스코어 기반 차등 진입 + AI 최종 심사 ──
                     # bear_score ≥ 3 이상만 진입 (반등 확신도 높을 때만 → 오진입 방지)

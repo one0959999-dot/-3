@@ -1100,47 +1100,12 @@ class USBotController:
 
             entry_threshold = get_entry_threshold(regime, 'satellite')
 
-            # ── BULL 국면 진입 완화 ─────────────────────────────────
-            # 조건 A: RSI ≤ 65 + bull_score ≥ 1
-            # 조건 B: MA5 > MA20 정배열 + 현재가 MA5 이내(2%) 눌림목
-            if entry_score < entry_threshold and regime == "BULL" and df_raw is not None and not df_raw.empty:
-                try:
-                    _closes_b = df_raw['close'].dropna()
-                    _rsi_bull = float(calc_rsi(_closes_b).iloc[-1])
-                    _bull_sc, _ = get_bull_momentum_score(df_raw)
-                    _bull_cond_a = (_rsi_bull <= 65) and (_bull_sc >= 1)
-                    _bull_cond_b = False
-                    if len(_closes_b) >= 22:
-                        _ma5_b  = float(_closes_b.rolling(5).mean().iloc[-1])
-                        _ma20_b = float(_closes_b.rolling(20).mean().iloc[-1])
-                        _bull_cond_b = (_ma5_b > _ma20_b) and (price <= _ma5_b * 1.02)
-                    if _bull_cond_a or _bull_cond_b:
-                        entry_score = entry_threshold
-                        _why = (f"RSI={_rsi_bull:.1f} bull_score={_bull_sc}" if _bull_cond_a
-                                else f"MA5눌림목(MA5={_closes_b.rolling(5).mean().iloc[-1]:.2f})")
-                        self.add_log(f"🚀 [BULL 위성 진입] {ticker} {_why} → 점수 완화 진입")
-                except Exception:
-                    pass
-
-            if entry_score < entry_threshold:
-                if pos is None:
-                    self.satellite_positions[ticker] = USPosition(
-                        ticker=ticker, name=info["name"], budget_usd=sat_budget_per,
-                        status=f"진입 점수 부족 ({entry_score}/{entry_threshold}pt) ⏳"
-                    )
-                else:
-                    with self.lock:
-                        pos.status = f"진입 점수 부족 ({entry_score}/{entry_threshold}pt) ⏳"
-                continue
-
-            budget_ratio = get_budget_ratio_from_score(entry_score, entry_threshold)
-            # ── BEAR 국면: 진입 점수가 충분해도 포지션 크기 50% 제한 ──
+            # 위성은 entry_score 게이트 제거 — AI 최종 심사로 충분
+            # (단타 모멘텀 기준 지표가 1-3달 보유 위성에 맞지 않음; RSI 30 신호 vs 40 요구 등 구조적 충돌)
+            # budget_ratio는 포지션 사이징에만 활용, 최소 60% floor 보장
+            budget_ratio = max(0.6, get_budget_ratio_from_score(entry_score, entry_threshold))
+            # ── BEAR 국면: 포지션 크기 50% 제한 (리스크 관리) ──
             if regime == "BEAR":
-                if entry_score < entry_threshold + 3:
-                    with self.lock if pos else (lambda: None)():
-                        if pos:
-                            pos.status = f"BEAR 보류 — 점수 부족 ({entry_score}/{entry_threshold+3}pt) 🐻"
-                    continue
                 budget_ratio = min(budget_ratio * 0.50, 0.50)
 
             # ── 실적 발표 D-3 이내 → 진입 차단 (깜짝 손실 방지) ───────
