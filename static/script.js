@@ -665,6 +665,9 @@ function animateStrategy(strategyName) {
     let t = 0;
     function render() {
         ctx.clearRect(0, 0, W, H);
+        // 테마와 무관하게 항상 어두운 배경 고정
+        ctx.fillStyle = 'rgba(15,23,42,0.94)';
+        ctx.fillRect(0, 0, W, H);
         ctx.strokeStyle = 'rgba(255,255,255,0.05)';
         ctx.lineWidth = 1;
         ctx.beginPath();
@@ -773,8 +776,40 @@ function animateStrategy(strategyName) {
                 ctx.fillText(btype, bx - 12, by - 10);
             }
         } else {
-            ctx.fillStyle = '#a78bfa'; ctx.font = '14px sans-serif';
-            ctx.fillText('AI 시뮬레이션 최적 타점 탐색 중...', W / 2 - 90, H / 2);
+            // 기본: 어두운 배경 채우고 모멘텀 바 애니메이션
+            ctx.fillStyle = 'rgba(15,23,42,0.92)';
+            ctx.fillRect(0, 0, W, H);
+
+            // 격자선
+            ctx.strokeStyle = 'rgba(255,255,255,0.04)';
+            ctx.lineWidth = 1;
+            ctx.beginPath();
+            for (let i = 0; i < W; i += 20) { ctx.moveTo(i, 0); ctx.lineTo(i, H); }
+            for (let i = 0; i < H; i += 20) { ctx.moveTo(0, i); ctx.lineTo(W, i); }
+            ctx.stroke();
+
+            // 모멘텀 바 (수직 바 7개, 물결치는 높이)
+            const barCount = 7;
+            const barW = 22;
+            const gap = (W - barCount * barW) / (barCount + 1);
+            for (let i = 0; i < barCount; i++) {
+                const x = gap + i * (barW + gap);
+                const heightRatio = 0.3 + 0.55 * Math.abs(Math.sin(t * 0.04 + i * 0.7));
+                const bh = H * 0.75 * heightRatio;
+                const by = (H - bh) / 2;
+                const alpha = 0.5 + 0.5 * heightRatio;
+                ctx.fillStyle = `rgba(167,139,250,${alpha.toFixed(2)})`;
+                ctx.beginPath();
+                ctx.roundRect ? ctx.roundRect(x, by, barW, bh, 4) : ctx.rect(x, by, barW, bh);
+                ctx.fill();
+            }
+
+            // 중앙 텍스트
+            ctx.fillStyle = 'rgba(248,250,252,0.92)';
+            ctx.font = 'bold 13px Inter, sans-serif';
+            ctx.textAlign = 'center';
+            ctx.fillText('AI 시뮬레이션 최적 타점 탐색 중...', W / 2, H - 14);
+            ctx.textAlign = 'left';
         }
         t++;
         strategyAnimReq = requestAnimationFrame(render);
