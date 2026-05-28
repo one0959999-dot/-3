@@ -50,14 +50,15 @@
 
         /* 환율·선물 위젯 고정 크기 — 두 칸 동일 */
         .nav-fx {
+            display: flex !important;
+            align-items: center !important;
             width: clamp(200px, 22vw, 280px) !important;
             height: clamp(28px, 3vw, 34px) !important;
             box-sizing: border-box !important;
             justify-content: space-between;
             overflow: hidden;
         }
-        #fut-inner { height: 100%; }
-        #fut-inner { display:flex; align-items:center; gap:clamp(4px,0.5vw,8px); width:100%; }
+        #fut-inner { display:flex; align-items:center; gap:clamp(4px,0.5vw,8px); width:100%; height:100%; }
         @keyframes fut-in  { from { opacity:0; transform:translateY(-6px); } to { opacity:1; transform:translateY(0); } }
         @keyframes fut-out { from { opacity:1; transform:translateY(0);    } to { opacity:0; transform:translateY(6px); } }
         #fut-inner.fut-anim-in  { animation: fut-in  0.28s ease forwards; }

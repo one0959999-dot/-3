@@ -1,0 +1,293 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>성과 리포트 — 라씨</title>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600;700;800&display=swap" rel="stylesheet">
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: 'Inter', sans-serif; background: #0d1117; color: #e6edf3; min-height: 100vh; }
+
+    .navbar {
+      display: flex; justify-content: space-between; align-items: center;
+      padding: 1rem 2rem;
+      background: rgba(15,23,42,0.6); backdrop-filter: blur(12px);
+      border-bottom: 1px solid rgba(255,255,255,0.06);
+    }
+    .nav-logo { font-weight: 800; font-size: 1.1rem; color: #e6edf3; text-decoration: none; }
+    .nav-right { display: flex; align-items: center; gap: 12px; }
+    .nav-link { color: #94a3b8; font-size: 0.82rem; text-decoration: none; padding: 6px 12px;
+                border: 1px solid rgba(255,255,255,0.1); border-radius: 8px; transition: color .15s, border-color .15s; }
+    .nav-link:hover { color: #e6edf3; border-color: rgba(255,255,255,0.25); }
+    .nav-link.active { color: #93c5fd; border-color: rgba(147,197,253,0.35); }
+
+    .main { max-width: 1100px; margin: 0 auto; padding: 2rem 1.5rem; }
+    .page-title { font-size: 1.5rem; font-weight: 800; margin-bottom: 0.3rem; }
+    .page-sub   { color: #64748b; font-size: 0.85rem; margin-bottom: 2rem; }
+
+    /* ── 요약 카드 그리드 ── */
+    .summary-grid {
+      display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+      gap: 1rem; margin-bottom: 2rem;
+    }
+    .sum-card {
+      background: rgba(22,27,34,0.9); border: 1px solid rgba(255,255,255,0.08);
+      border-radius: 14px; padding: 1.2rem 1.4rem;
+    }
+    .sum-label { font-size: 0.72rem; font-weight: 600; color: #64748b;
+                 text-transform: uppercase; letter-spacing: .06em; margin-bottom: .5rem; }
+    .sum-value { font-size: 1.5rem; font-weight: 800; color: #f1f5f9; }
+    .sum-value.up   { color: #f87171; }
+    .sum-value.down { color: #60a5fa; }
+    .sum-value.neutral { color: #94a3b8; }
+
+    /* ── KR/US 통계 ── */
+    .mode-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; margin-bottom: 2rem; }
+    .mode-card {
+      background: rgba(22,27,34,0.9); border: 1px solid rgba(255,255,255,0.08);
+      border-radius: 14px; padding: 1.2rem 1.4rem;
+    }
+    .mode-title { font-size: 0.82rem; font-weight: 700; color: #94a3b8;
+                  text-transform: uppercase; letter-spacing: .06em; margin-bottom: .8rem; }
+    .mode-stat { display: flex; justify-content: space-between; align-items: center;
+                 padding: 4px 0; border-bottom: 1px solid rgba(255,255,255,0.04); font-size: 0.82rem; }
+    .mode-stat:last-child { border: none; }
+    .mode-stat-label { color: #64748b; }
+    .mode-stat-val   { font-weight: 600; color: #e2e8f0; }
+
+    /* ── 차트 탭 ── */
+    .chart-section {
+      background: rgba(22,27,34,0.9); border: 1px solid rgba(255,255,255,0.08);
+      border-radius: 16px; padding: 1.5rem; margin-bottom: 2rem;
+    }
+    .chart-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem; }
+    .chart-title  { font-size: 0.82rem; font-weight: 700; color: #94a3b8;
+                    text-transform: uppercase; letter-spacing: .06em; }
+    .tab-group { display: flex; gap: 4px; }
+    .tab-btn {
+      padding: 4px 12px; border-radius: 6px;
+      border: 1px solid rgba(255,255,255,0.1); background: transparent;
+      color: #64748b; font-size: 0.75rem; font-weight: 600; cursor: pointer;
+      transition: background .15s, color .15s;
+    }
+    .tab-btn.active { background: rgba(59,130,246,0.18); border-color: rgba(59,130,246,0.4); color: #93c5fd; }
+    .tab-btn:hover:not(.active) { background: rgba(255,255,255,0.05); color: #94a3b8; }
+    #pnl-chart { height: 220px !important; }
+
+    /* ── 거래 내역 테이블 ── */
+    .trades-section {
+      background: rgba(22,27,34,0.9); border: 1px solid rgba(255,255,255,0.08);
+      border-radius: 16px; overflow: hidden;
+    }
+    .trades-header { padding: 1.2rem 1.4rem; border-bottom: 1px solid rgba(255,255,255,0.06);
+                     font-size: 0.82rem; font-weight: 700; color: #94a3b8;
+                     text-transform: uppercase; letter-spacing: .06em; }
+    table { width: 100%; border-collapse: collapse; font-size: 0.8rem; }
+    th { padding: 10px 14px; text-align: left; color: #475569; font-weight: 600;
+         font-size: 0.72rem; text-transform: uppercase; letter-spacing: .05em;
+         border-bottom: 1px solid rgba(255,255,255,0.06); background: rgba(0,0,0,0.2); }
+    td { padding: 10px 14px; border-bottom: 1px solid rgba(255,255,255,0.04); color: #cbd5e1; }
+    tbody tr:hover { background: rgba(255,255,255,0.03); }
+    tbody tr:last-child td { border: none; }
+    .badge {
+      display: inline-block; padding: 2px 8px; border-radius: 5px;
+      font-size: 0.7rem; font-weight: 700;
+    }
+    .badge-buy  { background: rgba(34,197,94,0.15);  color: #4ade80; }
+    .badge-sell { background: rgba(239,68,68,0.15);  color: #f87171; }
+    .badge-kr   { background: rgba(147,197,253,0.12); color: #93c5fd; }
+    .badge-us   { background: rgba(134,239,172,0.12); color: #86efac; }
+    .up   { color: #f87171; }
+    .down { color: #60a5fa; }
+    .flat { color: #94a3b8; }
+
+    .empty-state { padding: 3rem; text-align: center; color: #475569; font-size: 0.85rem; }
+  </style>
+</head>
+<body>
+
+<nav class="navbar">
+  <a href="/" class="nav-logo">라씨 매매비서</a>
+  <div class="nav-right">
+    <a href="/" class="nav-link">홈</a>
+    <a href="/dashboard" class="nav-link">대시보드</a>
+    <a href="/report"    class="nav-link active">📊 리포트</a>
+    <a href="/backtest"  class="nav-link">🔬 백테스트</a>
+    <a href="/logout"    class="nav-link">로그아웃</a>
+  </div>
+</nav>
+
+<main class="main">
+  <div class="page-title">📊 성과 리포트</div>
+  <div class="page-sub">실제 매매 기록 기반 — 일/주/월별 손익 및 승률 통계</div>
+
+  <!-- 요약 카드 -->
+  <div class="summary-grid" id="summary-grid">
+    <div class="sum-card"><div class="sum-label">총 매매</div><div class="sum-value neutral" id="s-total">—</div></div>
+    <div class="sum-card"><div class="sum-label">승률</div><div class="sum-value" id="s-winrate">—</div></div>
+    <div class="sum-card"><div class="sum-label">평균 수익</div><div class="sum-value up"   id="s-avgwin">—</div></div>
+    <div class="sum-card"><div class="sum-label">평균 손실</div><div class="sum-value down" id="s-avgloss">—</div></div>
+    <div class="sum-card"><div class="sum-label">누적 손익</div><div class="sum-value" id="s-totalpnl">—</div></div>
+  </div>
+
+  <!-- KR/US 모드별 통계 -->
+  <div class="mode-grid">
+    <div class="mode-card">
+      <div class="mode-title">🇰🇷 KR봇</div>
+      <div class="mode-stat"><span class="mode-stat-label">총 매도</span><span class="mode-stat-val" id="kr-trades">—</span></div>
+      <div class="mode-stat"><span class="mode-stat-label">승률</span><span class="mode-stat-val" id="kr-winrate">—</span></div>
+      <div class="mode-stat"><span class="mode-stat-label">누적 손익</span><span class="mode-stat-val" id="kr-pnl">—</span></div>
+    </div>
+    <div class="mode-card">
+      <div class="mode-title">🇺🇸 US봇</div>
+      <div class="mode-stat"><span class="mode-stat-label">총 매도</span><span class="mode-stat-val" id="us-trades">—</span></div>
+      <div class="mode-stat"><span class="mode-stat-label">승률</span><span class="mode-stat-val" id="us-winrate">—</span></div>
+      <div class="mode-stat"><span class="mode-stat-label">누적 손익</span><span class="mode-stat-val" id="us-pnl">—</span></div>
+    </div>
+  </div>
+
+  <!-- 손익 차트 -->
+  <div class="chart-section">
+    <div class="chart-header">
+      <span class="chart-title">손익 추이</span>
+      <div class="tab-group">
+        <button class="tab-btn active" onclick="switchTab('daily',this)">일별</button>
+        <button class="tab-btn" onclick="switchTab('weekly',this)">주별</button>
+        <button class="tab-btn" onclick="switchTab('monthly',this)">월별</button>
+      </div>
+    </div>
+    <canvas id="pnl-chart"></canvas>
+  </div>
+
+  <!-- 거래 내역 -->
+  <div class="trades-section">
+    <div class="trades-header">최근 매매 내역 (50건)</div>
+    <div id="trades-body">
+      <div class="empty-state">데이터 로딩 중...</div>
+    </div>
+  </div>
+</main>
+
+<script>
+let _chartData = {};
+let _pnlChart  = null;
+
+function fmt(n) {
+  if (n == null) return '—';
+  const abs = Math.abs(n);
+  const s   = abs >= 1e8 ? (abs/1e8).toFixed(1)+'억' : abs >= 1e4 ? Math.round(abs/1e4)+'만' : Math.round(abs)+'';
+  return (n < 0 ? '-' : '+') + s + '원';
+}
+function fmtN(n) { return n == null ? '—' : n.toLocaleString()+'원'; }
+function cls(n) { return n > 0 ? 'up' : n < 0 ? 'down' : 'flat'; }
+
+async function loadReport() {
+  try {
+    const res  = await fetch('/api/report');
+    const data = await res.json();
+
+    const s = data.summary;
+    document.getElementById('s-total').textContent   = s.total_trades + '건';
+    const wr = document.getElementById('s-winrate');
+    wr.textContent  = s.win_rate + '%';
+    wr.className    = 'sum-value ' + (s.win_rate >= 55 ? 'up' : s.win_rate >= 40 ? 'neutral' : 'down');
+    document.getElementById('s-avgwin').textContent   = fmt(s.avg_win);
+    document.getElementById('s-avgloss').textContent  = fmt(s.avg_loss);
+    const tp = document.getElementById('s-totalpnl');
+    tp.textContent = fmt(s.total_pnl);
+    tp.className   = 'sum-value ' + cls(s.total_pnl);
+
+    // KR/US
+    const kr = data.by_mode.KR, us = data.by_mode.US;
+    document.getElementById('kr-trades').textContent  = kr.trades + '건';
+    document.getElementById('kr-winrate').textContent = kr.win_rate + '%';
+    const krp = document.getElementById('kr-pnl');
+    krp.textContent = fmt(kr.total_pnl); krp.className = 'mode-stat-val ' + cls(kr.total_pnl);
+    document.getElementById('us-trades').textContent  = us.trades + '건';
+    document.getElementById('us-winrate').textContent = us.win_rate + '%';
+    const usp = document.getElementById('us-pnl');
+    usp.textContent = fmt(us.total_pnl); usp.className = 'mode-stat-val ' + cls(us.total_pnl);
+
+    _chartData = data.chart;
+    renderChart('daily');
+
+    // 거래 내역
+    renderTrades(data.recent_trades);
+  } catch(e) {
+    console.error(e);
+  }
+}
+
+function renderChart(tab) {
+  const d = _chartData[tab] || {labels:[], values:[]};
+  const colors = d.values.map(v => v >= 0 ? 'rgba(248,113,113,0.7)' : 'rgba(96,165,250,0.7)');
+  const borders = d.values.map(v => v >= 0 ? '#f87171' : '#60a5fa');
+
+  if (_pnlChart) _pnlChart.destroy();
+  const ctx = document.getElementById('pnl-chart').getContext('2d');
+  _pnlChart = new Chart(ctx, {
+    type: 'bar',
+    data: {
+      labels: d.labels,
+      datasets: [{
+        data: d.values,
+        backgroundColor: colors,
+        borderColor: borders,
+        borderWidth: 1,
+        borderRadius: 4,
+      }]
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      plugins: { legend: { display: false },
+                 tooltip: { callbacks: { label: ctx => fmtN(ctx.raw) } } },
+      scales: {
+        x: { grid: { color: 'rgba(255,255,255,0.04)' }, ticks: { color: '#64748b', font: { size: 10 } } },
+        y: { grid: { color: 'rgba(255,255,255,0.04)' }, ticks: { color: '#64748b', font: { size: 10 },
+             callback: v => v >= 0 ? '+' + Math.round(v/1e4) + '만' : Math.round(v/1e4) + '만' } }
+      }
+    }
+  });
+}
+
+function switchTab(tab, btn) {
+  document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+  btn.classList.add('active');
+  renderChart(tab);
+}
+
+function renderTrades(trades) {
+  const el = document.getElementById('trades-body');
+  if (!trades || trades.length === 0) {
+    el.innerHTML = '<div class="empty-state">매매 기록이 없습니다.<br>봇이 실제로 매수·매도하면 여기에 기록됩니다.</div>';
+    return;
+  }
+  const rows = trades.map(t => {
+    const isBuy   = t.action === 'BUY';
+    const profit  = t.profit != null && !isBuy ? `<span class="${cls(t.profit)}">${fmt(t.profit)}</span>` : '—';
+    return `<tr>
+      <td>${t.date || t.created_at?.slice(0,10) || '—'}</td>
+      <td><span class="badge badge-${t.mode?.toLowerCase() || 'kr'}">${t.mode || 'KR'}</span></td>
+      <td><b>${t.stock_name}</b> <span style="color:#475569">${t.ticker}</span></td>
+      <td><span class="badge badge-${isBuy ? 'buy' : 'sell'}">${isBuy ? '매수' : '매도'}</span></td>
+      <td>${(t.price || 0).toLocaleString()}</td>
+      <td>${(t.shares || 0).toLocaleString()}주</td>
+      <td style="max-width:200px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${t.strategy || '—'}</td>
+      <td>${profit}</td>
+    </tr>`;
+  }).join('');
+  el.innerHTML = `<table>
+    <thead><tr>
+      <th>날짜</th><th>시장</th><th>종목</th><th>구분</th>
+      <th>가격</th><th>수량</th><th>전략</th><th>손익</th>
+    </tr></thead>
+    <tbody>${rows}</tbody>
+  </table>`;
+}
+
+loadReport();
+</script>
+</body>
+</html>

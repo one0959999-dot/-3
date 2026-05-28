@@ -1116,6 +1116,217 @@ def search_stock():
 
     return jsonify({"results": []})
 
+# ─────────────────────────────────────────────────────────────────────────────
+# 성과 리포트 페이지
+# ─────────────────────────────────────────────────────────────────────────────
+
+@app.route('/report')
+@login_required
+def report_page():
+    return render_template('report.html', user=current_user)
+
+
+@app.route('/api/report')
+@login_required
+def report_api():
+    """일/주/월별 수익률 + 매매 승률 통계."""
+    conn = get_db_connection()
+    try:
+        rows = conn.execute(
+            '''SELECT ticker, stock_name, action, price, shares, mode,
+                      strategy, ai_reason, profit,
+                      strftime('%Y-%m-%d', created_at) as date,
+                      strftime('%Y-%W',    created_at) as week,
+                      strftime('%Y-%m',    created_at) as month,
+                      created_at
+               FROM trade_journal WHERE user_id = ?
+               ORDER BY created_at DESC''',
+            (current_user.id,)
+        ).fetchall()
+    finally:
+        conn.close()
+
+    trades = [dict(r) for r in rows]
+
+    # ── 승률 / 평균 손익 계산 ────────────────────────────────────────
+    sell_trades = [t for t in trades if t['action'] == 'SELL']
+    wins   = [t for t in sell_trades if (t['profit'] or 0) > 0]
+    losses = [t for t in sell_trades if (t['profit'] or 0) < 0]
+    win_rate  = round(len(wins) / len(sell_trades) * 100, 1) if sell_trades else 0
+    avg_win   = round(sum(t['profit'] for t in wins)   / len(wins),   0) if wins   else 0
+    avg_loss  = round(sum(t['profit'] for t in losses) / len(losses), 0) if losses else 0
+    total_pnl = round(sum((t['profit'] or 0) for t in sell_trades), 0)
+
+    # ── 일별 손익 집계 ───────────────────────────────────────────────
+    from collections import defaultdict as _dd
+    daily: dict  = _dd(float)
+    weekly: dict = _dd(float)
+    monthly: dict = _dd(float)
+    for t in sell_trades:
+        p = t['profit'] or 0
+        daily[t['date']]   += p
+        weekly[t['week']]  += p
+        monthly[t['month']] += p
+
+    daily_sorted   = sorted(daily.items())[-30:]
+    weekly_sorted  = sorted(weekly.items())[-12:]
+    monthly_sorted = sorted(monthly.items())[-12:]
+
+    # ── KR/US 별 승률 ────────────────────────────────────────────────
+    def _mode_stats(mode):
+        mt = [t for t in sell_trades if t.get('mode', 'KR') == mode]
+        mw = [t for t in mt if (t['profit'] or 0) > 0]
+        return {
+            'trades': len(mt),
+            'wins': len(mw),
+            'win_rate': round(len(mw) / len(mt) * 100, 1) if mt else 0,
+            'total_pnl': round(sum((t['profit'] or 0) for t in mt), 0),
+        }
+
+    return jsonify({
+        'summary': {
+            'total_trades': len(sell_trades),
+            'win_rate': win_rate,
+            'avg_win': avg_win,
+            'avg_loss': avg_loss,
+            'total_pnl': total_pnl,
+        },
+        'by_mode': {'KR': _mode_stats('KR'), 'US': _mode_stats('US')},
+        'chart': {
+            'daily':   {'labels': [r[0] for r in daily_sorted],   'values': [round(r[1]) for r in daily_sorted]},
+            'weekly':  {'labels': [r[0] for r in weekly_sorted],  'values': [round(r[1]) for r in weekly_sorted]},
+            'monthly': {'labels': [r[0] for r in monthly_sorted], 'values': [round(r[1]) for r in monthly_sorted]},
+        },
+        'recent_trades': trades[:50],
+    })
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 백테스트 페이지 + API
+# ─────────────────────────────────────────────────────────────────────────────
+
+@app.route('/backtest')
+@login_required
+def backtest_page():
+    return render_template('backtest.html', user=current_user)
+
+
+@app.route('/api/backtest', methods=['POST'])
+@login_required
+def backtest_api():
+    """간이 백테스트 — yfinance 일봉으로 MA/RSI 전략 시뮬레이션."""
+    data   = request.json or {}
+    ticker = (data.get('ticker') or '').strip().upper()
+    mode   = (data.get('mode') or 'KR').upper()          # KR / US
+    period = int(data.get('period', 180))                 # 일수 (기본 6개월)
+    ma_fast  = int(data.get('ma_fast', 20))
+    ma_slow  = int(data.get('ma_slow', 60))
+    rsi_buy  = float(data.get('rsi_buy', 40))
+    rsi_sell = float(data.get('rsi_sell', 70))
+    init_cash = float(data.get('init_cash', 10_000_000))
+
+    if not ticker:
+        return jsonify({'error': 'ticker 누락'}), 400
+
+    try:
+        import yfinance as yf
+        import pandas as pd
+        import numpy as np
+
+        yt = ticker + '.KS' if mode == 'KR' and not ticker.endswith(('.KS', '.KQ')) else ticker
+        df = yf.download(yt, period=f'{period + 80}d', interval='1d',
+                         progress=False, auto_adjust=True)
+        if hasattr(df.columns, 'get_level_values'):
+            df.columns = df.columns.get_level_values(0)
+        df = df.dropna(subset=['Close'])
+        df.columns = [c.lower() for c in df.columns]
+
+        if len(df) < ma_slow + 5:
+            return jsonify({'error': f'데이터 부족 ({len(df)}봉)'}), 400
+
+        # MA 계산
+        df['ma_fast'] = df['close'].rolling(ma_fast).mean()
+        df['ma_slow'] = df['close'].rolling(ma_slow).mean()
+
+        # RSI(14) 계산
+        delta  = df['close'].diff()
+        gain   = delta.clip(lower=0).rolling(14).mean()
+        loss   = (-delta.clip(upper=0)).rolling(14).mean()
+        rs     = gain / loss.replace(0, np.nan)
+        df['rsi'] = 100 - (100 / (1 + rs))
+
+        df = df.dropna().tail(period)
+
+        # ── 시뮬레이션 ───────────────────────────────────────────────
+        cash  = init_cash
+        shares = 0
+        avg_p  = 0.0
+        trades_log = []
+        equity_curve = []
+
+        for i, (idx, row) in enumerate(df.iterrows()):
+            price = float(row['close'])
+            rsi   = float(row['rsi'])
+            maf   = float(row['ma_fast'])
+            mas   = float(row['ma_slow'])
+            date_str = str(idx)[:10]
+
+            # 매수 신호: MA 골든크로스 + RSI < rsi_buy
+            if shares == 0 and maf > mas and rsi < rsi_buy and cash > price:
+                qty   = int(cash * 0.95 / price)
+                cost  = qty * price
+                cash -= cost
+                shares = qty
+                avg_p  = price
+                trades_log.append({'date': date_str, 'action': 'BUY',
+                                   'price': round(price, 2), 'qty': qty, 'profit': None})
+
+            # 매도 신호: MA 데드크로스 or RSI > rsi_sell
+            elif shares > 0 and (maf < mas or rsi > rsi_sell):
+                proceeds = shares * price * 0.998
+                profit   = round(proceeds - avg_p * shares, 0)
+                cash    += proceeds
+                trades_log.append({'date': date_str, 'action': 'SELL',
+                                   'price': round(price, 2), 'qty': shares,
+                                   'profit': profit})
+                shares = 0
+                avg_p  = 0.0
+
+            equity_curve.append({'date': date_str, 'value': round(cash + shares * price)})
+
+        # 미청산 포지션 시가 평가
+        last_price = float(df['close'].iloc[-1])
+        final_val  = cash + shares * last_price
+        total_pnl  = round(final_val - init_cash, 0)
+        total_ret  = round((final_val / init_cash - 1) * 100, 2)
+
+        wins   = [t for t in trades_log if t['action'] == 'SELL' and (t['profit'] or 0) > 0]
+        losses = [t for t in trades_log if t['action'] == 'SELL' and (t['profit'] or 0) <= 0]
+        n_sell = len(wins) + len(losses)
+
+        return jsonify({
+            'ticker': ticker,
+            'period': period,
+            'params': {'ma_fast': ma_fast, 'ma_slow': ma_slow,
+                       'rsi_buy': rsi_buy, 'rsi_sell': rsi_sell},
+            'result': {
+                'total_pnl':  total_pnl,
+                'total_ret':  total_ret,
+                'final_val':  round(final_val),
+                'n_trades':   n_sell,
+                'win_rate':   round(len(wins) / n_sell * 100, 1) if n_sell else 0,
+                'avg_win':    round(sum(t['profit'] for t in wins)   / len(wins),   0) if wins   else 0,
+                'avg_loss':   round(sum(t['profit'] for t in losses) / len(losses), 0) if losses else 0,
+            },
+            'equity_curve': equity_curve[-period:],
+            'trades': trades_log[-30:],
+        })
+
+    except Exception as e:
+        logger.warning(f"backtest 오류: {e}", exc_info=True)
+        return jsonify({'error': str(e)}), 500
+
+
 if __name__ == '__main__':
     init_db()
     app.run(host='0.0.0.0', port=5000, debug=False, use_reloader=False, threaded=True)

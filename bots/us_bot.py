@@ -35,6 +35,7 @@ from database import (
     set_user_initial_cash,
     add_user_initial_cash,
     get_sector_guide,
+    log_trade_journal,
 )
 from strategy import (calculate_entry_score, get_entry_threshold, get_budget_ratio_from_score,
                       get_bull_momentum_score, calc_rsi, _calc_adx, _get_up_streak,
@@ -436,7 +437,8 @@ class USBotController:
     # 주문 — KIS 실주문 후 즉시 잔고 재동기화
     # ─────────────────────────────────────────────────────────────────
 
-    def _buy(self, ticker: str, name: str, budget_usd: float, price: float = 0) -> int:
+    def _buy(self, ticker: str, name: str, budget_usd: float, price: float = 0,
+             strategy: str = "", ai_reason: str = "") -> int:
         """실전 매수. KIS 시장가 주문 → 즉시 잔고 재동기화. 체결 주수 반환 (0=실패)"""
         if not self.kis_overseas:
             self.add_log(f"⚠️ BUY 실패: KIS API 미설정 ({ticker})")
@@ -458,6 +460,11 @@ class USBotController:
                 self._last_trade_ts  = time.time()
                 self.pnl_this_turn  -= cost   # 원금 추적용
             self.add_log(f"📥 BUY  {name}({ticker}) {qty}주 @ ${price:.2f} 추정 (${cost:,.0f})")
+            try:
+                log_trade_journal(self.user_id, ticker, name, 'BUY', price,
+                                  strategy=strategy, ai_reason=ai_reason[:120], shares=qty, mode='US')
+            except Exception:
+                pass
             # 주문 후 5초 대기 후 즉시 잔고 재조회
             self._run_threaded(lambda: (time.sleep(5), self._sync_balance_from_kis()))
             return qty
@@ -465,7 +472,8 @@ class USBotController:
             self.add_log(f"❌ BUY 주문 실패: {name}({ticker}) — KIS 응답 확인 필요")
             return 0
 
-    def _sell(self, ticker: str, name: str, shares: float, price: float = 0) -> float:
+    def _sell(self, ticker: str, name: str, shares: float, price: float = 0,
+              strategy: str = "", ai_reason: str = "", profit: float = 0) -> float:
         """실전 매도. KIS 시장가 주문 → 즉시 잔고 재동기화. 체결 대금(USD) 추정값 반환"""
         if not self.kis_overseas:
             self.add_log(f"⚠️ SELL 실패: KIS API 미설정 ({ticker})")
@@ -483,6 +491,12 @@ class USBotController:
                 self._last_trade_ts  = time.time()
                 self.pnl_this_turn  += proceeds   # 원금 추적용
             self.add_log(f"📤 SELL {name}({ticker}) {qty}주 @ ${price:.2f} 추정 (${proceeds:,.0f})")
+            try:
+                log_trade_journal(self.user_id, ticker, name, 'SELL', price,
+                                  strategy=strategy, ai_reason=ai_reason[:120],
+                                  shares=qty, profit=profit, mode='US')
+            except Exception:
+                pass
             # 주문 후 5초 대기 후 즉시 잔고 재조회
             self._run_threaded(lambda: (time.sleep(5), self._sync_balance_from_kis()))
             return proceeds

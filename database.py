@@ -89,10 +89,19 @@ def init_db():
         CREATE TABLE IF NOT EXISTS trade_journal (
             id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER,
             ticker TEXT, stock_name TEXT, action TEXT, price REAL,
+            shares REAL DEFAULT 0, mode TEXT DEFAULT 'KR',
             strategy TEXT, ai_reason TEXT, profit REAL DEFAULT 0,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
         ''')
+            # 기존 DB에 shares/mode 컬럼 없으면 추가
+            _tj_cols = {r[1] for r in cursor.execute('PRAGMA table_info(trade_journal)').fetchall()}
+            for _col, _typ in [('shares', 'REAL DEFAULT 0'), ('mode', "TEXT DEFAULT 'KR'")]:
+                if _col not in _tj_cols:
+                    try:
+                        cursor.execute(f'ALTER TABLE trade_journal ADD COLUMN {_col} {_typ}')
+                    except sqlite3.OperationalError:
+                        pass
 
             cursor.execute('''
         CREATE TABLE IF NOT EXISTS ai_rules (
@@ -292,17 +301,19 @@ def load_portfolio_state(user_id, is_mock):
         return json.loads(row['state_json'])
     return None
 
-def log_trade_journal(user_id, ticker, stock_name, action, price, strategy, ai_reason, profit=0):
+def log_trade_journal(user_id, ticker, stock_name, action, price, strategy, ai_reason,
+                      profit=0, shares=0, mode='KR'):
     with db_lock:
         conn = get_db_connection()
         try:
             conn.execute('''
-                INSERT INTO trade_journal (user_id, ticker, stock_name, action, price, strategy, ai_reason, profit)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-            ''', (user_id, ticker, stock_name, action, price, strategy, ai_reason, profit))
+                INSERT INTO trade_journal
+                    (user_id, ticker, stock_name, action, price, shares, mode, strategy, ai_reason, profit)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ''', (user_id, ticker, stock_name, action, price, shares, mode, strategy, ai_reason, profit))
             conn.commit()
         finally:
-            conn.close()  # [BUG-C6]
+            conn.close()
 
 def get_recent_trades(user_id, ticker, limit=5):
     conn = get_db_connection()

@@ -643,7 +643,8 @@ class KRBotController:
         """거래 거절 알림 전용 헬퍼."""
         self._send_telegram(message, msg_type='reject')
 
-    def _buy_order(self, ticker: str, qty: int, pos, name: str, limit_price: int = 0) -> bool:
+    def _buy_order(self, ticker: str, qty: int, pos, name: str, limit_price: int = 0,
+                   strategy: str = "", ai_reason: str = "") -> bool:
         """매수 주문 실행 + KIS 응답 체크. 성공 True, 실패 False (봇 로그에 에러 기록).
         limit_price = 0 → 현재가 +0.3% 지정가 자동 계산 (슬리피지 제한)
         limit_price = -1 → 강제 시장가 (모멘텀 전용)"""
@@ -659,9 +660,6 @@ class KRBotController:
         result = self.kis.buy_market_order(ticker, qty, price=limit_price)
         if result:
             # 내부 현금 즉시 차감 — KIS 모의 API 반영 지연 보정
-            # _last_trade_ts는 est_price 여부와 무관하게 항상 갱신:
-            # est_price=0(신규 위성종목 첫 매수)일 때도 _sync_internal_balances가
-            # KIS API 값으로 덮어쓰지 않도록 타임스탬프를 찍어 둬야 함
             with self.lock:
                 self._last_trade_ts = time.time()
             est_price = self.live_prices.get(ticker, 0) or getattr(pos, 'avg_price', 0) or 0
@@ -669,6 +667,11 @@ class KRBotController:
                 with self.lock:
                     if self.internal_cash is not None:
                         self.internal_cash = max(0.0, self.internal_cash - est_price * qty * 1.00015)
+            try:
+                log_trade_journal(self.user_id, ticker, name, 'BUY', est_price or limit_price,
+                                  strategy=strategy, ai_reason=ai_reason[:120], shares=qty, mode='KR')
+            except Exception:
+                pass
             return True
         err = f"⚠️ [{self.mode_name}] {name}({ticker}) {qty}주 매수 주문 실패 — KIS API 오류"
         self.add_log(err)
@@ -682,14 +685,14 @@ class KRBotController:
             pos.cash = 0.0
         return False
 
-    def _sell_order(self, ticker: str, qty: int, pos, name: str, price: int = 0) -> bool:
+    def _sell_order(self, ticker: str, qty: int, pos, name: str, price: int = 0,
+                    strategy: str = "", ai_reason: str = "", profit: float = 0) -> bool:
         """매도 주문 실행 + KIS 응답 체크. 성공 True, 실패 False (봇 로그에 에러 기록)."""
         if not self.kis:
             return False
         result = self.kis.sell_market_order(ticker, qty, price=price)
         if result:
             # 내부 현금 즉시 증가 — KIS 모의 API 반영 지연 보정
-            # _last_trade_ts는 est_price 여부와 무관하게 항상 갱신
             with self.lock:
                 self._last_trade_ts = time.time()
             est_price = price or self.live_prices.get(ticker, 0) or getattr(pos, 'avg_price', 0) or 0
@@ -697,6 +700,12 @@ class KRBotController:
                 with self.lock:
                     if self.internal_cash is not None:
                         self.internal_cash += est_price * qty * (1 - _SELL_FEE - _SELL_TAX)
+            try:
+                log_trade_journal(self.user_id, ticker, name, 'SELL', est_price or price,
+                                  strategy=strategy, ai_reason=ai_reason[:120],
+                                  shares=qty, profit=profit, mode='KR')
+            except Exception:
+                pass
             return True
         err = f"⚠️ [{self.mode_name}] {name}({ticker}) {qty}주 매도 주문 실패 — KIS API 오류"
         self.add_log(err)
