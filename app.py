@@ -401,29 +401,83 @@ def home_summary():
     kr_card = _kr_card()
     us_card = _us_card()
 
-    # ── 합산 일별 PnL 차트 (최근 30일, 누적 기준) ──────────────────────
+    # ── 합산 일별 PnL 집계 (2026-05-20 ~) ─────────────────────────────
     from collections import defaultdict
-    combined: dict = defaultdict(float)
+    START_DATE = '2026-05-20'
 
+    combined: dict = defaultdict(float)   # {YYYY-MM-DD: KRW}
     if kr_bot:
         for d, v in kr_bot.daily_pnl.items():
-            combined[d] += float(v)
+            if d >= START_DATE:
+                combined[d] += float(v)
     if us_bot:
         for d, v in us_bot.daily_pnl.items():
-            combined[d] += float(v) * usd_krw
+            if d >= START_DATE:
+                combined[d] += float(v) * usd_krw
 
-    sorted_days = sorted(combined.keys())[-30:]
-    cumulative = 0.0
-    chart_values = []
-    for d in sorted_days:
-        cumulative += combined[d]
-        chart_values.append(round(cumulative))
+    all_days = sorted(combined.keys())
+
+    # ── 누적 합산 헬퍼 ────────────────────────────────────────────────
+    def _cumulative(days):
+        c, result = 0.0, []
+        for d in days:
+            c += combined[d]
+            result.append(round(c))
+        return result
+
+    # 일별 (최근 30일)
+    daily_days   = all_days[-30:]
+    # 일별 누적은 전체 기준으로 시작점 오프셋 맞춤
+    offset = sum(combined[d] for d in all_days if d < (daily_days[0] if daily_days else '9999'))
+    daily_cum_offset = round(offset)
+    dc, daily_vals = daily_cum_offset, []
+    for d in daily_days:
+        dc += combined[d]
+        daily_vals.append(round(dc))
+
+    # 월별 집계 (YYYY-MM)
+    monthly: dict = defaultdict(float)
+    for d, v in combined.items():
+        monthly[d[:7]] += v
+    monthly_keys = sorted(monthly.keys())
+    monthly_cum, monthly_vals = 0.0, []
+    for mk in monthly_keys:
+        monthly_cum += monthly[mk]
+        monthly_vals.append(round(monthly_cum))
+
+    # 연별 집계 (YYYY)
+    yearly: dict = defaultdict(float)
+    for d, v in combined.items():
+        yearly[d[:4]] += v
+    yearly_keys = sorted(yearly.keys())
+    yearly_cum, yearly_vals = 0.0, []
+    for yk in yearly_keys:
+        yearly_cum += yearly[yk]
+        yearly_vals.append(round(yearly_cum))
+
+    # ── 기준일(2026-05-20) 대비 등락 ──────────────────────────────────
+    total_pnl_from_start = sum(combined.values())
+    combined_initial = 0.0
+    try:
+        from database import get_user_initial_cash
+        kr_init = get_user_initial_cash(current_user.id, False) if kr_bot else 0
+        us_init = get_user_initial_cash(current_user.id, True)  if us_bot else 0
+        combined_initial = float(kr_init) + float(us_init) * usd_krw
+    except Exception:
+        pass
+    pnl_from_start_pct = round(total_pnl_from_start / combined_initial * 100, 2) if combined_initial > 0 else 0.0
 
     return jsonify({
         "kr": kr_card,
         "us": us_card,
         "combined_total_krw": kr_card["total_krw"] + us_card["total_krw"],
-        "chart": {"labels": sorted_days, "values": chart_values},
+        "pnl_from_start": round(total_pnl_from_start),
+        "pnl_from_start_pct": pnl_from_start_pct,
+        "chart": {
+            "daily":   {"labels": daily_days,   "values": daily_vals},
+            "monthly": {"labels": monthly_keys, "values": monthly_vals},
+            "yearly":  {"labels": yearly_keys,  "values": yearly_vals},
+        },
         "usd_krw": usd_krw,
     })
 

@@ -527,7 +527,9 @@
     </div>
 
     <nav class="navbar">
-        <div class="nav-logo"></div>
+        <div class="nav-logo">
+            <a href="/" style="font-family:'Outfit',sans-serif;font-size:1rem;font-weight:700;color:#94a3b8;text-decoration:none;display:flex;align-items:center;gap:6px;padding:5px 12px;border:1px solid rgba(255,255,255,0.1);border-radius:8px;transition:color .2s,border-color .2s;" onmouseover="this.style.color='#e6edf3';this.style.borderColor='rgba(255,255,255,0.25)'" onmouseout="this.style.color='#94a3b8';this.style.borderColor='rgba(255,255,255,0.1)'">🏠 홈</a>
+        </div>
 
         <!-- 중앙 위젯 그룹: 환율 + 선물 지표 -->
         <div class="nav-center">
@@ -565,7 +567,6 @@
             <span style="font-size: 0.9rem; font-weight: 600; margin-right: 10px;">👤 {{ user.username }}</span>
             <button class="btn-settings" onclick="openReportModal()" style="margin-right: 8px;">📜 오늘의 리포트</button>
             <button class="btn-settings" onclick="openSettingsModal()">계좌 설정</button>
-            <a href="/" class="btn-settings" style="margin-right: 4px; text-decoration:none;">🏠 홈</a>
             <a href="/logout" class="btn-logout">로그아웃</a>
         </div>
     </nav>

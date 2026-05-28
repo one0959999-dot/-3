@@ -101,6 +101,18 @@
       font-weight: 400;
       margin-left: 4px;
     }
+    .total-asset-change {
+      margin-top: 8px;
+      font-size: 1rem;
+      font-weight: 700;
+      letter-spacing: 0.2px;
+    }
+    .total-asset-change .since-label {
+      font-size: 0.72rem;
+      color: #4b5563;
+      font-weight: 400;
+      margin-left: 6px;
+    }
 
     /* ── 봇 카드 그리드 ────────────────────────────────────── */
     .cards-grid {
@@ -228,6 +240,32 @@
     .toggle-btn.stop   { background: rgba(239,68,68,0.15);  color: #f87171; border: 1px solid rgba(239,68,68,0.3); }
     .toggle-btn.loading{ background: rgba(100,116,139,0.15); color: #94a3b8; border: 1px solid rgba(100,116,139,0.2); cursor: not-allowed; }
 
+    /* ── 차트 탭 ─────────────────────────────────────────── */
+    .chart-tabs {
+      display: flex;
+      gap: 4px;
+    }
+    .chart-tab-btn {
+      padding: 4px 14px;
+      border-radius: 6px;
+      border: 1px solid rgba(255,255,255,0.1);
+      background: transparent;
+      color: #64748b;
+      font-size: 0.78rem;
+      font-weight: 600;
+      cursor: pointer;
+      transition: background .15s, color .15s, border-color .15s;
+    }
+    .chart-tab-btn.active {
+      background: rgba(59,130,246,0.18);
+      border-color: rgba(59,130,246,0.4);
+      color: #93c5fd;
+    }
+    .chart-tab-btn:hover:not(.active) {
+      background: rgba(255,255,255,0.06);
+      color: #94a3b8;
+    }
+
     /* ── 차트 카드 ────────────────────────────────────────── */
     .chart-card {
       background: rgba(22,27,34,0.9);
@@ -306,6 +344,10 @@
     <div class="total-asset-value" id="total-asset-val">
       <span class="skeleton skel-big">&nbsp;</span>
     </div>
+    <div class="total-asset-change" id="total-asset-change" style="display:none;">
+      <span id="total-change-val"></span>
+      <span class="since-label">2026-05-20 기준</span>
+    </div>
   </div>
 
   <!-- KR / US 카드 -->
@@ -376,9 +418,14 @@
   <!-- 합산 누적 손익 차트 -->
   <div class="chart-card">
     <div class="chart-card-header">
-      <span class="chart-title">합산 누적 실현 손익 (최근 30일)</span>
-      <span class="chart-period-note" id="chart-note">KRW 환산</span>
+      <span class="chart-title">합산 누적 실현 손익</span>
+      <div class="chart-tabs">
+        <button class="chart-tab-btn active" data-tab="daily"   onclick="switchChartTab('daily')">일</button>
+        <button class="chart-tab-btn"        data-tab="monthly" onclick="switchChartTab('monthly')">월</button>
+        <button class="chart-tab-btn"        data-tab="yearly"  onclick="switchChartTab('yearly')">년</button>
+      </div>
     </div>
+    <div style="font-size:0.72rem;color:#4b5563;margin-bottom:0.6rem;" id="chart-note">KRW 환산</div>
     <div class="chart-wrap">
       <canvas id="homeChart"></canvas>
     </div>
@@ -450,28 +497,52 @@ function colorClass(v) {
 function sign(v) { return v > 0 ? '+' : ''; }
 
 /* ──────────────────────────────────────────────────────────────
-   차트
+   차트 상태
 ────────────────────────────────────────────────────────────── */
-let homeChart = null;
+let homeChart   = null;
+let chartData   = {};          // API 응답의 chart 객체 캐시
+let activeTab   = 'daily';
 
-function renderChart(labels, values) {
+/* 탭 전환 */
+function switchChartTab(tab) {
+  activeTab = tab;
+  document.querySelectorAll('.chart-tab-btn').forEach(btn => {
+    btn.classList.toggle('active', btn.dataset.tab === tab);
+  });
+  if (chartData[tab]) {
+    renderChart(chartData[tab].labels, chartData[tab].values, tab);
+  }
+}
+
+/* 차트 렌더링 */
+function renderChart(labels, values, tab) {
   const ctx = document.getElementById('homeChart').getContext('2d');
   if (homeChart) homeChart.destroy();
 
-  const isPositive = values.length === 0 || values[values.length - 1] >= 0;
-  const lineColor  = isPositive ? '#3b82f6' : '#f85149';
-  const fillColor  = isPositive ? 'rgba(59,130,246,0.08)' : 'rgba(248,81,73,0.08)';
+  if (!labels || labels.length === 0) {
+    homeChart = null;
+    return;
+  }
+
+  const last = values[values.length - 1] ?? 0;
+  // 누적값이 양수면 빨강, 음수면 파랑
+  const lineColor = last >= 0 ? '#f85149' : '#58a6ff';
+  const fillColor = last >= 0 ? 'rgba(248,81,73,0.07)' : 'rgba(88,166,255,0.07)';
+
+  // 탭별 노트 업데이트
+  const noteMap = { daily: '최근 30일 · 일별 누적', monthly: '2026-05-20~ · 월별 누적', yearly: '2026-05-20~ · 연별 누적' };
+  document.getElementById('chart-note').textContent = noteMap[tab] || '';
 
   homeChart = new Chart(ctx, {
     type: 'line',
     data: {
-      labels: labels,
+      labels,
       datasets: [{
         data: values,
         borderColor: lineColor,
         backgroundColor: fillColor,
         borderWidth: 2,
-        pointRadius: labels.length > 15 ? 0 : 3,
+        pointRadius: labels.length > 20 ? 0 : 3,
         pointBackgroundColor: lineColor,
         fill: true,
         tension: 0.35,
@@ -494,8 +565,8 @@ function renderChart(labels, values) {
           callbacks: {
             label: (ctx) => {
               const v = ctx.raw;
-              const sign = v >= 0 ? '+' : '';
-              return ` 누적 손익: ${sign}${v.toLocaleString('ko-KR')}원`;
+              const s = v >= 0 ? '+' : '';
+              return ` 누적 손익: ${s}${v.toLocaleString('ko-KR')}원`;
             }
           }
         }
@@ -503,19 +574,14 @@ function renderChart(labels, values) {
       scales: {
         x: {
           grid: { color: 'rgba(255,255,255,0.04)' },
-          ticks: {
-            color: '#4b5563',
-            font: { size: 10 },
-            maxTicksLimit: 8,
-            maxRotation: 0,
-          }
+          ticks: { color: '#4b5563', font: { size: 10 }, maxTicksLimit: 8, maxRotation: 0 }
         },
         y: {
           grid: { color: 'rgba(255,255,255,0.06)' },
           ticks: {
             color: '#4b5563',
             font: { size: 10 },
-            callback: (v) => {
+            callback: v => {
               if (Math.abs(v) >= 100_000_000) return (v/100_000_000).toFixed(1)+'억';
               if (Math.abs(v) >= 10_000)      return Math.round(v/10_000)+'만';
               return v.toLocaleString('ko-KR');
@@ -543,24 +609,33 @@ async function loadSummary() {
         ? `${total.toLocaleString('ko-KR')}<span class="unit">원</span>`
         : `<span style="color:#4b5563">데이터 없음</span>`;
 
-    // ── KR 카드 ──
-    renderCard('kr', d.kr);
+    // ── 기준일 등락% ──
+    const pct     = d.pnl_from_start_pct ?? 0;
+    const pnlAmt  = d.pnl_from_start ?? 0;
+    const changeEl = document.getElementById('total-asset-change');
+    const changeValEl = document.getElementById('total-change-val');
+    if (pct !== 0 || pnlAmt !== 0) {
+      const s = pct >= 0 ? '+' : '';
+      const color = pct > 0 ? '#f85149' : (pct < 0 ? '#58a6ff' : '#94a3b8');
+      changeValEl.style.color = color;
+      changeValEl.textContent = `${s}${pct.toFixed(2)}%  (${s}${Math.round(pnlAmt).toLocaleString('ko-KR')}원)`;
+      changeEl.style.display = 'block';
+    } else {
+      changeEl.style.display = 'none';
+    }
 
-    // ── US 카드 ──
+    // ── KR / US 카드 ──
+    renderCard('kr', d.kr);
     renderCard('us', d.us);
 
     // ── 차트 ──
-    const chart = d.chart || {};
-    const labels = chart.labels || [];
-    const values = chart.values || [];
-
-    if (labels.length > 0) {
-      renderChart(labels, values);
-      document.getElementById('chart-note').textContent =
-        `KRW 환산 (환율 ${(d.usd_krw||1350).toLocaleString('ko-KR')}원)`;
+    chartData = d.chart || {};
+    const seg  = chartData[activeTab] || {};
+    if ((seg.labels || []).length > 0) {
+      renderChart(seg.labels, seg.values, activeTab);
     } else {
+      renderChart([], [], activeTab);
       document.getElementById('chart-note').textContent = '거래 데이터 없음';
-      renderChart([], []);
     }
 
   } catch (e) {
@@ -568,8 +643,7 @@ async function loadSummary() {
     const banner = document.getElementById('error-banner');
     banner.style.display = 'block';
     banner.textContent = '데이터를 불러오는 중 오류가 발생했습니다. 잠시 후 다시 시도합니다.';
-    document.getElementById('total-asset-val').innerHTML =
-      `<span style="color:#4b5563">—</span>`;
+    document.getElementById('total-asset-val').innerHTML = `<span style="color:#4b5563">—</span>`;
     setTimeout(loadSummary, 30_000);
   }
 }
