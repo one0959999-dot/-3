@@ -124,13 +124,19 @@ document.addEventListener('DOMContentLoaded', () => {
         container.style.display = 'grid';
         container.style.gridTemplateColumns = 'repeat(3, 1fr)';
 
+        // 테마 감지: theme-us(밝은 배경) vs 기본(어두운 배경)
+        const isLightTheme = document.body.classList.contains('theme-us');
+        const clr = isLightTheme
+            ? { name: '#111827', ticker: '#374151', price: '#111827', label: '#6b7280', valueTxt: '#374151' }
+            : { name: '#e6edf3', ticker: '#64748b', price: '#e6edf3', label: '#6b7280', valueTxt: '#94a3b8' };
+
         container.innerHTML = defensiveList.map(asset => {
             const holding  = asset.shares > 0;
             const priceStr = asset.price > 0 ? fmtPrice(asset.price) : null;
             const valueStr = holding ? fmtMoney(asset.value) : '-';
             const ratioStr = (asset.ratio * 100).toFixed(0) + '% 배정';
 
-            // 등락률 — 상승 빨강, 하락 파랑 (한국 주식 색 기준)
+            // 등락률 — 상승 빨강, 하락 파랑
             const chg = asset.change_pct || 0;
             const chgColor = chg > 0 ? '#f85149' : (chg < 0 ? '#58a6ff' : '#6b7280');
             const chgSign  = chg > 0 ? '+' : '';
@@ -141,26 +147,27 @@ document.addEventListener('DOMContentLoaded', () => {
             let borderColor, bgColor, statusText, statusColor;
             if (isBear && holding) {
                 borderColor = 'rgba(248,81,73,0.5)'; bgColor = 'rgba(248,81,73,0.06)';
-                statusText = `${asset.shares.toLocaleString()}주 보유 중`; statusColor = '#fca5a5';
+                statusText = `${asset.shares.toLocaleString()}주 보유 중`; statusColor = '#ef4444';
             } else if (isBear) {
                 borderColor = 'rgba(245,158,11,0.45)'; bgColor = 'rgba(245,158,11,0.05)';
-                statusText = 'BEAR — 매수 대기'; statusColor = '#fcd34d';
+                statusText = 'BEAR — 매수 대기'; statusColor = '#d97706';
             } else {
-                borderColor = 'rgba(255,255,255,0.1)'; bgColor = 'transparent';
+                borderColor = isLightTheme ? 'rgba(0,0,0,0.1)' : 'rgba(255,255,255,0.1)';
+                bgColor = isLightTheme ? 'rgba(0,0,0,0.02)' : 'transparent';
                 statusText = holding ? `${asset.shares.toLocaleString()}주 보유` : '비활성 (대기)';
-                statusColor = holding ? '#94a3b8' : '#4b5563';
+                statusColor = holding ? '#2563eb' : '#6b7280';
             }
 
             return `<div style="border:1px solid ${borderColor};background:${bgColor};border-radius:12px;padding:14px 16px;transition:all 0.3s;">
-                <div style="font-size:0.72rem;color:#6b7280;margin-bottom:6px;">${asset.emoji} ${ratioStr}</div>
-                <div style="font-size:0.95rem;font-weight:700;color:#e6edf3;margin-bottom:4px;">${asset.name}</div>
-                <div style="font-size:0.78rem;color:#64748b;margin-bottom:8px;">${asset.ticker}</div>
-                <div style="font-size:0.88rem;color:#94a3b8;">
+                <div style="font-size:0.72rem;color:${clr.label};margin-bottom:6px;">${asset.emoji} ${ratioStr}</div>
+                <div style="font-size:0.95rem;font-weight:700;color:${clr.name};margin-bottom:4px;">${asset.name}</div>
+                <div style="font-size:0.78rem;color:${clr.ticker};margin-bottom:8px;">${asset.ticker}</div>
+                <div style="font-size:0.88rem;color:${clr.valueTxt};">
                     ${priceStr
-                        ? `<span style="color:#e6edf3;font-weight:600;">${priceStr}</span>${chgStr}`
-                        : '현재가 조회 중'}
+                        ? `<span style="color:${clr.price};font-weight:600;">${priceStr}</span>${chgStr}`
+                        : '<span style="color:#9ca3af;">현재가 조회 중</span>'}
                 </div>
-                ${holding ? `<div style="font-size:0.82rem;color:#94a3b8;margin-top:2px;">평가 ${valueStr}</div>` : ''}
+                ${holding ? `<div style="font-size:0.82rem;color:${clr.valueTxt};margin-top:2px;">평가 ${valueStr}</div>` : ''}
                 <div style="margin-top:8px;font-size:0.78rem;font-weight:600;color:${statusColor};">${statusText}</div>
             </div>`;
         }).join('');
