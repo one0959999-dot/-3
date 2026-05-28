@@ -428,7 +428,8 @@ def get_futures_snapshot() -> dict:
     for key, (sym, label) in symbols.items():
         entry = {"label": label, "price": 0.0, "change_1h": 0.0, "change_5d": 0.0, "trend": "NEUTRAL"}
         try:
-            df = yf.download(sym, period="5d", interval="1h",
+            # 5분봉 2일치 — 최신 가격 정확히 반영 + 전날 종가 기준 등락률
+            df = yf.download(sym, period="5d", interval="5m",
                              progress=False, auto_adjust=True)
             if isinstance(df.columns, pd.MultiIndex):
                 df.columns = df.columns.get_level_values(0)
@@ -437,12 +438,18 @@ def get_futures_snapshot() -> dict:
                 result[key] = entry
                 continue
 
-            cur  = float(df["Close"].iloc[-1])
-            prev = float(df["Close"].iloc[-2])      # 1시간 전
-            chg_1h = (cur / prev - 1) * 100
+            cur = float(df["Close"].iloc[-1])
 
-            # 5일 추세: 일봉 리샘플
+            # 전날 종가 기준 당일 등락률 계산 (시장 표준)
             daily = df["Close"].resample("D").last().dropna()
+            if len(daily) >= 2:
+                prev_close = float(daily.iloc[-2])   # 전날 종가
+                chg_1h = (cur / prev_close - 1) * 100
+            else:
+                prev_close = float(df["Close"].iloc[-2])
+                chg_1h = (cur / prev_close - 1) * 100
+
+            # 5일 추세
             chg_5d = (cur / float(daily.iloc[0]) - 1) * 100 if len(daily) >= 2 else 0.0
 
             if chg_5d > 1.0:
