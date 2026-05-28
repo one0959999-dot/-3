@@ -3298,9 +3298,9 @@ class KRBotController:
     def _rescreen_satellites(self):
         try:
             now = _now_kst()
-            # 위성은 "오늘 하루 들고 갈 종목"을 장 초반에 결정 → 10:30 이후 신규 선정 금지.
-            # 10:30 이후 빈 슬롯 발생 시 당일 캐시 보유, 다음 날 08:50 사전 스크리닝에서 보충.
-            if not ("09:00" <= now.strftime('%H:%M') <= "10:30") or now.weekday() >= 5:
+            # 위성은 1-3개월 보유 스윙 포지션 — 시간 제한 없이 빈 슬롯 발생 시 즉시 보충.
+            # (매시간 자동 재스크리닝은 스케줄러에서 제거 → 불필요한 AI 호출 방지)
+            if not ("09:01" <= now.strftime('%H:%M') <= "15:20") or now.weekday() >= 5:
                 return
             self.add_log(f"🦅 {self.mode_name} 위성 실시간 교체 탐색 중...")
             keep_tickers = set()      # 유지 티커 (교체 슬롯으로 계산하지 않음)

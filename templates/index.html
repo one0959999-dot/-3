@@ -101,12 +101,14 @@
         .fut-card {
             padding: 14px 16px;
             border-right: 1px solid rgba(255,255,255,0.07);
+            text-align: center;
         }
         .fut-card:last-child { border-right: none; }
         .fut-card-top {
             display: flex;
-            justify-content: space-between;
+            justify-content: center;
             align-items: center;
+            gap: 6px;
             margin-bottom: 8px;
         }
         .fut-card-label { color: #94a3b8; font-size: 0.72rem; font-weight: 600; }
@@ -119,7 +121,7 @@
         }
         .fut-card-price { color: #f1f5f9; font-size: 1rem; font-weight: 700; margin-bottom: 4px; }
         .fut-card-chg   { font-size: 0.78rem; margin-bottom: 10px; }
-        .fut-card-desc  { color: #475569; font-size: 0.67rem; line-height: 1.45; border-top: 1px solid rgba(255,255,255,0.07); padding-top: 8px; }
+        .fut-card-desc  { color: #475569; font-size: 0.67rem; line-height: 1.45; border-top: 1px solid rgba(255,255,255,0.07); padding-top: 8px; text-align: left; }
         /* 모달 하단 닫기 버튼 */
         #fut-popup-footer {
             padding: 12px 18px;
@@ -962,8 +964,8 @@
                desc:'나스닥100 선물(NQ=F)\n미국 기술주·성장주의 방향성 선행지표.\n개장 전 나스닥이 어떻게 열릴지 예측하는 데 사용.' },
         es:  { lbl:'📊 ES선물', key:'es',  priceFmt: p => _fmt(p,2),
                desc:'S&P 500 선물(ES=F)\n미국 전체 시장 방향성 지표.\n글로벌 리스크온/오프 신호로 활용.' },
-        ewy: { lbl:'🇰🇷 EWY',   key:'ewy', priceFmt: p => '$'+_fmt(p,2),
-               desc:'iShares MSCI 한국 ETF(EWY)\n코스피 야간선물 프록시.\nCME 코스피선물 대신 미국 시간대에서\n한국 증시 흐름을 간접적으로 확인.' },
+        ewy: { lbl:'🇰🇷 KR야선(1x)', key:'ewy', priceFmt: p => '$'+_fmt(p,2),
+               desc:'iShares MSCI 한국 ETF(EWY) — 1배 비레버리지\n코스피 야간선물 프록시.\nCME 코스피선물 대신 미국 시간대에서\n한국 증시 흐름을 간접적으로 확인.' },
     };
 
     function _fmt(n, d) {

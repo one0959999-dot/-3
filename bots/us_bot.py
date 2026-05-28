@@ -1488,10 +1488,6 @@ class USBotController:
         last_screen_date를 초기화해 _screen_satellites()를 강제 재실행."""
         if not _is_us_market_open():
             return
-        # 위성은 장 초반(개장 후 2시간 이내)에만 신규 선정 — 11:30 ET 이후 진입 불필요
-        _now_et_hm = _now_et().strftime("%H:%M")
-        if not ("09:30" <= _now_et_hm <= "11:30"):
-            return
         self.add_log("🦅 [US] 위성 실시간 교체 탐색 중...")
         # 성장세 양호(+3%) 종목 유지 여부 사전 체크
         strong_keep: set = set()
