@@ -171,20 +171,19 @@ header {
     display: inline-block;
 }
 
-/* header right: mini-log + toggle btn */
+/* header right: sat-controls + toggle btn (mini-log은 header 직접 자식으로 분리됨) */
 .header-right {
     display: flex;
     align-items: center;
     gap: 14px;
-    flex: 1;
-    justify-content: flex-end;
+    flex-shrink: 0;
 }
 
 /* ─── Mini Log Panel ─── */
 .mini-log {
-    flex: 1;
-    max-width: 520px;
-    min-width: 220px;
+    flex: 1;               /* title-area와 header-right 사이 빈 공간 채움 */
+    max-width: 440px;      /* 너무 넓어지지 않게 제한 */
+    min-width: 180px;
     height: 72px;
     overflow-y: auto;
     padding: 0 14px;
