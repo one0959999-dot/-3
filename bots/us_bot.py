@@ -538,25 +538,46 @@ class USBotController:
         self.satellite_info = (pinned + filtered)[:self.num_satellites]
 
     def _screen_cores(self):
-        """월요일 1회 AI가 코어 종목 선정 (장기 우량주)."""
+        """
+        주 1회(월요일) 코어 종목 선정.
+        KIS 실시간 랭킹(거래량·신고가·모멘텀)에서 시장이 증명한 종목을 발굴,
+        AI가 장기 보유 적합성을 최종 판단.
+        KIS 미연결 시 하드코딩 유니버스(CORE_UNIVERSE) 폴백.
+        """
         now = _now_et()
         today = now.strftime("%Y-%m-%d")
-        # 주 1회 (월요일) 또는 코어가 비어있을 때만 실행
         if self.last_core_screen_date == today:
             return
         if now.weekday() != 0 and self.core_info:
             return
 
         holding = {t for t, p in self.core_positions.items() if p.shares > 0}
-        self.add_log("🔍 US 코어 종목 스캔 시작…")
+        self.add_log("🔍 US 코어 종목 스캔 시작 (KIS 실시간 랭킹)…")
 
         try:
-            # 코어 전용 유니버스(우량 대형주)에서 스캔 후 AI에게 넘김
-            candidates = scan_us_cores(n=self.num_cores * 3, exclude=holding)
+            candidates = []
+
+            # ① KIS 실시간 랭킹 우선 (거래량·신고가·모멘텀으로 시장이 증명한 종목)
+            if self.kis_overseas:
+                try:
+                    candidates = scan_us_satellites_kis(
+                        self.kis_overseas, n=self.num_cores * 4, exclude=holding
+                    )
+                    if candidates:
+                        self.add_log(f"📡 KIS 랭킹 {len(candidates)}개 후보 수집")
+                except Exception as e:
+                    logger.warning(f"[US봇] KIS 코어 스캔 오류: {e}")
+
+            # ② KIS 미연결 또는 결과 없으면 하드코딩 유니버스 폴백
             if not candidates:
-                self.add_log("⚠️ 코어 스캔 결과 없음 — 기존 유지")
+                self.add_log("⚠️ KIS 랭킹 미사용 → 퀀트 유니버스 폴백")
+                candidates = scan_us_cores(n=self.num_cores * 3, exclude=holding)
+
+            if not candidates:
+                self.add_log("⚠️ 코어 후보 없음 — 기존 유지")
                 return
 
+            # ③ AI 최종 선정 (장기 보유 적합성 판단)
             if self.gemini:
                 ai_result = self.gemini.ai_select_us_core_stocks(
                     candidates=candidates, n=self.num_cores
@@ -570,9 +591,9 @@ class USBotController:
                     self.add_log("⚠️ AI 코어 선정 실패 → 퀀트 상위 유지")
             else:
                 self.core_info = candidates[:self.num_cores]
-                self.add_log(f"✅ 코어 종목: {[c['ticker'] for c in self.core_info]}")
+                self.add_log(f"✅ 코어 종목(퀀트): {[c['ticker'] for c in self.core_info]}")
 
-            self._inject_user_cores()   # 사용자 지정 코어 우선 고정
+            self._inject_user_cores()
             self.last_core_screen_date = today
         except Exception as e:
             logger.warning(f"[US봇] 코어 스캔 오류: {e}")
@@ -982,25 +1003,48 @@ class USBotController:
         holding = strong_keep_tickers | {t for t, p in self.satellite_positions.items() if p.shares > 0}
         self.add_log(f"🔍 미국 위성 종목 스캔 시작… (빈 슬롯 {slots_needed}개)")
 
-        # KIS API 있으면 실시간 랭킹 스크리너 우선 시도
         candidates: list = []
-        if self.kis_overseas:
+
+        # ① AI 테마 발굴 → yfinance 퀀트 검증 (제2의 엔비디아 발굴)
+        if self.gemini:
             try:
-                self.add_log("📡 KIS 랭킹 API 스크리너 시도…")
-                candidates = scan_us_satellites_kis(
-                    kis_api = self.kis_overseas,
-                    n       = slots_needed * 2 + 2,
-                    exclude = holding,
-                )
-                if candidates:
-                    self.add_log(f"✅ KIS 스크리너: {len(candidates)}개 후보 수집")
+                self.add_log("🤖 AI 테마 발굴 시작 (제2의 엔비디아·로켓랩 후보 탐색)…")
+                themes = self.gemini.ai_discover_satellite_themes()
+                if themes:
+                    theme_tickers = []
+                    for theme in themes:
+                        t_list = [t for t in theme.get("tickers", []) if t not in holding]
+                        self.add_log(f"  💡 테마: {theme.get('theme','')} → {t_list}")
+                        theme_tickers.extend(t_list)
+
+                    # yfinance로 퀀트 검증 (실제 존재 + 지표 계산)
+                    if theme_tickers:
+                        from us_screener import _scan_universe, _satellite_score, SATELLITE_UNIVERSE
+                        theme_universe = {"AI발굴": list(set(theme_tickers) - holding)}
+                        quant_results = _scan_universe(
+                            theme_universe,
+                            n=slots_needed * 3,
+                            exclude=holding,
+                            score_fn=_satellite_score,
+                        )
+                        # 테마 정보 보강
+                        ticker_theme_map = {}
+                        for theme in themes:
+                            for t in theme.get("tickers", []):
+                                ticker_theme_map[t] = theme.get("theme", "AI발굴")
+                        for c in quant_results:
+                            c["sector"] = ticker_theme_map.get(c["ticker"], "AI발굴")
+                            c["ai_theme"] = ticker_theme_map.get(c["ticker"], "")
+
+                        candidates = quant_results
+                        self.add_log(f"✅ AI 테마 발굴 + 퀀트 검증: {len(candidates)}개 후보")
             except Exception as _e:
-                logger.warning(f"[US봇] KIS 스크리너 오류: {_e}")
+                logger.warning(f"[US봇] AI 테마 발굴 오류: {_e}")
                 candidates = []
 
-        # KIS 실패 or 결과 없으면 yfinance 폴백
+        # ② AI 실패 또는 결과 부족 → 하드코딩 유니버스 yfinance 스캔 폴백
         if not candidates:
-            self.add_log("📈 yfinance 스크리너로 폴백…")
+            self.add_log("📈 yfinance 위성 유니버스 폴백…")
             candidates = scan_us_satellites(n=slots_needed * 2 + 2, exclude=holding)
 
         if not candidates:
