@@ -1,4 +1,4 @@
-"""
+﻿"""
 stock_screener.py
 멀티팩터 위성 종목 자동 스크리너
 ─────────────────────────────────
@@ -28,7 +28,7 @@ _FULL_TICKER_TTL   = 1800   # 30분 (장중 급등주 포착 주기)
 # 모듈 레벨 AI 클라이언트 — select_satellites() 호출 시 자동 주입됨
 # kr_bot.py가 select_ai_core_stock()에 gemini를 전달하지 않으므로
 # select_satellites()에서 먼저 받아 여기에 저장 → 코어 선정 시 재사용
-_module_gemini = None
+_module_claude = None
 
 # 미국 섹터 선행 지수 캐시 (yfinance — 4시간마다 갱신)
 _us_sector_cache: dict = {'ts': 0.0, 'boosts': {}}
@@ -802,14 +802,14 @@ def find_best_strategy(df):
 # ──────────────────────────────────────────────
 # 5. 메인 선정 함수
 # ──────────────────────────────────────────────
-def select_satellites(kis=None, n=NUM_SATELLITES, verbose=True, gemini_client=None, bear_mode=False, sector_guide: str = '', real_kis=None):
+def select_satellites(kis=None, n=NUM_SATELLITES, verbose=True, claude_client=None, bear_mode=False, sector_guide: str = '', real_kis=None):
     """
     멀티팩터 위성 종목 선정 (딥러닝 PyTorch 확률 예측 엔진 연동 완료)
     """
     # 모듈 레벨 AI 클라이언트 저장 — select_ai_core_stock()이 gemini 없이 호출될 때 재사용
-    global _module_gemini
-    if gemini_client is not None:
-        _module_gemini = gemini_client
+    global _module_claude
+    if claude_client is not None:
+        _module_claude = claude_client
 
     if verbose:
         print("\n" + "="*60)
@@ -1064,10 +1064,10 @@ def select_satellites(kis=None, n=NUM_SATELLITES, verbose=True, gemini_client=No
     results.sort(key=lambda x: x['score'], reverse=True)
     
     selected = None
-    if gemini_client:
+    if claude_client:
         if verbose:
             print("\n🤖 [AI 자율 매매] Claude AI가 최종 위성 종목과 전략을 선정 중입니다...")
-        ai_result = gemini_client.ai_select_satellites(results, hot_sectors, n, sector_guide=sector_guide)
+        ai_result = claude_client.ai_select_satellites(results, hot_sectors, n, sector_guide=sector_guide)
         if ai_result:
             selected = ai_result
             if verbose: print("   ✅ AI 텍스트 선정 완료!")
@@ -1196,8 +1196,8 @@ def select_ai_core_stock(n: int = 2, exclude_tickers=None, verbose: bool = False
     scored.sort(key=lambda x: x[0], reverse=True)
 
     # ── AI 코어 선정 (Gemini가 있으면 AI가 장기누적 기준으로 최종 선택) ──
-    # kr_bot.py가 gemini 없이 호출하므로, select_satellites()에서 주입된 _module_gemini 사용
-    if _module_gemini is not None and scored:
+    # kr_bot.py가 gemini 없이 호출하므로, select_satellites()에서 주입된 _module_claude 사용
+    if _module_claude is not None and scored:
         if verbose:
             print(f"\n🤖 [AI 코어 선정] 퀀트 통과 {len(scored)}개 → Claude AI가 '장기 누적 매수' 기준으로 선정 중...")
         # AI에게 넘길 후보 준비 (상위 20개, 이름 포함)
@@ -1219,7 +1219,7 @@ def select_ai_core_stock(n: int = 2, exclude_tickers=None, verbose: bool = False
                 'strategy_name': '정배열 장기보유',
                 'return_pct':    round(sc, 2),
             })
-        ai_result = _module_gemini.ai_select_core_stocks(ai_candidates, n)
+        ai_result = _module_claude.ai_select_core_stocks(ai_candidates, n)
         if ai_result:
             if verbose:
                 for i, c in enumerate(ai_result, 1):
@@ -1264,10 +1264,10 @@ def select_ai_core_stock(n: int = 2, exclude_tickers=None, verbose: bool = False
 # ──────────────────────────────────────────────
 # 7. 일일 시장 분석 리포트 자동 생성
 # ──────────────────────────────────────────────
-def generate_daily_market_report(gemini_client=None, verbose=False, news_context=None, kis=None):
+def generate_daily_market_report(claude_client=None, verbose=False, news_context=None, kis=None):
     """
     코스피/코스닥 대리 지수(ETF) 및 주도 섹터 데이터를 활용하여 텍스트 리포트를 생성합니다.
-    gemini_client가 제공되면 AI 기반 분석을 수행합니다.
+    claude_client가 제공되면 AI 기반 분석을 수행합니다.
     """
     if verbose:
         print("\n📝 일일 시장 분석 리포트 생성 중...")
@@ -1319,10 +1319,10 @@ def generate_daily_market_report(gemini_client=None, verbose=False, news_context
 
     market_data_text = "\n".join(raw_data_lines)
 
-    # Gemini AI 활용 여부 결정
-    if gemini_client:
-        if verbose: print("   🤖 Gemini AI 분석 요청 중...")
-        report_text = gemini_client.analyze_market(market_data_text)
+    # Claude AI 활용 여부 결정
+    if claude_client:
+        if verbose: print("   🤖 Claude AI 분석 요청 중...")
+        report_text = claude_client.analyze_market(market_data_text)
     else:
         # Fallback: 기존 룰 기반 리포트
         report_lines = [f"### 📊 Lassi Bot 시장 분석 리포트 ({today_str})"]

@@ -1,4 +1,4 @@
-import threading
+﻿import threading
 import time
 import schedule
 import json
@@ -146,7 +146,7 @@ class KRBotController:
         self.kis = None
         self.real_kis = None   # 모의봇에서 외인/기관 데이터 조회용 실전 KIS 인스턴스 (주입 시 사용)
         self.telegram = None
-        self.gemini = None
+        self.claude = None
         self.news_monitor: NewsMonitor | None = None   # DART + Naver 뉴스 모니터
 
         # 뉴스 모니터 주기 제어
@@ -784,13 +784,13 @@ class KRBotController:
                         self.add_log(f"⚠️ {name}({ticker}) 악재 공시: {report_nm}")
 
                         # [BUG-N2] 코어 종목은 알림만, 매도 없음
-                        if is_core or not self.gemini:
+                        if is_core or not self.claude:
                             continue
 
                         # 위성 포지션 AI 손절 검토
                         try:
                             context = f"악재 공시 발생: {report_nm} ({rcept_dt})\n보유: {shares}주 @ 평단 {avg_price:,.0f}원"
-                            decision, ai_reason = self.gemini.ai_approve_trade(
+                            decision, ai_reason = self.claude.ai_approve_trade(
                                 'SELL', name, ticker, avg_price, "공시감지",
                                 {}, self.hot_sectors,
                                 get_recent_trades(self.user_id, ticker),
@@ -1027,11 +1027,11 @@ class KRBotController:
 
     def _ai_filter_satellites(self, candidates: list) -> list:
         """AI가 위성 후보 검토 — 부적합 종목 제거 + 전략 교체. AI 없으면 원본 반환."""
-        if not self.gemini or not candidates:
+        if not self.claude or not candidates:
             return candidates
         try:
             self.add_log("🤖 AI가 위성 후보 종목·전략 검토 중...")
-            reviewed = self.gemini.review_satellite_candidates(candidates, self.hot_sectors, sector_guide=self.sector_guide)
+            reviewed = self.claude.review_satellite_candidates(candidates, self.hot_sectors, sector_guide=self.sector_guide)
             approved = [c for c in reviewed if c.get('approved', True)]
             rejected = [c for c in reviewed if not c.get('approved', True)]
             for c in rejected:
@@ -1048,7 +1048,7 @@ class KRBotController:
 
     def initialize_portfolio(self, total_cash):
         self.add_log("포트폴리오 초기화 중...")
-        raw_info, self.hot_sectors = select_satellites(kis=self.kis, n=self.num_satellites * 2, verbose=False, gemini_client=self.gemini, sector_guide=self.sector_guide, real_kis=self.real_kis)
+        raw_info, self.hot_sectors = select_satellites(kis=self.kis, n=self.num_satellites * 2, verbose=False, claude_client=self.claude, sector_guide=self.sector_guide, real_kis=self.real_kis)
         if self.hot_sectors:
             self.add_log(f"🔥 강세 섹터: {', '.join(self.hot_sectors[:4])}")
         else:
@@ -1069,7 +1069,7 @@ class KRBotController:
         for line in log_lines: self.add_log(f"✅ {line.strip()}")
         log_html = "\n".join([f"  · {c['name']} <code>{c['ticker']}</code>  [{c['strategy_name']}]" for c in self.satellite_info])
         self._send_telegram(
-            f"🔍 <b>위성 종목 선정 완료{'(AI 검토 반영)' if self.gemini else ''}</b>  ·  {self.alert_icon} {self.mode_name}\n"
+            f"🔍 <b>위성 종목 선정 완료{'(AI 검토 반영)' if self.claude else ''}</b>  ·  {self.alert_icon} {self.mode_name}\n"
             f"━━━━━━━━━━━━━━━━━━━━\n"
             f"{log_html}\n"
             f"━━━━━━━━━━━━━━━━━━━━\n"
@@ -1666,7 +1666,7 @@ class KRBotController:
 
         # ── KST 기준 일일 리포트 발행 (시스템 타임존 무관) ──────────────
         # 리포트가 아직 생성 안 됐고 Claude API 설정 있을 때만 실행
-        if self.gemini:
+        if self.claude:
             for slot_time in ['15:40']:
                 if current_time_str == slot_time:
                     dr = self.daily_report
@@ -2035,7 +2035,7 @@ class KRBotController:
                     # 1차: +10%(일반) / +15%(BULL) 도달 → AI에 익절 여부 문의
                     if not core.partial_sold and c_pnl_pct >= _core_partial1 and c_sh > 1:
                         if c_decision is None:
-                            if self.gemini:
+                            if self.claude:
                                 self._trigger_ai_partial_exit(core, c_tk, c_nm, cp, c_avg, c_pnl_pct, regime)
                                 with self.lock: core.status = f"AI 익절 검토 중 ({c_pnl_pct:+.1f}%) 🤖"
                             else:
@@ -2062,7 +2062,7 @@ class KRBotController:
                     # 2차: +20%(일반) / +30%(BULL) 도달 → AI에 전량 익절 여부 문의
                     elif core.partial_sold and not core.partial_sold_2 and c_pnl_pct >= _core_partial2:
                         if c_decision is None:
-                            if self.gemini:
+                            if self.claude:
                                 self._trigger_ai_partial_exit(core, c_tk, c_nm, cp, c_avg, c_pnl_pct, regime)
                                 with self.lock: core.status = f"AI 익절 검토 중 ({c_pnl_pct:+.1f}%) 🤖"
                             else:
@@ -2157,12 +2157,12 @@ class KRBotController:
                         if qty > 0:
                             # ② AI 승인 (위성과 동일)
                             approved, ai_reason = True, "AI 미설정"
-                            if self.gemini:
+                            if self.claude:
                                 with self.lock:
                                     core.status     = "AI 심사 중 🤖"
                                     core.status_msg = f"매수 신호 발생 | {c_score}pt/{c_threshold}pt | RSI {c_rsi:.1f} — AI 최종 승인 대기 중..."
                                 trade_ctx = self._build_trade_context(c_tk, c_nm, cp, ex_df, 'RSI코어', regime)
-                                approved, ai_reason = self.gemini.ai_approve_trade(
+                                approved, ai_reason = self.claude.ai_approve_trade(
                                     'BUY', c_nm, c_tk, cp, 'RSI코어', c_rsi,
                                     self.hot_sectors, get_recent_trades(self.user_id, c_tk),
                                     load_ai_rules(self.user_id),
@@ -2445,7 +2445,7 @@ class KRBotController:
                         and price >= p_avg * _sat_partial1_mult):
                     s_decision = getattr(pos, 'ai_exit_decision', None)
                     if s_decision is None:
-                        if self.gemini:
+                        if self.claude:
                             pnl_pct_s = (price / p_avg - 1) * 100
                             self._trigger_ai_partial_exit(pos, ticker, p_nm, price, p_avg, pnl_pct_s, regime)
                             with self.lock: pos.status = f"AI 익절 검토 중 (+{pnl_pct_s:.1f}%) 🤖"
@@ -2478,7 +2478,7 @@ class KRBotController:
                         and price >= p_avg * _sat_partial2_mult):
                     s_decision = getattr(pos, 'ai_exit_decision', None)
                     if s_decision is None:
-                        if self.gemini:
+                        if self.claude:
                             pnl_pct_s = (price / p_avg - 1) * 100
                             self._trigger_ai_partial_exit(pos, ticker, p_nm, price, p_avg, pnl_pct_s, regime)
                             with self.lock: pos.status = f"AI 익절 검토 중 (+{pnl_pct_s:.1f}%) 🤖"
@@ -2600,11 +2600,11 @@ class KRBotController:
                         qty = int((bounce_cash * 0.98) // price)
                         if qty > 0:
                             # 하락장은 더 신중해야 하므로 AI 심사 필수
-                            if self.gemini:
+                            if self.claude:
                                 pos.status     = "AI 심사 중 🤖"
                                 pos.status_msg = f"하락장 저점 신호 | {bear_reason_str[:60]} — AI 최종 승인 대기 중..."
                                 trade_ctx = self._build_trade_context(ticker, p_nm, price, ex_df, st_nm, regime)
-                                decision, ai_reason = self.gemini.ai_approve_trade(sig, p_nm, ticker, price, st_nm, ind_val, self.hot_sectors, get_recent_trades(self.user_id, ticker), load_ai_rules(self.user_id) + "\n" + getattr(self, 'current_ai_market_view', '') + ("\n\n[📊 섹터 가이드 / 커스텀 전략]\n" + self.sector_guide if self.sector_guide else ''), context=trade_ctx)
+                                decision, ai_reason = self.claude.ai_approve_trade(sig, p_nm, ticker, price, st_nm, ind_val, self.hot_sectors, get_recent_trades(self.user_id, ticker), load_ai_rules(self.user_id) + "\n" + getattr(self, 'current_ai_market_view', '') + ("\n\n[📊 섹터 가이드 / 커스텀 전략]\n" + self.sector_guide if self.sector_guide else ''), context=trade_ctx)
                                 if decision:
                                     if self._buy_order(ticker, qty, pos, p_nm):
                                         with self.lock:
@@ -2675,7 +2675,7 @@ class KRBotController:
                             theme="📊 위성 매수 신호",
                             candidates=[{'name': p_nm, 'ticker': ticker, 'price': price, 'stats': _stats}],
                             regime=regime,
-                            action_note="AI 심사 후 자동주문" if self.gemini else "알고리즘 자동주문"
+                            action_note="AI 심사 후 자동주문" if self.claude else "알고리즘 자동주문"
                         ), 'misc')
                     except Exception:
                         pass
@@ -2693,13 +2693,13 @@ class KRBotController:
                     except Exception:
                         pass
 
-                    if self.gemini:
+                    if self.claude:
                         pos.status     = "AI 심사 중 🤖"
                         pos.status_msg = f"매수 신호 발생 | {st_nm} — AI 최종 승인 대기 중..."
                         trade_ctx = self._build_trade_context(ticker, p_nm, price, ex_df, st_nm, regime)
                         if _52w_note_kr:
                             trade_ctx += f"\n[52주 신고가] {_52w_note_kr}"
-                        decision, ai_reason = self.gemini.ai_approve_trade(sig, p_nm, ticker, price, st_nm, ind_val, self.hot_sectors, get_recent_trades(self.user_id, ticker), load_ai_rules(self.user_id) + "\n" + getattr(self, 'current_ai_market_view', '') + ("\n\n[📊 섹터 가이드 / 커스텀 전략]\n" + self.sector_guide if self.sector_guide else ''), context=trade_ctx)
+                        decision, ai_reason = self.claude.ai_approve_trade(sig, p_nm, ticker, price, st_nm, ind_val, self.hot_sectors, get_recent_trades(self.user_id, ticker), load_ai_rules(self.user_id) + "\n" + getattr(self, 'current_ai_market_view', '') + ("\n\n[📊 섹터 가이드 / 커스텀 전략]\n" + self.sector_guide if self.sector_guide else ''), context=trade_ctx)
                         if decision:
                             qty = int((entry_cash * 0.98) // price)
                             if qty > 0 and self._buy_order(ticker, qty, pos, p_nm):
@@ -2742,11 +2742,11 @@ class KRBotController:
                             self._send_trade_telegram(self._fmt_trade_msg("📈", f"알고리즘 매수  ({int(first_ratio*100)}% 1차)", ticker, p_nm, price, qty, strategy=f"{st_nm}  ·  {regime_label}", note=regime_reason_str))
 
                 elif sig == 'SELL' and p_sh > 0 and is_cd_passed:
-                    if self.gemini:
+                    if self.claude:
                         pos.status     = "AI 심사 중 🤖"
                         pos.status_msg = f"매도 신호 발생 | {st_nm} — AI 최종 승인 대기 중..."
                         trade_ctx = self._build_trade_context(ticker, p_nm, price, ex_df, st_nm, regime)
-                        decision, ai_reason = self.gemini.ai_approve_trade(sig, p_nm, ticker, price, st_nm, ind_val, self.hot_sectors, get_recent_trades(self.user_id, ticker), load_ai_rules(self.user_id) + "\n" + getattr(self, 'current_ai_market_view', '') + ("\n\n[📊 섹터 가이드 / 커스텀 전략]\n" + self.sector_guide if self.sector_guide else ''), context=trade_ctx)
+                        decision, ai_reason = self.claude.ai_approve_trade(sig, p_nm, ticker, price, st_nm, ind_val, self.hot_sectors, get_recent_trades(self.user_id, ticker), load_ai_rules(self.user_id) + "\n" + getattr(self, 'current_ai_market_view', '') + ("\n\n[📊 섹터 가이드 / 커스텀 전략]\n" + self.sector_guide if self.sector_guide else ''), context=trade_ctx)
                         if decision:
                             if self._sell_order(ticker, p_sh, pos, p_nm):
                                 with self.lock:
@@ -3134,7 +3134,7 @@ class KRBotController:
                 pass
 
             # AI 심사
-            if self.gemini:
+            if self.claude:
                 # 풀 기술 지표 컨텍스트 + 모멘텀 전용 신호 정보 결합
                 _ex_df_m = self._get_extended_ohlcv(b_ticker, b_price)
                 trade_ctx = self._build_trade_context(
@@ -3146,7 +3146,7 @@ class KRBotController:
                     f"점수: {best['momentum_score']:.1f}점 | "
                     f"ATR: {atr_val:,.0f}원"
                 )
-                m_decision, m_ai_reason = self.gemini.ai_approve_trade(
+                m_decision, m_ai_reason = self.claude.ai_approve_trade(
                     'BUY', b_name, b_ticker, b_price, "모멘텀슬롯",
                     {"momentum_score": best['momentum_score']}, self.hot_sectors,
                     get_recent_trades(self.user_id, b_ticker),
@@ -3256,7 +3256,7 @@ class KRBotController:
                         _news = self.news_monitor.get_news_summary(name, display=3)
                     except Exception:
                         pass
-                decision = self.gemini.ai_partial_exit(
+                decision = self.claude.ai_partial_exit(
                     ticker=ticker, stock_name=name, price=price,
                     avg_price=avg, pnl_pct=pnl_pct,
                     shares=int(getattr(pos, 'shares', 0)),
@@ -3390,7 +3390,7 @@ class KRBotController:
                 n_rejects = len(self._satellite_rejects)
             raw_info, self.hot_sectors = select_satellites(
                 kis=self.kis, n=self.num_satellites + n_needed + n_rejects + 3,
-                verbose=False, gemini_client=self.gemini, bear_mode=(self.market_regime == "BEAR"),
+                verbose=False, claude_client=self.claude, bear_mode=(self.market_regime == "BEAR"),
                 sector_guide=self.sector_guide, real_kis=self.real_kis
             )
             if self.hot_sectors:
@@ -3461,8 +3461,8 @@ class KRBotController:
                     if not df.empty and cp: market_data.append(f"{name}: {cp:,}원 ({((cp/df['close'].iloc[-1])-1)*100:+.2f}%)")
             
             prompt = f"시각 {now_time_str}. 지수: {' | '.join(market_data)}.강세: {', '.join(self.hot_sectors)}. 장중 분위기 짧게 2줄 요약."
-            if self.gemini:
-                analysis = self.gemini.chat(prompt, stock_analysis_context="마크다운 없이 평문 2줄로.")
+            if self.claude:
+                analysis = self.claude.chat(prompt, stock_analysis_context="마크다운 없이 평문 2줄로.")
                 self.current_ai_market_view = analysis
                 self.market_flow_history.append(f"[{now_time_str}] {analysis}")
         except Exception as e:
@@ -3492,7 +3492,7 @@ class KRBotController:
                 parts.append(f"[실시간 AI 추적]\n{flow_context}")
             combined_context = "\n\n".join(parts) if parts else ""
             
-            report_data = generate_daily_market_report(gemini_client=self.gemini, verbose=False, news_context=combined_context, kis=self.kis)
+            report_data = generate_daily_market_report(claude_client=self.claude, verbose=False, news_context=combined_context, kis=self.kis)
             if report_data:
                 today_str = _now_kst().strftime('%Y-%m-%d')
                 if not isinstance(self.daily_report, dict) or self.daily_report.get('date') != today_str: self.daily_report = {'date': today_str, '15:40': None}
@@ -3543,8 +3543,8 @@ class KRBotController:
 
         history_text = "\n".join([f"- {r['date']} | {r['stock_name']} | {r['action']} | {r['ai_reason']} | 손익:{r['profit']}" for r in rows])
         existing_rules = load_ai_rules(self.user_id)   # ← 기존 규칙 로드
-        if self.gemini:
-            new_rules = self.gemini.generate_weekly_reflection(history_text, existing_rules)
+        if self.claude:
+            new_rules = self.claude.generate_weekly_reflection(history_text, existing_rules)
             if new_rules:
                 save_ai_rules(self.user_id, new_rules, trigger_type='weekly')
                 self._send_telegram(f"🧠 [주간 학습 완료]\n\n{new_rules[:2000]}")
@@ -3565,8 +3565,8 @@ class KRBotController:
 
         history_text = "\n".join([f"- {r['date']} | {r['stock_name']} | {r['action']} | {r['ai_reason']} | 손익:{r['profit']}" for r in rows])
         existing_rules = load_ai_rules(self.user_id)
-        if self.gemini:
-            new_rules = self.gemini.generate_weekly_reflection(history_text, existing_rules)
+        if self.claude:
+            new_rules = self.claude.generate_weekly_reflection(history_text, existing_rules)
             if new_rules:
                 save_ai_rules(self.user_id, new_rules, trigger_type='incremental')
                 self._send_telegram(f"📚 [누적 10건 학습 완료]\n\n{new_rules[:2000]}")
@@ -3575,9 +3575,9 @@ class KRBotController:
                                profit: float, ai_reason: str):
         """큰 손실 직후 긴급 반성 — 관련 규칙 항목만 수정/강화, 나머지 보존."""
         existing_rules = load_ai_rules(self.user_id)
-        if not self.gemini:
+        if not self.claude:
             return
-        new_rules = self.gemini.generate_emergency_reflection(
+        new_rules = self.claude.generate_emergency_reflection(
             ticker, stock_name, profit, ai_reason, existing_rules
         )
         if new_rules:

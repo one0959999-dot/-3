@@ -1,4 +1,4 @@
-from bots.kr_bot import KRBotController   # KR 실전 봇
+﻿from bots.kr_bot import KRBotController   # KR 실전 봇
 from bots.us_bot import USBotController   # US 실전 매매 봇
 from claude_api import ClaudeApi
 from kis_brokers.kis_real_api import KisRealApi
@@ -70,14 +70,14 @@ class BotManager:
         # 각 봇은 자체 ClaudeApi 인스턴스를 가짐 — 유저 간 채팅 히스토리 공유 방지
         api_key = (user_data.get('claude_api_key') or '').strip()
         if api_key:
-            if bot.gemini is None or getattr(bot.gemini, '_api_key', '') != api_key:
+            if bot.claude is None or getattr(bot.claude, '_api_key', '') != api_key:
                 try:
-                    bot.gemini = ClaudeApi(api_key=api_key)
+                    bot.claude = ClaudeApi(api_key=api_key)
                     # anthropic 미설치 시 client=None → AI 기능 비활성화, 봇은 정상 동작
                 except Exception as e:
                     import logging
                     logging.getLogger('lassi_bot').warning(f"ClaudeApi 초기화 실패 (AI 비활성화): {e}")
-                    bot.gemini = None
+                    bot.claude = None
 
         return bot
 

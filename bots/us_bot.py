@@ -1,4 +1,4 @@
-"""
+﻿"""
 bots/us_bot.py — 미국장 실전 매매 봇 (KIS 해외주식 API)
 ──────────────────────────────────────────────────────────
 KRBotController 아키텍처 기반으로 완전 재구축.
@@ -232,7 +232,7 @@ class USBotController:
         self.real_kis        = None
         self.cached_balance  = None
         self.live_prices     = {}
-        self.gemini          = None
+        self.claude          = None
         self.sector_guide    = get_sector_guide(user_id) or ""
         self.fundamental_cache: dict = {}
 
@@ -579,8 +579,8 @@ class USBotController:
                 return
 
             # ③ AI 최종 선정 (장기 보유 적합성 판단)
-            if self.gemini:
-                ai_result = self.gemini.ai_select_us_core_stocks(
+            if self.claude:
+                ai_result = self.claude.ai_select_us_core_stocks(
                     candidates=candidates, n=self.num_cores
                 )
                 if ai_result:
@@ -748,7 +748,7 @@ class USBotController:
                 if qty > 0:
                     # AI 승인 (위성과 동일)
                     approved, ai_reason = True, "AI 미설정"
-                    if self.gemini:
+                    if self.claude:
                         with self.lock:
                             pos.status = "AI 심사 중 🤖"
                         momentum_20d = 0.0
@@ -759,7 +759,7 @@ class USBotController:
                         except Exception:
                             pass
                         _core_news = self._fetch_us_news([ticker])
-                        approved, ai_reason = self.gemini.ai_approve_us_trade(
+                        approved, ai_reason = self.claude.ai_approve_us_trade(
                             signal         = 'BUY',
                             stock_name     = pos.name,
                             ticker         = ticker,
@@ -938,7 +938,7 @@ class USBotController:
                 # 1차: +10%(일반) / +15%(BULL) 도달 → AI에 익절 여부 문의
                 if not pos.partial_sold and pnl_pct >= _core_partial1 and pos.shares > 1:
                     if decision is None:
-                        if self.gemini:
+                        if self.claude:
                             self._trigger_ai_partial_exit(pos, ticker, pos.name, price, avg, pnl_pct, regime)
                             with self.lock: pos.status = f"AI 익절 검토 중 ({pnl_pct:+.1f}%) 🤖"
                         else:
@@ -968,7 +968,7 @@ class USBotController:
                 # 2차: +20%(일반) / +30%(BULL) 도달 → AI에 전량 익절 여부 문의
                 elif pos.partial_sold and not pos.partial_sold_2 and pnl_pct >= _core_partial2 and pos.shares > 0:
                     if decision is None:
-                        if self.gemini:
+                        if self.claude:
                             self._trigger_ai_partial_exit(pos, ticker, pos.name, price, avg, pnl_pct, regime)
                             with self.lock: pos.status = f"AI 익절 검토 중 ({pnl_pct:+.1f}%) 🤖"
                         else:
@@ -1023,7 +1023,7 @@ class USBotController:
         def _worker():
             try:
                 _news = self._fetch_us_news([ticker])
-                decision = self.gemini.ai_partial_exit(
+                decision = self.claude.ai_partial_exit(
                     ticker=ticker, stock_name=name, price=price,
                     avg_price=avg, pnl_pct=pnl_pct,
                     shares=int(getattr(pos, 'shares', 0)),
@@ -1081,10 +1081,10 @@ class USBotController:
         candidates: list = []
 
         # ① AI 테마 발굴 → yfinance 퀀트 검증 (제2의 엔비디아 발굴)
-        if self.gemini:
+        if self.claude:
             try:
                 self.add_log("🤖 AI 테마 발굴 시작 (제2의 엔비디아·로켓랩 후보 탐색)…")
-                themes = self.gemini.ai_discover_satellite_themes()
+                themes = self.claude.ai_discover_satellite_themes()
                 if themes:
                     theme_tickers = []
                     for theme in themes:
@@ -1144,9 +1144,9 @@ class USBotController:
 
         # ── AI 위성 선정 (빈 슬롯 대상만) ───────────────────────────
         new_info: list = []
-        if self.gemini and filtered:
+        if self.claude and filtered:
             try:
-                ai_result = self.gemini.ai_select_us_satellites(
+                ai_result = self.claude.ai_select_us_satellites(
                     candidates  = filtered,
                     hot_sectors = self.hot_sectors or [],
                     n           = slots_needed,
@@ -1189,7 +1189,7 @@ class USBotController:
                 for c in self.satellite_info
             ])
             self._tg(
-                f"🔍 <b>US 위성 종목 선정{'(AI 검토)' if self.gemini else ''}</b>  {self.alert_icon}\n"
+                f"🔍 <b>US 위성 종목 선정{'(AI 검토)' if self.claude else ''}</b>  {self.alert_icon}\n"
                 f"━━━━━━━━━━━━━━━━━━━━\n"
                 f"{_lines}\n"
                 f"━━━━━━━━━━━━━━━━━━━━\n"
@@ -1307,7 +1307,7 @@ class USBotController:
             actual_budget = min(sat_budget_per * budget_ratio, self.cash_usd)
 
             # ── AI 매수 승인 심사 ────────────────────────────────────
-            if self.gemini:
+            if self.claude:
                 try:
                     # 종목 뉴스 헤드라인 fetch (yfinance, 무료)
                     _news_str = self._fetch_us_news([ticker])
@@ -1315,7 +1315,7 @@ class USBotController:
                     _full_ai_reason = info.get("ai_reason", "")
                     if _52w_note:
                         _full_ai_reason = f"{_full_ai_reason} | {_52w_note}".strip(" |")
-                    approved, ai_reason = self.gemini.ai_approve_us_trade(
+                    approved, ai_reason = self.claude.ai_approve_us_trade(
                         signal         = 'BUY',
                         stock_name     = info["name"],
                         ticker         = ticker,
@@ -1497,7 +1497,7 @@ class USBotController:
             if not pos.partial_sold and pnl_pct >= _sat_partial1 and pos.shares > 1:
                 decision = getattr(pos, 'ai_exit_decision', None)
                 if decision is None:
-                    if self.gemini:
+                    if self.claude:
                         self._trigger_ai_partial_exit(pos, ticker, pos.name, price, avg, pnl_pct, regime)
                         with self.lock: pos.status = f"AI 익절 검토 중 ({pnl_pct:+.1f}%) 🤖"
                     else:
@@ -1707,7 +1707,7 @@ class USBotController:
                         and self.daily_report.get("date") == today_str
                         and self.daily_report.get(_REPORT_SLOT) is not None
                     )
-                    if not already and self.gemini:
+                    if not already and self.claude:
                         self._run_threaded(lambda: self.generate_daily_report(_REPORT_SLOT))
 
                 # ── 종목 스크리닝 (코어: 주 1회 / 위성: 하루 1회) ────
@@ -2039,7 +2039,7 @@ class USBotController:
                 pass
 
             result = generate_us_daily_report(
-                gemini_client    = self.gemini,
+                claude_client    = self.claude,
                 positions        = dict(self.satellite_positions),
                 satellite_info   = list(self.satellite_info),
                 news_context     = news_context,

@@ -1,4 +1,4 @@
-"""
+﻿"""
 us_screener.py — 미국장 위성 종목 스크리너 (yfinance 기반)
 ─────────────────────────────────────────────────────────
 ① 섹터별 유니버스 정의 (~60개 종목)
@@ -575,7 +575,7 @@ def get_sector_trends() -> dict:
     }
 
 
-def generate_us_daily_report(gemini_client=None, positions: dict = None,
+def generate_us_daily_report(claude_client=None, positions: dict = None,
                               satellite_info: list = None,
                               news_context: str = None,
                               kr_context: dict = None,
@@ -591,7 +591,7 @@ def generate_us_daily_report(gemini_client=None, positions: dict = None,
     - market_regime: "BULL" | "BEAR" | "NEUTRAL"
     - futures_snapshot: get_futures_snapshot() 결과 dict (선택)
     - sector_trends: get_sector_trends()["sectors"] 리스트 (선택)
-    - gemini_client 제공 시 Claude AI 분석, 없으면 룰 기반 리포트
+    - claude_client 제공 시 Claude AI 분석, 없으면 룰 기반 리포트
     """
     from datetime import datetime, timezone, timedelta
     _ET = timezone(timedelta(hours=-4))
@@ -740,7 +740,7 @@ def generate_us_daily_report(gemini_client=None, positions: dict = None,
     market_data_text = "\n".join(lines)
 
     # ── 5. AI 분석 or 룰 기반 리포트 ─────────────────────────────────
-    if gemini_client:
+    if claude_client:
         kr_note = ""
         if kr_context:
             kr_note = (
@@ -758,7 +758,7 @@ def generate_us_daily_report(gemini_client=None, positions: dict = None,
             f"{market_data_text}"
         )
         try:
-            report_text = gemini_client.analyze_market(prompt)
+            report_text = claude_client.analyze_market(prompt)
         except Exception:
             report_text = market_data_text
     else:

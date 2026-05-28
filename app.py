@@ -1,4 +1,4 @@
-import logging
+﻿import logging
 import os
 import json
 import re
@@ -89,7 +89,7 @@ def index():
     user_data = current_user.data
     ai_enabled = bool(user_data.get('claude_api_key'))
     manager.get_bot(current_user.id, user_data)
-    return render_template('index.html', user=current_user, gemini_enabled=ai_enabled)
+    return render_template('index.html', user=current_user, claude_enabled=ai_enabled)
 
 @app.route('/login', methods=['GET', 'POST'])
 def login():
@@ -587,7 +587,7 @@ def set_core_dca():
 @login_required
 def get_daily_report():
     bot = get_current_bot()
-    if not bot or not bot.gemini:
+    if not bot or not bot.claude:
         return jsonify({"status": "error", "message": "AI 설정이 필요합니다."})
 
     is_us = bool(current_user.data.get('is_mock', 1))
@@ -648,7 +648,7 @@ def ai_chat():
     bot = get_current_bot()
     data = request.json or {}
     user_message = data.get('message', '').strip()
-    if not bot or not bot.gemini:
+    if not bot or not bot.claude:
         return jsonify({"status": "error", "reply": "AI API 키를 등록해주세요."})
 
     stock_analysis_context = ""
@@ -757,25 +757,25 @@ def ai_chat():
     except Exception as log_e:
         print(f"⚠️ [로그 데이터 가공 오류] : {log_e}")
 
-    # C-02: bot.gemini를 지역 변수로 캡처하여 스레드 교체 타이밍 race condition 방지
-    gemini_client = bot.gemini
-    if not gemini_client:
+    # C-02: bot.claude를 지역 변수로 캡처하여 스레드 교체 타이밍 race condition 방지
+    claude_client = bot.claude
+    if not claude_client:
         return jsonify({"status": "error", "reply": "⚠️ Claude API 키가 설정되지 않았습니다."})
 
     # ── 채팅 히스토리 DB 복원 (세션이 끊겨도 대화 기억) ──────────────────
     is_mock_flag = int(current_user.data.get('is_mock', 1))
     saved_history = load_chat_history(current_user.id, is_mock_flag)
     if saved_history:
-        gemini_client._conversation_history = saved_history
+        claude_client._conversation_history = saved_history
 
-    reply = gemini_client.chat(
+    reply = claude_client.chat(
         user_message,
         portfolio_context=bot.get_status(),
         stock_analysis_context=stock_analysis_context
     )
 
     # 응답 후 최신 히스토리를 DB에 저장
-    save_chat_history(current_user.id, is_mock_flag, gemini_client._conversation_history)
+    save_chat_history(current_user.id, is_mock_flag, claude_client._conversation_history)
 
     # ── 봇 명령 파싱 및 실행 ────────────────────────────────────────────
     # AI가 [BOT_COMMAND]{...}[/BOT_COMMAND] 블록을 포함하면 즉시 실행
@@ -863,8 +863,8 @@ def ai_chat_reset():
     bot = get_current_bot()
     is_mock_flag = int(current_user.data.get('is_mock', 1))
     # 메모리 히스토리 초기화
-    if bot and bot.gemini:
-        bot.gemini.reset_chat()
+    if bot and bot.claude:
+        bot.claude.reset_chat()
     # DB 히스토리 삭제
     clear_chat_history(current_user.id, is_mock_flag)
     return jsonify({"status": "success", "message": "대화 기록이 초기화되었습니다."})
@@ -1011,7 +1011,7 @@ def set_keys():
                 "token": data.get('telegram_token'),
                 "chat_id": data.get('telegram_chat_id')
             },
-            gemini_config={},
+            claude_config={},
             core_stocks=data.get('core_stocks')
         )
 
@@ -1029,7 +1029,7 @@ def set_keys():
                 "token": data.get('telegram_token'),
                 "chat_id": data.get('telegram_chat_id')
             },
-            gemini_config={},
+            claude_config={},
             core_stocks=data.get('core_stocks')
         )
 
