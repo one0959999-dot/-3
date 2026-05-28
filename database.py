@@ -58,7 +58,23 @@ def init_db():
                 try:
                     cursor.execute(f'ALTER TABLE users ADD COLUMN {col_name} {col_type}')
                 except sqlite3.OperationalError:
-                    pass
+                    pass  # 이미 존재하는 컬럼
+
+            # ── mock_* → us_* 레거시 데이터 자동 복사 ──────────────
+            # 구버전 DB는 mock_app_key 등을 사용했음 → 신버전 컬럼으로 1회 복사
+            legacy_copies = [
+                ('mock_app_key',     'us_app_key'),
+                ('mock_app_secret',  'us_app_secret'),
+                ('mock_account_no',  'us_account_no'),
+                ('mock_initial_cash','us_initial_cash'),
+            ]
+            existing_cols = {r[1] for r in cursor.execute('PRAGMA table_info(users)').fetchall()}
+            for src, dst in legacy_copies:
+                if src in existing_cols and dst in existing_cols:
+                    cursor.execute(f'''
+                        UPDATE users SET {dst} = {src}
+                        WHERE ({dst} IS NULL OR {dst} = "") AND {src} IS NOT NULL AND {src} != ""
+                    ''')
 
             cursor.execute('''
         CREATE TABLE IF NOT EXISTS bot_states (
