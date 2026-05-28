@@ -3632,9 +3632,16 @@ class KRBotController:
         # 리포트는 trading_job 안에서 _now_kst() 시간을 직접 체크해 발행 → 시스템 타임존 무관
         self.scheduler.every(1).minutes.do(self.trading_job)
         self.scheduler.every(30).minutes.do(lambda: self._run_threaded(self.analyze_continuous_market_flow))
-        # 위성 재스크리닝은 08:50 사전 스크리닝(아래 _kst_morning_prescreen)으로 커버.
-        # 1시간마다 자동 재스크리닝은 제거 — 10:30 이후 새 위성 선정은 의미 없음.
         self.scheduler.every(30).minutes.do(clear_expired_cache)
+
+        def _hourly_rescreen_if_empty():
+            """1시간마다 — 빈 위성 슬롯 있을 때만 재스크리닝 (슬롯 다 채워지면 스킵)."""
+            with self.lock:
+                has_empty = any(p.shares == 0 for p in self.satellite_positions.values())
+            if has_empty:
+                self._run_threaded(self._rescreen_satellites)
+
+        self.scheduler.every(1).hours.do(_hourly_rescreen_if_empty)
 
         # ⚠️ [BUG-FIX] schedule.at()은 시스템 로컬 시간 기준으로 발동 (UTC EC2 서버 대응).
         # datetime.now()가 아닌 _now_kst()로 KST 시각을 직접 확인하는 래퍼를 사용.

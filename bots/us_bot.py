@@ -1606,10 +1606,16 @@ class USBotController:
                 self._screen_cores()
                 self._screen_satellites()
 
-                # ── 위성 재스크리닝 (1시간마다 트리거, 단 11:30 ET 이후엔 _rescreen_satellites 내부 가드로 스킵)
+                # ── 위성 재스크리닝 (1시간마다 — 빈 슬롯 있을 때만) ──────
                 if time.time() - _last_rescreen_ts >= _rescreen_interval:
                     if _is_us_market_open():
-                        self._run_threaded(self._rescreen_satellites)
+                        with self.lock:
+                            _has_empty = any(
+                                p.shares == 0
+                                for p in self.satellite_positions.values()
+                            )
+                        if _has_empty:
+                            self._run_threaded(self._rescreen_satellites)
                     _last_rescreen_ts = time.time()
 
                 # ── 코어·위성 매매 (KIS 연결 시에만) ────────────────
