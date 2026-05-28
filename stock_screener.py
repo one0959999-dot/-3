@@ -709,7 +709,8 @@ def threshold_sig(ind, lo, hi):
 
 STRATEGY_REGISTRY = {
     "RSI(9) 30/70":     lambda df: threshold_sig(calc_rsi(df['close'], 9), 30, 70),
-    "RSI(14) 30/70":    lambda df: threshold_sig(calc_rsi(df['close'], 14), 30, 70),
+    # RSI(14) 30/70 제거 — RSI(9)가 신호 빈도 2.5배·수익률 우위 (백테스트 확인)
+    # "RSI(14) 30/70":  lambda df: threshold_sig(calc_rsi(df['close'], 14), 30, 70),
     "RSI(14) 40/60":    lambda df: threshold_sig(calc_rsi(df['close'], 14), 40, 60),
     "EMA 5/20 크로스":   lambda df: cross_sig(ema(df['close'], 5), ema(df['close'], 20)),
     "EMA 3/10 크로스":   lambda df: cross_sig(ema(df['close'], 3), ema(df['close'], 10)),

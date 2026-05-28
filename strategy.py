@@ -1246,7 +1246,9 @@ def get_signal_by_strategy(ticker, strategy_name, kis_api=None, df=None):
             sig, val = _thresh(_rsi(c, 9), 30, 70)
             return sig, price, val
         elif "RSI(14) 30" in sn:
-            sig, val = _thresh(_rsi(c, 14), 30, 70)
+            # RSI(14) 30/70은 STRATEGY_REGISTRY에서 제거됨.
+            # 구버전 저장 상태에서 복원된 경우 RSI(9) 30/70으로 자동 업그레이드.
+            sig, val = _thresh(_rsi(c, 9), 30, 70)
             return sig, price, val
         elif "RSI(14) 40" in sn:
             sig, val = _thresh(_rsi(c, 14), 40, 60)
