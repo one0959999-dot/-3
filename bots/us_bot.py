@@ -433,16 +433,40 @@ class USBotController:
         return new_prices
 
     def _perpetual_price_sync(self):
-        """백그라운드 가격 갱신 루프 — 60초마다."""
+        """백그라운드 가격 갱신 루프 — 30초마다 (KR봇 동일)."""
         while True:
             try:
                 self._refresh_prices()
             except Exception as e:
                 logger.debug(f"[US봇] 가격 동기화 오류: {e}")
-            time.sleep(60)
+            time.sleep(30)
 
     def _price(self, ticker: str) -> float:
         return self._price_cache.get(ticker, 0.0)
+
+    # ─────────────────────────────────────────────────────────────────
+    # OHLCV 캐시 — KR봇 _get_cached_base_ohlcv 동일 패턴
+    # ─────────────────────────────────────────────────────────────────
+    _ohlcv_cache: dict = {}   # {ticker: (ts, df)}
+    _OHLCV_TTL = 3600         # 1시간 캐시 (일봉 데이터는 장중 변하지 않음)
+
+    def _get_cached_ohlcv(self, ticker: str, period: str = "60d") -> "pd.DataFrame":
+        """yfinance OHLCV 1시간 캐시. 매 루프마다 다운로드하지 않음."""
+        import yfinance as yf
+        cached = self._ohlcv_cache.get(ticker)
+        if cached and time.time() - cached[0] < self._OHLCV_TTL:
+            return cached[1]
+        try:
+            df = yf.download(ticker, period=period, interval="1d",
+                             progress=False, auto_adjust=True)
+            if hasattr(df.columns, "get_level_values"):
+                df.columns = df.columns.get_level_values(0)
+            df = df.dropna(subset=["Close"])
+            df.columns = [c.lower() for c in df.columns]
+            self._ohlcv_cache[ticker] = (time.time(), df)
+            return df
+        except Exception:
+            return pd.DataFrame()
 
     # ─────────────────────────────────────────────────────────────────
     # ROE 턴어라운드 보너스 (분기별 ROE 개선 추세 감지)
@@ -716,16 +740,9 @@ class USBotController:
                 with self.lock:
                     self.core_positions[ticker] = pos
 
-            # OHLCV 조회 (yfinance)
-            try:
-                import yfinance as yf
-                df_raw = yf.download(ticker, period="180d", interval="1d",
-                                     progress=False, auto_adjust=True)
-                if hasattr(df_raw.columns, "get_level_values"):
-                    df_raw.columns = df_raw.columns.get_level_values(0)
-                df_raw = df_raw.dropna(subset=["Close"])
-                df_raw.columns = [c.lower() for c in df_raw.columns]
-            except Exception:
+            # OHLCV 조회 (캐시 1시간 — 매 루프 재다운로드 방지)
+            df_raw = self._get_cached_ohlcv(ticker, period="180d")
+            if df_raw.empty:
                 df_raw = None
 
             avg    = pos.avg_price_usd
@@ -1387,16 +1404,9 @@ class USBotController:
             if price <= 0 or self.cash_usd < sat_budget_per * 0.3:
                 continue
 
-            # OHLCV 조회
-            try:
-                import yfinance as yf
-                df_raw = yf.download(ticker, period="120d", interval="1d",
-                                     progress=False, auto_adjust=True)
-                if hasattr(df_raw.columns, "get_level_values"):
-                    df_raw.columns = df_raw.columns.get_level_values(0)
-                df_raw = df_raw.dropna(subset=["Close"])
-                df_raw.columns = [c.lower() for c in df_raw.columns]
-            except Exception:
+            # OHLCV 조회 (캐시 1시간)
+            df_raw = self._get_cached_ohlcv(ticker, period="120d")
+            if df_raw.empty:
                 df_raw = None
 
             # ── 통합 진입 점수 체크 ────────────────────────────────
@@ -1635,16 +1645,9 @@ class USBotController:
             if price <= 0:
                 continue
 
-            # OHLCV 조회
-            try:
-                import yfinance as yf
-                df_raw = yf.download(ticker, period="60d", interval="1d",
-                                     progress=False, auto_adjust=True)
-                if hasattr(df_raw.columns, "get_level_values"):
-                    df_raw.columns = df_raw.columns.get_level_values(0)
-                df_raw = df_raw.dropna(subset=["Close"])
-                df_raw.columns = [c.lower() for c in df_raw.columns]
-            except Exception:
+            # OHLCV 조회 (캐시 1시간)
+            df_raw = self._get_cached_ohlcv(ticker, period="60d")
+            if df_raw.empty:
                 df_raw = None
 
             avg = pos.avg_price_usd
@@ -1937,7 +1940,7 @@ class USBotController:
                 )
 
         _save_interval     = 300
-        _bal_interval      = 300
+        _bal_interval      = 120   # 2분마다 (기존 5분 → 단축)
         _regime_interval   = 3600   # 1시간마다 시장 국면 갱신
         _rescreen_interval = 3600   # 1시간마다 위성 재스크리닝 (KR봇 동일)
         _REPORT_SLOT       = "16:10"
@@ -2041,11 +2044,11 @@ class USBotController:
                     self._save_state()
                     _last_save_ts = time.time()
 
-                time.sleep(60)
+                time.sleep(30)   # 30초 루프 (기존 60초 → 단축)
 
             except Exception as e:
                 logger.error(f"[US봇] 루프 오류: {e}", exc_info=True)
-                time.sleep(30)
+                time.sleep(15)
 
         self._save_state()
         self.add_log("⏹️ US 봇 루프 종료")
