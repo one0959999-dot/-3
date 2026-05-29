@@ -1210,9 +1210,9 @@ def select_ai_core_stock(n: int = 2, exclude_tickers=None, verbose: bool = False
     if _module_claude is not None and scored:
         if verbose:
             print(f"\n🤖 [AI 코어 선정] 퀀트 통과 {len(scored)}개 → Claude AI가 '장기 누적 매수' 기준으로 선정 중...")
-        # AI에게 넘길 후보 준비 (상위 20개, 이름 포함)
+        # AI에게 넘길 후보 준비 (상위 200개, 이름 포함)
         ai_candidates = []
-        for sc, t in scored[:20]:
+        for sc, t in scored[:200]:
             try:
                 nm = stock.get_market_ticker_name(t)
             except Exception:
