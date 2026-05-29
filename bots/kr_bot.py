@@ -141,9 +141,9 @@ class KRBotController:
 
         # ── 🚀 테마·급등주 모멘텀 전용 슬롯 ──────────────────────────
         # 위성과 완전히 별개의 단일 포지션. AI 심사 후 진입, BEAR 시 현금 보유.
-        # 코어 40% + 위성 40% + 이 슬롯 20% = 총 100% (AI 재량으로 현금 가능)
-        self.momentum_positions = [None]      # 모멘텀 슬롯 1개 (총자산의 20%)
-        self.momentum_budget_ratio = 0.20    # 총자산의 20% (단일 슬롯)
+        # 코어 40% + 위성 40% + 단타 10% + 예비 10% = 총 100%
+        self.momentum_positions = [None]      # 모멘텀 슬롯 1개 (원금의 10%)
+        self.momentum_budget_ratio = 0.10    # 원금의 10% (단일 슬롯)
         self._last_momentum_scan = 0.0       # 마지막 스캔 타임스탬프
         self._momentum_scan_interval = 60    # 1분마다 스캔
 
@@ -3231,9 +3231,9 @@ class KRBotController:
             b_name   = best['name']
             b_price  = best['price']
 
-            # BULL 국면은 모멘텀 예산 12%로 상향 (추세장 확신 → 더 크게 베팅)
-            _mom_ratio = self.momentum_budget_ratio * 1.2 if regime == "BULL" else self.momentum_budget_ratio
-            budget = total_assets * _mom_ratio
+            # 원금 기준 고정 예산 (총자산 변동 무관)
+            initial_cap = get_user_initial_cash(self.user_id, self._is_mock)
+            budget = initial_cap * self.momentum_budget_ratio
             if available_cash < budget * 0.5:
                 break  # 현금 부족 → 나머지 슬롯도 포기
 
