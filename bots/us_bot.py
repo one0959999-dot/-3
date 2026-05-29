@@ -227,9 +227,8 @@ class USBotController:
         self._bl_date              = ""
         self._satellite_rejects:   dict = {}   # {ticker: float(ts)}
         self._satellite_reject_rsn:dict = {}   # {ticker: str}
-        self._core_reject_ts:      dict = {}   # {ticker: float(ts)}
-        self._SAT_REJECT_COOLDOWN  = 900       # 위성 15분
-        self._CORE_REJECT_COOLDOWN = 1200      # 코어 20분
+        self._core_reject_ts:      dict = {}   # {ticker: float(ts)} — 현재 미사용
+        self._SAT_REJECT_COOLDOWN  = 300       # 위성 5분 (KR봇 동일)
 
         # ── AI 채팅으로 동적 조정 가능한 파라미터 ────────────────────
         self.entry_thresholds: dict = {}    # {'BULL': 4, 'NEUTRAL': 5, ...}
@@ -443,6 +442,19 @@ class USBotController:
 
     def _price(self, ticker: str) -> float:
         return self._price_cache.get(ticker, 0.0)
+
+    def _reinvest_to_cores(self, profit_usd: float, source: str = ""):
+        """위성·단타 수익 전액을 코어 budget에 명시적 배분 (KR봇 REINVEST_RATIO=1.0 동일).
+        실제 cash는 _sell()에서 이미 증가 — 여기서는 코어별 budget_usd를 즉시 늘려
+        다음 매수 사이클에서 바로 활용 가능하게 함."""
+        if profit_usd <= 0 or not self.core_positions:
+            return
+        n = max(1, len(self.core_positions))
+        per_core = profit_usd / n
+        with self.lock:
+            for pos in self.core_positions.values():
+                pos.budget_usd = getattr(pos, 'budget_usd', 0.0) + per_core
+        self.add_log(f"♻️ 수익 재투자: ${profit_usd:,.0f} → 코어 {n}개 배분 (개당 ${per_core:,.0f}) [{source}]")
 
     # ─────────────────────────────────────────────────────────────────
     # OHLCV 캐시 — 인터벌별 TTL 분리
@@ -851,14 +863,6 @@ class USBotController:
                         pos.status = f"코어 진입 대기 ({c_score}/{c_threshold}pt) ⏳"
                     continue
 
-                # AI 거절 쿨다운 체크 (20분)
-                _core_reject_elapsed = time.time() - self._core_reject_ts.get(ticker, 0)
-                if _core_reject_elapsed < self._CORE_REJECT_COOLDOWN:
-                    _remain_min = int((self._CORE_REJECT_COOLDOWN - _core_reject_elapsed) / 60) + 1
-                    with self.lock:
-                        pos.status = f"코어 AI 거절 쿨다운 ⏳ ({_remain_min}분 후 재심사)"
-                    continue
-
                 budget_ratio = max(0.5, c_score / max(c_threshold, 1) * 0.75)
                 # 3트랜치 분할: 1차=ratio, 2차=min(ratio,남은), 3차=나머지
                 first_usd    = budget * budget_ratio
@@ -898,9 +902,8 @@ class USBotController:
                         )
                     if not approved:
                         with self.lock:
-                            pos.status = f"코어 AI 거절 🛑 ({c_score}pt) — 20분 후 재심사"
-                            self._core_reject_ts[ticker] = time.time()
-                        self.add_log(f"🛑 코어 AI 거절(20분 쿨다운) {pos.name}({ticker}): {ai_reason[:60]}")
+                            pos.status = f"코어 AI 거절 🛑 ({c_score}pt)"
+                        self.add_log(f"🛑 코어 AI 거절 {pos.name}({ticker}): {ai_reason[:60]}")
                         if self.claude:
                             self.claude.record_trade_event(
                                 f"코어 매수 거절 🛑 {pos.name}({ticker}) @ ${price:.2f} | "
@@ -1477,7 +1480,7 @@ class USBotController:
             if regime == "BEAR":
                 budget_ratio = min(budget_ratio * 0.50, 0.50)
 
-            # ── 실적 발표 D-3 이내 → 진입 차단 (깜짝 손실 방지) ───────
+            # ── 실적 발표 D-7 이내 → 보유 중이면 30% 축소, 미보유면 진입 차단 (KR봇 동일) ─
             try:
                 _cal = yf.Ticker(ticker).calendar
                 if _cal is not None and not _cal.empty:
@@ -1487,12 +1490,31 @@ class USBotController:
                         _earn_date = _cal[_earn_col].dropna()
                         if len(_earn_date) > 0:
                             _days_to_earn = (_earn_date.iloc[0].date() - _dt.date.today()).days
-                            if 0 <= _days_to_earn <= 3:
-                                _msg = f"실적발표 D-{_days_to_earn} 진입 차단 ({_earn_date.iloc[0].date()})"
-                                if pos:
-                                    with self.lock: pos.status = f"⚠️ {_msg}"
-                                self.add_log(f"⚠️ [{ticker}] {_msg}")
-                                continue
+                            _earn_date_str = str(_earn_date.iloc[0].date())
+                            if 0 <= _days_to_earn <= 7:
+                                if pos and pos.shares > 1:
+                                    # 이미 보유 중 + D-7 이내 → 30% 축소 (1회만)
+                                    _earn_key = f"{ticker}_{_earn_date_str}"
+                                    if not getattr(self, '_earnings_notified_us', {}).get(_earn_key):
+                                        _reduce = max(1.0, pos.shares * 0.30)
+                                        self._sell(ticker, pos.name, _reduce, self._price(ticker))
+                                        _pnl_e = _net_profit_usd(self._price(ticker), pos.avg_price_usd, _reduce)
+                                        with self.lock:
+                                            pos.shares = max(0.0, pos.shares - _reduce)
+                                            pos.status = f"실적전 축소 📊 (D-{_days_to_earn})"
+                                            if not hasattr(self, '_earnings_notified_us'):
+                                                self._earnings_notified_us = {}
+                                            self._earnings_notified_us[_earn_key] = True
+                                        self._record_pnl(_pnl_e)
+                                        self.add_log(f"📊 [{ticker}] 실적발표 D-{_days_to_earn} → 30% 축소 ({_earn_date_str}) | PnL ${_pnl_e:+.0f}")
+                                        self._tg(f"📊 [US 실적 전 축소] {pos.name}\nD-{_days_to_earn} ({_earn_date_str}) → 30% 선매도 | ${_pnl_e:+,.0f}")
+                                elif pos is None or pos.shares == 0:
+                                    # 미보유 + D-7 이내 → 신규 진입 차단
+                                    _msg = f"실적발표 D-{_days_to_earn} 진입 차단 ({_earn_date_str})"
+                                    if pos:
+                                        with self.lock: pos.status = f"⚠️ {_msg}"
+                                    self.add_log(f"⚠️ [{ticker}] {_msg}")
+                                    continue
             except Exception:
                 pass
 
@@ -1862,6 +1884,7 @@ class USBotController:
                     pos.ai_exit_decision = None
                     pos.status           = f"2차익절({pnl_pct:+.1f}%) ✅"
                 self._record_pnl(pnl2)
+                self._reinvest_to_cores(pnl2, f"위성 2차익절 {ticker}")
                 _thr2 = "30%(BULL)" if regime == "BULL" else "20%"
                 self.add_log(f"✅ 2차익절 {pos.name} +{_thr2} ({q2:.0f}주 / 원금 {_init_sh2:.0f}주 기준 50%) | PnL ${pnl2:+.0f}")
                 self._tg(f"✅ [US 위성 2차익절] {pos.name}\n@ ${price:.2f}  +{_thr2} | 잔여 {pos.shares:.0f}주 ATR 트레일링 대기")
@@ -1924,6 +1947,7 @@ class USBotController:
             pos.initial_shares_for_exit = 0.0
             pos.status                  = f"청산: {reason}"
         self._record_pnl(pnl)
+        self._reinvest_to_cores(pnl, reason[:30])
         icon = "🔴" if pnl < 0 else "🟢"
         self.add_log(f"{icon} 청산 {pos.name}({ticker}) | {reason} | PnL ${pnl:+.0f}")
         self._tg(

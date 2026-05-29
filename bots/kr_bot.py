@@ -163,10 +163,10 @@ class KRBotController:
         # momentum_ai_rejects  : {ticker: 거절횟수}  3회 거절 시 당일 블랙리스트
         self._bl_date               = ""       # 마지막 초기화 날짜 (YYYY-MM-DD)
         self._momentum_exit_times   : dict = {}  # {ticker: float(epoch)}
-        self._satellite_rejects     : dict = {}  # {ticker: float(ts)} — 15분 쿨다운
+        self._satellite_rejects     : dict = {}  # {ticker: float(ts)} — 5분 쿨다운
         self._satellite_reject_rsn  : dict = {}  # {ticker: str} — 거절 사유
         self._momentum_ai_rejects   : dict = {}  # {ticker: int}  당일 AI 거절 횟수
-        self._SAT_REJECT_COOLDOWN   = 900        # 위성 AI 거절 쿨다운 15분
+        self._SAT_REJECT_COOLDOWN   = 300        # 위성 AI 거절 쿨다운 5분
 
         # ── 유휴 위성 예산 → 코어 임시 배분 추적 ──────────────────────────
         # 위성 슬롯 공석 시 freed_cash를 코어 매수대기 포지션에 임시 배분.
