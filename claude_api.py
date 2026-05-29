@@ -1095,9 +1095,16 @@ REASON: (핵심 근거 2~3줄, 구체적 수치 포함)"""
 
 단기 추가 하락 리스크가 심각한가? 아니면 저평가 매수 적기인가?
 
-답변 형식 (반드시 준수):
-DECISION: CONFIRM 또는 REJECT
-REASON: (핵심 근거 1~2줄)"""
+⚠️ 답변 형식 — 아래 형식만 허용. 다른 형식(리포트, 표, 번호목록) 절대 금지:
+DECISION: CONFIRM
+REASON: (핵심 근거 1줄)
+
+또는
+
+DECISION: REJECT
+REASON: (거절 이유 1줄)
+
+반드시 첫 줄이 "DECISION: CONFIRM" 또는 "DECISION: REJECT"로 시작해야 함."""
 
         try:
             res = self.generate_content(prompt, temperature=0.1, model=self._FAST_MODEL)
@@ -1110,12 +1117,12 @@ REASON: (핵심 근거 1~2줄)"""
                 first_word  = after_colon.split()[0] if after_colon.split() else ""
                 decision = first_word == "CONFIRM"
             else:
-                # ② 폴백: 줄 맨 앞의 단독 CONFIRM/REJECT만 인식
-                # (본문에 "REJECT 사유 없음" 등이 있어도 오판 방지)
+                # ② 폴백: 줄 맨 앞에 CONFIRM/REJECT 단독으로 있을 때만 인식
+                # "REJECT 사유 부재", "REJECT 사유 없음" 등 문장 속 REJECT는 무시
                 import re as _re
-                if _re.search(r'(?:^|\n)\s*CONFIRM\b', upper):
+                if _re.search(r'(?:^|\n)\s*CONFIRM\s*(?:\n|$)', upper):
                     decision = True
-                elif _re.search(r'(?:^|\n)\s*REJECT\b', upper):
+                elif _re.search(r'(?:^|\n)\s*REJECT\s*(?:\n|$)', upper):
                     decision = False
                 else:
                     # 코어는 기본 CONFIRM — 명백한 거절 사유 없으면 승인

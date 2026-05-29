@@ -1568,9 +1568,13 @@ class KRBotController:
         else:
             try:
                 news = fetch_recent_news(stock_name)
+                # "뉴스 조회 실패" 텍스트는 AI에 전달 금지 — 악재 오인 방지
+                if "조회 실패" in news:
+                    news = ""
             except Exception:
-                news = "뉴스 조회 실패"
-            lines.append(f"[최근 뉴스] {news}")
+                news = ""
+            if news:
+                lines.append(f"[최근 뉴스] {news}")
 
         # ── 2. 재무지표 (PER·PBR·ROE — yfinance .info, 일 1회 캐싱) ──
         fundamental = self._fetch_fundamental(ticker, stock_name)
@@ -2360,7 +2364,9 @@ class KRBotController:
                                     _ma60  = float(_c.rolling(60).mean().iloc[-1])  if len(_c) >= 60  else 0
                                 except Exception:
                                     _ma120 = _ma60 = 0
-                                _news = fetch_recent_news(c_nm)
+                                _news_raw = fetch_recent_news(c_nm)
+                                # "뉴스 조회 실패" 텍스트는 AI에 전달 금지 — 악재 오인 방지
+                                _news = _news_raw if _news_raw and "조회 실패" not in _news_raw else ""
                                 approved, ai_reason = self.claude.ai_approve_core_trade(
                                     stock_name=c_nm, ticker=c_tk, price=cp,
                                     rsi=c_rsi, ma120=_ma120, ma60=_ma60,
