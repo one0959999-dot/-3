@@ -1707,12 +1707,18 @@ def calculate_entry_score(df, price: float, regime: str = 'NEUTRAL',
                 score += 1
                 reasons.append(f"MACD히스토그램+({hist:+.2f})")
 
-        # ⑤ RSI 건강 구간 40~68 (+1)
+        # ⑤ RSI 과매도 근접 (최대 +2) — 30 근처일수록 높은 점수
         if len(c) >= 16:
             rsi = _calc_rsi14(c)
-            if 40 <= rsi <= 68:
+            if rsi <= 32:
+                score += 2
+                reasons.append(f"RSI과매도({rsi:.0f}≤32) +2")
+            elif rsi <= 38:
                 score += 1
-                reasons.append(f"RSI건강구간({rsi:.0f})")
+                reasons.append(f"RSI과매도근접({rsi:.0f}≤38)")
+            elif rsi <= 45:
+                score += 1
+                reasons.append(f"RSI하락접근({rsi:.0f}≤45)")
 
         # ⑥ 거래량 100% 이상 (+1) — 평소 거래량 이상이면 OK (완화: 130% → 100%)
         if 'volume' in df.columns:
@@ -1779,6 +1785,8 @@ def get_entry_threshold(regime: str, slot: str = 'satellite') -> int:
         ('BEAR',    'core'):      8,
         ('BEAR',    'satellite'): 7,
     }
+    # 주의: RSI ⑤번 항목이 최대 +2로 변경돼 총 만점은 11점.
+    # 합격선은 기존 유지 — RSI 과매도 구간(≤32)에서 +1 추가 보너스가 진입을 더 유리하게 만듦.
     return table.get((regime, slot), 6)
 
 
