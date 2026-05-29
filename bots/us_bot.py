@@ -1496,6 +1496,13 @@ class USBotController:
         if not self.kis_overseas:
             return
 
+        # 코어 종목이 위성에 남아있으면 실시간 제거
+        _core_t = set(self.core_positions.keys())
+        for _dup in [t for t in list(self.satellite_positions.keys()) if t in _core_t]:
+            if self.satellite_positions[_dup].shares == 0:
+                del self.satellite_positions[_dup]
+                self.satellite_info = [s for s in self.satellite_info if s.get("ticker") != _dup]
+
         import pandas as pd
         # ── 위성 풀 내 동적 균등 배분 ────────────────────────────────────
         # 위성 풀(SAT_RATIO) 안에서 활성 위성 수로 균등 분배
@@ -2886,6 +2893,14 @@ class USBotController:
                         status="감시 중 👀"
                     )
                     _existing_us.add(_t)
+
+            # 코어 종목이 위성에도 있으면 제거 (중복 방지)
+            _core_tickers = set(self.core_positions.keys())
+            _dup = [t for t in list(self.satellite_positions.keys()) if t in _core_tickers]
+            for t in _dup:
+                del self.satellite_positions[t]
+                self.satellite_info = [s for s in self.satellite_info if s.get("ticker") != t]
+                self.add_log(f"🧹 위성 중복 제거: {t} (코어 종목)")
 
             self.add_log("📂 이전 상태 복원 완료")
         except Exception as e:
