@@ -857,15 +857,21 @@ def ai_chat():
                         )
 
             elif cmd.get('action') == 'trigger_rescreen':
-                # AI가 위성 종목 자동 재스캔 명령
+                # AI가 위성 종목 자동 재스캔 명령 (블랙리스트 초기화 후 재스캔)
                 target = cmd.get('market', 'KR').upper()
                 is_us = (target == 'US')
                 _is_mock_v = True if is_us else False
                 _b = manager.bots.get((current_user.id, _is_mock_v))
                 if _b and hasattr(_b, '_rescreen_satellites'):
+                    # 블랙리스트 강제 초기화 — 오늘 AI 거절 내역 리셋 후 재스캔
+                    if hasattr(_b, '_satellite_rejects'):
+                        _b._satellite_rejects = {}
+                        logging.getLogger('lassi_bot').info(f"[AI봇명령] {target} satellite_rejects 초기화")
+                    if hasattr(_b, '_last_rescreen_actual_ts'):
+                        _b._last_rescreen_actual_ts = 0.0  # 쿨다운 리셋
                     import threading as _threading
                     _threading.Thread(target=_b._rescreen_satellites, daemon=True).start()
-                    applied_commands.append(f"✅ [{target}] 위성 종목 재스캔을 시작했습니다. 잠시 후 로그를 확인하세요.")
+                    applied_commands.append(f"✅ [{target}] 블랙리스트 초기화 후 위성 재스캔을 시작했습니다.")
                     logging.getLogger('lassi_bot').info(
                         f"[AI봇명령] user={current_user.id} {target} _rescreen_satellites 트리거"
                     )
