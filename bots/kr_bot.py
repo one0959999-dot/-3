@@ -2230,8 +2230,8 @@ class KRBotController:
                     c_threshold = self.entry_thresholds.get(f'core_{regime}', self.entry_thresholds.get(regime, get_entry_threshold(regime, 'core')))
                     if c_score < c_threshold:
                         with self.lock:
-                            core.status = f"점수 대기 ({c_score}/{c_threshold}pt) ⏳"
-                            core.status_msg = f"진입점수 부족 | 충족: {', '.join(c_score_reasons[:3]) if c_score_reasons else '없음'}"
+                            core.status = "점수 대기 ⏳"
+                            core.status_msg = f"진입점수 {c_score}/{c_threshold}pt | 충족: {', '.join(c_score_reasons[:3]) if c_score_reasons else '없음'}"
                     else:
                         budget_ratio  = get_budget_ratio_from_score(c_score, c_threshold)
                         # 위성과 동일하게 75/25 분할: 1차 진입 후 나머지는 -2% 눌림목 예약
@@ -2256,8 +2256,8 @@ class KRBotController:
                                 )
                             if not approved:
                                 with self.lock:
-                                    core.status     = f"코어 AI 거절 🛑 ({c_score}pt)"
-                                    core.status_msg = f"거절 이유: {ai_reason}"
+                                    core.status     = "AI 거절 🛑"
+                                    core.status_msg = f"진입점수 {c_score}/{c_threshold}pt | 거절 이유: {ai_reason}"
                                 self.add_log(f"🛑 {c_nm} 코어 AI 거절: {ai_reason[:60]}")
                                 if self.claude:
                                     self.claude.record_trade_event(f"KR 코어 AI 매수 거절: {c_nm}({c_tk}) @ {cp:,}원 | 사유: {ai_reason[:80]}")
