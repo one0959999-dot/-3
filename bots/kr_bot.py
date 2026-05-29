@@ -351,45 +351,36 @@ class KRBotController:
                     self.last_asset_cost = current_asset_cost
                 
                 if total_equity >= 0:
-                    # [BUG-FIX v2] 코어 예산: total_equity 기반 재계산 → 기하급수적 감소 버그
-                    # ─ 구 로직: target_core_pool = total_equity * core_ratio
-                    #   매수 후 현금이 줄면 total_equity도 감소 → 목표 풀도 축소 → 또 매수 반복
-                    # ─ v1 수정(last_order_time 가드)의 한계:
-                    #   core.shares가 30초마다 원자적 0 리셋 → 5분 후 가드 해제 시 mem_val=0 → 재발
-                    # ─ v2 수정: core._bought_val 필드로 "매수 확약액" 영속 추적.
-                    #   - 매수 시 += cp*qty, API 반영 확인 시 자동 해제
-                    #   - shares 리셋과 독립적으로 유지 → T+2 랙에 완전 면역
+                    # ── 동적 균등 예산 배분 ──────────────────────────────────
+                    # 코어/위성 고정 비율 폐지 → 선정된 전체 종목 수로 균등 분배
+                    # 2개: 각 50% | 3개: 각 33% | 5개: 각 20%
+                    # TBD(AI선정대기) 제외, 실제 선정된 종목만 카운트
                     initial_cap = get_user_initial_cash(self.user_id, self._is_mock)
-                    target_core_per = (initial_cap * self.core_ratio) / max(1, len(self.core_positions))
+                    _active_cores = [c for c in self.core_positions if c.ticker != "TBD"]
+                    _active_sats  = list(self.satellite_positions.values())
+                    n_total = max(1, len(_active_cores) + len(_active_sats))
+                    budget_per = initial_cap / n_total
+
+                    # 코어 예산 sync (TBD = 0, 매수 완료 = 0, 미매수 = budget_per)
                     for core in self.core_positions:
-                        api_val = next(
-                            (float(s.get('value', 0)) for s in real_balance['stocks'] if s['ticker'] == core.ticker),
-                            0.0
-                        )
+                        if core.ticker == "TBD":
+                            core.cash = 0.0
+                            continue
+                        api_val    = next((float(s.get('value', 0)) for s in real_balance['stocks']
+                                           if s['ticker'] == core.ticker), 0.0)
                         bought_val = getattr(core, '_bought_val', 0.0)
-                        # API가 보유 주식을 반영했으면 _bought_val 해제 (API 데이터로 전환)
                         if api_val > 0:
                             core._bought_val = 0.0
                             bought_val = 0.0
                         effective_val = max(api_val, bought_val)
-                        new_cash = round(max(0.0, target_core_per - effective_val), 2)
-                        # 진단 로그: cash가 크게 변할 때만 출력 (중복매수 방지 확인용)
+                        new_cash = round(max(0.0, budget_per - effective_val), 2)
                         if abs(new_cash - core.cash) > 10000:
                             logger.info(f"[{self.mode_name}] 코어 예산 sync | {core.ticker} | "
-                                        f"원금={initial_cap:,.0f} 슬롯목표={target_core_per:,.0f} "
-                                        f"api_val={api_val:,.0f} bought_val={bought_val:,.0f} "
-                                        f"→ cash {core.cash:,.0f} → {new_cash:,.0f}")
+                                        f"원금={initial_cap:,.0f} 1인당={budget_per:,.0f}(총{n_total}종목) "
+                                        f"api_val={api_val:,.0f} → cash {core.cash:,.0f} → {new_cash:,.0f}")
                         core.cash = new_cash
 
-                    target_sat_pool = total_equity * self.satellite_ratio
-
-                    current_sat_stock_val = sum([float(s.get('value', 0)) for s in real_balance['stocks'] if s['ticker'] in self.satellite_positions])
-                    # [BUG-FIX] 위성 예산 상한을 실제 주문가능현금으로 캡 적용.
-                    # total_equity 기반 목표치가 코어 투자분 포함 총 자산에서 계산되므로
-                    # 실제 현금 < 위성 예산 → "주문가능금액 초과" 주문 실패 방지.
-                    core_reserved = sum(getattr(c, 'cash', 0.0) for c in self.core_positions)
-                    # T+2 보정: 매수가능조회(007) → nrcvb_buy_amt 는 당일 매도대금 포함
-                    # 잔고조회의 ord_psbl_cash는 T+2 정산 전 0으로 나올 수 있어 위성 매수 차단됨
+                    # 위성 예산 sync (주문가능현금 캡 적용)
                     buyable_cash = real_cash
                     if self.kis and hasattr(self.kis, 'get_buyable_cash'):
                         try:
@@ -398,15 +389,14 @@ class KRBotController:
                                 buyable_cash = _bc
                         except Exception:
                             pass
+                    core_reserved = sum(getattr(c, 'cash', 0.0) for c in self.core_positions)
                     avail_for_sat = max(0.0, buyable_cash - core_reserved)
-                    total_sat_cash = min(
-                        max(0.0, target_sat_pool - current_sat_stock_val),
-                        avail_for_sat
-                    )
-                    empty_sat_count = sum(1 for sat in self.satellite_positions.values() if int(sat.shares) == 0)
+                    sat_cash_each = min(budget_per, avail_for_sat / max(1, len(_active_sats))) if _active_sats else 0
                     for t, sat in self.satellite_positions.items():
-                        if int(sat.shares) > 0: sat.cash = 0.0
-                        else: sat.cash = round(total_sat_cash / max(1, empty_sat_count), 2)
+                        if int(sat.shares) > 0:
+                            sat.cash = 0.0
+                        else:
+                            sat.cash = round(sat_cash_each, 2)
 
                 # 원자적 교체: 먼저 새 값을 모두 수집한 뒤 한 번에 적용
                 # (중간에 예외 발생 시 shares=0으로 남아 재매수 폭주하는 버그 방지)
@@ -2277,9 +2267,33 @@ class KRBotController:
                         reserve_cash  = c_cash * reserve_ratio
                         qty = int((first_cash * 0.98) // cp)
                         if qty > 0:
-                            # ② 코어는 AI 승인 없이 즉시 매수
-                            # 코어 기준(RSI 저평가 + 120MA)을 통과했으면 모멘텀 무관하게 진입
-                            if self._buy_order(c_tk, qty, core, c_nm):
+                            # ② 코어 전용 AI 승인 — 단기 모멘텀 무관, 악재 리스크만 판단
+                            approved, ai_reason = True, "AI 미설정"
+                            if self.claude:
+                                with self.lock:
+                                    core.status     = "AI 심사 중 🤖"
+                                    core.status_msg = f"RSI{c_rsi:.0f}+120MA 기준 충족 | 악재 리스크 확인 중..."
+                                # 120MA, 60MA 값 추출
+                                try:
+                                    _c = ex_df['close'].dropna()
+                                    _ma120 = float(_c.rolling(120).mean().iloc[-1]) if len(_c) >= 120 else 0
+                                    _ma60  = float(_c.rolling(60).mean().iloc[-1])  if len(_c) >= 60  else 0
+                                except Exception:
+                                    _ma120 = _ma60 = 0
+                                _news = fetch_recent_news(c_nm)
+                                approved, ai_reason = self.claude.ai_approve_core_trade(
+                                    stock_name=c_nm, ticker=c_tk, price=cp,
+                                    rsi=c_rsi, ma120=_ma120, ma60=_ma60,
+                                    regime=regime, news_headlines=_news,
+                                )
+                            if not approved:
+                                with self.lock:
+                                    core.status     = "AI 거절 🛑"
+                                    core.status_msg = f"악재 리스크 감지: {ai_reason[:80]}"
+                                self.add_log(f"🛑 {c_nm} 코어 AI 거절(악재): {ai_reason[:80]}")
+                                if self.claude:
+                                    self.claude.record_trade_event(f"KR 코어 AI 거절: {c_nm}({c_tk}) @ {cp:,}원 | {ai_reason[:80]}")
+                            elif self._buy_order(c_tk, qty, core, c_nm):
                                 with self.lock:
                                     core.last_order_time  = time.time()
                                     core.status           = "체결 대기 ⏳"
@@ -2292,11 +2306,11 @@ class KRBotController:
                                     core.second_buy_cash  = reserve_cash
                                     core.second_buy_done  = False
                                 score_str = " | ".join(c_score_reasons[:3])
-                                self.add_log(f"💎 {c_nm} 코어 1차 매수 | {qty}주 @ {cp:,}원 | {c_score}pt [{score_str}] | 2차 예약 {cp*0.98:,.0f}원")
+                                self.add_log(f"💎 {c_nm} 코어 1차 매수 | {qty}주 @ {cp:,}원 | {c_score}pt [{score_str}] | 2차 예약 {cp*0.98:,.0f}원 | {ai_reason[:30]}")
                                 if self.claude:
                                     self.claude.record_trade_event(f"KR 코어 1차 매수: {c_nm}({c_tk}) {qty}주 @ {cp:,}원 | {c_score}pt [{score_str}]")
-                                self._log_trade(c_tk, c_nm, 'BUY', cp, "RSI코어", f"RSI저평가+120MA 점수{c_score}pt [{score_str}] — 1차({int(first_ratio*100)}%)")
-                                self._send_trade_telegram(self._fmt_trade_msg("💎", f"코어 1차 매수 ({int(first_ratio*100)}%)", c_tk, c_nm, cp, qty, strategy=f"RSI코어 · {c_score}pt/{c_threshold}pt", note=f"2차 예약: {cp*0.98:,.0f}원 (-2%)"))
+                                self._log_trade(c_tk, c_nm, 'BUY', cp, "RSI코어", f"RSI저평가+120MA {c_score}pt [{score_str}] — 1차({int(first_ratio*100)}%)")
+                                self._send_trade_telegram(self._fmt_trade_msg("💎", f"코어 1차 매수 ({int(first_ratio*100)}%)", c_tk, c_nm, cp, qty, strategy=f"RSI코어 · {c_score}pt/{c_threshold}pt", ai_reason=ai_reason, note=f"2차 예약: {cp*0.98:,.0f}원 (-2%)"))
 
                 elif c_sig == 'SELL' and c_sh > 0 and is_core_cd:
                     # RSI 데드크로스 → 전량 매도 (floor_shares 제거)
