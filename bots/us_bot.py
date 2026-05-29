@@ -1467,6 +1467,13 @@ class USBotController:
 
         self.satellite_info   = strong_keep_info + new_info
         self._inject_user_satellites()
+
+        # 코어 종목이 위성에 포함되면 제거 (스크리너가 동일 종목을 중복 선정하는 경우 방지)
+        _core_t = set(self.core_positions.keys())
+        self.satellite_info = [s for s in self.satellite_info if s.get("ticker") not in _core_t]
+        for _dup in [t for t in list(self.satellite_positions.keys()) if t in _core_t and self.satellite_positions[t].shares == 0]:
+            del self.satellite_positions[_dup]
+
         _new_hot = list({c["sector"] for c in self.satellite_info if c.get("sector")})
         if _new_hot:
             self.hot_sectors = _new_hot
