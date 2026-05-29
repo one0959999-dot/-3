@@ -1102,6 +1102,7 @@ class USBotController:
         today = _now_et().strftime("%Y-%m-%d")
         if self.last_screen_date == today:
             return
+        self.last_screen_date = today  # 즉시 선점 — 동시 호출 중복 실행 방지
 
         # ── 성장세 양호 종목 파악 — 교체 슬롯에서 제외 ──────────────
         strong_keep_info: list = []
