@@ -157,13 +157,54 @@ class KisOverseasApi:
 
     def buy_market_order(self, ticker: str, qty: int,
                          exchange: str = EXCHANGE_NAS) -> bool:
-        """시장가 매수"""
+        """시장가 매수 (정수 주)"""
         return self._order(ticker, qty, "BUY", exchange)
 
     def sell_market_order(self, ticker: str, qty: int,
                           exchange: str = EXCHANGE_NAS) -> bool:
-        """시장가 매도"""
+        """시장가 매도 (정수 주)"""
         return self._order(ticker, qty, "SELL", exchange)
+
+    def buy_fractional_order(self, ticker: str, qty_decimal: float,
+                             exchange: str = EXCHANGE_NAS) -> bool:
+        """
+        소수단위(소수점) 매수 — 정규장(09:30~16:00 ET)에서만 사용.
+        KIS 소수단위 해외주식 매수: TR_ID TTTS0307U (나스닥/NYSE)
+        qty_decimal 예시: 0.5, 1.25, 2.0 (소수점 3자리까지)
+
+        ※ 실계좌에서 KIS 소수단위 매매 서비스 신청 필수.
+        """
+        qty_str = f"{qty_decimal:.3f}"
+        tr_id = "TTTS0307U"   # 소수단위 해외주식 매수
+        body = {
+            "CANO":            self.cano,
+            "ACNT_PRDT_CD":    self.acnt_cd,
+            "OVRS_EXCG_CD":    exchange,
+            "PDNO":            ticker,
+            "ORD_QTY":         qty_str,
+            "OVRS_ORD_UNPR":   "0",
+            "ORD_SVR_DVSN_CD": "0",
+            "ORD_DVSN":        "00",
+        }
+        try:
+            res  = requests.post(
+                f"{_BASE_URL}/uapi/overseas-stock/v1/trading/order",
+                headers=self._headers(tr_id),
+                data=json.dumps(body),
+                timeout=10,
+            )
+            data  = res.json()
+            rt_cd = data.get("rt_cd", "9")
+            msg   = data.get("msg1", "")
+            if rt_cd == "0":
+                logger.info(f"[KIS해외] 소수단위 BUY {ticker} {qty_str}주 접수 완료: {msg}")
+                return True
+            else:
+                logger.warning(f"[KIS해외] 소수단위 BUY {ticker} {qty_str}주 실패 (rt_cd={rt_cd}): {msg}")
+                return False
+        except Exception as e:
+            logger.error(f"[KIS해외] 소수단위 주문 통신 오류: {e}")
+            return False
 
     # ── 매수가능금액 (T+2 fix) ────────────────────────────────────────
 

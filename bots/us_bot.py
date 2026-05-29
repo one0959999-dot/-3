@@ -603,18 +603,34 @@ class USBotController:
             return 0
         with self.lock:
             avail = min(budget_usd, self.cash_usd)
-            qty   = int(avail / price)
-            if qty <= 0:
+            # 정규장(09:30~16:00 ET): 소수점 주 허용 / 시간외: 정수 주만
+            if _is_us_market_open():
+                qty_f = round(avail / price, 3)   # 소수점 3자리
+                qty   = int(qty_f) if qty_f == int(qty_f) else qty_f
+            else:
+                qty_f = None
+                qty   = int(avail / price)         # 정수 주만
+            if (qty_f or qty) <= 0:
                 return 0
 
-        ok = self.kis_overseas.buy_market_order(ticker, qty)
+        # 소수점 주문 (정규장 + 0.001 이상 분수)
+        _use_fractional = (qty_f is not None and qty_f != int(qty_f) and qty_f >= 0.001
+                           and hasattr(self.kis_overseas, 'buy_fractional_order'))
+        if _use_fractional:
+            ok   = self.kis_overseas.buy_fractional_order(ticker, qty_f)
+            qty  = qty_f   # 반환값도 소수점
+        else:
+            qty  = int(qty_f) if qty_f is not None else qty
+            ok   = self.kis_overseas.buy_market_order(ticker, qty)
+
         if ok:
             cost = qty * price
             with self.lock:
                 self.cash_usd        = max(0.0, self.cash_usd - cost)
                 self._last_trade_ts  = time.time()
-                self.pnl_this_turn  -= cost   # 원금 추적용
-            self.add_log(f"📥 BUY  {name}({ticker}) {qty}주 @ ${price:.2f} 추정 (${cost:,.0f})")
+                self.pnl_this_turn  -= cost
+            _qty_str = f"{qty:.3f}" if isinstance(qty, float) and qty != int(qty) else str(int(qty))
+            self.add_log(f"📥 BUY  {name}({ticker}) {_qty_str}주 @ ${price:.2f} 추정 (${cost:,.0f})")
             try:
                 log_trade_journal(self.user_id, ticker, name, 'BUY', price,
                                   strategy=strategy, ai_reason=ai_reason[:120], shares=qty, mode='US')
