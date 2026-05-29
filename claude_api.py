@@ -848,25 +848,31 @@ REASON: (핵심 근거 1~2줄)"""
         if stock_analysis_context:
             context_prefix += f"[📈 종목 실시간 데이터]\n{stock_analysis_context}\n\n"
 
-        full_message = context_prefix + user_message
+        # ⛔ 모든 메시지에 hallucination 방지 주입 — Haiku가 시스템 프롬프트를 무시할 때 대비
+        _anti_hallucination = (
+            "⛔지시: 단계별 계획·타임라인·가짜 로그·예상 종목·이모지 남발 절대 금지. "
+            "3~5문장으로 간결하게 답하라.\n\n"
+        )
+        full_message = _anti_hallucination + context_prefix + user_message
 
         self._conversation_history.append({"role": "user", "content": full_message})
 
-        # 히스토리 최대 40개 메시지 유지 (매매 기록 포함하므로 여유 확보)
-        if len(self._conversation_history) > 40:
+        # 히스토리 최대 20개로 축소 — 가짜 응답이 쌓여 few-shot 오염되는 것 방지
+        if len(self._conversation_history) > 20:
             # 앞쪽 매매기록은 보존, 오래된 일반 대화만 제거
             trade_logs = [m for m in self._conversation_history if m.get('content','').startswith('[매매기록]')]
             chat_msgs  = [m for m in self._conversation_history if not m.get('content','').startswith('[매매기록]')]
-            # 최근 매매기록 10개 + 최근 대화 20개
-            self._conversation_history = trade_logs[-10:] + chat_msgs[-20:]
+            # 최근 매매기록 5개 + 최근 대화 10개
+            self._conversation_history = trade_logs[-5:] + chat_msgs[-10:]
 
         try:
-            # 채팅은 Sonnet + 채팅 전용 시스템 프롬프트 (매매 심사 프롬프트 X)
+            # 채팅은 Haiku + 채팅 전용 시스템 프롬프트
             _chat_sys = [{"type": "text", "text": self._CHAT_SYSTEM,
                           "cache_control": {"type": "ephemeral"}}]
             resp = self.client.messages.create(
                 model=self._SMART_MODEL,
-                max_tokens=8192,
+                max_tokens=1200,   # 8192→1200: 5000자 가짜 플랜 생성 공간 원천 차단
+                temperature=0.1,   # 낮은 온도 → 창의적 hallucination 억제
                 system=_chat_sys,
                 messages=self._conversation_history,
             )
