@@ -1316,6 +1316,25 @@ class USBotController:
             # ── 복합 타이밍 신호 체크 ────────────────────────────────────
             # 봇이 매수 타이밍을 잡고, AI가 매매 판단을 심사하는 역할 분리
             _comp_sig, _buy_sc, _sell_sc, _sig_reasons = get_composite_signal(df_raw) if df_raw is not None else ('HOLD', 0, 0, [])
+
+            # ── RSI 과매도 근접 오버라이드 ──────────────────────────────────
+            # RSI(9) ≤ 33 + 신호 1개 이상이면 BUY 오버라이드 (임계치 완화)
+            if _comp_sig != 'BUY' and _buy_sc >= 1 and df_raw is not None and 'Close' in df_raw.columns:
+                try:
+                    _c = df_raw['Close'].dropna()
+                    if len(_c) >= 11:
+                        _d = _c.diff()
+                        _g = _d.clip(lower=0).rolling(9).mean()
+                        _l = (-_d.clip(upper=0)).rolling(9).mean()
+                        _rsi_now = float((100 - 100 / (1 + _g / (_l + 1e-10))).iloc[-1])
+                        if _rsi_now <= 33:
+                            _comp_sig = 'BUY'
+                            _sig_reasons.append(f"RSI과매도오버라이드(RSI={_rsi_now:.0f}≤33)")
+                            self.add_log(f"🔥 [{ticker}] RSI={_rsi_now:.0f} 과매도 근접 — 복합신호 임계치 완화 BUY")
+                except Exception:
+                    pass
+            # ────────────────────────────────────────────────────────────────
+
             if _comp_sig != 'BUY':
                 _timing_status = f"타이밍 대기 ({_buy_sc}/2점) ⏳"
                 if pos is None:
