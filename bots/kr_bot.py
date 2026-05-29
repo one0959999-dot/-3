@@ -1126,9 +1126,12 @@ class KRBotController:
         if _new_hot:
             self.hot_sectors = _new_hot
         if self.hot_sectors:
-            self.add_log(f"🔥 강세 섹터: {', '.join(self.hot_sectors[:4])}")
+            self.add_log(
+                f"🔥 전 섹터 스캔 완료 (총 {len(self.hot_sectors)}개) — "
+                f"가산점 TOP4: {', '.join(self.hot_sectors[:4])}"
+            )
         else:
-            self.add_log("⚠️ 강세 섹터 없음 — 상대 강세 기준 후보 선정")
+            self.add_log("⚠️ 전 섹터 스캔 완료 — 강세 섹터 없음 (상대 강세 기준 후보 선정)")
         # 모멘텀 슬롯 종목은 위성 편입 금지
         momentum_tickers = {
             mp['ticker'] for mp in self.momentum_positions
@@ -3541,12 +3544,14 @@ class KRBotController:
             if _new_hot:
                 self.hot_sectors = _new_hot
             if self.hot_sectors:
-                _top4 = self.hot_sectors[:4]
-                _rest = len(self.hot_sectors) - 4
-                _rest_str = f" 외 {_rest}개 전 섹터 포함" if _rest > 0 else ""
-                self.add_log(f"🔥 강세 섹터 TOP4: {', '.join(_top4)}{_rest_str} (가산점 적용)")
+                _total = len(self.hot_sectors)
+                _top4  = self.hot_sectors[:4]
+                self.add_log(
+                    f"🔥 전 섹터 스캔 완료 (총 {_total}개) — "
+                    f"가산점 TOP4: {', '.join(_top4)}"
+                )
             else:
-                self.add_log("⚠️ 강세 섹터 없음 (전 섹터 하락 — 상대 강세 기준으로 후보 선정)")
+                self.add_log("⚠️ 전 섹터 스캔 완료 — 강세 섹터 없음 (상대 강세 기준 후보 선정)")
             # exclude_set 이미 적용됐으므로 pre_filter 는 keep_tickers 중복 체크만 하면 됨
             pre_filter = [
                 c for c in raw_info
