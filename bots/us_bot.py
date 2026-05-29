@@ -223,6 +223,11 @@ class USBotController:
         self._defensive_sold_ts:   dict = {}      # 종목별 청산 타임스탬프 (24h 쿨다운)
         self._defensive_shares:    dict = {}      # 종목별 보유 수량 캐시
 
+        # ── AI 스윙 재진입 큐 ─────────────────────────────────────────
+        # {ticker: {'sell_price': float, 'target_rsi': 35, 'target_price': float, 'ts': float}}
+        self._swing_rebuy_queue:    dict = {}
+        self._swing_accumulate_cnt: dict = {}  # {ticker: int} 누적 횟수 (최대 2회)
+
         # ── 거절 쿨다운 (영구 블랙리스트 대신 15분/20분 쿨다운) ─────────
         self._bl_date              = ""
         self._satellite_rejects:   dict = {}   # {ticker: float(ts)}
@@ -442,6 +447,38 @@ class USBotController:
 
     def _price(self, ticker: str) -> float:
         return self._price_cache.get(ticker, 0.0)
+
+    def _ai_swing_check(self, pos, ticker: str, price: float, reason: str) -> str:
+        """ATR 손절/트레일링 발동 시 AI 전권 판단 — SELL_REBUY / ACCUMULATE / EXIT"""
+        if not self.claude:
+            return 'EXIT'
+        avg = pos.avg_price_usd
+        if avg <= 0:
+            return 'EXIT'
+        acc_cnt = self._swing_accumulate_cnt.get(ticker, 0)
+        if acc_cnt >= 2:
+            return 'EXIT'
+
+        pnl_pct = (price / avg - 1) * 100
+        roe_bonus, roe_reason = self._roe_turnaround_bonus(ticker)
+        news         = self._fetch_us_news([ticker])
+        fundamental  = self._fetch_fundamental(ticker)
+
+        decision = self.claude.ai_swing_trade_check(
+            ticker         = ticker,
+            name           = pos.name,
+            price_usd      = price,
+            avg_usd        = avg,
+            pnl_pct        = pnl_pct,
+            regime         = self.market_regime,
+            exit_reason    = reason,
+            roe_reason     = roe_reason,
+            news           = news,
+            fundamental    = fundamental,
+            hot_sectors    = self.hot_sectors or [],
+            accumulate_count = acc_cnt,
+        )
+        return decision
 
     def _reinvest_to_cores(self, profit_usd: float, source: str = ""):
         """위성·단타 수익 전액을 코어 budget에 명시적 배분 (KR봇 REINVEST_RATIO=1.0 동일).
@@ -811,9 +848,45 @@ class USBotController:
                         _stop_skip = True
                         self.add_log(f"⚠️ [코어] {pos.name} ATR 손절 터치 but 호재 뉴스 감지 → 1회 유예\n{_stop_news[:120]}")
                 if not _stop_skip:
-                    # ATR 하드 손절 — 전량 청산 (floor_shares 무시).
-                    # 추세 붕괴 시 floor 보호 없이 100% 청산 (KR봇 동일 원칙)
                     pos.stop_news_checked = False
+                    _atr_reason = f"ATR×{hard_mult:.1f} 손절"
+
+                    # ── AI 스윙 판단 우선 (코어도 동일) ───────────────
+                    swing = self._ai_swing_check(pos, ticker, price, _atr_reason)
+
+                    if swing == 'SELL_REBUY':
+                        # 매도 후 재진입 큐
+                        self._swing_rebuy_queue[ticker] = {
+                            'sell_price':   price,
+                            'target_price': price * 0.95,
+                            'target_rsi':   35,
+                            'name':         pos.name,
+                            'ts':           time.time(),
+                            'budget':       core_budget_per,
+                            'is_core':      True,
+                        }
+                        self.add_log(f"🔄 [스윙 코어] {pos.name}({ticker}) SELL_REBUY — 재진입 큐 등록")
+                        self._tg(f"🔄 [US 코어 스윙] {pos.name}\n매도 후 재진입 대기 | 조건: RSI≤35 or ${price*0.95:.2f}")
+                        # 아래 매도 실행
+
+                    elif swing == 'ACCUMULATE':
+                        acc_cnt = self._swing_accumulate_cnt.get(ticker, 0)
+                        _acc_budget = min(core_budget_per * 0.30, self.cash_usd * 0.15)
+                        acc_qty = self._buy(ticker, pos.name, _acc_budget, price)
+                        if acc_qty > 0:
+                            with self.lock:
+                                new_sh = pos.shares + acc_qty
+                                pos.avg_price_usd = (pos.avg_price_usd * pos.shares + price * acc_qty) / new_sh
+                                pos.shares = new_sh
+                                pos.floor_shares = max(pos.floor_shares, pos.shares * 0.5)
+                                pos.last_order_time = time.time()
+                                pos.status = f"코어 스윙 누적 {acc_cnt+1}차 📥"
+                                self._swing_accumulate_cnt[ticker] = acc_cnt + 1
+                            self.add_log(f"📥 [스윙 코어] {pos.name}({ticker}) ACCUMULATE {acc_cnt+1}차 | {acc_qty}주 @ ${price:.2f}")
+                            self._tg(f"📥 [US 코어 스윙 누적] {pos.name}\n{acc_cnt+1}차 추가매수 | 평단 ${pos.avg_price_usd:.2f}")
+                        continue  # 청산 없이 다음 루프
+
+                    # EXIT 또는 SELL_REBUY → 공통 매도 실행
                     proceeds = self._sell(ticker, pos.name, pos.shares, price)
                     pnl      = _net_profit_usd(price, avg, pos.shares)
                     with self.lock:
@@ -829,14 +902,13 @@ class USBotController:
                         pos.third_buy_done          = False
                         pos.initial_shares_for_exit = 0.0
                         pos.bull_pyramid_done       = False
-                        pos.status                  = "코어 손절 🚨"
+                        pos.status                  = "코어 손절 🚨" if swing == 'EXIT' else "코어 스윙매도 🔄"
                     self._record_pnl(pnl)
-                    self.add_log(f"🚨 코어 손절 {pos.name}({ticker}) | ATR×{hard_mult:.1f} 이탈 | PnL ${pnl:+.0f}")
-                    self._tg(f"🚨 [US 코어 손절] {pos.name}\nATR×{hard_mult:.1f} 이탈 | 재진입 타점 탐색 중\n손익: ${pnl:+,.0f}")
+                    self._reinvest_to_cores(pnl, _atr_reason)
+                    self.add_log(f"🚨 코어 손절 {pos.name}({ticker}) | {_atr_reason} [{swing}] | PnL ${pnl:+.0f}")
+                    self._tg(f"🚨 [US 코어 손절] {pos.name}\n{_atr_reason} | {swing} | ${pnl:+,.0f}")
                     if self.claude:
-                        self.claude.record_trade_event(
-                            f"코어 손절 🚨 {pos.name}({ticker}) | ATR×{hard_mult:.1f} 이탈 | 손익 ${pnl:+.0f}"
-                        )
+                        self.claude.record_trade_event(f"코어 손절 {pos.name}({ticker}) | {_atr_reason} | {swing} | ${pnl:+.0f}")
                 continue
 
             # ── 통합 진입 점수 + RSI 매수 신호 (정규장만 매수) ────────────
@@ -1928,10 +2000,125 @@ class USBotController:
             with self.lock:
                 pos.status = f"보유 중 🛰️ ({pnl_pct:+.1f}%)"
 
+    def _check_swing_rebuy_queue(self):
+        """스윙 재진입 큐 모니터링 — RSI≤35 or 추가 -5% 도달 시 AI 승인 후 재매수."""
+        _ET_CLOSE = _now_et().replace(hour=16, minute=0, second=0, microsecond=0)
+        now_et = _now_et()
+        expired = []
+
+        for ticker, rebuy in list(self._swing_rebuy_queue.items()):
+            # 장 종료 시 만료
+            if now_et >= _ET_CLOSE:
+                expired.append(ticker)
+                continue
+
+            price = self._price(ticker)
+            if price <= 0:
+                continue
+
+            # 트리거 체크: RSI≤35 or 추가 -5%
+            triggered = False
+            trigger_reason = ""
+            df_5m = self._get_cached_ohlcv_5m(ticker)
+            if not df_5m.empty and 'close' in df_5m.columns and len(df_5m) >= 15:
+                _c = df_5m['close'].dropna()
+                _d = _c.diff()
+                _g = _d.clip(lower=0).rolling(14).mean()
+                _l = (-_d.clip(upper=0)).rolling(14).mean()
+                _rsi = float((100 - 100 / (1 + _g / (_l + 1e-10))).iloc[-1])
+                if _rsi <= rebuy['target_rsi']:
+                    triggered = True
+                    trigger_reason = f"RSI {_rsi:.0f}≤35"
+
+            if not triggered and price <= rebuy['target_price']:
+                triggered = True
+                trigger_reason = f"추가 -5% (${price:.2f}≤${rebuy['target_price']:.2f})"
+
+            if not triggered:
+                continue
+
+            # AI 재진입 승인
+            name   = rebuy.get('name', ticker)
+            budget = rebuy.get('budget', self.cash_usd * 0.10)
+            is_core = rebuy.get('is_core', False)
+
+            approved, ai_reason = True, "AI 미설정"
+            if self.claude:
+                news = self._fetch_us_news([ticker])
+                approved, ai_reason = self.claude.ai_approve_us_trade(
+                    signal='BUY', stock_name=name, ticker=ticker,
+                    price_usd=price, sector='',
+                    hot_sectors=self.hot_sectors or [],
+                    ai_reason=f"스윙 재진입 | 트리거: {trigger_reason} | 원매도가: ${rebuy['sell_price']:.2f}",
+                    news_headlines=news,
+                )
+
+            if approved:
+                qty = self._buy(ticker, name, min(budget, self.cash_usd * 0.95), price)
+                if qty > 0:
+                    label = "코어 스윙 재진입" if is_core else "위성 스윙 재진입"
+                    self.add_log(f"🎯 [{label}] {name}({ticker}) {qty}주 @ ${price:.2f} | {trigger_reason} | AI: {ai_reason[:50]}")
+                    self._tg(f"🎯 [US {label}] {name}\n{trigger_reason} | {qty}주 @ ${price:.2f}")
+                    if self.claude:
+                        self.claude.record_trade_event(f"US {label}: {name}({ticker}) {qty}주 @ ${price:.2f} | {trigger_reason}")
+                    # 스윙 누적 횟수 초기화 (재진입 성공 시)
+                    self._swing_accumulate_cnt.pop(ticker, None)
+                expired.append(ticker)
+            else:
+                self.add_log(f"🛑 스윙 재진입 AI 거절: {name}({ticker}) — {ai_reason[:60]}")
+                expired.append(ticker)
+
+        for t in expired:
+            self._swing_rebuy_queue.pop(t, None)
+
     def _close_sat(self, ticker: str, pos: USPosition, price: float, reason: str):
-        """위성 전량 청산 — ATR 손절·트레일링·과열 등 응급 청산 (floor_shares 무시).
-        부분 익절(PARTIAL1)만 별도 floor 보호를 적용. 응급 청산 후 floor도 리셋.
-        KR봇: 'ATR 손절 전량 청산 — floor_shares 없음' 동일 원칙."""
+        """위성 전량 청산 — ATR 손절·트레일링 발동 시 AI 스윙 판단 우선.
+        과열/스크리너제외 등 비ATR 청산은 AI 판단 없이 즉시 실행."""
+        # ── AI 스윙 판단 (ATR 손절/트레일링 발동 시만) ────────────────
+        _is_atr_exit = any(kw in reason for kw in ["ATR", "손절", "트레일링"])
+        if _is_atr_exit and self.claude and pos.shares > 0 and pos.avg_price_usd > 0:
+            with self.lock: pos.status = "AI 스윙 판단 중 🤖"
+            swing = self._ai_swing_check(pos, ticker, price, reason)
+
+            if swing == 'SELL_REBUY':
+                # 매도 후 재진입 큐 등록
+                sell_price = price
+                self._swing_rebuy_queue[ticker] = {
+                    'sell_price':   sell_price,
+                    'target_price': sell_price * 0.95,   # 추가 -5%
+                    'target_rsi':   35,
+                    'name':         pos.name,
+                    'ts':           time.time(),
+                    'budget':       pos.budget_usd,
+                }
+                self.add_log(f"🔄 [스윙] {pos.name}({ticker}) SELL_REBUY — 매도 후 RSI≤35 or -5% 재매수 큐")
+                self._tg(f"🔄 [US 스윙매매] {pos.name}\n매도 후 재진입 대기\n재매수 조건: RSI≤35 or ${sell_price*0.95:.2f}(-5%)")
+                # 매도는 아래 공통 로직으로 실행됨
+
+            elif swing == 'ACCUMULATE':
+                # 매도 없이 추가매수
+                acc_cnt = self._swing_accumulate_cnt.get(ticker, 0)
+                _acc_budget = min(pos.budget_usd * 0.30, self.cash_usd * 0.15)
+                acc_qty = self._buy(ticker, pos.name, _acc_budget, price)
+                if acc_qty > 0:
+                    with self.lock:
+                        new_sh = pos.shares + acc_qty
+                        pos.avg_price_usd = (pos.avg_price_usd * pos.shares + price * acc_qty) / new_sh
+                        pos.shares        = new_sh
+                        pos.floor_shares  = max(pos.floor_shares, pos.shares * 0.5)
+                        pos.last_order_time = time.time()
+                        pos.status        = f"스윙 누적 {acc_cnt+1}차 📥"
+                        self._swing_accumulate_cnt[ticker] = acc_cnt + 1
+                    self.add_log(f"📥 [스윙] {pos.name}({ticker}) ACCUMULATE {acc_cnt+1}차 | {acc_qty}주 @ ${price:.2f} | 평단 ${pos.avg_price_usd:.2f}")
+                    self._tg(f"📥 [US 스윙 누적] {pos.name}\n{acc_cnt+1}차 추가매수 | 평단 ${pos.avg_price_usd:.2f}")
+                    if self.claude:
+                        self.claude.record_trade_event(f"US 스윙 누적 {acc_cnt+1}차: {pos.name}({ticker}) {acc_qty}주 @ ${price:.2f}")
+                return  # 청산 없이 리턴
+
+            else:  # EXIT
+                self.add_log(f"📤 [스윙] {pos.name}({ticker}) EXIT — AI: 추세 붕괴 판단")
+
+        # ── 공통 청산 로직 ────────────────────────────────────────────
         shares   = pos.shares
         proceeds = self._sell(ticker, pos.name, shares, price)
         pnl      = _net_profit_usd(price, pos.avg_price_usd, shares)
@@ -2130,6 +2317,10 @@ class USBotController:
                         if _has_empty:
                             self._run_threaded(self._rescreen_satellites)
                     _last_rescreen_ts = time.time()
+
+                # ── 스윙 재진입 큐 체크 ──────────────────────────────
+                if self.kis_overseas and _mkt_open:
+                    self._check_swing_rebuy_queue()
 
                 # ── 코어·위성·방어자산 매매 (KIS 연결 시에만) ──────────
                 if self.kis_overseas:

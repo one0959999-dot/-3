@@ -866,6 +866,83 @@ REASON: (핵심 근거 1~2줄)"""
                 f"[ClaudeAPI] ai_approve_us_trade 오류 — 자동 허용: {type(e).__name__}: {e}")
             return True, "AI 일시 오류 — 알고리즘 신호 허용"
 
+    def ai_swing_trade_check(
+        self,
+        ticker: str, name: str,
+        price_usd: float, avg_usd: float, pnl_pct: float,
+        regime: str, exit_reason: str,
+        roe_reason: str = "", news: str = "", fundamental: str = "",
+        hot_sectors: list = None, accumulate_count: int = 0,
+    ) -> str:
+        """
+        US봇 ATR 손절/트레일링 발동 시 AI 전권 판단.
+        AI가 종목 전망을 종합해 3가지 중 하나 반환:
+          SELL_REBUY  — 매도 후 RSI≤35 or 추가-5% 시 재매수
+          ACCUMULATE  — 매도 보류 + 잔여예산 추가매수 (평단 낮추기)
+          EXIT        — 기존 로직대로 전량 매도
+
+        US봇은 100% AI 자율 운영 — 이 판단이 최우선.
+        """
+        if not self.client:
+            return 'EXIT'
+        if accumulate_count >= 2:
+            return 'EXIT'  # 무한 물타기 방지
+
+        hot_str = ", ".join(hot_sectors or []) or "없음"
+        regime_label = {"BULL": "상승장 🐂", "BEAR": "하락장 🐻", "NEUTRAL": "횡보장 😐"}.get(regime, regime)
+        roe_section = f"\nROE 개선 추세: {roe_reason}" if roe_reason else ""
+        news_section = f"\n최신 뉴스:\n{news[:300]}" if news.strip() else ""
+        fund_section = f"\n재무지표: {fundamental[:200]}" if fundamental.strip() else ""
+        acc_warn = f"\n⚠️ 이미 누적 {accumulate_count}회 — 2회 초과 불가" if accumulate_count > 0 else ""
+
+        prompt = f"""[US 자율 운영봇 — 포지션 처리 판단 요청]
+
+종목: {name}({ticker})
+현재가: ${price_usd:.2f} | 평단: ${avg_usd:.2f} | 수익률: {pnl_pct:+.1f}%
+시장 국면: {regime_label} | 강세 섹터: {hot_str}
+발동 이유: {exit_reason}{roe_section}{fund_section}{news_section}{acc_warn}
+
+──────────────────────────────────────────
+【판단 배경】
+이 봇은 사용자가 미국 종목을 모르기 때문에 AI가 100% 자율 운영하는 공간입니다.
+ATR 기계적 손절이 발동됐으나, 종목의 미래 전망에 따라 더 나은 선택이 있을 수 있습니다.
+
+【판단 기준】
+SELL_REBUY  : 추세는 살아있으나 일시 눌림 → 매도 후 RSI≤35 or 추가 -5% 시 재매수
+              (단기 변동성 활용, 더 낮은 가격에 재진입)
+ACCUMULATE  : 장기 전망 매우 밝음 → 매도 없이 평단 낮추며 보유 강화
+              (ROE 개선 중, 섹터 성장, 강한 모멘텀 회복 예상)
+EXIT        : 추세 붕괴 또는 전망 불투명 → 기존 로직대로 전량 매도
+
+답변 형식 (반드시 준수):
+DECISION: SELL_REBUY 또는 ACCUMULATE 또는 EXIT
+REASON: (핵심 근거 1~2줄)"""
+
+        try:
+            res = self.generate_content(prompt, temperature=0.15, model=self._FAST_MODEL)
+            upper = res.upper()
+            decision_line = next(
+                (ln for ln in upper.splitlines() if "DECISION:" in ln), ""
+            )
+            decision = 'EXIT'
+            if decision_line:
+                after = decision_line.split("DECISION:", 1)[-1].strip()
+                if "SELL_REBUY" in after:
+                    decision = 'SELL_REBUY'
+                elif "ACCUMULATE" in after:
+                    decision = 'ACCUMULATE'
+                else:
+                    decision = 'EXIT'
+            reason = res.split("REASON:")[-1].strip()[:120] if "REASON:" in res else res.strip()[:120]
+            import logging
+            logging.getLogger('lassi_bot').info(
+                f"[AI 스윙판단] {name}({ticker}) → {decision} | {reason}")
+            return decision
+        except Exception as e:
+            import logging
+            logging.getLogger('lassi_bot').warning(f"[ClaudeAPI] ai_swing_trade_check 오류: {e}")
+            return 'EXIT'
+
     def record_trade_event(self, event: str) -> None:
         """매매 결정을 대화 히스토리에 기록 — 채팅 AI가 매매 맥락을 기억하도록.
         매수/매도/거절/손절 등 주요 이벤트 발생 시 호출.
