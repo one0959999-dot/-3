@@ -2303,28 +2303,22 @@ class KRBotController:
 
                 ex_df = self._get_extended_ohlcv(ticker, price)
                 sig, buy_sc, sell_sc, sig_reasons = get_composite_signal(ex_df)
-                st_nm   = f"복합신호(매수{buy_sc}/매도{sell_sc})"
                 ind_val = {"buy": buy_sc, "sell": sell_sc, "signals": sig_reasons}
                 if price <= 0: continue
 
-                # ── RSI 과매도 근접 오버라이드 ──────────────────────────────────
-                # 스크리너가 RSI 30 근처 종목을 선정했다면, RSI ≤ 33 + 신호 1개만으로 매수 허용
-                # (복합신호 2개 요구는 평상시 기준 — 극단적 과매도엔 임계치 완화)
-                if sig != 'BUY' and buy_sc >= 1 and not ex_df.empty and 'close' in ex_df.columns:
-                    try:
-                        _c = ex_df['close'].dropna()
-                        if len(_c) >= 11:
-                            _d = _c.diff()
-                            _g = _d.clip(lower=0).rolling(9).mean()
-                            _l = (-_d.clip(upper=0)).rolling(9).mean()
-                            _rsi_now = float((100 - 100 / (1 + _g / (_l + 1e-10))).iloc[-1])
-                            if _rsi_now <= 33:
-                                sig = 'BUY'
-                                sig_reasons.append(f"RSI과매도오버라이드(RSI={_rsi_now:.0f}≤33)")
-                                st_nm = f"RSI과매도({_rsi_now:.0f})+신호{buy_sc}개"
-                                self.add_log(f"🔥 [{ticker}] RSI={_rsi_now:.0f} 과매도 근접 — 복합신호 임계치 완화 BUY")
-                    except Exception:
-                        pass
+                # ── 진입 점수 계산 (RSI 30은 더이상 필수 아님 — 점수제로 통합) ──
+                _frgn_net = 0
+                try:
+                    if self.kis and hasattr(self.kis, 'get_foreign_buy_by_ticker'):
+                        _fi = self.kis.get_foreign_buy_by_ticker(ticker)
+                        if _fi:
+                            _frgn_net = int(_fi.get("frgn_net", 0))
+                except Exception:
+                    pass
+                entry_score, entry_reasons = calculate_entry_score(ex_df, price, regime, frgn_net=_frgn_net)
+                entry_threshold = get_entry_threshold(regime, 'satellite')
+                score_ratio = max(0.6, get_budget_ratio_from_score(entry_score, entry_threshold))
+                st_nm = f"진입점수({entry_score}/{entry_threshold}pt)"
                 # ────────────────────────────────────────────────────────────────
 
                 if ex_df.empty or not all(c in ex_df.columns for c in ['high', 'low', 'close']):
@@ -2642,13 +2636,13 @@ class KRBotController:
                         self._send_trade_telegram(self._fmt_trade_msg("🛒", "2차 분할 매수", ticker, p_nm, price, sq, strategy=st_nm, note="-2% 눌림목 포착"))
 
                 # 당일 AI 거절 블랙리스트 종목은 매수 시도 자체를 차단
-                if sig == 'BUY' and p_sh == 0 and self._is_satellite_blacklisted(ticker):
+                if p_sh == 0 and self._is_satellite_blacklisted(ticker):
                     pos.status = "당일 블랙리스트 🚫"
                     pos.status_msg = f"오늘 거절됨: {self._satellite_rejects.get(ticker, '')[:30]}"
                     continue
 
                 # 실적 발표 D-3 이내 → 신규 진입 차단 (깜짝 손실 방지) — US봇 동일
-                if sig == 'BUY' and p_sh == 0 and is_cd_passed and is_golden_hours and self.news_monitor:
+                if p_sh == 0 and is_cd_passed and is_golden_hours and self.news_monitor:
                     try:
                         _earn_kr = self.news_monitor.get_upcoming_earnings(ticker)
                         if _earn_kr and _earn_kr.get('days_until', 99) <= 3:
@@ -2660,22 +2654,13 @@ class KRBotController:
                     except Exception:
                         pass
 
-                if sig == 'BUY' and p_sh == 0 and is_cd_passed and is_golden_hours:
-                    # ── 통합 진입 점수 체크 (1차 게이트) ──
-                    _frgn_net = 0
-                    try:
-                        if self.kis and hasattr(self.kis, 'get_foreign_buy_by_ticker'):
-                            _fi = self.kis.get_foreign_buy_by_ticker(ticker)
-                            if _fi:
-                                _frgn_net = int(_fi.get("frgn_net", 0))
-                    except Exception:
-                        pass
-                    entry_score, entry_reasons = calculate_entry_score(ex_df, price, regime, frgn_net=_frgn_net)
-                    entry_threshold = get_entry_threshold(regime, 'satellite')
-                    # 위성은 entry_score 게이트 제거 — AI 최종 심사로 충분
-                    # (단타 모멘텀 기준 지표가 1-3달 보유 위성에 맞지 않음; RSI 30 신호 vs 40 요구 등 구조적 충돌)
-                    # score_ratio는 포지션 사이징에만 활용, 최소 60% floor 보장
-                    score_ratio = max(0.6, get_budget_ratio_from_score(entry_score, entry_threshold))
+                # ── 진입 점수 게이트 (RSI 필수 아님 — 10개 지표 합산으로 판단) ──────
+                if p_sh == 0 and is_cd_passed and is_golden_hours and entry_score < entry_threshold:
+                    pos.status = f"점수 대기 ({entry_score}/{entry_threshold}pt) ⏳"
+                    pos.status_msg = f"진입 점수 미달 | 충족: {' | '.join(entry_reasons[:3]) if entry_reasons else '없음'}"
+                    continue
+
+                if p_sh == 0 and is_cd_passed and is_golden_hours and entry_score >= entry_threshold:
 
                     # ── BEAR 국면: 10개 저점 전략 스코어 기반 차등 진입 + AI 최종 심사 ──
                     # bear_score ≥ 3 이상만 진입 (반등 확신도 높을 때만 → 오진입 방지)

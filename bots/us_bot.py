@@ -1314,30 +1314,12 @@ class USBotController:
 
             entry_threshold = get_entry_threshold(regime, 'satellite')
 
-            # ── 복합 타이밍 신호 체크 ────────────────────────────────────
-            # 봇이 매수 타이밍을 잡고, AI가 매매 판단을 심사하는 역할 분리
-            _comp_sig, _buy_sc, _sell_sc, _sig_reasons = get_composite_signal(df_raw) if df_raw is not None else ('HOLD', 0, 0, [])
+            # ── 진입 점수 게이트 (RSI 필수 아님 — 10개 지표 합산으로 판단) ──────────
+            # composite_signal 게이트 제거 → entry_score >= threshold 면 AI 심사로 진행
+            budget_ratio = max(0.6, get_budget_ratio_from_score(entry_score, entry_threshold))
 
-            # ── RSI 과매도 근접 오버라이드 ──────────────────────────────────
-            # RSI(9) ≤ 33 + 신호 1개 이상이면 BUY 오버라이드 (임계치 완화)
-            if _comp_sig != 'BUY' and _buy_sc >= 1 and df_raw is not None and 'Close' in df_raw.columns:
-                try:
-                    _c = df_raw['Close'].dropna()
-                    if len(_c) >= 11:
-                        _d = _c.diff()
-                        _g = _d.clip(lower=0).rolling(9).mean()
-                        _l = (-_d.clip(upper=0)).rolling(9).mean()
-                        _rsi_now = float((100 - 100 / (1 + _g / (_l + 1e-10))).iloc[-1])
-                        if _rsi_now <= 33:
-                            _comp_sig = 'BUY'
-                            _sig_reasons.append(f"RSI과매도오버라이드(RSI={_rsi_now:.0f}≤33)")
-                            self.add_log(f"🔥 [{ticker}] RSI={_rsi_now:.0f} 과매도 근접 — 복합신호 임계치 완화 BUY")
-                except Exception:
-                    pass
-            # ────────────────────────────────────────────────────────────────
-
-            if _comp_sig != 'BUY':
-                _timing_status = f"타이밍 대기 ({_buy_sc}/2점) ⏳"
+            if entry_score < entry_threshold:
+                _timing_status = f"점수 대기 ({entry_score}/{entry_threshold}pt) ⏳"
                 if pos is None:
                     self.satellite_positions[ticker] = USPosition(
                         ticker=ticker, name=info["name"], budget_usd=sat_budget_per,
@@ -1347,11 +1329,7 @@ class USBotController:
                     with self.lock:
                         pos.status = _timing_status
                 continue
-
-            # 위성은 entry_score 게이트 제거 — AI 최종 심사로 충분
-            # (단타 모멘텀 기준 지표가 1-3달 보유 위성에 맞지 않음; RSI 30 신호 vs 40 요구 등 구조적 충돌)
-            # budget_ratio는 포지션 사이징에만 활용, 최소 60% floor 보장
-            budget_ratio = max(0.6, get_budget_ratio_from_score(entry_score, entry_threshold))
+            # ────────────────────────────────────────────────────────────────
             # ── BEAR 국면: 포지션 크기 50% 제한 (리스크 관리) ──
             if regime == "BEAR":
                 budget_ratio = min(budget_ratio * 0.50, 0.50)
