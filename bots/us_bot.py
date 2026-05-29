@@ -640,24 +640,12 @@ class USBotController:
         # 총자산 기준 예산 산정 (수익 복리 효과: 수익금 → cash_usd → 총자산 증가 → 예산 자동 증가)
         total_usd      = self._get_total_assets_usd()
 
-        # ── 위성 공석 예산 → 코어 임시 배분 ──────────────────────────────
-        # 위성이 진입 못 한 슬롯의 예산을 코어 매수 예산에 임시 추가
-        # US 봇은 global cash_usd 풀 사용 → 별도 lending 추적 없이 budget 계산만 확대
-        _sat_info_set  = {i['ticker'] for i in self.satellite_info}
-        _sat_holding   = sum(1 for t, p in self.satellite_positions.items()
-                             if p.shares > 0 and t in _sat_info_set)
-        _sat_idle      = max(0, self.num_satellites - _sat_holding)
-        _sat_bud_per   = (total_usd * self.SAT_RATIO) / max(1, self.num_satellites)
-        _idle_sat_usd  = _sat_idle * _sat_bud_per
-
-        _core_pool      = total_usd * self.CORE_RATIO + _idle_sat_usd
-        core_budget_per = _core_pool / max(1, self.num_cores)
-
-        if _sat_idle > 0 and _idle_sat_usd > 10:
-            self.add_log(
-                f"💰 위성 공석 {_sat_idle}개 → 코어 예산 임시 확대 "
-                f"(+${_idle_sat_usd:,.0f} | 코어 슬롯당 ${core_budget_per:,.0f})"
-            )
+        # ── 코어 풀 내 동적 균등 배분 ────────────────────────────────────
+        # 코어 풀(CORE_RATIO) 안에서 활성 코어 수로 균등 분배
+        # 1개: 풀 100% | 2개: 각 50% | 3개: 각 33%
+        _core_pool      = total_usd * self.CORE_RATIO
+        _active_cores   = max(1, len([t for t, p in self.core_positions.items() if p is not None]))
+        core_budget_per = _core_pool / _active_cores
 
         for info in self.core_info:
             ticker = info["ticker"]
@@ -1263,9 +1251,13 @@ class USBotController:
             return
 
         import pandas as pd
-        # 총자산 기준 예산 산정 — 코어와 동일하게 수익 복리 효과 적용
+        # ── 위성 풀 내 동적 균등 배분 ────────────────────────────────────
+        # 위성 풀(SAT_RATIO) 안에서 활성 위성 수로 균등 분배
+        # 1개: 풀 100% | 2개: 각 50% | 3개: 각 33%
         total_usd      = self._get_total_assets_usd()
-        sat_budget_per = (total_usd * self.SAT_RATIO) / max(1, self.num_satellites)
+        _sat_pool      = total_usd * self.SAT_RATIO
+        _active_sats   = max(1, len(self.satellite_info))
+        sat_budget_per = _sat_pool / _active_sats
         regime         = self.market_regime
 
         # ── 미보유 후보 매수 (정규장만) ──────────────────────────────
