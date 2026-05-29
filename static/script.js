@@ -604,6 +604,10 @@ document.addEventListener('DOMContentLoaded', () => {
                         : '<span style="color:#8b949e">-</span>';
                     const sharesCell = isHolding ? `${s.shares.toLocaleString()}주` : `<span style="color:#64748b">-</span>`;
                     const valueCell  = isHolding ? `<span style="font-weight:600;">${fmtMoney(s.value || 0)}</span>` : `<span style="color:#64748b">-</span>`;
+                    // 배정예산: 미매수 상태일 때만 표시
+                    const budgetLine = (!isHolding && s.budget > 0)
+                        ? `<div style="color:#60a5fa;font-size:0.75rem;margin-top:2px">💰 ${fmtMoney(s.budget)}</div>`
+                        : '';
                     satHtmlBuffer += `
                         <tr>
                             <td><b>${s.name}</b>
@@ -614,6 +618,7 @@ document.addEventListener('DOMContentLoaded', () => {
                             <td>
                                 <div>${valueCell}</div>
                                 ${_pnlCell(s.shares, s.avg_price, s.price)}
+                                ${budgetLine}
                             </td>
                             <td><span class="badge" onclick="showStatusModalEncoded('${s.name}', '${encodeURIComponent(sMsg)}')" style="cursor:pointer; ${_positionBadgeStyle(sText)}">${sText}</span></td>
                         </tr>`;
