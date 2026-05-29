@@ -472,7 +472,11 @@ class KRBotController:
         """
         봇 초기화 시 임시 코어 포지션 생성 (initialize_portfolio 전 플레이스홀더).
         구조: 사용자 지정 최대 3개 → 남은 자리만 TBD 플레이스홀더로 채움
+        BUG-FIX: 기존 보유 데이터(shares, avg_price 등) 보존 — reload_api_keys 호출 시 정보 손실 방지
         """
+        # 기존 포지션 데이터 스냅샷 (설정 변경 시 보유주/평단 보존용)
+        _existing = {c.ticker: c for c in self.core_positions if c.ticker != "TBD"}
+
         self.core_positions = []
         user_tickers_seen: set = set()
         # 사용자 지정 종목 전부 사용 (최대 3개까지)
@@ -484,6 +488,18 @@ class KRBotController:
                     pos.dca_amount         = float(c.get('dca_amount', 0))
                     pos.dca_interval_hours = int(c.get('dca_hours', 72))
                     pos.dca_dip_pct        = float(c.get('dca_dip_pct', 3.0))
+                # 기존 보유 데이터 복원 (동일 티커가 이미 있으면)
+                if c['ticker'] in _existing:
+                    _old = _existing[c['ticker']]
+                    pos.shares       = _old.shares
+                    pos.floor_shares = _old.floor_shares
+                    pos.avg_price    = _old.avg_price
+                    pos.cash         = _old.cash
+                    pos.initial_cash = _old.initial_cash
+                    pos.second_buy_price = getattr(_old, 'second_buy_price', 0.0)
+                    pos.second_buy_cash  = getattr(_old, 'second_buy_cash',  0.0)
+                    pos.second_buy_done  = getattr(_old, 'second_buy_done',  False)
+                    pos.last_dca_time    = getattr(_old, 'last_dca_time',    0.0)
                 self.core_positions.append(pos)
                 user_tickers_seen.add(c['ticker'])
         # 빈 슬롯만 TBD 플레이스홀더로 채움
@@ -1083,11 +1099,12 @@ class KRBotController:
         self.core_name   = _u['name']   if _u else ""
 
         self._init_api(kis_config)
-        
+
         if telegram_config and telegram_config.get('token'):
             self.telegram = TelegramNotifier(token=telegram_config.get('token', '').strip(), chat_id=telegram_config.get('chat_id', '').strip())
         else: self.telegram = None
         self._init_dummy_cores()
+        self._save_state()   # 새 코어 설정 즉시 저장 → 재시작 후에도 유지
         self.add_log(f"🔑 [{self.mode_name}] API 키 및 계좌 설정이 시스템에 반영되었습니다.")
 
     def update_mode(self, is_mock, total_cash=10000000):
