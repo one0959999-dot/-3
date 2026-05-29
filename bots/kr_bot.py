@@ -2278,6 +2278,26 @@ class KRBotController:
                 ind_val = {"buy": buy_sc, "sell": sell_sc, "signals": sig_reasons}
                 if price <= 0: continue
 
+                # ── RSI 과매도 근접 오버라이드 ──────────────────────────────────
+                # 스크리너가 RSI 30 근처 종목을 선정했다면, RSI ≤ 33 + 신호 1개만으로 매수 허용
+                # (복합신호 2개 요구는 평상시 기준 — 극단적 과매도엔 임계치 완화)
+                if sig != 'BUY' and buy_sc >= 1 and not ex_df.empty and 'close' in ex_df.columns:
+                    try:
+                        _c = ex_df['close'].dropna()
+                        if len(_c) >= 11:
+                            _d = _c.diff()
+                            _g = _d.clip(lower=0).rolling(9).mean()
+                            _l = (-_d.clip(upper=0)).rolling(9).mean()
+                            _rsi_now = float((100 - 100 / (1 + _g / (_l + 1e-10))).iloc[-1])
+                            if _rsi_now <= 33:
+                                sig = 'BUY'
+                                sig_reasons.append(f"RSI과매도오버라이드(RSI={_rsi_now:.0f}≤33)")
+                                st_nm = f"RSI과매도({_rsi_now:.0f})+신호{buy_sc}개"
+                                self.add_log(f"🔥 [{ticker}] RSI={_rsi_now:.0f} 과매도 근접 — 복합신호 임계치 완화 BUY")
+                    except Exception:
+                        pass
+                # ────────────────────────────────────────────────────────────────
+
                 if ex_df.empty or not all(c in ex_df.columns for c in ['high', 'low', 'close']):
                     atr_14 = p_avg * 0.02
                 else:
