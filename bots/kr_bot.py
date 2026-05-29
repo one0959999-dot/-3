@@ -25,6 +25,7 @@ from strategy import CorePosition, Position, get_rsi_signal, get_composite_signa
 from stock_screener import select_satellites, generate_daily_market_report
 from hot_momentum_scanner import scan_hot_momentum, clear_expired_cache
 from upper_limit_pattern_scanner import collect_and_save_pattern, scan_pattern_matches
+from premarket_scanner import scan_premarket_candidates, check_morning_entry
 from database import update_bot_status, save_portfolio_state, load_portfolio_state, log_trade_journal, get_recent_trades, save_ai_rules, load_ai_rules, get_ai_rules_history, get_user_initial_cash, set_user_initial_cash, add_user_initial_cash, get_news_api_keys, get_sector_guide
 from news_monitor import NewsMonitor
 from kis_brokers.kis_real_api import KisRealApi
@@ -146,6 +147,8 @@ class KRBotController:
         self.momentum_budget_ratio = 0.10    # 원금의 10% (단일 슬롯)
         self._last_momentum_scan = 0.0       # 마지막 스캔 타임스탬프
         self._momentum_scan_interval = 60    # 1분마다 스캔
+        self._premarket_candidates: list = []       # 전날 선정된 사전 단타 후보
+        self._premarket_scan_date: str = ""         # 마지막 사전 스캔 날짜
 
         # ── 🧠 자가학습 트리거 ───────────────────────────────────────
         self._trades_since_reflection = 0        # 누적 거래 수 (10건마다 반성)
@@ -1806,6 +1809,30 @@ class KRBotController:
                     except Exception as e:
                         logger.warning(f"[{self.mode_name}] 급등패턴 수집 오류: {e}")
                 threading.Thread(target=_collect_pattern, daemon=True).start()
+
+                # ── 사전 단타 후보 선정 (다음날 09:00~09:15 선제 진입용) ──
+                def _scan_premarket():
+                    try:
+                        candidates = scan_premarket_candidates(kis=self.kis, top_n=10, verbose=False)
+                        self._premarket_candidates = candidates
+                        self._premarket_scan_date  = today_str
+                        if candidates:
+                            names = ', '.join(c['name'] for c in candidates[:5])
+                            self.add_log(f"🌙 [사전단타] 내일 후보 {len(candidates)}개 선정: {names} 등")
+                            self._send_telegram(
+                                f"🌙 <b>내일 단타 사전 후보 선정</b>\n"
+                                f"━━━━━━━━━━━━━━━━━━━━\n"
+                                + "\n".join(
+                                    f"• {c['name']}({c['ticker']}) {c['price']:,}원 | 점수 {c['score']:.0f}"
+                                    for c in candidates[:5]
+                                )
+                                + "\n🕘 내일 09:00~09:15 거래량 확인 후 진입", 'misc'
+                            )
+                        else:
+                            self.add_log("🌙 [사전단타] 조건 충족 후보 없음 — 내일 장중 실시간 스캔으로 대체")
+                    except Exception as e:
+                        logger.warning(f"[{self.mode_name}] 사전 단타 스캔 오류: {e}")
+                threading.Thread(target=_scan_premarket, daemon=True).start()
         
         if not is_golden_hours:
             with self.lock:
@@ -3151,6 +3178,113 @@ class KRBotController:
         if not empty_slots or regime == "BEAR":
             return
 
+        now_time_str = now.strftime('%H:%M')
+        _today       = now.strftime('%Y%m%d')
+
+        # ── B-1. 사전 선정 후보 선제 진입 (09:00~09:15) ─────────────────
+        # 전날 15:35에 박스권+거래량증가로 선정된 후보를 장 시작 직후 진입
+        if ("09:00" <= now_time_str <= "09:15"
+                and self._premarket_candidates
+                and self._premarket_scan_date == _today):
+
+            with self.lock:
+                held_pm = {mp['ticker'] for mp in self.momentum_positions if mp is not None}
+                held_pm |= {t for t, p in self.satellite_positions.items() if p.shares > 0}
+
+            try:
+                balance_pm   = self.kis.get_account_balance()
+                available_pm = float(balance_pm.get('total_cash', 0)) if balance_pm else 0
+            except Exception:
+                available_pm = 0
+
+            initial_cap_pm = get_user_initial_cash(self.user_id, self._is_mock)
+            budget_pm      = initial_cap_pm * self.momentum_budget_ratio
+
+            for slot_idx in empty_slots:
+                for cand in self._premarket_candidates:
+                    ct = cand['ticker']
+                    if ct in held_pm or self._is_momentum_blacklisted(ct):
+                        continue
+
+                    ok, entry_reason = check_morning_entry(cand, self.kis)
+                    if not ok:
+                        self.add_log(f"⏭️ [사전단타] {cand['name']}({ct}) 진입 불가: {entry_reason}")
+                        continue
+
+                    b_price = self.live_prices.get(ct) or self.kis.get_current_price(ct)
+                    if not b_price:
+                        continue
+
+                    if available_pm < budget_pm * 0.5:
+                        break
+
+                    qty = int((budget_pm * 0.98) // b_price)
+                    if qty <= 0:
+                        continue
+
+                    b_ticker = ct
+                    b_name   = cand['name']
+
+                    atr_val = b_price * 0.02
+                    try:
+                        df_m = self._get_cached_base_ohlcv(b_ticker)
+                        if not df_m.empty and all(c in df_m.columns for c in ['high', 'low', 'close']):
+                            tr = pd.concat([
+                                df_m['high'] - df_m['low'],
+                                (df_m['high'] - df_m['close'].shift(1)).abs(),
+                                (df_m['low']  - df_m['close'].shift(1)).abs(),
+                            ], axis=1).max(axis=1)
+                            atr_val = float(tr.rolling(14, min_periods=1).mean().iloc[-1])
+                    except Exception:
+                        pass
+
+                    if not self.kis.buy_market_order(b_ticker, qty):
+                        self.add_log(f"⚠️ 사전단타#{slot_idx+1} 매수 실패: {b_name}({b_ticker})")
+                        continue
+
+                    with self.lock:
+                        if self.internal_cash is not None:
+                            self.internal_cash = max(0.0, self.internal_cash - b_price * qty * 1.00015)
+                        self._last_trade_ts = time.time()
+                    available_pm = max(0.0, available_pm - b_price * qty)
+
+                    try:
+                        self.momentum_positions[slot_idx] = {
+                            'ticker': b_ticker, 'name': b_name, 'shares': qty,
+                            'avg_price': b_price, 'atr': atr_val, 'peak_price': b_price,
+                            'peak_volume': 0, 'enter_time': now,
+                            'score': cand['score'],
+                            'reason': f"사전단타 박스권돌파 | {entry_reason}",
+                            'slot_idx': slot_idx,
+                        }
+                    except Exception as dict_err:
+                        logger.error(f"[{self.mode_name}] 사전단타#{slot_idx+1} 포지션 저장 실패 → 즉시 청산: {dict_err}")
+                        self.kis.sell_market_order(b_ticker, qty)
+                        continue
+
+                    buy_note = f"[사전단타] 박스권 후보 | {entry_reason}"
+                    self._log_trade(b_ticker, b_name, 'BUY', b_price, "모멘텀슬롯", buy_note)
+                    self.add_log(f"🌅 사전단타#{slot_idx+1} 진입 | {b_name}({b_ticker}) {qty}주 @ {b_price:,.0f}원 | {entry_reason}")
+                    if self.claude:
+                        self.claude.record_trade_event(f"KR 사전단타 매수: {b_name}({b_ticker}) {qty}주 @ {b_price:,.0f}원 | {entry_reason}")
+                    self._send_trade_telegram(
+                        f"🌅 사전단타#{slot_idx+1} 진입!  ·  {self.alert_icon} {self.mode_name}\n"
+                        f"━━━━━━━━━━━━━━━━━━━━\n"
+                        f"📌 <b>{b_name}</b>  <code>{b_ticker}</code>\n"
+                        f"💰 <b>{b_price:,.0f}원</b> × <b>{qty}주</b> = <b>{b_price*qty:,.0f}원</b>\n"
+                        f"🎯 박스권 횡보 후 거래량 돌파 — 전날 선정 후보\n"
+                        f"📊 {entry_reason}\n"
+                        f"🛡️ 손절: ATR <b>{atr_val:,.0f}원</b>  ·  🎯 익절: <b>+10% 1차 / +20% 2차</b>\n"
+                        f"━━━━━━━━━━━━━━━━━━━━\n"
+                        f"⏰ {now.strftime('%H:%M KST')}"
+                    )
+                    held_pm.add(b_ticker)
+                    break  # 이 슬롯 완료
+
+            self._last_momentum_scan = time.time()
+            return  # 09:15 이전엔 사전 후보만 사용
+
+        # ── B-2. 장중 실시간 스캔 (09:15 이후, 기존 hot_momentum 방식) ──
         if time.time() - self._last_momentum_scan < self._momentum_scan_interval:
             return
         self._last_momentum_scan = time.time()
@@ -3200,7 +3334,6 @@ class KRBotController:
             balance = self.kis.get_account_balance()
             if not balance:
                 return
-            total_assets   = float(balance.get('total_cash', 0)) + float(balance.get('total_value', 0))
             available_cash = float(balance.get('total_cash', 0))
         except Exception:
             return
