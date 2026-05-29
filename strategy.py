@@ -190,7 +190,7 @@ def get_market_regime(kis_api) -> str:
         if len(c) < 65:
             return "NEUTRAL"
 
-        score, _, _ = _calc_regime_score(c)
+        score, rsi, _ = _calc_regime_score(c)
 
         adx, plus_di, minus_di = _calc_adx(df)
         up_streak = _get_up_streak(c)
@@ -204,11 +204,13 @@ def get_market_regime(kis_api) -> str:
             return "BEAR"
 
         if score >= 5:
-            # ── 과열 필터: BULL 점수 충족해도 추세 막바지면 NEUTRAL 강등 ──
-            if adx >= 40:
-                return "NEUTRAL"   # 추세 강도 과열 — 고점 매수 위험
+            # ── 과열 필터: BULL 점수 충족해도 진짜 과열이면 NEUTRAL 강등 ──
+            # ADX ≥ 40 조건 제거: ADX 40은 "강한 추세"를 의미하지 막바지가 아님 (Wilder 원 기준)
+            # 강한 상승장에서 ADX 40~60 유지는 정상 → BULL 유지
             if up_streak >= 8:
                 return "NEUTRAL"   # 8일 연속 상승 — 단기 과열
+            if rsi >= 80:
+                return "NEUTRAL"   # RSI 80 이상 — 극도 과열 (68~70은 정상 상승장)
             return "BULL"
 
         return "NEUTRAL"
@@ -271,12 +273,13 @@ def get_market_regime_detail(kis_api) -> dict:
             else:
                 result['regime'] = 'BEAR'
         elif score >= 5:
-            if adx >= 40:
-                result['regime']           = 'NEUTRAL'
-                result['downgrade_reason'] = f'BULL→NEUTRAL 강등: ADX {adx:.1f} ≥ 40 (추세 막바지 과열)'
-            elif up_streak >= 8:
+            # ADX ≥ 40 조건 제거: 강한 추세 = 막바지가 아님. RSI 80+ 또는 8일 연속 상승만 진짜 과열로 판단
+            if up_streak >= 8:
                 result['regime']           = 'NEUTRAL'
                 result['downgrade_reason'] = f'BULL→NEUTRAL 강등: {up_streak}일 연속 상승 (단기 과열, 조정 임박)'
+            elif rsi >= 80:
+                result['regime']           = 'NEUTRAL'
+                result['downgrade_reason'] = f'BULL→NEUTRAL 강등: RSI {rsi:.1f} ≥ 80 (극도 과열)'
             else:
                 result['regime'] = 'BULL'
         # else: NEUTRAL (기본값 유지)
