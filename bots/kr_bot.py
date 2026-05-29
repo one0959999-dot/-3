@@ -92,7 +92,6 @@ class KRBotController:
         self.core_positions = []
         self.satellite_positions = {}
         self.satellite_info = []
-        self.satellite_strategies = {}
         self.daily_pnl = {}
         self.last_screen_month = None
         self.last_screen_date = None
@@ -451,9 +450,8 @@ class KRBotController:
                                 new_sat = Position(t, stock_name, 0.0)
                                 new_sat.shares = q; new_sat.avg_price = p; new_sat.kis_current_price = c_p
                                 self.satellite_positions[t] = new_sat
-                                self.satellite_strategies[t] = 'RSI(9) 30/70'
                                 if not any(x['ticker'] == t for x in self.satellite_info):
-                                    self.satellite_info.append({'ticker': t, 'name': stock_name, 'strategy_name': 'RSI(9) 30/70', 'return_pct': 0.0, 'sector': '-'})
+                                    self.satellite_info.append({'ticker': t, 'name': stock_name, 'return_pct': 0.0, 'sector': '-'})
                             else:
                                 logger.warning(f"[{self.mode_name}] 위성 한도({self.num_satellites}) 초과 — '{stock_name}'({t}) 자동 편입 생략")
 
@@ -548,7 +546,6 @@ class KRBotController:
             if _t not in user_tickers and int(self.satellite_positions[_t].shares) == 0:
                 # 스크리너 선정 or 이전에 user가 지정했다가 제거한 종목 → positions에서 제거
                 self.satellite_positions.pop(_t, None)
-                self.satellite_strategies.pop(_t, None)
                 self.satellite_info = [c for c in self.satellite_info if c.get('ticker') != _t]
 
         if not self.user_satellite_stocks:
@@ -585,17 +582,13 @@ class KRBotController:
                         _vol_ratio = round(float(v_s.iloc[-1]) / avg20, 2) if avg20 > 0 else 1.0
             except Exception:
                 pass
-            entry = {'ticker': t, 'name': s['name'],
-                     'strategy_name': '사용자지정', 'return_pct': _ret, 'sector': '사용자지정'}
+            entry = {'ticker': t, 'name': s['name'], 'return_pct': _ret, 'sector': '사용자지정'}
             if _rsi is not None:
                 entry['rsi'] = _rsi
             if _vol_ratio is not None:
                 entry['vol_ratio'] = _vol_ratio
             pinned.append(entry)
         self.satellite_info = (pinned + filtered)[:self.num_satellites]
-        # satellite_strategies 동기화
-        for s in pinned:
-            self.satellite_strategies[s['ticker']] = '사용자지정'
 
     def _rebalance_ai_cores(self):
         """
@@ -1143,10 +1136,6 @@ class KRBotController:
             for c in rejected:
                 self.add_log(f"🛑 AI 위성 퇴출: {c['name']}({c['ticker']}) — {c.get('ai_reason','')}")
                 self._add_satellite_reject(c['ticker'], c.get('ai_reason', 'AI 부적합 판정'))
-            for c in approved:
-                old_st = candidates[[x['ticker'] for x in candidates].index(c['ticker'])].get('strategy_name','') if c['ticker'] in [x['ticker'] for x in candidates] else ''
-                if old_st and old_st != c.get('strategy_name', old_st):
-                    self.add_log(f"🔄 AI 전략 교체: {c['name']} [{old_st}] → [{c['strategy_name']}] | {c.get('ai_reason','')}")
             # ── 심사 결과 텔레그램 알림 ──
             if self.telegram:
                 approve_lines = "\n".join([f"  ✅ {c['name']}({c['ticker']})" for c in approved[:6]])
@@ -1189,10 +1178,9 @@ class KRBotController:
         self.satellite_info = filtered_info[:self.num_satellites]
         self._inject_user_satellites()  # 사용자 지정 종목 우선 고정
         from stock_screener import select_ai_core_stock
-        self.satellite_strategies = {c['ticker']: c['strategy_name'] for c in self.satellite_info}
-        log_lines = [f"  {i+1}. {c['name']} ({c['ticker']}) → [{c['strategy_name']}] {c['return_pct']:+.1f}%" for i, c in enumerate(self.satellite_info)]
+        log_lines = [f"  {i+1}. {c['name']} ({c['ticker']}) {c.get('momentum_20d', 0):+.1f}%" for i, c in enumerate(self.satellite_info)]
         for line in log_lines: self.add_log(f"✅ {line.strip()}")
-        log_html = "\n".join([f"  · {c['name']} <code>{c['ticker']}</code>  [{c['strategy_name']}]" for c in self.satellite_info])
+        log_html = "\n".join([f"  · {c['name']} <code>{c['ticker']}</code>" for c in self.satellite_info])
         self._send_telegram(
             f"🔍 <b>위성 종목 선정 완료{'(AI 검토 반영)' if self.claude else ''}</b>  ·  {self.alert_icon} {self.mode_name}\n"
             f"━━━━━━━━━━━━━━━━━━━━\n"
@@ -1270,7 +1258,7 @@ class KRBotController:
             state = {
                 "cores": [{"ticker": c.ticker, "name": c.name, "shares": int(c.shares), "floor_shares": int(c.floor_shares), "cash": float(c.cash), "initial_cash": float(c.initial_cash), "avg_price": float(c.avg_price), "dca_mode": bool(getattr(c, 'dca_mode', False)), "dca_amount": float(getattr(c, 'dca_amount', 0)), "dca_interval_hours": int(getattr(c, 'dca_interval_hours', 72)), "dca_dip_pct": float(getattr(c, 'dca_dip_pct', 3.0)), "last_dca_time": float(getattr(c, 'last_dca_time', 0.0)), "second_buy_price": float(getattr(c, 'second_buy_price', 0.0)), "second_buy_cash": float(getattr(c, 'second_buy_cash', 0.0)), "second_buy_done": bool(getattr(c, 'second_buy_done', False))} for c in self.core_positions],
                 "satellites": {ticker: {"name": pos.name, "shares": int(pos.shares), "cash": float(pos.cash), "initial_cash": float(pos.initial_cash), "avg_price": float(pos.avg_price), "partial_sold": bool(getattr(pos, 'partial_sold', False)), "partial_sold_2": bool(getattr(pos, 'partial_sold_2', False)), "second_buy_done": bool(getattr(pos, 'second_buy_done', False)), "pyramid_done": bool(getattr(pos, 'pyramid_done', False)), "second_buy_price": float(getattr(pos, 'second_buy_price', 0)), "second_buy_cash": float(getattr(pos, 'second_buy_cash', 0)), "max_price": float(getattr(pos, 'max_price', 0))} for ticker, pos in self.satellite_positions.items()},
-                "satellite_info": self.satellite_info, "satellite_strategies": self.satellite_strategies, "hot_sectors": self.hot_sectors, "num_satellites": self.num_satellites,
+                "satellite_info": self.satellite_info, "hot_sectors": self.hot_sectors, "num_satellites": self.num_satellites,
                 "last_screen_month": getattr(self, 'last_screen_month', None), "last_screen_date": self.last_screen_date.strftime('%Y-%m-%d') if getattr(self, 'last_screen_date', None) else None,
                 "last_core_rebalance_date": self.last_core_rebalance_date.strftime('%Y-%m-%d') if getattr(self, 'last_core_rebalance_date', None) else None,
                 "daily_pnl": self.daily_pnl, "daily_report": self.daily_report,
@@ -1326,16 +1314,13 @@ class KRBotController:
                 pos.max_price        = float(s.get("max_price",        0))  # W-04: 트레일링 스탑 기준가 복원
                 self.satellite_positions[ticker] = pos
 
-            # [BUG-FIX] satellite_info / satellite_strategies 도 비KR 티커 제거
+            # [BUG-FIX] satellite_info 비KR 티커 제거
             # + 사용자지정 or 보유 중인 종목만 복원 (스크리너 ghost 방지)
             _restored_sat_tickers = set(self.satellite_positions.keys())
             self.satellite_info = [c for c in state.get("satellite_info", [])
                                    if c.get('ticker','').isdigit() and len(c.get('ticker','')) == 6
                                    and (c.get('ticker') in _restored_sat_tickers
                                         or c.get('ticker') in _user_sat_tickers)]
-            self.satellite_strategies = {t: v for t, v in state.get("satellite_strategies", {}).items()
-                                         if t.isdigit() and len(t) == 6
-                                         and (t in _restored_sat_tickers or t in _user_sat_tickers)}
             self.hot_sectors = state.get("hot_sectors", [])
             self.num_satellites = state.get("num_satellites", 3)  # 저장된 값 복원
             self.last_screen_month = state.get("last_screen_month")
@@ -1380,7 +1365,6 @@ class KRBotController:
                 _t = _sat.get('ticker')
                 if _t and _t not in _existing_tickers and _t in _user_sat_tickers:
                     self.satellite_positions[_t] = Position(_t, _sat.get('name', _t), 0.0)
-                    self.satellite_strategies[_t] = _sat.get('strategy_name', 'RSI(9) 30/70')
                     _existing_tickers.add(_t)
 
             return True
@@ -1933,9 +1917,8 @@ class KRBotController:
                             sat.status = "보유 중 ✅"
                             sat.status_msg = f"{sat.shares}주 보유 중 | 평단 {sat.avg_price:,.0f}원 | 수익률 {_pnl:+.1f}% | {_regime_label}"
                         elif sat.cash > 0:
-                            _st = getattr(sat, 'strategy', self.satellite_strategies.get(sat.ticker, '-'))
                             sat.status = "감시 중 👀"
-                            sat.status_msg = f"전략 [{_st}] 신호 대기 | 예산 {sat.cash:,.0f}원 | 시장: {_regime_label}"
+                            sat.status_msg = f"신호 대기 | 예산 {sat.cash:,.0f}원 | 시장: {_regime_label}"
                         else:
                             sat.status = "감시 중 👀"
                             sat.status_msg = f"예산 소진 — 다음 종목 교체 대기 | 시장: {_regime_label}"
@@ -3809,7 +3792,6 @@ class KRBotController:
                     freed_cash += pos.cash
                     with self.lock:
                         if ticker in self.satellite_positions: del self.satellite_positions[ticker]
-                        if ticker in self.satellite_strategies: del self.satellite_strategies[ticker]
                     continue
                 time.sleep(0.2)
                 price = self.kis.get_current_price(ticker) if self.kis else 0
@@ -3878,7 +3860,6 @@ class KRBotController:
                         with self.lock:
                             freed_cash += pos.cash  # sell() 후 cash = 매도 대금 포함 전액
                             if t in self.satellite_positions: del self.satellite_positions[t]
-                            if t in self.satellite_strategies: del self.satellite_strategies[t]
                         if sell_qty > 0:
                             # [C-03] 누락된 거래 로그 및 손익 통계 추가
                             self._log_trade(t, pos.name, 'SELL', price_e, '위성초과정리',
@@ -3977,7 +3958,6 @@ class KRBotController:
                             self.satellite_positions[t].cash = alloc
                     for c in new_info:
                         self.satellite_positions[c['ticker']] = Position(c['ticker'], c['name'], alloc)
-                        self.satellite_strategies[c['ticker']] = c['strategy_name']
                 self.satellite_info = [c for c in self.satellite_info if c['ticker'] in keep_tickers] + new_info
                 self._inject_user_satellites()  # 사용자 지정 종목 우선 고정
 
@@ -4358,7 +4338,7 @@ class KRBotController:
             for ticker, pos in capped_items:
                 sp = _sat_price_cache.get(ticker) or float(getattr(pos, '_last_price', 0) or self.live_prices.get(ticker, 0) or getattr(pos, 'kis_current_price', 0) or pos.avg_price or 0)
                 sat_val = float(pos.shares) * sp
-                satellites.append({"name": pos.name, "ticker": ticker, "strategy": self.satellite_strategies.get(ticker, '-'), "shares": pos.shares, "price": sp, "value": sat_val, "avg_price": float(getattr(pos, 'avg_price', 0) or 0), "budget": float(getattr(pos, 'cash', 0) or 0), "status": getattr(pos, 'status', '감시 중 👀'), "status_msg": getattr(pos, 'status_msg', '지표 점검 중...')})
+                satellites.append({"name": pos.name, "ticker": ticker, "shares": pos.shares, "price": sp, "value": sat_val, "avg_price": float(getattr(pos, 'avg_price', 0) or 0), "budget": float(getattr(pos, 'cash', 0) or 0), "status": getattr(pos, 'status', '감시 중 👀'), "status_msg": getattr(pos, 'status_msg', '지표 점검 중...')})
 
             try:
                 current_initial_cash = get_user_initial_cash(self.user_id, self._is_mock)

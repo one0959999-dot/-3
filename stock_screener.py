@@ -999,8 +999,6 @@ def select_satellites(kis=None, n=NUM_SATELLITES, verbose=True, claude_client=No
             current_price = df['close'].iloc[-1]
             bb_discount = (bb_mid.iloc[-1] - current_price) / bb_mid.iloc[-1] * 100
 
-            best_strat, best_ret = find_best_strategy(df)
-
             vol_score = volume_surges.get(ticker, 1.0)
             # 섹터 보너스: 순위 기반 × 품질 보정
             # - 순위 보너스: 1위 +22, 2위 +18, 3위 +14, 4위 +10
@@ -1076,25 +1074,17 @@ def select_satellites(kis=None, n=NUM_SATELLITES, verbose=True, claude_client=No
             ai_up_prob = dl_predictor.predict_up_probability(df) if dl_predictor is not None else 50.0
             ml_factor_score = (ai_up_prob - 50.0) * 0.2
 
-            # ── 신호 준비도 점수 ───────────────────────────────────────────
-            # 선정된 전략 기준으로 현재 지표가 BUY 신호에 얼마나 가까운지 계산.
-            # 이미 크로스/RSI 통과한 종목은 패널티(다음 신호까지 대기 시간 ↑).
-            # 신호 임박 종목은 보너스 → 선정 후 실제 매수로 이어질 가능성 ↑.
-            signal_readiness = calc_signal_readiness(df, best_strat)
-
-            score = (best_ret
-                     + (vol_score - 1) * 6
+            score = ((vol_score - 1) * 6
                      + sector_bonus
                      + frgn_inst_bonus
                      + (bb_discount * 1.5)
-                     + momentum_boost          # 20일 모멘텀 부스트 (한달 20% 목표)
-                     + pos_52w_score           # 52주 위치 점수 (백테스트 분석 반영)
+                     + momentum_boost          # 20일 모멘텀 부스트
+                     + pos_52w_score           # 52주 위치 점수
                      - overheated_penalty
                      - stat_arb_penalty
                      + ml_factor_score
-                     + signal_readiness        # 신호 준비도 (임박 +20, 이미 통과 -8)
-                     + rsi_oversold_bonus      # RSI 30 근접 우선 선정 (전략 무관 공통)
-                     + macd_pullback_bonus)    # MACD 눌림목 우선 선정 (저점 진입 기회)
+                     + rsi_oversold_bonus      # RSI 과매도 근접 보너스
+                     + macd_pullback_bonus)    # MACD 눌림목 보너스
 
             # RSI(14) 현재값 계산 — AI 전략 검수 프롬프트에 활용
             try:
@@ -1129,21 +1119,19 @@ def select_satellites(kis=None, n=NUM_SATELLITES, verbose=True, claude_client=No
                 pass
 
             results.append({
-                'ticker':        ticker,
-                'name':          name,
-                'strategy_name': best_strat,
-                'return_pct':    float(round(best_ret, 2)),
-                'volume_surge':  float(round(vol_score, 2)),
-                'vol_ratio':     float(round(vol_score, 2)),   # review_satellite_candidates 프롬프트용 별칭
-                'rsi':           rsi_val,                      # review_satellite_candidates 프롬프트용
-                'sector':        ticker_to_sector.get(ticker, '-'),
-                'momentum_20d':  float(round(recent_ret, 2)),
-                'pos_52w':       float(round(pos_52w, 1)) if pos_52w is not None else None,  # 52주 위치
-                'dl_prob':          float(round(ai_up_prob, 1)),
-                'frgn_inst':        ticker in frgn_inst_tickers,
-                'frgn_only':        ticker in frgn_only_tickers,  # 161: 외국계 전용 순매수
-                'signal_readiness': float(round(signal_readiness, 1)),
-                'score':            float(round(score, 2)),
+                'ticker':       ticker,
+                'name':         name,
+                'return_pct':   0.0,
+                'volume_surge': float(round(vol_score, 2)),
+                'vol_ratio':    float(round(vol_score, 2)),
+                'rsi':          rsi_val,
+                'sector':       ticker_to_sector.get(ticker, '-'),
+                'momentum_20d': float(round(recent_ret, 2)),
+                'pos_52w':      float(round(pos_52w, 1)) if pos_52w is not None else None,
+                'dl_prob':      float(round(ai_up_prob, 1)),
+                'frgn_inst':    ticker in frgn_inst_tickers,
+                'frgn_only':    ticker in frgn_only_tickers,
+                'score':        float(round(score, 2)),
             })
             processed += 1
 
