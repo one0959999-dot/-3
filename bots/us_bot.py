@@ -223,6 +223,9 @@ class USBotController:
         self._bl_date           = ""
         self._satellite_rejects: dict = {}
 
+        # ── AI 채팅으로 동적 조정 가능한 파라미터 ────────────────────
+        self.entry_thresholds: dict = {}    # {'BULL': 4, 'NEUTRAL': 5, ...}
+
         # ── 가격 캐시 ─────────────────────────────────────────────────
         self._price_cache:   dict  = {}
         self._last_price_ts: float = 0.0
@@ -743,7 +746,7 @@ class USBotController:
                 else:
                     c_score, c_reasons = 0, []
 
-                c_threshold = get_entry_threshold(regime, 'core')
+                c_threshold = self.entry_thresholds.get(f'core_{regime}', self.entry_thresholds.get(regime, get_entry_threshold(regime, 'core')))
 
                 # ── BULL 국면 진입 완화 ─────────────────────────────────
                 # 조건 A: RSI ≤ 65 + bull_score ≥ 1
@@ -1312,7 +1315,7 @@ class USBotController:
             else:
                 entry_score, entry_reasons = 0, []
 
-            entry_threshold = get_entry_threshold(regime, 'satellite')
+            entry_threshold = self.entry_thresholds.get(f'sat_{regime}', self.entry_thresholds.get(regime, get_entry_threshold(regime, 'satellite')))
 
             # ── 진입 점수 게이트 (RSI 필수 아님 — 10개 지표 합산으로 판단) ──────────
             # composite_signal 게이트 제거 → entry_score >= threshold 면 AI 심사로 진행

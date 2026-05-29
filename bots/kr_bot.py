@@ -122,6 +122,11 @@ class KRBotController:
         # 클래스 상수 _MAX_DAILY_LOSS_PER_TICKER 는 하단 클래스 본문에 정의됨
         self._daily_loss_by_ticker  : dict = {}
 
+        # ── AI 채팅으로 동적 조정 가능한 파라미터 ──────────────────────
+        # entry_thresholds: 진입점수 기준 오버라이드 {regime: threshold}
+        #   설정 없으면 strategy.get_entry_threshold() 기본값 사용
+        self.entry_thresholds: dict = {}    # {'BULL': 4, 'NEUTRAL': 5, 'BEAR': 6}
+
         # 시장 국면 (BULL / BEAR / NEUTRAL)
         self.market_regime = "NEUTRAL"
         self.last_regime_check = 0.0
@@ -2222,7 +2227,7 @@ class KRBotController:
                 if c_sig == 'BUY' and c_cash >= cp and is_core_cd and not _dca_bought_this_turn:
                     # ① 통합 진입 점수 체크
                     c_score, c_score_reasons = calculate_entry_score(ex_df, cp, regime)
-                    c_threshold = get_entry_threshold(regime, 'core')
+                    c_threshold = self.entry_thresholds.get(f'core_{regime}', self.entry_thresholds.get(regime, get_entry_threshold(regime, 'core')))
                     if c_score < c_threshold:
                         with self.lock:
                             core.status = "감시 중 👀"
@@ -2328,7 +2333,7 @@ class KRBotController:
                 except Exception:
                     pass
                 entry_score, entry_reasons = calculate_entry_score(ex_df, price, regime, frgn_net=_frgn_net)
-                entry_threshold = get_entry_threshold(regime, 'satellite')
+                entry_threshold = self.entry_thresholds.get(f'sat_{regime}', self.entry_thresholds.get(regime, get_entry_threshold(regime, 'satellite')))
                 score_ratio = max(0.6, get_budget_ratio_from_score(entry_score, entry_threshold))
                 st_nm = f"진입점수({entry_score}/{entry_threshold}pt)"
                 # ────────────────────────────────────────────────────────────────

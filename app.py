@@ -760,6 +760,13 @@ def ai_chat():
             "(US면 market을 'US'로)\n"
             "③ 위성 종목 직접 지정: [BOT_COMMAND]{\"action\":\"update_satellite_stocks\",\"market\":\"KR\","
             "\"stocks\":[{\"ticker\":\"005930\",\"name\":\"삼성전자\"}]}[/BOT_COMMAND]\n"
+            "④ 봇 파라미터 변경: [BOT_COMMAND]{\"action\":\"update_bot_params\",\"market\":\"KR\","
+            "\"params\":{\"num_satellites\":5,\"entry_threshold_bull\":4,\"entry_threshold_neutral\":5,\"entry_threshold_bear\":6}}[/BOT_COMMAND]\n"
+            "   • num_satellites: 위성 슬롯 수 (1~10)\n"
+            "   • entry_threshold: 전 국면 공통 진입점수 기준\n"
+            "   • entry_threshold_bull/neutral/bear: 국면별 진입점수 기준 (기본: BULL=5, NEUTRAL=6, BEAR=7)\n"
+            "   사용자가 '기준 낮춰줘', '4점이면 매수해줘', '위성 5개로 늘려줘' 등을 요청하면 "
+            "즉시 update_bot_params 명령을 실행하세요.\n"
             "사용자가 '위성 종목 교체', '위성 재선정', '위성 바꿔줘' 등을 요청하면 조건을 묻지 말고 "
             "즉시 trigger_rescreen 명령을 실행하세요.\n"
         )
@@ -877,6 +884,50 @@ def ai_chat():
                     )
                 else:
                     applied_commands.append(f"⚠️ [{target}] 봇이 실행 중이지 않아 재스캔할 수 없습니다.")
+
+            elif cmd.get('action') == 'update_bot_params':
+                # AI가 봇 파라미터를 동적으로 변경 (진입점수 기준, 위성 슬롯 수 등)
+                # params 예: {"num_satellites": 5, "entry_threshold_bull": 4, "entry_threshold_neutral": 5}
+                target = cmd.get('market', 'KR').upper()
+                is_us = (target == 'US')
+                _is_mock_v = True if is_us else False
+                _b = manager.bots.get((current_user.id, _is_mock_v))
+                if _b:
+                    params = cmd.get('params', {})
+                    changed = []
+
+                    # 위성 슬롯 수
+                    if 'num_satellites' in params:
+                        _ns = int(params['num_satellites'])
+                        _ns = max(1, min(10, _ns))
+                        _b.num_satellites = _ns
+                        _b._save_state()
+                        changed.append(f"위성 슬롯 수: {_ns}개")
+
+                    # 진입점수 기준 오버라이드 — 키 형식: entry_threshold_{regime소문자}
+                    # 예: entry_threshold_bull=4 → entry_thresholds['BULL']=4
+                    regime_map = {'bull': 'BULL', 'neutral': 'NEUTRAL', 'bear': 'BEAR'}
+                    for k, v in params.items():
+                        if k.startswith('entry_threshold_'):
+                            suffix = k.replace('entry_threshold_', '')
+                            regime_key = regime_map.get(suffix)
+                            if regime_key:
+                                _b.entry_thresholds[regime_key] = int(v)
+                                changed.append(f"진입점수 기준 {regime_key}: {int(v)}pt")
+                        elif k == 'entry_threshold':   # 전 국면 공통 설정 단축키
+                            for rk in ('BULL', 'NEUTRAL', 'BEAR'):
+                                _b.entry_thresholds[rk] = int(v)
+                            changed.append(f"진입점수 기준 전 국면: {int(v)}pt")
+
+                    if changed:
+                        applied_commands.append(f"✅ [{target}] 파라미터 변경: {', '.join(changed)}")
+                        logging.getLogger('lassi_bot').info(
+                            f"[AI봇명령] user={current_user.id} {target} update_bot_params: {params}"
+                        )
+                    else:
+                        applied_commands.append(f"⚠️ [{target}] 변경할 파라미터가 없습니다.")
+                else:
+                    applied_commands.append(f"⚠️ [{target}] 봇이 활성화되어 있지 않습니다.")
 
             elif cmd.get('action') == 'update_satellite_stocks':
                 # AI가 위성 종목 교체 명령 — KR: [{"ticker":"005930","name":"삼성전자"}]
