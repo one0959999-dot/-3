@@ -1,9 +1,16 @@
 ﻿"""
-us_screener.py — 미국장 위성 종목 스크리너 (yfinance 기반)
-─────────────────────────────────────────────────────────
+us_screener.py — 미국장 위성 종목 스크리너 (yfinance 기반, KR 동등 수준)
+──────────────────────────────────────────────────────────────────────
 ① S&P 500 동적 유니버스 (Wikipedia, 일 1회 캐싱) + 기존 고성장 목록
-② 모멘텀(20일/60일) + 골든크로스 + 거래량 서지 + RSI 필터
-③ 종합 스코어 → AI에 전체 전달 → 최종 N개 선정
+② 섹터 ETF 모멘텀 (GICS 기반, 20d×0.7 + 5d×0.3 듀얼 모멘텀, 4시간 캐시)
+③ 모멘텀(20d/60d) + 골든크로스(SMA50>200) + 거래량 서지 + RSI
+④ 52주 위치 점수 (스윗스팟 40~80%)
+⑤ 백테스트 최적 전략 (walk-forward OOS 검증, 12가지 전략)
+⑥ 신호 준비도 (BUY 신호까지 거리 점수화)
+⑦ PyTorch LSTM 딥러닝 상승확률
+⑧ 과열 패널티 (20d +15% 초과 + 거래량 서지 없음)
+⑨ KIS 랭킹 보너스 (거래증가율·52주신고가·거래량·상승율 4종 교차)
+⑩ 종합 스코어 → AI 최종 심사 → N개 선정
 """
 
 import time
@@ -11,6 +18,7 @@ import datetime
 import logging
 import threading
 
+import numpy as np
 import yfinance as yf
 import pandas as pd
 
@@ -137,6 +145,276 @@ def _get_name(ticker: str) -> str:
     with _name_lock:
         _name_cache[ticker] = name
     return name
+
+
+# ══════════════════════════════════════════════════════════════════════
+# ── US 섹터 모멘텀 (KR get_sector_momentum 동등)
+# ══════════════════════════════════════════════════════════════════════
+
+# GICS 섹터명 + 커스텀 위성 섹터 → 대표 ETF 매핑
+_US_SECTOR_ETF_MAP: dict[str, list[str]] = {
+    "Information Technology":  ["XLK", "SOXX"],
+    "Health Care":             ["XLV", "IBB"],
+    "Financials":              ["XLF"],
+    "Consumer Discretionary":  ["XLY"],
+    "Communication Services":  ["XLC"],
+    "Industrials":             ["XLI"],
+    "Consumer Staples":        ["XLP"],
+    "Energy":                  ["XLE"],
+    "Utilities":               ["XLU"],
+    "Real Estate":             ["XLRE"],
+    "Materials":               ["XLB"],
+    # 커스텀 위성 섹터
+    "AI/반도체 신흥":           ["SOXX", "XLK"],
+    "우주/방산":                ["ITA"],
+    "핀테크/크립토":            ["XLF"],
+    "바이오 신흥":              ["IBB"],
+    "소비/성장":                ["XLY"],
+    "클라우드/SaaS":            ["XLK"],
+    "NASDAQ100":               ["QQQ"],
+    "기타":                    ["SPY"],
+}
+_us_sec_mom_cache: dict = {'data': {}, 'ts': 0.0}
+_us_sec_mom_lock  = threading.Lock()
+_US_SEC_MOM_TTL   = 4 * 3600  # 4시간 캐시
+
+
+def _get_us_sector_momentum() -> dict[str, float]:
+    """US 섹터 ETF 기반 듀얼 모멘텀 계산. 4시간 캐싱.
+    Returns: {sector_name: blended_momentum_pct}  (20d×0.7 + 5d×0.3)
+    """
+    now_ts = time.time()
+    with _us_sec_mom_lock:
+        if now_ts - _us_sec_mom_cache['ts'] < _US_SEC_MOM_TTL and _us_sec_mom_cache['data']:
+            return dict(_us_sec_mom_cache['data'])
+
+    unique_etfs = list({e for etfs in _US_SECTOR_ETF_MAP.values() for e in etfs})
+    try:
+        raw = yf.download(unique_etfs, period="30d", interval="1d",
+                          progress=False, auto_adjust=True)
+        if raw is None or raw.empty:
+            return {}
+        if isinstance(raw.columns, pd.MultiIndex):
+            lv0    = raw.columns.get_level_values(0).unique().tolist()
+            closes = raw["Close"] if "Close" in lv0 else raw.xs("Close", axis=1, level=1, drop_level=True)
+        else:
+            closes = raw[["Close"]].rename(columns={"Close": unique_etfs[0]})
+
+        etf_ret: dict[str, float] = {}
+        for etf in unique_etfs:
+            try:
+                if etf not in closes.columns:
+                    continue
+                c = closes[etf].dropna()
+                if len(c) < 6:
+                    continue
+                ret_20 = (float(c.iloc[-1]) / float(c.iloc[-min(21, len(c)-1)]) - 1) * 100
+                ret_5  = (float(c.iloc[-1]) / float(c.iloc[-min(6,  len(c)-1)]) - 1) * 100
+                etf_ret[etf] = ret_20 * 0.70 + ret_5 * 0.30
+            except Exception:
+                continue
+
+        sector_momentum: dict[str, float] = {}
+        for sector, etfs in _US_SECTOR_ETF_MAP.items():
+            vals = [etf_ret[e] for e in etfs if e in etf_ret]
+            if vals:
+                sector_momentum[sector] = round(sum(vals) / len(vals), 2)
+
+        with _us_sec_mom_lock:
+            _us_sec_mom_cache['data'] = sector_momentum
+            _us_sec_mom_cache['ts']   = time.time()
+
+        logger.info(f"[US스크리너] 섹터 모멘텀 로드: {len(sector_momentum)}개 섹터")
+        return sector_momentum
+    except Exception as e:
+        logger.warning(f"[US스크리너] 섹터 모멘텀 조회 실패: {e}")
+        return {}
+
+
+# ══════════════════════════════════════════════════════════════════════
+# ── 전략 백테스트 엔진 (KR find_best_strategy 동등)
+# ══════════════════════════════════════════════════════════════════════
+
+def _ema_us(s, n): return s.ewm(span=n, adjust=False).mean()
+def _sma_us(s, n): return s.rolling(n).mean()
+
+def _rsi_us(s, p=14):
+    d = s.diff()
+    g = d.clip(lower=0).rolling(p).mean()
+    l = (-d.clip(upper=0)).rolling(p).mean()
+    return 100 - 100 / (1 + g / (l + 1e-10))
+
+def _macd_us(s, f=12, sl=26, sig=9):
+    m = _ema_us(s, f) - _ema_us(s, sl)
+    return m, _ema_us(m, sig)
+
+def _bb_us(s, p=20, k=2):
+    mid = _sma_us(s, p); std = s.rolling(p).std()
+    return mid + k*std, mid, mid - k*std
+
+def _stoch_us(h, l, c, kp=21, dp=5):
+    lo = l.rolling(kp).min(); hi = h.rolling(kp).max()
+    k  = 100 * (c - lo) / (hi - lo + 1e-10)
+    return k, k.rolling(dp).mean()
+
+def _cci_us(h, l, c, p=20):
+    tp = (h + l + c) / 3; ma = _sma_us(tp, p)
+    md = tp.rolling(p).apply(lambda x: np.mean(np.abs(x - x.mean())), raw=True)
+    return (tp - ma) / (0.015 * md + 1e-10)
+
+def _williams_us(h, l, c, p=14):
+    return -100 * (h.rolling(p).max() - c) / (h.rolling(p).max() - l.rolling(p).min() + 1e-10)
+
+def _cross_sig_us(fast, slow):
+    s = pd.Series(0, index=fast.index)
+    s[fast > slow] = 1; s[fast < slow] = -1
+    t = s.diff().fillna(0)
+    out = pd.Series(0, index=s.index)
+    out[t > 0] = 1; out[t < 0] = -1
+    return out
+
+def _threshold_sig_us(ind, lo, hi):
+    s = pd.Series(0, index=ind.index)
+    s[ind < lo] = 1; s[ind > hi] = -1
+    prev = 0
+    for i in s.index:
+        if s[i] == prev:  s[i] = 0
+        elif s[i] != 0:   prev = s[i]
+    return s
+
+_STRATEGY_REGISTRY_US = {
+    "RSI(9) 30/70":      lambda c, h, l: _threshold_sig_us(_rsi_us(c, 9),  30, 70),
+    "RSI(14) 40/60":     lambda c, h, l: _threshold_sig_us(_rsi_us(c, 14), 40, 60),
+    "EMA 5/20 크로스":    lambda c, h, l: _cross_sig_us(_ema_us(c, 5),  _ema_us(c, 20)),
+    "EMA 3/10 크로스":    lambda c, h, l: _cross_sig_us(_ema_us(c, 3),  _ema_us(c, 10)),
+    "SMA 5/20 크로스":    lambda c, h, l: _cross_sig_us(_sma_us(c, 5),  _sma_us(c, 20)),
+    "SMA 3/10 크로스":    lambda c, h, l: _cross_sig_us(_sma_us(c, 3),  _sma_us(c, 10)),
+    "SMA 3/20 크로스":    lambda c, h, l: _cross_sig_us(_sma_us(c, 3),  _sma_us(c, 20)),
+    "MACD 크로스":        lambda c, h, l: _cross_sig_us(*_macd_us(c)),
+    "볼린저밴드 반전":     lambda c, h, l: _threshold_sig_us(c / _bb_us(c)[1], 0.97, 1.03),
+    "Stochastic 크로스":  lambda c, h, l: _cross_sig_us(*_stoch_us(h, l, c)),
+    "CCI ±100":           lambda c, h, l: _threshold_sig_us(_cci_us(h, l, c), -100, 100),
+    "Williams %R":        lambda c, h, l: _threshold_sig_us(_williams_us(h, l, c), -80, -20),
+}
+
+
+def _backtest_us(close: pd.Series, sig_series: pd.Series,
+                 initial: float = 100_000.0) -> float:
+    """US 종목 백테스트 — fractional shares, 수수료 0.05%."""
+    fee = 0.0005
+    cash, holding = float(initial), 0.0
+    for date in close.index:
+        price = float(close.loc[date])
+        sig   = int(sig_series.get(date, 0)) if isinstance(sig_series, pd.Series) else 0
+        if sig == 1 and holding == 0 and cash >= price * (1 + fee):
+            holding = cash / (price * (1 + fee))
+            cash    = 0.0
+        elif sig == -1 and holding > 0:
+            cash    += holding * price * (1 - fee)
+            holding  = 0.0
+    if holding > 0:
+        cash += holding * float(close.iloc[-1]) * (1 - fee)
+    return (cash - initial) / initial * 100
+
+
+def _find_best_strategy_us(close: pd.Series,
+                            high:  pd.Series,
+                            low:   pd.Series):
+    """Walk-forward OOS(마지막 30%) 검증으로 최적 전략 선정 (KR find_best_strategy 포팅)."""
+    if len(close) < 50:
+        return None, -9999.0
+    split    = max(20, int(len(close) * 0.70))
+    oos_close = close.iloc[split:]
+    best_name, best_ret = None, -9999.0
+    for name, fn in _STRATEGY_REGISTRY_US.items():
+        try:
+            full_sig = fn(close, high, low)
+            oos_sig  = full_sig.iloc[split:]
+            if (oos_sig == 1).sum() > 15:   # 과신호 전략 제외
+                continue
+            ret = _backtest_us(oos_close, oos_sig)
+            if ret > best_ret:
+                best_ret, best_name = ret, name
+        except Exception:
+            continue
+    # OOS 전부 -30% 이하 → 전체 기간 폴백
+    if best_ret < -30:
+        for name, fn in _STRATEGY_REGISTRY_US.items():
+            try:
+                sig = fn(close, high, low)
+                ret = _backtest_us(close, sig)
+                if ret > best_ret:
+                    best_ret, best_name = ret, name
+            except Exception:
+                continue
+    return best_name, best_ret
+
+
+def _signal_readiness_us(close: pd.Series, high: pd.Series,
+                          low: pd.Series, strategy_name: str) -> float:
+    """선정된 전략 기준 BUY 신호까지의 거리를 점수화 (KR calc_signal_readiness 포팅)."""
+    try:
+        if len(close) < 30:
+            return 0.0
+        if 'RSI' in strategy_name:
+            period    = 9  if 'RSI(9)'  in strategy_name else 14
+            threshold = 40 if '40/60'   in strategy_name else 30
+            rsi_s     = _rsi_us(close, period)
+            rsi_cur   = float(rsi_s.iloc[-1])
+            rsi_prev  = float(rsi_s.iloc[-2])
+            gap = rsi_cur - threshold
+            td  = rsi_cur < rsi_prev  # 하락 중 → 신호 임박 가능성↑
+            if   gap <= 5:  return 20.0
+            elif gap <= 15: return 14.0 if td else 10.0
+            elif gap <= 30: return  6.0 if td else  3.0
+            else:           return -8.0
+        elif '크로스' in strategy_name and strategy_name != 'MACD 크로스':
+            use_ema = strategy_name.startswith('EMA')
+            parts   = strategy_name.split()[1].split('/')
+            fp, sp  = int(parts[0]), int(parts[1])
+            fn      = _ema_us if use_ema else _sma_us
+            fast = fn(close, fp); slow = fn(close, sp)
+            f_cur, s_cur = float(fast.iloc[-1]), float(slow.iloc[-1])
+            f_prv, s_prv = float(fast.iloc[-2]), float(slow.iloc[-2])
+            if s_cur <= 0: return 0.0
+            gap_pct   = (s_cur - f_cur) / s_cur * 100
+            shrinking = (s_prv - f_prv) > (s_cur - f_cur)
+            if gap_pct > 0:
+                if   gap_pct <= 1.0: return 20.0
+                elif gap_pct <= 3.0: return 14.0 if shrinking else 10.0
+                elif gap_pct <= 6.0: return  6.0 if shrinking else  2.0
+                else:                return -5.0
+            else:
+                return -8.0
+        elif strategy_name == 'MACD 크로스':
+            ml, sl_   = _macd_us(close)
+            h_cur  = float((ml - sl_).iloc[-1])
+            h_prev = float((ml - sl_).iloc[-2])
+            if h_cur < 0:
+                s_ = h_cur > h_prev
+                if   h_cur > -50:  return 18.0 if s_ else  8.0
+                elif h_cur > -200: return  8.0 if s_ else  2.0
+                else:              return -5.0
+            else:
+                return -8.0
+        elif strategy_name == '볼린저밴드 반전':
+            _, bb_mid, bb_low = _bb_us(close)
+            p    = float(close.iloc[-1])
+            mid_ = float(bb_mid.iloc[-1])
+            low_ = float(bb_low.iloc[-1])
+            bb_1sig = mid_ - (mid_ - low_) * 0.5
+            if   p <= low_ * 1.02: return 20.0
+            elif p <= bb_1sig:     return 10.0
+            elif p <= mid_:        return  3.0
+            else:                  return -8.0
+    except Exception:
+        pass
+    return 0.0
+
+
+# ── DL 예측기 싱글턴 ──────────────────────────────────────────────────
+_dl_predictor_us = None
+_dl_lock_us      = threading.Lock()
 
 
 def _scan_universe(universe: dict, n: int, exclude: set, score_fn) -> list[dict]:
@@ -294,16 +572,261 @@ def scan_us_cores(n: int = 3, exclude: set = None) -> list[dict]:
     return _scan_universe(CORE_UNIVERSE, n, exclude or set(), _core_score)
 
 
-def scan_us_satellites(n: int = 5, exclude: set = None) -> list[dict]:
+def scan_us_satellites(n: int = 5, exclude: set = None, kis_api=None) -> list[dict]:
     """
-    미국 위성 종목 스캔 — S&P 500 동적 유니버스 + 고성장 목록에서 단기 폭발력 종목 선정.
-    제2의 엔비디아·테슬라·로켓랩 후보군.
+    US 위성 종목 멀티팩터 스크리닝 (KR select_satellites와 동등 수준).
 
-    Returns list of dicts:
-      ticker, name, sector, score, price, momentum_20d, rsi, golden, vol_ratio
+    ① S&P 500 동적 유니버스 (Wikipedia, 일 1회) + 고성장 목록
+    ② 섹터 ETF 모멘텀 보너스 (GICS 기반, 4시간 캐시)
+    ③ 모멘텀(20d/60d) + 골든크로스(SMA50>200) + 거래량 서지 + RSI
+    ④ 52주 위치 점수 (스윗스팟 40~80% → +5점)
+    ⑤ 백테스트 최적 전략 (walk-forward OOS 검증 → 수익률 반영)
+    ⑥ 신호 준비도 (BUY 신호까지 거리)
+    ⑦ PyTorch LSTM 딥러닝 상승확률
+    ⑧ 과열 패널티 (20d +15% 초과 + 거래량 서지 없으면 패널티)
+    ⑨ KIS 랭킹 보너스 (kis_api 제공 시 자동 통합)
+
+    Returns list of dicts (score 내림차순 전체):
+      ticker, name, sector, score, price, momentum_20d, momentum_60d,
+      rsi, golden, vol_ratio, sector_bonus, best_strategy, backtest_return,
+      signal_readiness, ai_up_prob, kis_bonus
     """
+    global _dl_predictor_us
+
+    exclude_set = (exclude or set()) | CORE_ETF_EXCLUDE
+
+    # ① 유니버스 로드
     universe = _get_dynamic_satellite_universe()
-    return _scan_universe(universe, n, exclude or set(), _satellite_score)
+    all_tickers: list[str] = []
+    ticker_sector: dict[str, str] = {}
+    for sector, tickers in universe.items():
+        for t in tickers:
+            if t not in exclude_set:
+                all_tickers.append(t)
+                ticker_sector[t] = sector
+    if not all_tickers:
+        return []
+
+    # ② 섹터 모멘텀 사전 로드 (4시간 캐시)
+    sector_momentum = _get_us_sector_momentum()
+    sorted_sectors  = sorted(sector_momentum.items(), key=lambda x: x[1], reverse=True)
+    sector_rank     = {sec: rank for rank, (sec, _) in enumerate(sorted_sectors)}
+    if sector_momentum:
+        top4 = [f"{s}({v:+.1f}%)" for s, v in sorted_sectors[:4]]
+        logger.info(f"[US스크리너] 강세섹터 TOP4: {', '.join(top4)}")
+
+    # ③ KIS 랭킹 보너스 수집 (선택)
+    kis_bonuses: dict[str, float] = {}
+    if kis_api is not None:
+        try:
+            kis_results = scan_us_satellites_kis(kis_api, n=50, exclude=exclude_set)
+            for item in kis_results:
+                kis_bonuses[item['ticker']] = item.get('score', 0.0)
+            logger.info(f"[US스크리너] KIS 랭킹 보너스: {len(kis_bonuses)}개 종목")
+        except Exception as e:
+            logger.warning(f"[US스크리너] KIS 랭킹 수집 실패: {e}")
+
+    # ④ DL 예측기 싱글턴 로드
+    try:
+        from dl_model import DeepLearningPredictor
+    except ImportError:
+        DeepLearningPredictor = None
+    if DeepLearningPredictor is not None and _dl_predictor_us is None:
+        with _dl_lock_us:
+            if _dl_predictor_us is None:
+                try:
+                    _dl_predictor_us = DeepLearningPredictor()
+                except Exception as e:
+                    logger.warning(f"[US스크리너] DL 예측기 초기화 실패: {e}")
+    dl_predictor = _dl_predictor_us
+
+    # ⑤ yfinance 배치 다운로드 (1년치 — 백테스트·52주 위치용)
+    logger.info(f"[US스크리너] 멀티팩터 스캔 시작: {len(all_tickers)}개 종목 다운로드...")
+    try:
+        raw = yf.download(all_tickers, period="1y", interval="1d",
+                          progress=False, auto_adjust=True)
+    except Exception as e:
+        logger.error(f"[US스크리너] 배치 다운로드 실패: {e}")
+        return []
+    if raw is None or raw.empty:
+        return []
+
+    try:
+        if isinstance(raw.columns, pd.MultiIndex):
+            lv0     = raw.columns.get_level_values(0).unique().tolist()
+            closes  = raw["Close"]  if "Close"  in lv0 else raw.xs("Close",  axis=1, level=1, drop_level=True)
+            volumes = raw["Volume"] if "Volume" in lv0 else raw.xs("Volume", axis=1, level=1, drop_level=True)
+            highs   = raw["High"]   if "High"   in lv0 else raw.xs("High",   axis=1, level=1, drop_level=True)
+            lows    = raw["Low"]    if "Low"    in lv0 else raw.xs("Low",    axis=1, level=1, drop_level=True)
+        else:
+            closes  = raw[["Close"]].rename(columns={"Close":  all_tickers[0]})
+            volumes = raw[["Volume"]].rename(columns={"Volume": all_tickers[0]})
+            highs   = raw[["High"]].rename(columns={"High":    all_tickers[0]})
+            lows    = raw[["Low"]].rename(columns={"Low":      all_tickers[0]})
+    except Exception as e:
+        logger.error(f"[US스크리너] 컬럼 파싱 실패: {e}")
+        return []
+
+    # ⑥ 종목별 멀티팩터 점수 계산
+    results: list[dict] = []
+    for ticker in all_tickers:
+        try:
+            if ticker not in closes.columns:
+                continue
+            close  = closes[ticker].dropna()
+            volume = volumes[ticker].dropna() if ticker in volumes.columns else pd.Series(dtype=float)
+            high   = highs[ticker].dropna()   if ticker in highs.columns  else close
+            low    = lows[ticker].dropna()    if ticker in lows.columns   else close
+
+            if len(close) < 60:
+                continue
+            price = float(close.iloc[-1])
+            if price <= 0:
+                continue
+
+            # ── 기본 지표 ──────────────────────────────────────────────
+            mom_20 = (price / float(close.iloc[-20]) - 1) * 100 if len(close) >= 20 else 0.0
+            mom_60 = (price / float(close.iloc[-60]) - 1) * 100 if len(close) >= 60 else 0.0
+            sma50  = float(close.rolling(50).mean().iloc[-1])  if len(close) >= 50  else price
+            sma200 = float(close.rolling(200).mean().iloc[-1]) if len(close) >= 200 else price
+            golden = price > sma50 > sma200 * 0.98
+            rsi    = float(_calc_rsi(close).iloc[-1]) if len(close) >= 20 else 50.0
+            if len(volume) >= 60:
+                vol_ratio = float(volume.iloc[-5:].mean()) / (float(volume.iloc[-60:-5].mean()) + 1)
+            else:
+                vol_ratio = 1.0
+
+            # 과매수(RSI>82) / 급락(20d<-8%) 제외
+            if rsi > 82 or mom_20 < -8:
+                continue
+
+            # ── 기본 위성 점수 ─────────────────────────────────────────
+            score = 0.0
+            score += min(40.0, max(0.0, mom_20 * 2.0))
+            if golden: score += 20.0
+            if   rsi <= 32:          score += 22.0
+            elif rsi <= 38:          score += 18.0
+            elif rsi <= 45:          score += 10.0
+            elif 45 < rsi <= 65:     score += 15.0
+            elif 65 < rsi <= 70:     score +=  8.0
+            score += min(15.0, (vol_ratio - 1) * 10.0)
+            if mom_60 > 0: score += min(10.0, mom_60 * 0.5)
+
+            # ── ④ 52주 위치 점수 ───────────────────────────────────────
+            pos_52w_score = 0.0
+            if len(close) >= 60:
+                n52  = min(252, len(close))
+                h_s  = high.reindex(close.index).dropna()
+                l_s  = low.reindex(close.index).dropna()
+                h52  = float(h_s.tail(n52).max()) if len(h_s) >= n52 else float(close.tail(n52).max())
+                l52  = float(l_s.tail(n52).min()) if len(l_s) >= n52 else float(close.tail(n52).min())
+                pos_52w = (price - l52) / (h52 - l52 + 1e-9) * 100
+                if   40 <= pos_52w <= 80: pos_52w_score =  5.0  # 스윗스팟
+                elif 15 <= pos_52w <  40: pos_52w_score =  3.0  # 저점 탈출 초기
+                elif pos_52w > 92:        pos_52w_score = -2.0  # 극단 과열 소패널티
+            score += pos_52w_score
+
+            # ── ⑤ 섹터 모멘텀 보너스 (가산점, 필수 아님) ────────────────
+            sec     = ticker_sector.get(ticker, "")
+            sec_ret = sector_momentum.get(sec, 0.0)
+            rank    = sector_rank.get(sec, len(sector_rank))
+            _base   = max(22 - rank * 4, 10)
+            if   sec_ret > 0:    _quality = 1.0
+            elif sec_ret > -5:   _quality = 0.6
+            else:                _quality = 0.3
+            sector_bonus = int(_base * _quality)
+            score += sector_bonus
+
+            # ── ⑥ 과열 패널티 ────────────────────────────────────────
+            overheated = 0.0
+            if mom_20 > 15 and vol_ratio < 2.0:
+                base_p    = (mom_20 - 15) * 1.5
+                discount  = 0.5 if sector_bonus >= 10 else 1.0
+                overheated = base_p * discount
+            if mom_20 > 30:
+                overheated += (mom_20 - 30) * 0.8
+            score -= overheated
+
+            # ── ⑦ 백테스트 최적 전략 ─────────────────────────────────
+            best_strat, best_ret_val = None, 0.0
+            if len(close) >= 50:
+                try:
+                    h_aligned = high.reindex(close.index).fillna(method='ffill')
+                    l_aligned = low.reindex(close.index).fillna(method='ffill')
+                    best_strat, best_ret_val = _find_best_strategy_us(close, h_aligned, l_aligned)
+                    score += min(20.0, max(-10.0, best_ret_val * 0.3))
+                except Exception:
+                    pass
+
+            # ── ⑧ 신호 준비도 ─────────────────────────────────────────
+            sig_ready = 0.0
+            if best_strat:
+                try:
+                    h_aligned = high.reindex(close.index).fillna(method='ffill')
+                    l_aligned = low.reindex(close.index).fillna(method='ffill')
+                    sig_ready = _signal_readiness_us(close, h_aligned, l_aligned, best_strat)
+                    score += sig_ready
+                except Exception:
+                    pass
+
+            # ── ⑨ 딥러닝 상승확률 ────────────────────────────────────
+            ai_up_prob = 50.0
+            if dl_predictor is not None:
+                try:
+                    dl_df = pd.DataFrame({
+                        'close':  close.values,
+                        'high':   high.reindex(close.index).values,
+                        'low':    low.reindex(close.index).values,
+                        'volume': volume.reindex(close.index).fillna(0).values,
+                    })
+                    ai_up_prob = dl_predictor.predict_up_probability(dl_df)
+                except Exception:
+                    ai_up_prob = 50.0
+            score += (ai_up_prob - 50.0) * 0.2
+
+            # ── ⑩ KIS 랭킹 보너스 ───────────────────────────────────
+            kis_bonus = min(30.0, kis_bonuses.get(ticker, 0.0) * 0.15)
+            score += kis_bonus
+
+            results.append({
+                "ticker":           ticker,
+                "name":             ticker,
+                "sector":           sec,
+                "score":            round(score, 1),
+                "price":            round(price, 2),
+                "momentum_20d":     round(mom_20, 2),
+                "momentum_60d":     round(mom_60, 2),
+                "rsi":              round(rsi, 1),
+                "golden":           golden,
+                "vol_ratio":        round(vol_ratio, 2),
+                "sector_bonus":     sector_bonus,
+                "best_strategy":    best_strat or "",
+                "backtest_return":  round(best_ret_val, 1),
+                "signal_readiness": round(sig_ready, 1),
+                "ai_up_prob":       round(ai_up_prob, 1),
+                "kis_bonus":        round(kis_bonus, 1),
+            })
+        except Exception as e:
+            logger.debug(f"[US스크리너] {ticker} 처리 실패: {e}")
+            continue
+
+    results.sort(key=lambda x: x["score"], reverse=True)
+
+    # 종목명 조회 (전체 — AI가 모두 볼 수 있도록)
+    for r in results:
+        r["name"] = _get_name(r["ticker"])
+        time.sleep(0.05)
+
+    logger.info(f"[US스크리너] 멀티팩터 스캔 완료: {len(results)}개 통과")
+    for r in results[:n]:
+        logger.info(
+            f"  {r['ticker']:6s}  {r['sector']:22s}  스코어:{r['score']:6.1f}"
+            f"  RSI:{r['rsi']:4.1f}  20d:{r['momentum_20d']:+5.1f}%"
+            f"  {'🟡골든' if r['golden'] else '      '}"
+            f"  {r['best_strategy']:<14}  DL:{r['ai_up_prob']:.0f}%"
+            f"  KIS:{r['kis_bonus']:.0f}pt"
+        )
+    return results
 
 
 # ── KIS 기반 스크리너 ─────────────────────────────────────────────────
