@@ -445,16 +445,20 @@ class USBotController:
         return self._price_cache.get(ticker, 0.0)
 
     # ─────────────────────────────────────────────────────────────────
-    # OHLCV 캐시 — KR봇 _get_cached_base_ohlcv 동일 패턴
+    # OHLCV 캐시 — 인터벌별 TTL 분리
+    #   일봉(1d): 1시간 캐시 — 종가는 장 마감 후 확정, 장중 변화 없음
+    #   5분봉(5m): 5분 캐시  — 장중 실시간 흐름 반영
     # ─────────────────────────────────────────────────────────────────
-    _ohlcv_cache: dict = {}   # {ticker: (ts, df)}
-    _OHLCV_TTL = 3600         # 1시간 캐시 (일봉 데이터는 장중 변하지 않음)
+    _ohlcv_cache_1d: dict = {}   # {ticker: (ts, df)}
+    _ohlcv_cache_5m: dict = {}   # {ticker: (ts, df)}
+    _OHLCV_TTL_1D = 3600         # 일봉 1시간 캐시
+    _OHLCV_TTL_5M = 300          # 5분봉 5분 캐시
 
     def _get_cached_ohlcv(self, ticker: str, period: str = "60d") -> "pd.DataFrame":
-        """yfinance OHLCV 1시간 캐시. 매 루프마다 다운로드하지 않음."""
+        """일봉(1d) OHLCV — 추세/MA/RSI/ATR/MACD 계산용. 1시간 캐시."""
         import yfinance as yf
-        cached = self._ohlcv_cache.get(ticker)
-        if cached and time.time() - cached[0] < self._OHLCV_TTL:
+        cached = self._ohlcv_cache_1d.get(ticker)
+        if cached and time.time() - cached[0] < self._OHLCV_TTL_1D:
             return cached[1]
         try:
             df = yf.download(ticker, period=period, interval="1d",
@@ -463,7 +467,25 @@ class USBotController:
                 df.columns = df.columns.get_level_values(0)
             df = df.dropna(subset=["Close"])
             df.columns = [c.lower() for c in df.columns]
-            self._ohlcv_cache[ticker] = (time.time(), df)
+            self._ohlcv_cache_1d[ticker] = (time.time(), df)
+            return df
+        except Exception:
+            return pd.DataFrame()
+
+    def _get_cached_ohlcv_5m(self, ticker: str, period: str = "5d") -> "pd.DataFrame":
+        """5분봉 OHLCV — 장중 진입 타이밍/모멘텀/거래량 서지 확인용. 5분 캐시."""
+        import yfinance as yf
+        cached = self._ohlcv_cache_5m.get(ticker)
+        if cached and time.time() - cached[0] < self._OHLCV_TTL_5M:
+            return cached[1]
+        try:
+            df = yf.download(ticker, period=period, interval="5m",
+                             progress=False, auto_adjust=True)
+            if hasattr(df.columns, "get_level_values"):
+                df.columns = df.columns.get_level_values(0)
+            df = df.dropna(subset=["Close"])
+            df.columns = [c.lower() for c in df.columns]
+            self._ohlcv_cache_5m[ticker] = (time.time(), df)
             return df
         except Exception:
             return pd.DataFrame()
@@ -1404,13 +1426,27 @@ class USBotController:
             if price <= 0 or self.cash_usd < sat_budget_per * 0.3:
                 continue
 
-            # OHLCV 조회 (캐시 1시간)
+            # 일봉 OHLCV (추세/MA/RSI/ATR, 1시간 캐시)
             df_raw = self._get_cached_ohlcv(ticker, period="120d")
             if df_raw.empty:
                 df_raw = None
 
+            # 5분봉 OHLCV (장중 모멘텀/거래량 서지, 5분 캐시)
+            df_5m = self._get_cached_ohlcv_5m(ticker, period="2d")
+            # 5분봉으로 장중 거래량 서지 확인 → momentum_20d 보정
+            _intraday_vol_surge = False
+            if not df_5m.empty and 'volume' in df_5m.columns and len(df_5m) >= 12:
+                _v5m = df_5m['volume'].dropna()
+                _recent_vol = float(_v5m.iloc[-3:].mean())   # 최근 15분 평균
+                _base_vol   = float(_v5m.iloc[-78:-3].mean()) if len(_v5m) > 78 else float(_v5m.mean())
+                if _base_vol > 0 and _recent_vol >= _base_vol * 1.5:
+                    _intraday_vol_surge = True
+
             # ── 통합 진입 점수 체크 ────────────────────────────────
             momentum_20d = info.get("momentum_20d", 0.0)
+            # 5분봉 거래량 서지 시 모멘텀 점수 보정 (진입 우선도 상승)
+            if _intraday_vol_surge:
+                momentum_20d = max(momentum_20d, 4.0)
             if df_raw is not None and not df_raw.empty:
                 entry_score, entry_reasons = calculate_entry_score(
                     df_raw, price, regime, momentum_20d=momentum_20d
@@ -2293,20 +2329,15 @@ class USBotController:
         """최근 5개 5분봉 종가 기울기가 양수(상승 추세)이면 True.
         BULL 국면에서는 항상 True 반환 (상승 중 진입 기회 놓치지 않기 위해).
         데이터 조회 실패 시에도 True 반환 (차단하지 않음).
+        5분봉 캐시(5분 TTL) 활용 — 매 호출마다 다운로드 방지.
         """
         if self.market_regime == "BULL":
             return True
         try:
-            import yfinance as yf
-            df = yf.download(ticker, period="1d", interval="5m",
-                             progress=False, auto_adjust=True)
-            if hasattr(df.columns, "get_level_values"):
-                df.columns = df.columns.get_level_values(0)
-            df = df.dropna(subset=["Close"])
-            if len(df) < 3:
+            df = self._get_cached_ohlcv_5m(ticker, period="1d")
+            if df.empty or len(df) < 3:
                 return True
-            closes = df["Close"].iloc[-5:].tolist()
-            # 마지막 종가가 첫 종가 이상이면 상승 추세
+            closes = df["close"].iloc[-5:].tolist()
             return float(closes[-1]) >= float(closes[0])
         except Exception:
             return True
