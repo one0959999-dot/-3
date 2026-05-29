@@ -943,6 +943,36 @@ REASON: (핵심 근거 1~2줄)"""
             logging.getLogger('lassi_bot').warning(f"[ClaudeAPI] ai_swing_trade_check 오류: {e}")
             return 'EXIT'
 
+    def ai_approve_split_buy(self, ticker: str, name: str,
+                             price: float, avg: float, split_no: int,
+                             regime: str, news: str = "") -> bool:
+        """
+        2차/3차 분할매수 경량 AI 체크.
+        사전에 1차 매수 시 승인된 종목이므로 기본 CONFIRM.
+        시장 급변(섹터 붕괴, 주요 악재)이 없으면 자동 진행.
+        Returns: True(진행) / False(중단)
+        """
+        if not self.client:
+            return True
+        pnl = (price / avg - 1) * 100 if avg > 0 else 0
+        news_sec = f"\n최신 뉴스: {news[:150]}" if news.strip() else ""
+        prompt = f"""[{split_no}차 분할매수 속행 여부 — 빠른 판단]
+종목: {name}({ticker}) | 현재 {pnl:+.1f}% | 시장: {regime}{news_sec}
+
+이미 1차 매수 승인된 종목으로, 예약된 분할매수입니다.
+다음 중 하나에 해당하면 ABORT, 그 외는 PROCEED:
+- 해당 종목/섹터에 심각한 악재 발생
+- 시장 국면이 BEAR로 전환되며 전체 하락 가속
+- 연속 손실 패턴 확인
+
+DECISION: PROCEED 또는 ABORT
+REASON: (1줄)"""
+        try:
+            res = self.generate_content(prompt, temperature=0.1, model=self._FAST_MODEL)
+            return "ABORT" not in res.upper()
+        except Exception:
+            return True  # 오류 시 진행
+
     def record_trade_event(self, event: str) -> None:
         """매매 결정을 대화 히스토리에 기록 — 채팅 AI가 매매 맥락을 기억하도록.
         매수/매도/거절/손절 등 주요 이벤트 발생 시 호출.

@@ -1260,9 +1260,11 @@ class USBotController:
         if getattr(pos, 'ai_exit_pending', False):
             return
         asked = getattr(pos, 'ai_exit_asked_price', 0.0)
-        # HOLD 상태일 때: 새 고점(+1%) 도달 전까지 재요청 안 함
+        # HOLD 후 재요청 조건: +1% 상승 OR -2% 하락 (가격 반납 감지)
         if getattr(pos, 'ai_exit_decision', None) == "HOLD" and asked > 0:
-            if price < asked * 1.01:
+            risen  = price >= asked * 1.01
+            fallen = price <= asked * 0.98
+            if not risen and not fallen:
                 return
         pos.ai_exit_pending     = True
         pos.ai_exit_asked_price = price  # 현재 문의 가격 기록
@@ -1733,19 +1735,26 @@ class USBotController:
                     and getattr(pos, 'second_buy_price', 0) > 0
                     and price <= pos.second_buy_price
                     and getattr(pos, 'second_buy_cash', 0) >= price):
-                sq2 = self._buy(ticker, pos.name, pos.second_buy_cash, price)
-                if sq2 > 0:
-                    with self.lock:
-                        new_sh2 = pos.shares + sq2
-                        pos.avg_price_usd  = (pos.avg_price_usd * pos.shares + price * sq2) / new_sh2
-                        pos.shares         = new_sh2
-                        pos.floor_shares   = max(pos.floor_shares, pos.shares * 0.5)
-                        pos.second_buy_done= True
-                        pos.second_buy_cash= 0.0
-                        pos.last_order_time= time.time()
-                        pos.status         = "2차 매수 ✅"
-                    self.add_log(f"🛰️ 위성 2차매수 {pos.name}({ticker}) {sq2}주 @ ${price:.2f} | -2% 눌림목")
-                    self._tg(f"🛰️ [US 위성 2차매수] {pos.name}\n@ ${price:.2f}  눌림목 -2% 포착")
+                _s2_ok = self.claude.ai_approve_split_buy(
+                    ticker, pos.name, price, pos.avg_price_usd, 2,
+                    self.market_regime, self._fetch_us_news([ticker])
+                ) if self.claude else True
+                if _s2_ok:
+                    sq2 = self._buy(ticker, pos.name, pos.second_buy_cash, price)
+                    if sq2 > 0:
+                        with self.lock:
+                            new_sh2 = pos.shares + sq2
+                            pos.avg_price_usd  = (pos.avg_price_usd * pos.shares + price * sq2) / new_sh2
+                            pos.shares         = new_sh2
+                            pos.floor_shares   = max(pos.floor_shares, pos.shares * 0.5)
+                            pos.second_buy_done= True
+                            pos.second_buy_cash= 0.0
+                            pos.last_order_time= time.time()
+                            pos.status         = "2차 매수 ✅"
+                        self.add_log(f"🛰️ 위성 2차매수 {pos.name}({ticker}) {sq2}주 @ ${price:.2f} | -2% 눌림목")
+                        self._tg(f"🛰️ [US 위성 2차매수] {pos.name}\n@ ${price:.2f}  눌림목 -2% 포착")
+                else:
+                    self.add_log(f"🛑 2차 분할매수 AI 중단: {pos.name}({ticker}) — 시장 악화")
 
             # 3차 분할 매수: 진입가 -4% 눌림목
             elif (is_cd_sat
@@ -1754,6 +1763,13 @@ class USBotController:
                     and getattr(pos, 'third_buy_price', 0) > 0
                     and price <= pos.third_buy_price
                     and getattr(pos, 'third_buy_cash', 0) >= price):
+                _s3_ok = self.claude.ai_approve_split_buy(
+                    ticker, pos.name, price, pos.avg_price_usd, 3,
+                    self.market_regime, self._fetch_us_news([ticker])
+                ) if self.claude else True
+                if not _s3_ok:
+                    self.add_log(f"🛑 3차 분할매수 AI 중단: {pos.name}({ticker}) — 시장 악화")
+                    continue  # elif 블록 넘어가기 위해 continue 대신 아래 sq3 실행 방지용
                 sq3 = self._buy(ticker, pos.name, pos.third_buy_cash, price)
                 if sq3 > 0:
                     with self.lock:
@@ -2002,13 +2018,14 @@ class USBotController:
 
     def _check_swing_rebuy_queue(self):
         """스윙 재진입 큐 모니터링 — RSI≤35 or 추가 -5% 도달 시 AI 승인 후 재매수."""
-        _ET_CLOSE = _now_et().replace(hour=16, minute=0, second=0, microsecond=0)
+        _QUEUE_TTL = 3 * 86400   # 3 거래일 유효 (장 마감에도 만료 안 됨)
         now_et = _now_et()
         expired = []
 
         for ticker, rebuy in list(self._swing_rebuy_queue.items()):
-            # 장 종료 시 만료
-            if now_et >= _ET_CLOSE:
+            # 3일 초과 시 만료
+            if time.time() - rebuy.get('ts', 0) > _QUEUE_TTL:
+                self.add_log(f"⏰ [스윙큐 만료] {rebuy.get('name', ticker)} — 3일 미실현")
                 expired.append(ticker)
                 continue
 

@@ -2306,27 +2306,39 @@ class KRBotController:
                     if _stop_skip_c:
                         continue
                     core.stop_news_checked = False
+                    _core_atr_reason = f"코어 ATR×{core_hard_mult} 손절"
+                    _swing_core = self._ai_swing_check_kr(core, c_tk, cp, _core_atr_reason)
+                    if _swing_core == 'ACCUMULATE':
+                        acc_c = getattr(core, 'swing_acc_count', 0)
+                        _acc_cash_c = core.cash * 0.30
+                        _acc_qty_c  = int((_acc_cash_c * 0.98) // cp)
+                        if _acc_qty_c > 0 and self._buy_order(c_tk, _acc_qty_c, core, c_nm):
+                            with self.lock:
+                                new_sh = core.shares + _acc_qty_c
+                                if new_sh > 0: core.avg_price = round((core.avg_price * core.shares + cp * _acc_qty_c) / new_sh, 2)
+                                core.shares = new_sh; core.swing_acc_count = acc_c + 1; core.status = f"코어 스윙 누적 {acc_c+1}차 📥"
+                            self.add_log(f"📥 [스윙 KR코어] {c_nm}({c_tk}) ACCUMULATE {acc_c+1}차 | {_acc_qty_c}주 @ {cp:,.0f}원")
+                        continue
+                    if _swing_core == 'SELL_REBUY':
+                        self.add_log(f"🔄 [스윙 KR코어] {c_nm}({c_tk}) SELL_REBUY — 손절 후 재진입 모니터링")
                     if self._sell_order(c_tk, c_sh, core, c_nm):
                         core_profit = _net_profit(cp, c_avg, c_sh)
                         with self.lock:
-                            core.last_order_time = time.time()
-                            core.status           = "코어 손절 🚨"
-                            core.shares           = 0
-                            core._bought_val      = 0.0
-                            core.partial_sold     = False
-                            core.partial_sold_2   = False
-                            core.second_buy_price = 0.0
-                            core.second_buy_cash  = 0.0
-                            core.second_buy_done  = False
-                            core.bull_pyramid_done= False
+                            core.last_order_time  = time.time()
+                            core.status           = "코어 손절 🚨" if _swing_core == 'EXIT' else "코어 스윙매도 🔄"
+                            core.shares           = 0; core._bought_val = 0.0
+                            core.partial_sold     = False; core.partial_sold_2 = False
+                            core.second_buy_price = 0.0; core.second_buy_cash = 0.0
+                            core.second_buy_done  = False; core.bull_pyramid_done = False
+                            core.swing_acc_count  = 0
                             self.pnl_this_turn   += core_profit
                         self._record_daily_pnl(core_profit)
-                        self.add_log(f"🚨 {c_nm} 코어 ATR 손절 전량 | {c_sh}주 @ {cp:,}원 | 손익: {core_profit:+,.0f}원")
+                        self.add_log(f"🚨 {c_nm} 코어 ATR 손절 [{_swing_core}] | {c_sh}주 @ {cp:,}원 | 손익: {core_profit:+,.0f}원")
                         if self.claude:
-                            self.claude.record_trade_event(f"KR 코어 ATR 손절: {c_nm}({c_tk}) {c_sh}주 @ {cp:,}원 | 손익: {core_profit:+,.0f}원")
-                        self._log_trade(c_tk, c_nm, 'SELL', cp, "코어 ATR 손절", f"평단 {c_avg:,.0f} 대비 ATR×{core_hard_mult} 이탈", profit=core_profit)
-                        self._send_trade_telegram(self._fmt_trade_msg("🚨", "코어 손절 전량", c_tk, c_nm, cp, c_sh, profit=core_profit, strategy="코어 ATR 손절", note=f"재진입 대기 — 더 좋은 타점 탐색 중"))
-                    continue  # 손절 후 이번 턴 추가 로직 스킵
+                            self.claude.record_trade_event(f"KR 코어 ATR 손절 [{_swing_core}]: {c_nm}({c_tk}) {c_sh}주 @ {cp:,}원 | 손익: {core_profit:+,.0f}원")
+                        self._log_trade(c_tk, c_nm, 'SELL', cp, "코어 ATR 손절", f"평단 {c_avg:,.0f} ATR×{core_hard_mult} [{_swing_core}]", profit=core_profit)
+                        self._send_trade_telegram(self._fmt_trade_msg("🚨", f"코어 손절 [{_swing_core}]", c_tk, c_nm, cp, c_sh, profit=core_profit, strategy="코어 ATR 손절"))
+                    continue
 
                 # ── 코어 부분 익절 (AI 판단) ─────────────────────────────
                 if c_sh > 0 and c_avg > 0 and is_core_cd:
@@ -2631,16 +2643,31 @@ class KRBotController:
                     if price > p_max:
                         with self.lock: pos.max_price = price; p_max = price
                     if p_max >= p_avg + (trail_trigger * atr_14) and price <= p_max - (trail_mult * atr_14):
+                        _trail_reason = "ATR 트레일링 익절"
+                        _swing = self._ai_swing_check_kr(pos, ticker, price, _trail_reason)
+                        if _swing == 'ACCUMULATE':
+                            acc_c = getattr(pos, 'swing_acc_count', 0)
+                            _acc_cash = pos.cash * 0.30
+                            _acc_qty  = int((_acc_cash * 0.98) // price)
+                            if _acc_qty > 0 and self._buy_order(ticker, _acc_qty, pos, p_nm):
+                                with self.lock:
+                                    new_sh = pos.shares + _acc_qty
+                                    if new_sh > 0: pos.avg_price = round((pos.avg_price * pos.shares + price * _acc_qty) / new_sh, 2)
+                                    pos.shares = new_sh; pos.swing_acc_count = acc_c + 1
+                                    pos.status = f"스윙 누적 {acc_c+1}차 📥"
+                                self.add_log(f"📥 [스윙 KR위성] {p_nm}({ticker}) ACCUMULATE {acc_c+1}차 | {_acc_qty}주 @ {price:,.0f}원")
+                            continue
+                        if _swing == 'SELL_REBUY':
+                            self.add_log(f"🔄 [스윙 KR위성] {p_nm}({ticker}) SELL_REBUY — 트레일링 매도 후 재진입 모니터링")
                         if self._sell_order(ticker, p_sh, pos, p_nm):
                             with self.lock:
                                 pos.last_order_time = time.time(); pos.max_price = 0; pos.status = "체결 대기 ⏳"
-                                pos.shares = 0  # [BUG-C1] 트레일링 익절 전량 매도 후 잔여주수 초기화
+                                pos.shares = 0; pos.swing_acc_count = 0
                             profit = _net_profit(price, p_avg, p_sh)
-                            self._log_trade(ticker, p_nm, 'SELL', price, st_nm, "ATR 트레일링 익절", profit=profit)
-                            self._send_trade_telegram(self._fmt_trade_msg("🎯", "트레일링 익절", ticker, p_nm, price, p_sh, profit=profit, strategy=st_nm, note="ATR 트레일링 스탑 발동"))
+                            self._log_trade(ticker, p_nm, 'SELL', price, st_nm, f"{_trail_reason} [{_swing}]", profit=profit)
+                            self._send_trade_telegram(self._fmt_trade_msg("🎯", "트레일링 익절", ticker, p_nm, price, p_sh, profit=profit, strategy=st_nm, note=f"ATR 트레일링 [{_swing}]"))
                             with self.lock:
                                 self.pnl_this_turn += profit
-                                # [W-NEW-03] 트레일링 익절 수익도 코어 재투자 적용
                                 if profit > 0 and self.core_positions:
                                     reinvest_trail = profit * REINVEST_RATIO
                                     for core in self.core_positions:
@@ -2685,18 +2712,33 @@ class KRBotController:
                         if _stop_skip_kr:
                             continue
                         pos.stop_news_checked = False
+                        _atr_reason_kr = "ATR 하드 손절"
+                        _swing_kr = self._ai_swing_check_kr(pos, ticker, price, _atr_reason_kr)
+                        if _swing_kr == 'ACCUMULATE':
+                            acc_c = getattr(pos, 'swing_acc_count', 0)
+                            _acc_cash = pos.cash * 0.30
+                            _acc_qty  = int((_acc_cash * 0.98) // price)
+                            if _acc_qty > 0 and self._buy_order(ticker, _acc_qty, pos, p_nm):
+                                with self.lock:
+                                    new_sh = pos.shares + _acc_qty
+                                    if new_sh > 0: pos.avg_price = round((pos.avg_price * pos.shares + price * _acc_qty) / new_sh, 2)
+                                    pos.shares = new_sh; pos.swing_acc_count = acc_c + 1; pos.status = f"스윙 누적 {acc_c+1}차 📥"
+                                self.add_log(f"📥 [스윙 KR위성] {p_nm}({ticker}) ACCUMULATE {acc_c+1}차 | {_acc_qty}주 @ {price:,.0f}원")
+                            continue
+                        if _swing_kr == 'SELL_REBUY':
+                            self.add_log(f"🔄 [스윙 KR위성] {p_nm}({ticker}) SELL_REBUY — 손절 후 재진입 모니터링")
                         if self._sell_order(ticker, p_sh, pos, p_nm):
                             with self.lock:
                                 pos.last_order_time = time.time(); pos.status = "체결 대기 ⏳"
                                 pos.second_buy_done = True; pos.pyramid_done = True
-                                pos.partial_sold = False; pos.partial_sold_2 = False; pos.overext_sell_count = 0  # [C-NEW-01/W-NEW-02]
-                                pos.second_buy_price = 0; pos.second_buy_cash = 0
-                                pos.shares = 0  # [BUG-M5] 하드 손절 전량 매도 후 잔여주수 초기화
+                                pos.partial_sold = False; pos.partial_sold_2 = False; pos.overext_sell_count = 0
+                                pos.second_buy_price = 0; pos.second_buy_cash = 0; pos.swing_acc_count = 0
+                                pos.shares = 0
                             profit = _net_profit(price, p_avg, p_sh)
-                            self._log_trade(ticker, p_nm, 'SELL', price, st_nm, "ATR 하드 손절", profit=profit)
-                            self._send_trade_telegram(self._fmt_trade_msg("💥", "손절 체결", ticker, p_nm, price, p_sh, profit=profit, strategy=st_nm, note="ATR 하드 손절선 이탈"))
+                            self._log_trade(ticker, p_nm, 'SELL', price, st_nm, f"{_atr_reason_kr} [{_swing_kr}]", profit=profit)
+                            self._send_trade_telegram(self._fmt_trade_msg("💥", "손절 체결", ticker, p_nm, price, p_sh, profit=profit, strategy=st_nm, note=f"ATR 하드 손절 [{_swing_kr}]"))
                             if self.claude:
-                                self.claude.record_trade_event(f"KR 위성 ATR 손절: {p_nm}({ticker}) {p_sh}주 @ {price:,.0f}원 | 손익: {profit:+,.0f}원")
+                                self.claude.record_trade_event(f"KR 위성 ATR 손절 [{_swing_kr}]: {p_nm}({ticker}) {p_sh}주 @ {price:,.0f}원 | 손익: {profit:+,.0f}원")
                             with self.lock: self.pnl_this_turn += profit
                             self._record_daily_pnl(profit)
                         continue
@@ -2900,18 +2942,27 @@ class KRBotController:
                         and price <= pos.second_buy_price
                         and getattr(pos, 'second_buy_cash', 0) > price
                         and sig != 'SELL'):
-                    sq = int((pos.second_buy_cash * 0.98) // price)
-                    if sq > 0 and self._buy_order(ticker, sq, pos, p_nm):
-                        with self.lock:
-                            pos.last_order_time = time.time(); pos.second_buy_done = True
-                            pos.second_buy_cash = 0; pos.status = "2차매수 ✅"
-                            # [BUG-C5] 2차 매수 후 평단가·보유주수 즉시 갱신 (KIS 동기화 전 손절 방지)
-                            new_shares = pos.shares + sq
-                            if new_shares > 0:
-                                pos.avg_price = round((pos.avg_price * pos.shares + price * sq) / new_shares, 2)
-                            pos.shares = new_shares
-                        self._log_trade(ticker, p_nm, 'BUY', price, st_nm, f"2차 분할 매수 눌림목 -2% ({sq}주)")
-                        self._send_trade_telegram(self._fmt_trade_msg("🛒", "2차 분할 매수 (30%)", ticker, p_nm, price, sq, strategy=st_nm, note="-2% 눌림목 포착 | 3차 -4% 대기"))
+                    _split2_ok = True
+                    if self.claude:
+                        _sn2 = ""
+                        if self.news_monitor:
+                            try: _sn2 = self.news_monitor.get_news_summary(p_nm, display=2)
+                            except Exception: pass
+                        _split2_ok = self.claude.ai_approve_split_buy(ticker, p_nm, price, p_avg, 2, regime, _sn2)
+                    if _split2_ok:
+                        sq = int((pos.second_buy_cash * 0.98) // price)
+                        if sq > 0 and self._buy_order(ticker, sq, pos, p_nm):
+                            with self.lock:
+                                pos.last_order_time = time.time(); pos.second_buy_done = True
+                                pos.second_buy_cash = 0; pos.status = "2차매수 ✅"
+                                new_shares = pos.shares + sq
+                                if new_shares > 0:
+                                    pos.avg_price = round((pos.avg_price * pos.shares + price * sq) / new_shares, 2)
+                                pos.shares = new_shares
+                            self._log_trade(ticker, p_nm, 'BUY', price, st_nm, f"2차 분할 매수 눌림목 -2% ({sq}주)")
+                            self._send_trade_telegram(self._fmt_trade_msg("🛒", "2차 분할 매수 (30%)", ticker, p_nm, price, sq, strategy=st_nm, note="-2% 눌림목 포착 | 3차 -4% 대기"))
+                    else:
+                        self.add_log(f"🛑 2차 분할매수 AI 중단: {p_nm}({ticker}) — 시장 악화 감지")
 
                 # ── 3차 분할 매수: 1차 진입가 대비 -4% 눌림목 ──
                 if (p_sh > 0 and is_cd_passed
@@ -2921,19 +2972,27 @@ class KRBotController:
                         and price <= pos.third_buy_price
                         and getattr(pos, 'third_buy_cash', 0) > price
                         and sig != 'SELL'):
-                    sq3 = int((pos.third_buy_cash * 0.98) // price)
-                    if sq3 > 0 and self._buy_order(ticker, sq3, pos, p_nm):
-                        with self.lock:
-                            pos.last_order_time = time.time()
-                            pos.third_buy_done  = True
-                            pos.third_buy_cash  = 0
-                            pos.status          = "3차매수 ✅"
-                            new_shares = pos.shares + sq3
-                            if new_shares > 0:
-                                pos.avg_price = round((pos.avg_price * pos.shares + price * sq3) / new_shares, 2)
-                            pos.shares = new_shares
-                        self._log_trade(ticker, p_nm, 'BUY', price, st_nm, f"3차 분할 매수 눌림목 -4% ({sq3}주)")
-                        self._send_trade_telegram(self._fmt_trade_msg("🛒", "3차 분할 매수 (40%)", ticker, p_nm, price, sq3, strategy=st_nm, note="-4% 눌림목 포착 | 예산 전액 투입 완료"))
+                    _split3_ok = True
+                    if self.claude:
+                        _sn3 = ""
+                        if self.news_monitor:
+                            try: _sn3 = self.news_monitor.get_news_summary(p_nm, display=2)
+                            except Exception: pass
+                        _split3_ok = self.claude.ai_approve_split_buy(ticker, p_nm, price, p_avg, 3, regime, _sn3)
+                    if _split3_ok:
+                        sq3 = int((pos.third_buy_cash * 0.98) // price)
+                        if sq3 > 0 and self._buy_order(ticker, sq3, pos, p_nm):
+                            with self.lock:
+                                pos.last_order_time = time.time()
+                                pos.third_buy_done  = True; pos.third_buy_cash = 0; pos.status = "3차매수 ✅"
+                                new_shares = pos.shares + sq3
+                                if new_shares > 0:
+                                    pos.avg_price = round((pos.avg_price * pos.shares + price * sq3) / new_shares, 2)
+                                pos.shares = new_shares
+                            self._log_trade(ticker, p_nm, 'BUY', price, st_nm, f"3차 분할 매수 눌림목 -4% ({sq3}주)")
+                            self._send_trade_telegram(self._fmt_trade_msg("🛒", "3차 분할 매수 (40%)", ticker, p_nm, price, sq3, strategy=st_nm, note="-4% 눌림목 포착 | 예산 전액 투입 완료"))
+                    else:
+                        self.add_log(f"🛑 3차 분할매수 AI 중단: {p_nm}({ticker}) — 시장 악화 감지")
 
                 # 당일 AI 거절 블랙리스트 종목은 매수 시도 자체를 차단
                 if p_sh == 0 and self._is_satellite_blacklisted(ticker):
@@ -3538,6 +3597,20 @@ class KRBotController:
                     b_ticker = ct
                     b_name   = cand['name']
 
+                    # ── 사전단타 AI 심사 (장중 스캔 경로와 동일하게 적용) ──────
+                    if self.claude:
+                        _pm_ind = {"buy": cand.get('score', 0), "sell": 0, "signals": [entry_reason]}
+                        _pm_decision, _pm_ai_reason = self.claude.ai_approve_trade(
+                            'BUY', b_name, b_ticker, b_price, "사전단타",
+                            _pm_ind, self.hot_sectors,
+                            get_recent_trades(self.user_id, b_ticker),
+                            load_ai_rules(self.user_id),
+                        )
+                        if not _pm_decision:
+                            self.add_log(f"🛑 사전단타 AI 거절: {b_name}({b_ticker}) — {_pm_ai_reason[:60]}")
+                            self._add_satellite_reject(b_ticker, _pm_ai_reason)
+                            continue
+
                     atr_val = b_price * 0.02
                     try:
                         df_m = self._get_cached_base_ohlcv(b_ticker)
@@ -3829,19 +3902,47 @@ class KRBotController:
             used_tickers.add(b_ticker)
             held.add(b_ticker)
 
+    def _ai_swing_check_kr(self, pos, ticker: str, price: float, reason: str) -> str:
+        """KR봇 ATR 손절/트레일링 발동 시 AI 전권 판단 — SELL_REBUY / ACCUMULATE / EXIT"""
+        if not self.claude:
+            return 'EXIT'
+        avg = getattr(pos, 'avg_price', 0)
+        if avg <= 0:
+            return 'EXIT'
+        acc_cnt = getattr(pos, 'swing_acc_count', 0)
+        if acc_cnt >= 2:
+            return 'EXIT'
+        pnl_pct = (price / avg - 1) * 100
+        news = ""
+        if self.news_monitor:
+            try:
+                news = self.news_monitor.get_news_summary(getattr(pos, 'name', ticker), display=3)
+            except Exception:
+                pass
+        return self.claude.ai_swing_trade_check(
+            ticker=ticker, name=getattr(pos, 'name', ticker),
+            price_usd=price, avg_usd=avg, pnl_pct=pnl_pct,
+            regime=self.market_regime, exit_reason=reason,
+            news=news, hot_sectors=getattr(self, 'hot_sectors', []) or [],
+            accumulate_count=acc_cnt,
+        )
+
     def _trigger_ai_partial_exit(self, pos, ticker: str, name: str,
                                   price: float, avg: float,
                                   pnl_pct: float, regime: str):
         """AI 익절 판단을 백그라운드 스레드로 요청 (메인 루프 비차단).
 
-        HOLD 후에는 시간 대신 가격 기준: 마지막 문의가격 대비 +1% 이상 올랐을 때만 재요청.
+        HOLD 후에는 가격 기준:
+        - +1% 이상 상승 시 재요청 (새 고점)
+        - -2% 이상 하락 시도 재요청 (가격 반납 감지)
         """
         if getattr(pos, 'ai_exit_pending', False):
             return
         asked = getattr(pos, 'ai_exit_asked_price', 0.0)
-        # HOLD 상태일 때: 새 고점(+1%) 도달 전까지 재요청 안 함
         if getattr(pos, 'ai_exit_decision', None) == "HOLD" and asked > 0:
-            if price < asked * 1.01:
+            risen  = price >= asked * 1.01   # +1% 상승
+            fallen = price <= asked * 0.98   # -2% 하락
+            if not risen and not fallen:
                 return
         pos.ai_exit_pending     = True
         pos.ai_exit_asked_price = price  # 현재 문의 가격 기록
