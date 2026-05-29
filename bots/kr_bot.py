@@ -1336,10 +1336,45 @@ class KRBotController:
             state = load_portfolio_state(self.user_id, self._is_mock)
             if not state or not state.get("cores"): return False
             self.add_log(f"🔄 {self.mode_name} 포트폴리오 상태 복구 중...")
+
+            # [BUG-FIX] 복원 기준: user_core_stocks(설정) 우선 → 저장된 거래 데이터(주수/평단/현금) 덮어씌움
+            # 이전 방식(저장 상태를 그대로 복원)은 설정 변경 후 재시작 시 변경사항이 사라지는 버그 유발
+            saved_core_map = {c["ticker"]: c for c in state.get("cores", [])}
+            # user_core_stocks 기준으로 슬롯 재구성 (reload_api_keys와 동일한 로직)
             self.core_positions = []
-            for c in state["cores"]:
-                pos = CorePosition(c["ticker"], c["name"], initial_cash=c.get("initial_cash", 3000000))
-                pos.shares = c["shares"]; pos.floor_shares = c["floor_shares"]; pos.cash = c["cash"]; pos.avg_price = c.get("avg_price", 0)
+            user_tickers_seen: set = set()
+            for uc in self.user_core_stocks[:3]:
+                if not uc.get('ticker') or uc['ticker'] in user_tickers_seen:
+                    continue
+                t = uc['ticker']
+                c = saved_core_map.get(t, {})
+                pos = CorePosition(t, uc['name'], initial_cash=c.get("initial_cash", 0))
+                pos.shares         = c.get("shares", 0)
+                pos.floor_shares   = c.get("floor_shares", 0)
+                pos.cash           = c.get("cash", 0)
+                pos.avg_price      = c.get("avg_price", 0)
+                pos.dca_mode           = bool(uc.get("dca") or c.get("dca_mode", False))
+                pos.dca_amount         = float(uc.get("dca_amount") or c.get("dca_amount", 0))
+                pos.dca_interval_hours = int(uc.get("dca_hours") or c.get("dca_interval_hours", 72))
+                pos.dca_dip_pct        = float(uc.get("dca_dip_pct") or c.get("dca_dip_pct", 3.0))
+                pos.last_dca_time      = float(c.get("last_dca_time", 0.0))
+                pos.second_buy_price   = float(c.get("second_buy_price", 0.0))
+                pos.second_buy_cash    = float(c.get("second_buy_cash", 0.0))
+                pos.second_buy_done    = bool(c.get("second_buy_done", False))
+                self.core_positions.append(pos)
+                user_tickers_seen.add(t)
+            # 빈 슬롯: 저장된 AI 코어 복원 (user_core_stocks에 없는 것)
+            for c in state.get("cores", []):
+                t = c["ticker"]
+                if t in user_tickers_seen or t == "TBD":
+                    continue
+                if len(self.core_positions) >= 3:
+                    break
+                pos = CorePosition(t, c["name"], initial_cash=c.get("initial_cash", 0))
+                pos.shares         = c.get("shares", 0)
+                pos.floor_shares   = c.get("floor_shares", 0)
+                pos.cash           = c.get("cash", 0)
+                pos.avg_price      = c.get("avg_price", 0)
                 pos.dca_mode           = bool(c.get("dca_mode", False))
                 pos.dca_amount         = float(c.get("dca_amount", 0))
                 pos.dca_interval_hours = int(c.get("dca_interval_hours", 72))
@@ -1349,6 +1384,12 @@ class KRBotController:
                 pos.second_buy_cash    = float(c.get("second_buy_cash", 0.0))
                 pos.second_buy_done    = bool(c.get("second_buy_done", False))
                 self.core_positions.append(pos)
+                user_tickers_seen.add(t)
+            # 나머지 빈 슬롯 TBD 채움
+            while len(self.core_positions) < 3:
+                ph = CorePosition("TBD", f"AI선정대기#{len(self.core_positions)+1}", initial_cash=0)
+                ph.status = "AI 선정 대기 🤖"
+                self.core_positions.append(ph)
             _user_sat_tickers = {s['ticker'] for s in self.user_satellite_stocks if s.get('ticker')}
             self.satellite_positions = {}
             for ticker, s in state["satellites"].items():
