@@ -202,14 +202,21 @@ def _satellite_score(mom_20, mom_60, golden, rsi, vol_ratio):
     위성 스코어링 — 단기 폭발력 우선.
     과매수(RSI>82) 또는 급락(20d<-8%) 제외.
     단기 모멘텀 + 거래량 서지에 더 큰 가중치.
+    RSI 30 근접 종목 우선 선정 — 선정 즉시 매수 신호 연결.
     """
     if rsi > 82 or mom_20 < -8:
         return None
     score = 0.0
     score += min(40.0, max(0.0, mom_20 * 2.0))    # 20일 단기 모멘텀 (주요 지표)
     if golden:          score += 20.0
-    if 40 <= rsi <= 65: score += 15.0
-    elif 35 <= rsi <= 70: score += 8.0
+
+    # RSI 구간별 보너스 — 30 근처일수록 우선 선정 (매수 신호 임박)
+    if rsi <= 32:            score += 22.0   # 30 터치·직후 — 즉시 매수 가능
+    elif rsi <= 38:          score += 18.0   # 임박 — 1~2일 내 매수
+    elif rsi <= 45:          score += 10.0   # 접근 중
+    elif 45 < rsi <= 65:     score += 15.0   # 적정 모멘텀 구간
+    elif 65 < rsi <= 70:     score += 8.0    # 허용 구간
+
     score += min(15.0, (vol_ratio - 1) * 10.0)    # 거래량 서지 (폭발력)
     if mom_60 > 0:      score += min(10.0, mom_60 * 0.5)
     return score

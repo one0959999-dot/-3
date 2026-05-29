@@ -1028,13 +1028,23 @@ def select_satellites(kis=None, n=NUM_SATELLITES, verbose=True, claude_client=No
                      - overheated_penalty
                      - stat_arb_penalty
                      + ml_factor_score
-                     + signal_readiness)       # 신호 준비도 (임박 +20, 이미 통과 -8)
+                     + signal_readiness        # 신호 준비도 (임박 +20, 이미 통과 -8)
+                     + rsi_oversold_bonus)     # RSI 30 근접 우선 선정 (전략 무관 공통)
 
             # RSI(14) 현재값 계산 — AI 전략 검수 프롬프트에 활용
             try:
                 rsi_val = round(float(calc_rsi(df['close'], 14).iloc[-1]), 1)
             except Exception:
                 rsi_val = None
+
+            # ── RSI 과매도 근접 보너스 (전략 무관 — 30 근처 종목 우선 선정) ──────
+            # 선정 즉시 매수 신호와 연결되도록 RSI 30 임박 종목을 상위 배치.
+            # calc_signal_readiness가 RSI 전략에만 적용되므로 여기서 공통 보완.
+            rsi_oversold_bonus = 0.0
+            if rsi_val is not None:
+                if rsi_val <= 32:   rsi_oversold_bonus = 15.0   # 30 터치·직후
+                elif rsi_val <= 38: rsi_oversold_bonus = 10.0   # 임박
+                elif rsi_val <= 45: rsi_oversold_bonus = 4.0    # 접근 중
 
             results.append({
                 'ticker':        ticker,
