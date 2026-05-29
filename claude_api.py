@@ -985,6 +985,63 @@ REASON: (핵심 근거 2~3줄, 구체적 수치 포함)"""
                 f"[ClaudeAPI] ai_approve_trade 오류 — 알고리즘 신호 허용: {type(e).__name__}: {e}")
             return True, "AI 일시 오류 — 알고리즘 신호 그대로 허용"  # [BUG-M6] 오류 시 자동 거절 → 허용
 
+    def ai_approve_core_trade(self, stock_name: str, ticker: str, price: int,
+                               rsi: float, ma120: float, ma60: float,
+                               regime: str = "NEUTRAL",
+                               news_headlines: str = "") -> tuple:
+        """코어 장기 매수 AI 승인 — 위성과 다른 기준 적용.
+
+        코어는 RSI 저평가 + 120MA 위 기준을 이미 통과한 상태.
+        AI 역할: 거래량·모멘텀 무관, 단기 추가 하락 리스크(악재·구조적 위기)만 판단.
+        기본값 CONFIRM — 명백한 이유 있을 때만 REJECT.
+        """
+        if not self.client:
+            return True, "API 미설정으로 자동 승인"
+
+        ma120_gap = (price / ma120 - 1) * 100 if ma120 > 0 else 0
+        ma60_gap  = (price / ma60  - 1) * 100 if ma60  > 0 else 0
+        news_section = f"\n[최근 뉴스]\n{news_headlines}" if news_headlines else ""
+
+        prompt = f"""[코어 장기 매수 리스크 검토]
+종목: {stock_name}({ticker}) | 현재가: {price:,}원 | 시장국면: {regime}
+
+[진입 근거 — 이미 기준 충족됨]
+• RSI {rsi:.1f} (저평가 구간 ≤45)
+• 120일선 대비 {ma120_gap:+.1f}% ({ma120:,.0f}원) — 장기 우상향 확인
+• 60일선 대비 {ma60_gap:+.1f}% ({ma60:,.0f}원)
+{news_section}
+
+[판단 지침 — 코어 전용]
+• 코어는 장기 저평가 매수 전략 (3개월~1년 보유 목표)
+• 거래량 감소, MACD, 5일선 이탈 등 단기 모멘텀 지표는 판단 근거로 쓰지 말 것
+• REJECT 기준: 심각한 악재(회계 부정, 규제 리스크, 구조적 산업 위기, 상장폐지 위험)
+• 단순 단기 하락, 시장 약세는 REJECT 사유 아님 — 오히려 저평가 매수 기회
+• 명백한 REJECT 사유 없으면 CONFIRM
+
+단기 추가 하락 리스크가 심각한가? 아니면 저평가 매수 적기인가?
+
+답변 형식 (반드시 준수):
+DECISION: CONFIRM 또는 REJECT
+REASON: (핵심 근거 1~2줄)"""
+
+        try:
+            res = self.generate_content(prompt, temperature=0.1, model=self._FAST_MODEL)
+            upper = res.upper()
+            decision_line = next((ln for ln in upper.splitlines()
+                                  if ln.strip().startswith("DECISION:") or "DECISION:" in ln), "")
+            if decision_line:
+                after_colon = decision_line.split("DECISION:", 1)[-1].strip()
+                first_word  = after_colon.split()[0] if after_colon.split() else ""
+                decision = first_word == "CONFIRM"
+            else:
+                decision = "CONFIRM" in upper and "REJECT" not in upper
+            reason = res.split("REASON:")[-1].strip() if "REASON:" in res else res.strip()
+            return decision, reason
+        except Exception as e:
+            import logging
+            logging.getLogger('lassi_bot').warning(f"[ClaudeAPI] ai_approve_core_trade 오류: {e}")
+            return True, "AI 일시 오류 — 자동 승인"
+
     def ai_partial_exit(self, ticker: str, stock_name: str, price: float,
                         avg_price: float, pnl_pct: float, shares: int,
                         partial_sold: bool, regime: str = "NEUTRAL",
