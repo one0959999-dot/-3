@@ -21,7 +21,7 @@ def _now_kst():
     return datetime.now(_KST).replace(tzinfo=None)
 
 from telegram_bot import TelegramNotifier
-from strategy import CorePosition, Position, get_rsi_signal, get_composite_signal, REINVEST_RATIO, get_market_regime, get_market_regime_detail, get_bear_bounce_signal, get_bear_bottom_score, get_bull_momentum_score, get_neutral_range_score, INVERSE_ETF_TICKER, INVERSE_ETF_NAME, INVERSE_BUDGET_RATIO, DEFENSIVE_ASSETS, check_giveback_stop, check_early_drop_stop, check_theme_overextension_exit, check_rsi_progressive_exit, calculate_entry_score, get_entry_threshold, get_budget_ratio_from_score, calc_rsi
+from strategy import CorePosition, Position, get_rsi_signal, get_composite_signal, REINVEST_RATIO, get_market_regime, get_market_regime_detail, get_bear_bounce_signal, get_bear_bottom_score, get_bull_momentum_score, get_neutral_range_score, INVERSE_ETF_TICKER, INVERSE_ETF_NAME, INVERSE_BUDGET_RATIO, DEFENSIVE_ASSETS, check_giveback_stop, check_early_drop_stop, check_theme_overextension_exit, check_rsi_progressive_exit, calculate_entry_score, get_entry_threshold, get_budget_ratio_from_score, calc_rsi, calculate_core_entry_score, get_core_entry_threshold
 from stock_screener import select_satellites, generate_daily_market_report
 from hot_momentum_scanner import scan_hot_momentum, clear_expired_cache
 from upper_limit_pattern_scanner import collect_and_save_pattern, scan_pattern_matches
@@ -2258,9 +2258,10 @@ class KRBotController:
                 # ─────────────────────────────────────────────────────────────
 
                 if c_cash >= cp and is_core_cd and not _dca_bought_this_turn:
-                    # ① 통합 진입 점수 체크 (composite_signal 게이트 제거 → 순수 점수제)
-                    c_score, c_score_reasons = calculate_entry_score(ex_df, cp, regime)
-                    c_threshold = self.entry_thresholds.get(f'core_{regime}', self.entry_thresholds.get(regime, get_entry_threshold(regime, 'core')))
+                    # ① 코어 전용 진입 점수 (RSI 저평가 + 120MA/60MA 위치만 판단)
+                    # 모멘텀·거래량·MACD 무관 — 장기 프로젝트 원칙
+                    c_score, c_score_reasons = calculate_core_entry_score(ex_df, cp, regime)
+                    c_threshold = self.entry_thresholds.get(f'core_{regime}', get_core_entry_threshold(regime))
                     if c_score < c_threshold:
                         with self.lock:
                             core.status = "점수 대기 ⏳"

@@ -40,7 +40,7 @@ from database import (
 from strategy import (calculate_entry_score, get_entry_threshold, get_budget_ratio_from_score,
                       get_bull_momentum_score, calc_rsi, _calc_adx, _get_up_streak,
                       check_theme_overextension_exit, check_rsi_progressive_exit,
-                      get_composite_signal)
+                      get_composite_signal, calculate_core_entry_score, get_core_entry_threshold)
 # bot_manager는 순환 임포트 방지를 위해 런타임에 참조
 import importlib
 
@@ -639,7 +639,25 @@ class USBotController:
         import pandas as pd
         # 총자산 기준 예산 산정 (수익 복리 효과: 수익금 → cash_usd → 총자산 증가 → 예산 자동 증가)
         total_usd      = self._get_total_assets_usd()
-        core_budget_per = (total_usd * self.CORE_RATIO) / max(1, self.num_cores)
+
+        # ── 위성 공석 예산 → 코어 임시 배분 ──────────────────────────────
+        # 위성이 진입 못 한 슬롯의 예산을 코어 매수 예산에 임시 추가
+        # US 봇은 global cash_usd 풀 사용 → 별도 lending 추적 없이 budget 계산만 확대
+        _sat_info_set  = {i['ticker'] for i in self.satellite_info}
+        _sat_holding   = sum(1 for t, p in self.satellite_positions.items()
+                             if p.shares > 0 and t in _sat_info_set)
+        _sat_idle      = max(0, self.num_satellites - _sat_holding)
+        _sat_bud_per   = (total_usd * self.SAT_RATIO) / max(1, self.num_satellites)
+        _idle_sat_usd  = _sat_idle * _sat_bud_per
+
+        _core_pool      = total_usd * self.CORE_RATIO + _idle_sat_usd
+        core_budget_per = _core_pool / max(1, self.num_cores)
+
+        if _sat_idle > 0 and _idle_sat_usd > 10:
+            self.add_log(
+                f"💰 위성 공석 {_sat_idle}개 → 코어 예산 임시 확대 "
+                f"(+${_idle_sat_usd:,.0f} | 코어 슬롯당 ${core_budget_per:,.0f})"
+            )
 
         for info in self.core_info:
             ticker = info["ticker"]
@@ -731,51 +749,21 @@ class USBotController:
                 if budget < price * 0.1:
                     continue
 
-                # 통합 점수 체크
+                # ── 코어 전용 진입 점수 (RSI 저평가 + 120MA/60MA만 판단) ──────
+                # 모멘텀·거래량·MACD 완전 무시 — 장기 프로젝트 원칙
                 if df_raw is not None and not df_raw.empty:
-                    momentum_20d = 0.0
-                    try:
-                        c = df_raw['close'].dropna()
-                        if len(c) >= 21:
-                            momentum_20d = float((c.iloc[-1] / c.iloc[-21] - 1) * 100)
-                    except Exception:
-                        pass
-                    c_score, c_reasons = calculate_entry_score(
-                        df_raw, price, regime, momentum_20d=momentum_20d
-                    )
+                    c_score, c_reasons = calculate_core_entry_score(df_raw, price, regime)
                 else:
                     c_score, c_reasons = 0, []
 
-                c_threshold = self.entry_thresholds.get(f'core_{regime}', self.entry_thresholds.get(regime, get_entry_threshold(regime, 'core')))
-
-                # ── BULL 국면 진입 완화 ─────────────────────────────────
-                # 조건 A: RSI ≤ 65 + bull_score ≥ 1
-                # 조건 B: MA5 > MA20 정배열 + 현재가 MA5 이내(2%) 눌림목
-                if c_score < c_threshold and regime == "BULL" and df_raw is not None and not df_raw.empty:
-                    try:
-                        _closes_b = df_raw['close'].dropna()
-                        _rsi_bull = float(calc_rsi(_closes_b).iloc[-1])
-                        _bull_sc, _ = get_bull_momentum_score(df_raw)
-                        _bull_cond_a = (_rsi_bull <= 65) and (_bull_sc >= 1)
-                        _bull_cond_b = False
-                        if len(_closes_b) >= 22:
-                            _ma5_b  = float(_closes_b.rolling(5).mean().iloc[-1])
-                            _ma20_b = float(_closes_b.rolling(20).mean().iloc[-1])
-                            _bull_cond_b = (_ma5_b > _ma20_b) and (price <= _ma5_b * 1.02)
-                        if _bull_cond_a or _bull_cond_b:
-                            c_score = c_threshold
-                            _why = (f"RSI={_rsi_bull:.1f} bull_score={_bull_sc}" if _bull_cond_a
-                                    else f"MA5눌림목(MA5={_closes_b.rolling(5).mean().iloc[-1]:.2f})")
-                            self.add_log(f"🚀 [BULL 코어 진입] {ticker} {_why} → 점수 완화 진입")
-                    except Exception:
-                        pass
+                c_threshold = self.entry_thresholds.get(f'core_{regime}', get_core_entry_threshold(regime))
 
                 if c_score < c_threshold:
                     with self.lock:
                         pos.status = f"코어 진입 대기 ({c_score}/{c_threshold}pt) ⏳"
                     continue
 
-                budget_ratio  = get_budget_ratio_from_score(c_score, c_threshold)
+                budget_ratio  = max(0.5, c_score / max(c_threshold, 1) * 0.75)
                 # 75/25 분할: 1차 진입 후 나머지는 -2% 눌림목 예약
                 first_ratio   = budget_ratio * 0.75
                 reserve_usd   = budget * budget_ratio * 0.25

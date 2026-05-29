@@ -1655,6 +1655,71 @@ def check_rsi_progressive_exit(df, current_price: float, avg_price: float) -> tu
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# 코어 전용 진입 점수 — RSI 저평가 + 장기 이동평균만 사용
+# 모멘텀·거래량·외국계·MACD 완전 제외 (장기 프로젝트 원칙)
+# ─────────────────────────────────────────────────────────────────────────────
+
+def calculate_core_entry_score(df, price: float, regime: str = 'NEUTRAL') -> tuple:
+    """
+    코어 전용 진입 점수 (최대 6점).
+    RSI 저평가 + 120MA/60MA 위치만 판단.
+    모멘텀, 거래량, 외국계, MACD 완전 무시.
+
+    Returns: (score: int, reasons: list[str])
+    """
+    if df is None or df.empty or 'close' not in df.columns:
+        return 0, []
+
+    score   = 0
+    reasons = []
+    try:
+        c = df['close'].dropna()
+        if len(c) < 16:
+            return 0, []
+
+        # ① RSI 저평가 (최대 +3) — 핵심 기준
+        rsi = _calc_rsi14(c)
+        if rsi <= 32:
+            score += 3
+            reasons.append(f"RSI 극저평가({rsi:.0f}≤32) +3")
+        elif rsi <= 38:
+            score += 2
+            reasons.append(f"RSI 저평가({rsi:.0f}≤38) +2")
+        elif rsi <= 45:
+            score += 1
+            reasons.append(f"RSI 과매도근접({rsi:.0f}≤45)")
+
+        # ② 120MA 위 (+2) — 장기 우상향 안전 확인
+        if len(c) >= 120:
+            ma120 = float(c.rolling(120).mean().iloc[-1])
+            if price > ma120:
+                score += 2
+                reasons.append(f"120MA 위({ma120:,.0f}) +2")
+
+        # ③ 60MA 위 (+1) — 중기 지지 확인
+        if len(c) >= 62:
+            ma60 = float(c.rolling(60).mean().iloc[-1])
+            if price > ma60:
+                score += 1
+                reasons.append(f"60MA 위({ma60:,.0f})")
+
+    except Exception:
+        pass
+
+    return score, reasons
+
+
+def get_core_entry_threshold(regime: str) -> int:
+    """
+    코어 전용 진입 기준점.
+    - BULL:    RSI만 저평가여도 진입 (threshold=2 → RSI≤38만으로 충족)
+    - NEUTRAL: RSI≤45(+1) + 120MA(+2) = 3점 충족
+    - BEAR:    RSI≤38(+2) + 120MA(+2) = 4점 충족 (하락장 안전 강화)
+    """
+    return {'BULL': 2, 'NEUTRAL': 3, 'BEAR': 4}.get(regime, 3)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # 통합 매수 강도 점수 — KR / US 공통 (10점 만점)
 # ─────────────────────────────────────────────────────────────────────────────
 
