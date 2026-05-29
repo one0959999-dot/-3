@@ -485,9 +485,25 @@ def _scan_universe(universe: dict, n: int, exclude: set, score_fn) -> list[dict]
             else:
                 vol_ratio = 1.0
 
-            score = score_fn(mom_20, mom_60, golden, rsi, vol_ratio)
+            score = score_fn(mom_20, mom_60, golden, rsi, vol_ratio, close)
             if score is None:
                 continue
+
+            # macd_state 계산 (로깅 및 AI 판단용)
+            macd_state = "-"
+            try:
+                if len(close) >= 30:
+                    _ml, _sl = _macd_us(close)
+                    _h_now  = float((_ml - _sl).iloc[-1])
+                    _h_prev = float((_ml - _sl).iloc[-2])
+                    if _h_now < 0 and _h_now > _h_prev:
+                        macd_state = "눌림반등(최적)"
+                    elif _h_now < 0:
+                        macd_state = "눌림목"
+                    else:
+                        macd_state = "골든크로스"
+            except Exception:
+                pass
 
             results.append({
                 "ticker":       ticker,
@@ -499,6 +515,7 @@ def _scan_universe(universe: dict, n: int, exclude: set, score_fn) -> list[dict]
                 "rsi":          round(rsi, 1),
                 "golden":       golden,
                 "vol_ratio":    round(vol_ratio, 2),
+                "macd_state":   macd_state,
             })
         except Exception as e:
             logger.debug(f"[US스크리너] {ticker} 처리 실패: {e}")
@@ -521,11 +538,12 @@ def _scan_universe(universe: dict, n: int, exclude: set, score_fn) -> list[dict]
     return results
 
 
-def _core_score(mom_20, mom_60, golden, rsi, vol_ratio):
+def _core_score(mom_20, mom_60, golden, rsi, vol_ratio, close=None):
     """
     코어 스코어링 — 안정적 우상향 우선.
     과열(RSI>75) 또는 급락(20d<-8%) 제외.
     장기 모멘텀(60d)에 더 큰 가중치.
+    MACD 역추세(눌림목) 보너스 — 진입게이트 아님, 가산점만.
     """
     if rsi > 75 or mom_20 < -8:
         return None
@@ -536,15 +554,31 @@ def _core_score(mom_20, mom_60, golden, rsi, vol_ratio):
     if 40 <= rsi <= 65: score += 15.0              # RSI 적정 구간
     elif 35 <= rsi <= 70: score += 8.0
     score += min(10.0, (vol_ratio - 1) * 5.0)     # 거래량 (보조 지표)
+    # ── MACD 역추세 눌림목 보너스 (최대 +8) ──────────────────────────────
+    # 데드크로스 구간 = 장기 추세 살아있는데 단기 눌림 = 저점 누적 기회
+    # 골든크로스 구간 = 이미 반영된 상승 = 0점
+    try:
+        if close is not None and len(close) >= 30:
+            _ml, _sl = _macd_us(close)
+            _h_now  = float((_ml - _sl).iloc[-1])
+            _h_prev = float((_ml - _sl).iloc[-2])
+            if _h_now < 0 and _h_now > _h_prev:
+                score += 8.0   # 음수 구간 반등 중 = 눌림반등(최적)
+            elif _h_now < 0:
+                score += 4.0   # 단순 눌림목
+            # hist > 0 (골든크로스) → 0점 유지
+    except Exception:
+        pass
     return score
 
 
-def _satellite_score(mom_20, mom_60, golden, rsi, vol_ratio):
+def _satellite_score(mom_20, mom_60, golden, rsi, vol_ratio, close=None):
     """
     위성 스코어링 — 단기 폭발력 우선.
     과매수(RSI>82) 또는 급락(20d<-8%) 제외.
     단기 모멘텀 + 거래량 서지에 더 큰 가중치.
     RSI 30 근접 종목 우선 선정 — 선정 즉시 매수 신호 연결.
+    ※ scan_us_satellites()는 자체 루프에서 MACD 계산 — 이 함수는 미사용.
     """
     if rsi > 82 or mom_20 < -8:
         return None
@@ -788,23 +822,47 @@ def scan_us_satellites(n: int = 5, exclude: set = None, kis_api=None) -> list[di
             kis_bonus = min(30.0, kis_bonuses.get(ticker, 0.0) * 0.15)
             score += kis_bonus
 
+            # ── ⑪ MACD 역추세 눌림목 보너스 ──────────────────────────
+            # 데드크로스 구간 = 단기 눌림 = 저점 진입 기회 → 가산
+            # 골든크로스 구간 = 이미 올라간 뒤 = 0점
+            macd_pullback_bonus = 0.0
+            macd_state = "-"
+            try:
+                if len(close) >= 30:
+                    _ml, _sl = _macd_us(close)
+                    _h_now  = float((_ml - _sl).iloc[-1])
+                    _h_prev = float((_ml - _sl).iloc[-2])
+                    if _h_now < 0 and _h_now > _h_prev:
+                        macd_pullback_bonus = 8.0
+                        macd_state = "눌림반등(최적)"
+                    elif _h_now < 0:
+                        macd_pullback_bonus = 4.0
+                        macd_state = "눌림목"
+                    else:
+                        macd_state = "골든크로스"
+            except Exception:
+                pass
+            score += macd_pullback_bonus
+
             results.append({
-                "ticker":           ticker,
-                "name":             ticker,
-                "sector":           sec,
-                "score":            round(score, 1),
-                "price":            round(price, 2),
-                "momentum_20d":     round(mom_20, 2),
-                "momentum_60d":     round(mom_60, 2),
-                "rsi":              round(rsi, 1),
-                "golden":           golden,
-                "vol_ratio":        round(vol_ratio, 2),
-                "sector_bonus":     sector_bonus,
-                "best_strategy":    best_strat or "",
-                "backtest_return":  round(best_ret_val, 1),
-                "signal_readiness": round(sig_ready, 1),
-                "ai_up_prob":       round(ai_up_prob, 1),
-                "kis_bonus":        round(kis_bonus, 1),
+                "ticker":               ticker,
+                "name":                 ticker,
+                "sector":               sec,
+                "score":                round(score, 1),
+                "price":                round(price, 2),
+                "momentum_20d":         round(mom_20, 2),
+                "momentum_60d":         round(mom_60, 2),
+                "rsi":                  round(rsi, 1),
+                "golden":               golden,
+                "vol_ratio":            round(vol_ratio, 2),
+                "sector_bonus":         sector_bonus,
+                "best_strategy":        best_strat or "",
+                "backtest_return":      round(best_ret_val, 1),
+                "signal_readiness":     round(sig_ready, 1),
+                "ai_up_prob":           round(ai_up_prob, 1),
+                "kis_bonus":            round(kis_bonus, 1),
+                "macd_state":           macd_state,
+                "macd_pullback_bonus":  round(macd_pullback_bonus, 1),
             })
         except Exception as e:
             logger.debug(f"[US스크리너] {ticker} 처리 실패: {e}")
