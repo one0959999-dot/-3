@@ -163,20 +163,20 @@ def _scan_universe(universe: dict, n: int, exclude: set, score_fn) -> list[dict]
             continue
 
     results.sort(key=lambda x: x["score"], reverse=True)
-    top = results[:n * 2]
-    for r in top:
+    # 이름 조회는 전체 대상 (AI가 전부 볼 수 있도록)
+    for r in results:
         r["name"] = _get_name(r["ticker"])
         time.sleep(0.05)
 
     logger.info(f"[US스크리너] 스캔 완료: {len(results)}개 통과 → 상위 {n}개 선정")
-    for r in top[:n]:
+    for r in results[:n]:
         logger.info(
             f"  {r['ticker']:6s}  {r['sector']:14s}  스코어:{r['score']:5.1f}"
             f"  RSI:{r['rsi']:4.1f}  20d:{r['momentum_20d']:+5.1f}%"
             f"  {'🟡골든' if r['golden'] else '  '}"
             f"  거래량:{r['vol_ratio']:.1f}x"
         )
-    return top[:n]
+    return results
 
 
 def _core_score(mom_20, mom_60, golden, rsi, vol_ratio):
