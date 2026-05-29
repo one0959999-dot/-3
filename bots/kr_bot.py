@@ -502,17 +502,46 @@ class KRBotController:
         """user_satellite_stocks를 satellite_info 앞 슬롯에 고정 (코어의 _init_dummy_cores와 동일 패턴).
         - 사용자 지정 종목은 screener 결과보다 우선 배치
         - 중복 제거 후 num_satellites 한도 적용
+        - 기본 지표(RSI, 수익률, 거래량비율) 자동 채움 → AI 리뷰어 "데이터 미제공" 방지
         """
         if not self.user_satellite_stocks:
             return
         user_tickers = {s['ticker'] for s in self.user_satellite_stocks if s.get('ticker')}
         # screener 결과에서 사용자 종목 제거 (중복 방지)
         filtered = [c for c in self.satellite_info if c['ticker'] not in user_tickers]
-        pinned = [
-            {'ticker': s['ticker'], 'name': s['name'],
-             'strategy_name': '사용자지정', 'return_pct': 0.0, 'sector': '-'}
-            for s in self.user_satellite_stocks if s.get('ticker') and s.get('name')
-        ]
+        pinned = []
+        for s in self.user_satellite_stocks:
+            if not s.get('ticker') or not s.get('name'):
+                continue
+            t = s['ticker']
+            # 기본 지표 계산 (OHLCV 캐시 활용 — 없으면 KIS 호출)
+            _ret = 0.0; _rsi = None; _vol_ratio = None
+            try:
+                df = self._get_cached_base_ohlcv(t)
+                if df.empty and self.kis:
+                    df = self.kis.get_ohlcv(t, "D")
+                if df is not None and not df.empty and 'close' in df.columns:
+                    c_s = df['close'].dropna()
+                    if len(c_s) >= 20:
+                        _ret = round((c_s.iloc[-1] / c_s.iloc[-min(22, len(c_s)-1)] - 1) * 100, 1)
+                    if len(c_s) >= 11:
+                        _d = c_s.diff()
+                        _g = _d.clip(lower=0).rolling(9).mean()
+                        _l = (-_d.clip(upper=0)).rolling(9).mean()
+                        _rsi = round(float((100 - 100 / (1 + _g / (_l + 1e-10))).iloc[-1]), 1)
+                    if 'volume' in df.columns and len(df) >= 21:
+                        v_s = df['volume'].dropna()
+                        avg20 = float(v_s.iloc[-21:-1].mean()) if len(v_s) > 20 else 1
+                        _vol_ratio = round(float(v_s.iloc[-1]) / avg20, 2) if avg20 > 0 else 1.0
+            except Exception:
+                pass
+            entry = {'ticker': t, 'name': s['name'],
+                     'strategy_name': '사용자지정', 'return_pct': _ret, 'sector': '사용자지정'}
+            if _rsi is not None:
+                entry['rsi'] = _rsi
+            if _vol_ratio is not None:
+                entry['vol_ratio'] = _vol_ratio
+            pinned.append(entry)
         self.satellite_info = (pinned + filtered)[:self.num_satellites]
         # satellite_strategies 동기화
         for s in pinned:
