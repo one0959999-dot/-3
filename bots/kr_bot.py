@@ -1808,7 +1808,7 @@ class KRBotController:
                             core.status_msg = f"{core.shares}주 보유 중 | 평단 {core.avg_price:,.0f}원 | 수익률 {_pnl:+.1f}% | {_regime_label}"
                         elif core.cash > 0:
                             core.status = "감시 중 👀"
-                            core.status_msg = f"매수 신호 대기 중 | 가용 예산 {core.cash:,.0f}원 | 시장: {_regime_label}"
+                            core.status_msg = f"진입점수 확인 중 | 가용 예산 {core.cash:,.0f}원 | 시장: {_regime_label}"
                         else:
                             core.status = "감시 중 👀"
                             core.status_msg = f"예산 소진 — 다음 잔고 동기화 대기 중 | 시장: {_regime_label}"
