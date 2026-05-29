@@ -1195,7 +1195,7 @@ def set_keys():
                 "token": data.get('telegram_token'),
                 "chat_id": data.get('telegram_chat_id')
             },
-            claude_config={},
+            gemini_config={},
             core_stocks=data.get('core_stocks')
         )
 
@@ -1213,7 +1213,7 @@ def set_keys():
                 "token": data.get('telegram_token'),
                 "chat_id": data.get('telegram_chat_id')
             },
-            claude_config={},
+            gemini_config={},
             core_stocks=data.get('core_stocks')
         )
 
