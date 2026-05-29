@@ -1093,7 +1093,8 @@ def select_satellites(kis=None, n=NUM_SATELLITES, verbose=True, claude_client=No
                      - stat_arb_penalty
                      + ml_factor_score
                      + signal_readiness        # 신호 준비도 (임박 +20, 이미 통과 -8)
-                     + rsi_oversold_bonus)     # RSI 30 근접 우선 선정 (전략 무관 공통)
+                     + rsi_oversold_bonus      # RSI 30 근접 우선 선정 (전략 무관 공통)
+                     + macd_pullback_bonus)    # MACD 눌림목 우선 선정 (저점 진입 기회)
 
             # RSI(14) 현재값 계산 — AI 전략 검수 프롬프트에 활용
             try:
@@ -1109,6 +1110,23 @@ def select_satellites(kis=None, n=NUM_SATELLITES, verbose=True, claude_client=No
                 if rsi_val <= 32:   rsi_oversold_bonus = 15.0   # 30 터치·직후
                 elif rsi_val <= 38: rsi_oversold_bonus = 10.0   # 임박
                 elif rsi_val <= 45: rsi_oversold_bonus = 4.0    # 접근 중
+
+            # ── MACD 역추세 눌림목 보너스 (선정 단계) ────────────────────────
+            # 데드크로스 구간 = 단기 눌림 = 선정 후 저점 진입 가능성 높음
+            # 골든크로스 구간 = 이미 오른 뒤 선정 = 고점 진입 리스크
+            macd_pullback_bonus = 0.0
+            try:
+                if len(df) >= 30:
+                    _macd_line, _sig_line = calc_macd(df['close'])
+                    _hist_now  = float((_macd_line - _sig_line).iloc[-1])
+                    _hist_prev = float((_macd_line - _sig_line).iloc[-2])
+                    if _hist_now < 0 and _hist_now > _hist_prev:
+                        macd_pullback_bonus = 8.0   # 음수 구간 반등 중 = 최적 타이밍
+                    elif _hist_now < 0:
+                        macd_pullback_bonus = 4.0   # 단순 눌림목
+                    # 골든크로스(hist > 0) → 0점 (이미 올랐을 가능성)
+            except Exception:
+                pass
 
             results.append({
                 'ticker':        ticker,
@@ -1259,8 +1277,30 @@ def select_ai_core_stock(n: int = 2, exclude_tickers=None, verbose: bool = False
             momentum_120d = (curr_close / float(close.iloc[-120]) - 1) * 100
             std_20        = float(close.pct_change().rolling(20).std().iloc[-1]) * 100
 
-            # 점수 = 120일 모멘텀 - 변동성 패널티 × 2
-            score = momentum_120d - (std_20 * 2)
+            # MACD 역추세 보너스 — 눌림목 종목을 상위 배치 (저점 진입 기회)
+            macd_bonus = 0.0
+            try:
+                _ml, _sl = calc_macd(close)
+                _h_now  = float((_ml - _sl).iloc[-1])
+                _h_prev = float((_ml - _sl).iloc[-2])
+                if _h_now < 0 and _h_now > _h_prev:
+                    macd_bonus = 5.0   # 음수 구간 반등 = 최적 진입 타이밍
+                elif _h_now < 0:
+                    macd_bonus = 2.0   # 단순 눌림목
+            except Exception:
+                pass
+
+            # RSI 저평가 보너스 — 과매도 구간 종목 우선
+            rsi_bonus = 0.0
+            try:
+                _rsi = float(calc_rsi(close, 14).iloc[-1])
+                if _rsi <= 35:   rsi_bonus = 6.0
+                elif _rsi <= 45: rsi_bonus = 3.0
+            except Exception:
+                pass
+
+            # 점수 = 120일 모멘텀 - 변동성 패널티 + MACD 눌림목 + RSI 저평가
+            score = momentum_120d - (std_20 * 2) + macd_bonus + rsi_bonus
             scored.append((score, ticker))
 
         except Exception:
@@ -1283,6 +1323,23 @@ def select_ai_core_stock(n: int = 2, exclude_tickers=None, verbose: bool = False
                 nm = t
             sec = ticker_to_sector_map.get(t, '-')
             mom = (sc + 0.0)  # score ≒ 120일 모멘텀 - 변동성 패널티
+            # MACD 눌림목 여부 계산 (AI에게 전달)
+            _macd_state = '-'
+            try:
+                _df_c = fetch_ohlcv(t, days=60)
+                if len(_df_c) >= 30:
+                    _ml2, _sl2 = calc_macd(_df_c['close'])
+                    _h2 = float((_ml2 - _sl2).iloc[-1])
+                    _hp2 = float((_ml2 - _sl2).iloc[-2])
+                    if _h2 < 0 and _h2 > _hp2:
+                        _macd_state = '눌림반등(최적)'
+                    elif _h2 < 0:
+                        _macd_state = '눌림목'
+                    else:
+                        _macd_state = '골든크로스'
+            except Exception:
+                pass
+
             ai_candidates.append({
                 'ticker':        t,
                 'name':          nm,
@@ -1292,6 +1349,7 @@ def select_ai_core_stock(n: int = 2, exclude_tickers=None, verbose: bool = False
                 'sma_aligned':   'YES',   # 이 목록은 이미 정배열 필터 통과
                 'strategy_name': '정배열 장기보유',
                 'return_pct':    round(sc, 2),
+                'macd_state':    _macd_state,
             })
         ai_result = _module_claude.ai_select_core_stocks(ai_candidates, n)
         if ai_result:
