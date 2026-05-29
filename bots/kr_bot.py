@@ -358,17 +358,22 @@ class KRBotController:
                 
                 if total_equity >= 0:
                     # ── 동적 균등 예산 배분 ──────────────────────────────────
-                    # 코어/위성 고정 비율 폐지 → 선정된 전체 종목 수로 균등 분배
-                    # 2개: 각 50% | 3개: 각 33% | 5개: 각 20%
-                    # TBD(AI선정대기) 제외, 실제 선정된 종목만 카운트
-                    #
-                    # BUG-FIX: 기존에는 DB initial_cap(기본값 천만원)으로 예산 계산
-                    # → DB 기본값이 고착되면 실제 잔고와 무관하게 천만원 기준 배정 버그
-                    # → 수정: 실시간 총자산(total_equity = 예수금 + 보유주식 평가액) 기준 균등 배분
+                    # 단타(모멘텀) 예산 먼저 차감 → 나머지를 코어/위성 균등 배분
+                    # 예: 단타 10% 먼저 제외 → 90%를 n개 종목으로 나눔
+                    # BEAR 국면: 방어자산 40% + 현금 60% 전략
+                    #   → 코어/위성 예산 = 총자산 × 60% / n (저점매수 탄약 확보)
+                    # BULL/NEUTRAL: 단타 10% 제외 → 나머지 90% / n
                     _active_cores = [c for c in self.core_positions if c.ticker != "TBD"]
                     _active_sats  = list(self.satellite_positions.values())
                     n_total = max(1, len(_active_cores) + len(_active_sats))
-                    budget_per = total_equity / n_total if total_equity > 0 else 0
+                    _regime_now = getattr(self, 'market_regime', 'NEUTRAL')
+                    if _regime_now == "BEAR":
+                        # BEAR: 방어자산 40% 제외 후 60% 현금을 저점매수 예산으로
+                        _tradable = total_equity * 0.60
+                    else:
+                        # BULL/NEUTRAL: 단타 슬롯 예산 먼저 제외
+                        _tradable = total_equity * (1.0 - self.momentum_budget_ratio)
+                    budget_per = _tradable / n_total if total_equity > 0 else 0
 
                     # 코어 예산 sync (TBD = 0, 매수 완료 = 0, 미매수 = budget_per)
                     for core in self.core_positions:
@@ -1440,7 +1445,7 @@ class KRBotController:
 
     def _handle_defensive_assets(self, regime: str):
         """
-        BEAR 국면: DEFENSIVE_ASSETS 3종 자동 매수 (인버스 15%, 달러 10%, 금 5%).
+        BEAR 국면: DEFENSIVE_ASSETS 3종 자동 매수 (인버스 20%, 달러 13%, 금 7% = 총 40%).
         BULL/NEUTRAL 국면: 보유 중이면 각 자산 전량 청산.
         종목별 독립 24h 재매수 쿨다운 (휩쏘 방지).
         5분마다 한 번만 실행 (매분 API 호출 방지).
@@ -1479,11 +1484,9 @@ class KRBotController:
                         self.add_log(f"⏳ {name} 재매수 쿨다운 중 ({cooldown_remaining/3600:.1f}h 남음) — 휩쏘 방지")
                         continue
 
-                    # BEAR 시 방어헤지 총합 50% (기존 30% → 50% 스케일업)
-                    # 개별 비율을 ×(0.50/0.30) = ×5/3 적용 → 인버스 25%, 달러 16.7%, 금 8.3%
-                    _total_def_ratio = sum(a['ratio'] for a in DEFENSIVE_ASSETS)  # 0.30
-                    bear_ratio_scaled = ratio * (0.50 / _total_def_ratio)
-                    budget = int(total_assets * bear_ratio_scaled)
+                    # BEAR 방어헤지: ratio 그대로 사용 (인버스 20% + 달러 13% + 금 7% = 40%)
+                    # 나머지 60%는 현금 보유 → 저점매수(bear_bottom_score) 탄약
+                    budget = int(total_assets * ratio)
                     price  = self.kis.get_current_price(ticker)
                     if price and price > 0:
                         qty = int(budget // price)
@@ -1491,13 +1494,13 @@ class KRBotController:
                             if self.kis.buy_market_order(ticker, qty):  # [BUG-FIX] 반환값 확인
                                 total_cash -= qty * price  # 현금 차감 (다음 종목 계산용)
                                 self.add_log(f"🐻 하락장 방어 매수 | {emoji} {name} {qty}주 @ {price:,.0f}원")
-                                self._log_trade(ticker, name, 'BUY', price, "방어자산", f"BEAR 국면 총자산 {bear_ratio_scaled*100:.0f}% 헤지")
+                                self._log_trade(ticker, name, 'BUY', price, "방어자산", f"BEAR 국면 총자산 {ratio*100:.0f}% 헤지")
                                 self._send_telegram(
                                     f"🐻 <b>방어 자산 매수</b>  ·  {self.alert_icon} {self.mode_name}\n"
                                     f"━━━━━━━━━━━━━━━━━━━━\n"
                                     f"{emoji} <b>{name}</b>  <code>{ticker}</code>\n"
                                     f"💰 <b>{price:,.0f}원</b> × <b>{qty}주</b>  =  <b>{qty*price:,.0f}원</b>\n"
-                                    f"📋 BEAR 국면  ·  총자산 {bear_ratio_scaled*100:.0f}% 헤지 (방어50% + 위성저점50%)\n"
+                                    f"📋 BEAR 국면  ·  총자산 {ratio*100:.0f}% 헤지 (방어40% + 저점대기60%)\n"
                                     f"━━━━━━━━━━━━━━━━━━━━\n"
                                     f"⏰ {_now_kst().strftime('%H:%M KST')}",
                                     msg_type='trade'

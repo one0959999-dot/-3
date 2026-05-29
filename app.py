@@ -866,9 +866,73 @@ def ai_chat():
 
     try:
         current_status = bot.get_status()
+
+        # ── 시장 국면 + 예산 배분 현황 ──────────────────────────────────
+        _regime = current_status.get('market_regime', getattr(bot, 'market_regime', 'NEUTRAL'))
+        _hot_sectors = current_status.get('hot_sectors', [])
+        _total_asset = current_status.get('mock_total_asset', 0) or current_status.get('us_total_asset', 0)
+        _avail_cash  = current_status.get('available_cash', 0)
+        _regime_emoji = {"BULL": "🐂", "BEAR": "🐻", "NEUTRAL": "📊"}.get(_regime, "📊")
+        _momentum_budget_ratio = getattr(bot, 'momentum_budget_ratio', 0.10)
+        _n_cores = len([c for c in current_status.get('cores', []) if c.get('ticker') != 'TBD'])
+        _n_sats  = len(current_status.get('satellites', []))
+        _n_total = max(1, _n_cores + _n_sats)
+
+        if _regime == "BEAR":
+            _tradable_pct = 60
+            _budget_per = _total_asset * 0.60 / _n_total if _total_asset > 0 else 0
+            _budget_note = f"BEAR: 방어자산40% + 저점매수현금60% | 종목당 예산 약 {_budget_per:,.0f}원"
+        else:
+            _tradable_pct = int((1 - _momentum_budget_ratio) * 100)
+            _budget_per = _total_asset * (1 - _momentum_budget_ratio) / _n_total if _total_asset > 0 else 0
+            _budget_note = f"단타{int(_momentum_budget_ratio*100)}% 제외 후 {_tradable_pct}%를 {_n_total}종목 균등배분 | 종목당 약 {_budget_per:,.0f}원"
+
+        stock_analysis_context += f"\n\n[🏦 봇 운용 현황 요약 — 반드시 숙지]\n"
+        stock_analysis_context += f"■ 시장 국면: {_regime_emoji} {_regime}\n"
+        stock_analysis_context += f"■ 총 평가자산: {_total_asset:,.0f}원 | 가용 현금: {_avail_cash:,.0f}원\n"
+        stock_analysis_context += f"■ 예산 배분: {_budget_note}\n"
+        stock_analysis_context += f"■ 코어 {_n_cores}개 / 위성 {_n_sats}개 / 단타 슬롯 {len(getattr(bot, 'momentum_positions', [None]))}개\n"
+        if _hot_sectors:
+            stock_analysis_context += f"■ 강세 섹터: {', '.join(_hot_sectors[:6])}\n"
+
+        # ── 단타(모멘텀) 슬롯 현황 ──────────────────────────────────────
+        _momentum_list = current_status.get('momentum_list', [])
+        _active_mom = [m for m in _momentum_list if m]
+        if _active_mom:
+            stock_analysis_context += f"\n[🚀 단타 슬롯 현황]\n"
+            for m in _active_mom:
+                stock_analysis_context += (
+                    f"- {m.get('name','?')}({m.get('ticker','?')}): "
+                    f"{m.get('shares',0)}주 | 수익률 {m.get('pnl_pct',0):+.1f}% | "
+                    f"{m.get('elapsed','')} | 사유: {m.get('reason','')[:50]}\n"
+                )
+        else:
+            stock_analysis_context += f"[🚀 단타 슬롯]: 현재 비어있음 (스캔 대기 중)\n"
+
+        # ── 장중 AI 시황 분석 (있을 때만) ─────────────────────────────
+        _ai_view = getattr(bot, 'current_ai_market_view', '')
+        if _ai_view:
+            stock_analysis_context += f"\n[🧠 장중 AI 시황 분석]\n{_ai_view[:600]}\n"
+
+        # ── 일일 리포트 (가장 최근 슬롯) ────────────────────────────────
+        _daily_report = getattr(bot, 'daily_report', None)
+        if isinstance(_daily_report, dict):
+            _today = _daily_report.get('date', '')
+            _report_slots = {k: v for k, v in _daily_report.items() if k != 'date' and v}
+            if _report_slots:
+                _latest_slot = sorted(_report_slots.keys())[-1]
+                _report_content = _report_slots[_latest_slot]
+                if _report_content:
+                    stock_analysis_context += (
+                        f"\n[📋 오늘의 일일 리포트 ({_today} {_latest_slot}) — 이 내용이 채팅 질문의 배경일 수 있음]\n"
+                        f"{str(_report_content)[:1500]}\n"
+                        f"(리포트 관련 질문은 위 내용을 바탕으로 답하세요. '데이터 없음'이라고 하면 안 됩니다.)\n"
+                    )
+
+        # ── 봇 최근 로그 ───────────────────────────────────────────────
         bot_logs = current_status.get('logs', [])
         if bot_logs:
-            stock_analysis_context += "\n\n[📝 백엔드 자동 매매 시스템 최근 실행 로그 (필독)]\n"
+            stock_analysis_context += "\n[📝 백엔드 자동 매매 시스템 최근 실행 로그 (필독)]\n"
             for log in bot_logs[-15:]:
                 stock_analysis_context += f"- [{log['time']}] {log['message']}\n"
             stock_analysis_context += "위 로그를 바탕으로 현재 매매 봇이 백엔드에서 무엇을 하고 있는지 파악하여 답변에 자연스럽게 녹여주세요.\n"

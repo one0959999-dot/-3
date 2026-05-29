@@ -26,26 +26,27 @@ INVERSE_BUDGET_RATIO = 0.15     # 기존 20% → 3종 분산으로 비율 조정
 
 # ── 방어 자산 포트폴리오 (BEAR 국면 자동 편입) ─────────────────────────────
 # 하락장에서 서로 역상관(uncorrelated) 또는 안전자산 특성을 가진 3가지 수단으로 분산.
-# 총 배분: 인버스 15% + 달러선물 10% + 금선물 5% = 30% 헤지 포지션
+# 총 배분: 인버스 20% + 달러선물 13% + 금선물 7% = 40% 헤지 포지션
+# 나머지 60% 현금 = 저점매수(bear_bottom_score) 대기 탄약
 DEFENSIVE_ASSETS = [
     {
         "ticker": "114800",
         "name":   "KODEX 인버스",
-        "ratio":  0.15,    # 총자산의 15% — KOSPI200 1배 인버스
+        "ratio":  0.20,    # 총자산의 20% — KOSPI200 1배 인버스
         "type":   "inverse",
         "emoji":  "📉",
     },
     {
         "ticker": "130730",
         "name":   "KODEX 달러선물",
-        "ratio":  0.10,    # 총자산의 10% — 원/달러 상승(원화 약세) 수익
+        "ratio":  0.13,    # 총자산의 13% — 원/달러 상승(원화 약세) 수익
         "type":   "dollar",
         "emoji":  "💵",
     },
     {
         "ticker": "132030",
         "name":   "KODEX 골드선물(H)",
-        "ratio":  0.05,    # 총자산의 5% — 금 안전자산 (환헤지)
+        "ratio":  0.07,    # 총자산의 7% — 금 안전자산 (환헤지)
         "type":   "gold",
         "emoji":  "🥇",
     },
@@ -1136,9 +1137,58 @@ def _neutral_pivot_support(df) -> tuple:
         return False, ""
 
 
+def _neutral_bb_squeeze_accumulation(df) -> tuple:
+    """
+    [횡보 11] 볼린저밴드 수축 + OBV 축적 — 삼성전기 타입 폭발 전 신호
+    - BB폭이 60일 중 하위 30% 수준으로 압축 (에너지 응축)
+    - OBV가 최근 5일간 상승 추세 (박스권 내 세력 매집)
+    - 가격이 BB 중심선~하단 사이에 위치 (저점 진입 구간)
+    → 횡보 후 급등 직전 패턴: 삼성전기 80만원 박스 → 210만원 사례
+    """
+    try:
+        if df is None or df.empty or len(df) < 62:
+            return False, ""
+        c = df['close'].dropna()
+        if len(c) < 62:
+            return False, ""
+        mid   = c.rolling(20).mean()
+        std   = c.rolling(20).std()
+        upper = mid + 2 * std
+        lower = mid - 2 * std
+        bw    = (upper - lower) / (mid + 1e-9)   # 밴드폭 비율
+        # 최근 60일 중 하위 30%tile 수준으로 압축됐는지
+        bw_60      = bw.iloc[-60:]
+        bw_30th    = float(bw_60.quantile(0.30))
+        curr_bw    = float(bw.iloc[-1])
+        is_squeezed = curr_bw <= bw_30th * 1.05
+        if not is_squeezed:
+            return False, ""
+        # 가격이 BB 중심선~하단 사이 (저점 매수 포지션)
+        price   = float(c.iloc[-1])
+        mid_val = float(mid.iloc[-1])
+        low_val = float(lower.iloc[-1])
+        in_lower_half = low_val * 0.98 <= price <= mid_val * 1.02
+        if not in_lower_half:
+            return False, ""
+        # OBV 축적 여부 (데이터 있을 때만 추가 확인)
+        v = df['volume'].dropna() if 'volume' in df.columns else None
+        if v is not None and len(v) >= 6:
+            obv = (np.sign(c.diff()) * v).cumsum()
+            obv_slope = float(obv.iloc[-1]) - float(obv.iloc[-5])
+            if obv_slope > 0:
+                return True, f"BB수축+OBV축적(폭{curr_bw:.3f}≤{bw_30th:.3f},가격{price:,.0f})"
+            # OBV 하락 시 신호 약화 → 점수 미부여
+            return False, ""
+        # OBV 데이터 없어도 BB 수축 + 위치 조건만으로 약한 신호
+        return True, f"BB수축눌림목(폭{curr_bw:.3f}≤{bw_30th:.3f})"
+    except Exception:
+        return False, ""
+
+
 def get_neutral_range_score(df) -> tuple:
     """
     횡보장 레인지 트레이딩 종합 스코어링.
+    11개 전략 독립 실행 (10개 기본 + BB스퀴즈 축적).
     Returns: (score: int, reasons: list[str])
       score 0   = 신호 없음 → 매수 차단 (횡보장은 근거 없이 진입 금지)
       score 1   = 약한 신호 → 30% 소액
@@ -1156,6 +1206,7 @@ def get_neutral_range_score(df) -> tuple:
         _neutral_box_range_support,
         _neutral_adx_low_reversal,
         _neutral_pivot_support,
+        _neutral_bb_squeeze_accumulation,   # [추가] BB수축 + OBV 축적 (삼성전기 타입)
     ]
     score, reasons = 0, []
     for fn in checkers:
