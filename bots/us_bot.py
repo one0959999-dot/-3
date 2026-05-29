@@ -1118,10 +1118,13 @@ class USBotController:
                         with self.lock:
                             pos.status = f"AI 홀드 ({pnl_pct:+.1f}%) ⏳"
                     else:
-                        # floor_shares 보호: floor 이하로는 매도 안 함
+                        # 원금 주수 고정 (복리 방지 — KR봇 동일)
+                        if not getattr(pos, 'initial_shares_for_exit', 0):
+                            with self.lock: pos.initial_shares_for_exit = pos.shares
+                        _c_init1 = getattr(pos, 'initial_shares_for_exit', 0) or pos.shares
                         sellable_p1 = max(0.0, pos.shares - pos.floor_shares)
                         if sellable_p1 > 0:
-                            q   = min(max(1.0, pos.shares * self.PARTIAL1_QTY), sellable_p1)
+                            q   = max(1.0, min(_c_init1 * self.PARTIAL1_QTY, sellable_p1))
                             self._sell(ticker, pos.name, q, price)
                             pnl = _net_profit_usd(price, avg, q)
                             with self.lock:
@@ -1129,42 +1132,40 @@ class USBotController:
                                 pos.ai_exit_decision  = None
                                 pos.status            = f"코어 1차익절({pnl_pct:+.1f}%) ✂️"
                             self._record_pnl(pnl)
-                            self.add_log(f"✂️  코어 1차익절 {pos.name} | PnL ${pnl:+.0f}")
+                            self.add_log(f"✂️  코어 1차익절 {pos.name} ({q:.0f}주 / 원금 {_c_init1:.0f}주 기준 50%) | PnL ${pnl:+.0f}")
                         with self.lock:
                             pos.partial_sold = True
                             if sellable_p1 <= 0:
                                 pos.ai_exit_decision = None
                                 pos.status = f"코어 floor 보호 ({pnl_pct:+.1f}%) 🛡️"
 
-                # 2차: +20%(일반) / +30%(BULL) 도달 → AI에 전량 익절 여부 문의
+                # 2차: +20%(일반) / +30%(BULL) → 원금 기준 50% 부분 매도 (KR봇 동일)
                 elif pos.partial_sold and not pos.partial_sold_2 and pnl_pct >= _core_partial2 and pos.shares > 0:
                     if decision is None:
                         if self.claude:
                             self._trigger_ai_partial_exit(pos, ticker, pos.name, price, avg, pnl_pct, regime)
-                            with self.lock: pos.status = f"AI 익절 검토 중 ({pnl_pct:+.1f}%) 🤖"
+                            with self.lock: pos.status = f"AI 2차익절 검토 ({pnl_pct:+.1f}%) 🤖"
                         else:
-                            with self.lock: pos.ai_exit_decision = "SELL_ALL"
+                            with self.lock: pos.ai_exit_decision = "SELL_PARTIAL"
                     elif decision == "HOLD":
                         with self.lock:
                             pos.status = f"AI 홀드 ({pnl_pct:+.1f}%) ⏳"
                     else:
-                        # floor_shares 보호: floor 이하로는 매도 안 함
+                        _c_init2 = getattr(pos, 'initial_shares_for_exit', 0) or pos.shares
                         sellable_p2 = max(0.0, pos.shares - pos.floor_shares)
                         if sellable_p2 > 0:
-                            q   = sellable_p2
-                            self._sell(ticker, pos.name, q, price)
-                            pnl = _net_profit_usd(price, avg, q)
+                            q2  = max(1.0, min(_c_init2 * 0.50, sellable_p2))
+                            self._sell(ticker, pos.name, q2, price)
+                            pnl = _net_profit_usd(price, avg, q2)
                             self._record_pnl(pnl)
-                            self.add_log(f"✅ 코어 2차익절 {pos.name} | PnL ${pnl:+.0f}")
-                            self._tg(f"✅ [US 코어 전량익절] {pos.name} | +{pnl_pct:.1f}% | ${pnl:+,.0f}")
-                        with self.lock:
-                            pos.shares           -= sellable_p2 if sellable_p2 > 0 else 0
-                            pos.partial_sold_2    = True
-                            pos.ai_exit_decision  = None
-                            if pos.floor_shares > 0 and pos.shares > 0:
-                                pos.status = f"코어 floor 보호 ({pnl_pct:+.1f}%) 🛡️"
-                            else:
-                                pos.status = f"코어 2차익절({pnl_pct:+.1f}%) ✅"
+                            _thr2c = "30%(BULL)" if regime == "BULL" else "20%"
+                            self.add_log(f"✅ 코어 2차익절 {pos.name} +{_thr2c} ({q2:.0f}주 / 원금 {_c_init2:.0f}주 기준 50%) | PnL ${pnl:+.0f}")
+                            self._tg(f"✅ [US 코어 2차익절] {pos.name}\n+{_thr2c} | 잔여 {pos.shares - q2:.0f}주 ATR 대기 | ${pnl:+,.0f}")
+                            with self.lock:
+                                pos.shares           = max(0.0, pos.shares - q2)
+                                pos.partial_sold_2   = True
+                                pos.ai_exit_decision = None
+                                pos.status           = f"코어 2차익절({pnl_pct:+.1f}%) ✅"
 
                 else:
                     with self.lock:
@@ -1777,11 +1778,15 @@ class USBotController:
                         elif _fe_sig == 'PARTIAL_EXIT_30' and pos.shares > 1:
                             _oe_cnt = getattr(pos, 'overext_sell_count', 0)
                             if _oe_cnt < 3:
-                                _q30 = max(1.0, pos.shares * 0.30)
+                                # 1차 트리거 시 원금 주수 고정 (복리 방지 — KR봇 동일)
+                                if _oe_cnt == 0 and not getattr(pos, 'initial_shares_for_exit', 0):
+                                    with self.lock: pos.initial_shares_for_exit = pos.shares
+                                _init_sh_oe = getattr(pos, 'initial_shares_for_exit', 0) or pos.shares
+                                _q30 = max(1.0, min(_init_sh_oe * 0.30, pos.shares))
                                 self._sell(ticker, pos.name, _q30, price)
                                 _pnl30 = _net_profit_usd(price, avg, _q30)
                                 with self.lock:
-                                    pos.shares -= _q30
+                                    pos.shares = max(0.0, pos.shares - _q30)
                                     pos.overext_sell_count = _oe_cnt + 1
                                     pos.status = f"과열 선익절 {_oe_cnt+1}차 30% ✂️"
                                 self._record_pnl(_pnl30)
@@ -1790,9 +1795,8 @@ class USBotController:
                         logger.debug(f"[US봇] 과열청산 체크 오류 ({ticker}): {_oe_err}")
 
             # ④ 1차 부분 익절 (+10%(일반) / +15%(BULL)) — AI 판단
-            # BULL 장에서는 추세 지속 가능성이 높아 익절 기준 상향
-            # 위성 2차 전량익절(PARTIAL2) 제거 → ATR 트레일링으로 무한 보유 (제2의 엔비디아 전략)
             _sat_partial1 = 15.0 if regime == "BULL" else self.PARTIAL1_PCT
+            _sat_partial2 = 30.0 if regime == "BULL" else self.PARTIAL2_PCT
             if not pos.partial_sold and pnl_pct >= _sat_partial1 and pos.shares > 1:
                 decision = getattr(pos, 'ai_exit_decision', None)
                 if decision is None:
@@ -1809,9 +1813,13 @@ class USBotController:
                         pos.status = f"AI 홀드 ({pnl_pct:+.1f}%) ⏳"
                     continue
                 # SELL_PARTIAL 또는 SELL_ALL → 1차 익절 실행 (floor_shares 보호)
+                # 원금 주수 고정 (복리 방지 — KR봇 동일)
+                if not getattr(pos, 'initial_shares_for_exit', 0):
+                    with self.lock: pos.initial_shares_for_exit = pos.shares
+                _init_sh1 = getattr(pos, 'initial_shares_for_exit', 0) or pos.shares
                 sellable_s1 = max(0.0, pos.shares - pos.floor_shares)
                 if sellable_s1 > 0:
-                    q   = min(max(1.0, pos.shares * self.PARTIAL1_QTY), sellable_s1)
+                    q   = max(1.0, min(_init_sh1 * self.PARTIAL1_QTY, sellable_s1))
                     self._sell(ticker, pos.name, q, price)
                     pnl = _net_profit_usd(price, avg, q)
                     with self.lock:
@@ -1819,12 +1827,44 @@ class USBotController:
                         pos.ai_exit_decision  = None
                         pos.status            = f"1차익절({pnl_pct:+.1f}%) ✂️"
                     self._record_pnl(pnl)
-                    self.add_log(f"✂️  1차익절 {pos.name} | PnL ${pnl:+.0f}")
+                    self.add_log(f"✂️  1차익절 {pos.name} ({q:.0f}주 / 원금 {_init_sh1:.0f}주 기준 50%) | PnL ${pnl:+.0f}")
+                    self._tg(f"✂️ [US 위성 1차익절] {pos.name}\n@ ${price:.2f}  +{pnl_pct:.1f}% | 원금 {_init_sh1:.0f}주 기준 50%")
                 with self.lock:
                     pos.partial_sold = True
                     if sellable_s1 <= 0:
                         pos.ai_exit_decision = None
                         pos.status = f"floor 보호 ({pnl_pct:+.1f}%) 🛡️"
+                continue
+
+            # ④-2. 2차 부분 익절 (+20%(일반) / +30%(BULL)) — 원금 기준 50% (KR봇 동일)
+            if (pos.partial_sold and not pos.partial_sold_2
+                    and pnl_pct >= _sat_partial2 and pos.shares > 1 and is_cd):
+                decision2 = getattr(pos, 'ai_exit_decision', None)
+                if decision2 is None:
+                    if self.claude:
+                        self._trigger_ai_partial_exit(pos, ticker, pos.name, price, avg, pnl_pct, regime)
+                        with self.lock: pos.status = f"AI 2차익절 검토 ({pnl_pct:+.1f}%) 🤖"
+                    else:
+                        with self.lock: pos.ai_exit_decision = "SELL_PARTIAL"
+                    continue
+                if decision2 == "HOLD":
+                    with self.lock:
+                        pos.ai_exit_decision = None
+                        pos.status = f"AI 홀드 ({pnl_pct:+.1f}%) ⏳"
+                    continue
+                _init_sh2 = getattr(pos, 'initial_shares_for_exit', 0) or pos.shares
+                q2 = max(1.0, min(_init_sh2 * 0.50, pos.shares))
+                self._sell(ticker, pos.name, q2, price)
+                pnl2 = _net_profit_usd(price, avg, q2)
+                with self.lock:
+                    pos.shares           = max(0.0, pos.shares - q2)
+                    pos.partial_sold_2   = True
+                    pos.ai_exit_decision = None
+                    pos.status           = f"2차익절({pnl_pct:+.1f}%) ✅"
+                self._record_pnl(pnl2)
+                _thr2 = "30%(BULL)" if regime == "BULL" else "20%"
+                self.add_log(f"✅ 2차익절 {pos.name} +{_thr2} ({q2:.0f}주 / 원금 {_init_sh2:.0f}주 기준 50%) | PnL ${pnl2:+.0f}")
+                self._tg(f"✅ [US 위성 2차익절] {pos.name}\n@ ${price:.2f}  +{_thr2} | 잔여 {pos.shares:.0f}주 ATR 트레일링 대기")
                 continue
 
             # ⑤ BULL 불타기 (위성 피라미딩) — +3% + MA5 정배열 ────────
