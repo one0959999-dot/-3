@@ -2224,14 +2224,14 @@ class KRBotController:
                             core.status_msg = f"입금 감지 대기 | 눌림목 트리거 -{_dca_dip:.0f}% (평단 {c_avg:,.0f}원)"
                 # ─────────────────────────────────────────────────────────────
 
-                if c_sig == 'BUY' and c_cash >= cp and is_core_cd and not _dca_bought_this_turn:
-                    # ① 통합 진입 점수 체크
+                if c_cash >= cp and is_core_cd and not _dca_bought_this_turn:
+                    # ① 통합 진입 점수 체크 (composite_signal 게이트 제거 → 순수 점수제)
                     c_score, c_score_reasons = calculate_entry_score(ex_df, cp, regime)
                     c_threshold = self.entry_thresholds.get(f'core_{regime}', self.entry_thresholds.get(regime, get_entry_threshold(regime, 'core')))
                     if c_score < c_threshold:
                         with self.lock:
                             core.status = "감시 중 👀"
-                            core.status_msg = f"코어 진입 점수 부족 ({c_score}/{c_threshold}) — 신호 강화 대기"
+                            core.status_msg = f"코어 진입 점수 부족 ({c_score}/{c_threshold}pt) — {c_sig} | {', '.join(c_score_reasons[:2]) if c_score_reasons else '지표 점검 중'}"
                     else:
                         budget_ratio  = get_budget_ratio_from_score(c_score, c_threshold)
                         # 위성과 동일하게 75/25 분할: 1차 진입 후 나머지는 -2% 눌림목 예약
