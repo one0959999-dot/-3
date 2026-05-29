@@ -1079,7 +1079,18 @@ class KRBotController:
         if not self.claude or not candidates:
             return candidates
         try:
-            self.add_log("🤖 AI가 위성 후보 종목·전략 검토 중...")
+            # ── 심사 시작 텔레그램 알림 ──
+            preview = ', '.join([f"{c['name']}({c['ticker']})" for c in candidates[:5]])
+            if len(candidates) > 5:
+                preview += f" 외 {len(candidates)-5}개"
+            self.add_log(f"🤖 AI가 위성 후보 {len(candidates)}개 종목·전략 검토 중...")
+            if self.telegram:
+                self.telegram.send_message(
+                    f"🔍 <b>위성 후보 AI 심사 시작</b>  {self.alert_icon} {self.mode_name}\n"
+                    f"━━━━━━━━━━━━━━━━━━━━\n"
+                    f"📋 후보 <b>{len(candidates)}개</b> → AI 검토 중...\n"
+                    f"📝 {preview}"
+                )
             reviewed = self.claude.review_satellite_candidates(candidates, self.hot_sectors, sector_guide=self.sector_guide)
             approved = [c for c in reviewed if c.get('approved', True)]
             rejected = [c for c in reviewed if not c.get('approved', True)]
@@ -1090,6 +1101,20 @@ class KRBotController:
                 old_st = candidates[[x['ticker'] for x in candidates].index(c['ticker'])].get('strategy_name','') if c['ticker'] in [x['ticker'] for x in candidates] else ''
                 if old_st and old_st != c.get('strategy_name', old_st):
                     self.add_log(f"🔄 AI 전략 교체: {c['name']} [{old_st}] → [{c['strategy_name']}] | {c.get('ai_reason','')}")
+            # ── 심사 결과 텔레그램 알림 ──
+            if self.telegram:
+                approve_lines = "\n".join([f"  ✅ {c['name']}({c['ticker']})" for c in approved[:6]])
+                reject_lines  = "\n".join([f"  🛑 {c['name']}({c['ticker']}): {c.get('ai_reason','')[:25]}" for c in rejected[:4]])
+                msg = (
+                    f"🤖 <b>AI 위성 심사 완료</b>  {self.alert_icon} {self.mode_name}\n"
+                    f"━━━━━━━━━━━━━━━━━━━━\n"
+                    f"✅ 승인 <b>{len(approved)}개</b>  /  🛑 퇴출 <b>{len(rejected)}개</b>\n"
+                )
+                if approve_lines:
+                    msg += f"\n<b>승인 종목:</b>\n{approve_lines}"
+                if reject_lines:
+                    msg += f"\n\n<b>퇴출 종목:</b>\n{reject_lines}"
+                self.telegram.send_message(msg)
             return approved
         except Exception as e:
             logger.warning(f"[{self.mode_name}] _ai_filter_satellites 오류: {e}")
@@ -3523,7 +3548,19 @@ class KRBotController:
             ai_filtered = self._ai_filter_satellites(pre_filter)
             new_info = ai_filtered[:n_needed]
             if len(new_info) < n_needed:
-                self.add_log(f"⚠️ 당일 블랙리스트/AI 퇴출로 인해 {n_needed - len(new_info)}개 위성 슬롯 공석 유지")
+                empty_count = n_needed - len(new_info)
+                with self.lock:
+                    bl_tickers = list(self._satellite_rejects.keys())
+                self.add_log(f"⚠️ 당일 블랙리스트/AI 퇴출로 인해 {empty_count}개 위성 슬롯 공석 유지")
+                if self.telegram:
+                    bl_text = ', '.join(bl_tickers[:5]) + (f" 외 {len(bl_tickers)-5}개" if len(bl_tickers) > 5 else "") if bl_tickers else "없음"
+                    self.telegram.send_message(
+                        f"⚠️ <b>위성 슬롯 {empty_count}개 공석</b>  {self.alert_icon} {self.mode_name}\n"
+                        f"━━━━━━━━━━━━━━━━━━━━\n"
+                        f"📭 승인된 신규 후보 부족\n"
+                        f"🚫 당일 블랙리스트: {bl_text}\n"
+                        f"💡 내일 자정 블랙리스트 초기화 후 재시도"
+                    )
 
             # [BUG-FIX] 재스크리닝 도중 삭제된 종목이 keep_tickers에 남아 있으면 KeyError 발생
             keep_tickers = {t for t in keep_tickers if t in self.satellite_positions}
