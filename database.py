@@ -165,27 +165,48 @@ def update_user_keys(user_id, keys_dict):
     with db_lock:
         conn = get_db_connection()
         try:
-            # [C-04 수정] 실전/모의 원금을 현재 모드에 해당하는 컬럼에만 업데이트 (반대 모드 원금은 건드리지 않음)
             is_mock = keys_dict.get('is_mock', 1)
-            initial_cash = keys_dict.get('initial_cash', 10000000)
-            cash_col = "us_initial_cash" if is_mock else "real_initial_cash"
 
-            conn.execute(f'''
-                UPDATE users SET real_app_key = ?, real_app_secret = ?, real_account_no = ?,
-                    us_app_key = ?, us_app_secret = ?, us_account_no = ?,
-                    telegram_token = ?, telegram_chat_id = ?,
-                    claude_api_key = ?,
-                    core_stocks = ?, is_mock = ?, initial_cash = ?, {cash_col} = ? WHERE id = ?
-            ''', (
-                keys_dict.get('real_app_key'), keys_dict.get('real_app_secret'), keys_dict.get('real_account_no'),
-                keys_dict.get('us_app_key'), keys_dict.get('us_app_secret'), keys_dict.get('us_account_no'),
-                keys_dict.get('telegram_token'), keys_dict.get('telegram_chat_id'),
-                keys_dict.get('claude_api_key'),
-                keys_dict.get('core_stocks'), is_mock,
-                initial_cash,   # initial_cash (공통 legacy 컬럼)
-                initial_cash,   # cash_col (실전 또는 모의 전용 컬럼만 업데이트)
-                user_id
-            ))
+            # ── 원금 컬럼 업데이트 정책 ──────────────────────────────────────
+            # [BUG-FIX] 설정 저장 시 real_initial_cash가 항상 천만원으로 초기화되는 버그 수정
+            # - KR 봇(is_mock=0): real_initial_cash는 실제 계좌 잔고로 자동 감지
+            #   → 설정 저장 시 절대 덮어쓰기 금지 (set_user_initial_cash만 허용)
+            # - US 봇(is_mock=1): us_initial_cash는 사용자가 직접 운용 자본 입력
+            #   → 폼 입력값으로 업데이트 허용
+            if is_mock:
+                # US 봇: us_initial_cash 직접 설정 허용
+                us_cash = float(keys_dict.get('initial_cash', 0) or 0)
+                conn.execute('''
+                    UPDATE users SET real_app_key = ?, real_app_secret = ?, real_account_no = ?,
+                        us_app_key = ?, us_app_secret = ?, us_account_no = ?,
+                        telegram_token = ?, telegram_chat_id = ?,
+                        claude_api_key = ?,
+                        core_stocks = ?, is_mock = ?, us_initial_cash = ? WHERE id = ?
+                ''', (
+                    keys_dict.get('real_app_key'), keys_dict.get('real_app_secret'), keys_dict.get('real_account_no'),
+                    keys_dict.get('us_app_key'), keys_dict.get('us_app_secret'), keys_dict.get('us_account_no'),
+                    keys_dict.get('telegram_token'), keys_dict.get('telegram_chat_id'),
+                    keys_dict.get('claude_api_key'),
+                    keys_dict.get('core_stocks'), is_mock,
+                    us_cash,
+                    user_id
+                ))
+            else:
+                # KR 봇: real_initial_cash는 건드리지 않음 (자동 감지 보호)
+                conn.execute('''
+                    UPDATE users SET real_app_key = ?, real_app_secret = ?, real_account_no = ?,
+                        us_app_key = ?, us_app_secret = ?, us_account_no = ?,
+                        telegram_token = ?, telegram_chat_id = ?,
+                        claude_api_key = ?,
+                        core_stocks = ?, is_mock = ? WHERE id = ?
+                ''', (
+                    keys_dict.get('real_app_key'), keys_dict.get('real_app_secret'), keys_dict.get('real_account_no'),
+                    keys_dict.get('us_app_key'), keys_dict.get('us_app_secret'), keys_dict.get('us_account_no'),
+                    keys_dict.get('telegram_token'), keys_dict.get('telegram_chat_id'),
+                    keys_dict.get('claude_api_key'),
+                    keys_dict.get('core_stocks'), is_mock,
+                    user_id
+                ))
             conn.commit()
         finally:
             conn.close()
