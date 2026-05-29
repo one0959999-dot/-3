@@ -2791,8 +2791,30 @@ class KRBotController:
                             if new_shares > 0:
                                 pos.avg_price = round((pos.avg_price * pos.shares + price * sq) / new_shares, 2)
                             pos.shares = new_shares
-                        self._log_trade(ticker, p_nm, 'BUY', price, st_nm, f"2차 분할 매수 눌림목 ({sq}주)")
-                        self._send_trade_telegram(self._fmt_trade_msg("🛒", "2차 분할 매수", ticker, p_nm, price, sq, strategy=st_nm, note="-2% 눌림목 포착"))
+                        self._log_trade(ticker, p_nm, 'BUY', price, st_nm, f"2차 분할 매수 눌림목 -2% ({sq}주)")
+                        self._send_trade_telegram(self._fmt_trade_msg("🛒", "2차 분할 매수 (30%)", ticker, p_nm, price, sq, strategy=st_nm, note="-2% 눌림목 포착 | 3차 -4% 대기"))
+
+                # ── 3차 분할 매수: 1차 진입가 대비 -4% 눌림목 ──
+                if (p_sh > 0 and is_cd_passed
+                        and getattr(pos, 'second_buy_done', False)
+                        and not getattr(pos, 'third_buy_done', False)
+                        and getattr(pos, 'third_buy_price', 0) > 0
+                        and price <= pos.third_buy_price
+                        and getattr(pos, 'third_buy_cash', 0) > price
+                        and sig != 'SELL'):
+                    sq3 = int((pos.third_buy_cash * 0.98) // price)
+                    if sq3 > 0 and self._buy_order(ticker, sq3, pos, p_nm):
+                        with self.lock:
+                            pos.last_order_time = time.time()
+                            pos.third_buy_done  = True
+                            pos.third_buy_cash  = 0
+                            pos.status          = "3차매수 ✅"
+                            new_shares = pos.shares + sq3
+                            if new_shares > 0:
+                                pos.avg_price = round((pos.avg_price * pos.shares + price * sq3) / new_shares, 2)
+                            pos.shares = new_shares
+                        self._log_trade(ticker, p_nm, 'BUY', price, st_nm, f"3차 분할 매수 눌림목 -4% ({sq3}주)")
+                        self._send_trade_telegram(self._fmt_trade_msg("🛒", "3차 분할 매수 (40%)", ticker, p_nm, price, sq3, strategy=st_nm, note="-4% 눌림목 포착 | 예산 전액 투입 완료"))
 
                 # 당일 AI 거절 블랙리스트 종목은 매수 시도 자체를 차단
                 if p_sh == 0 and self._is_satellite_blacklisted(ticker):
@@ -2885,12 +2907,9 @@ class KRBotController:
                             pos.status_msg = "최근 5분봉 하락 추세, 매수 보류 (BULL 국면 제외)"
                             continue
 
-                    # ── 국면별 타이밍 신호 + 통합 점수 합산 포지션 사이징 ──────
+                    # ── 국면별 타이밍 신호 (진입 여부 판단용 — 예산 비율에는 영향 없음) ──
                     if regime == "BULL":
                         bull_score, bull_reasons = get_bull_momentum_score(ex_df)
-                        # 통합 점수(score_ratio)와 국면 타이밍 신호를 합산
-                        regime_bonus = 0.10 if bull_score >= 3 else (0.05 if bull_score >= 1 else 0.0)
-                        entry_ratio  = min(0.90, score_ratio + regime_bonus)
                         regime_label = f"BULL·점수{entry_score}pt+타이밍{bull_score}개"
                         regime_reason_str = " | ".join(bull_reasons) if bull_reasons else "상승 추세 추종"
                     else:  # NEUTRAL
@@ -2899,16 +2918,14 @@ class KRBotController:
                             pos.status = "횡보 관망 ⏸"
                             pos.status_msg = "NEUTRAL 국면 — 레인지 신호 없음, 매수 차단"
                             continue
-                        regime_bonus  = 0.10 if neutral_score >= 3 else (0.05 if neutral_score >= 2 else 0.0)
-                        entry_ratio   = min(0.90, score_ratio + regime_bonus)
                         regime_label  = f"NEUTRAL·점수{entry_score}pt+타이밍{neutral_score}개"
                         regime_reason_str = " | ".join(neutral_reasons)
 
-                    # 1차 매수: entry_ratio 의 75%, 나머지 25%는 2차 분할 매수용 유보
-                    first_ratio   = entry_ratio * 0.75
-                    reserve_ratio = entry_ratio * 0.25
-                    entry_cash    = p_cash * first_ratio
-                    reserve_cash  = p_cash * reserve_ratio
+                    # 배정 예산 전체를 30 / 30 / 40으로 분할 (원금 기준 — 잔여금 기준 아님)
+                    # 점수는 진입 게이트만 결정, 투입 금액은 항상 배정 예산 100% 사용
+                    entry_cash   = p_cash * 0.30   # 1차: 즉시
+                    reserve_cash = p_cash * 0.30   # 2차: -2% 눌림목
+                    third_cash   = p_cash * 0.40   # 3차: -4% 눌림목
 
                     # ── 매수 검토 리포트 발송 (친구 AI 스타일) ──────────────
                     try:
@@ -2949,15 +2966,19 @@ class KRBotController:
                                 with self.lock:
                                     pos.last_order_time = time.time(); pos.status = "체결 대기 ⏳"
                                     pos.status_msg      = f"AI 승인: {ai_reason}"
-                                    pos.second_buy_price         = price * 0.98
-                                    pos.second_buy_cash          = reserve_cash
+                                    pos.second_buy_price         = price * 0.98   # -2% 눌림목
+                                    pos.second_buy_cash          = reserve_cash    # 원금의 30%
                                     pos.second_buy_done          = False
+                                    pos.third_buy_price          = price * 0.96   # -4% 눌림목
+                                    pos.third_buy_cash           = third_cash      # 원금의 40%
+                                    pos.third_buy_done           = False
                                     pos.pyramid_done             = False
                                     pos.partial_sold             = False
                                     pos.partial_sold_2           = False
-                                    pos.initial_shares_for_exit  = 0   # 신규 진입 시 매도 원금 기준 초기화
-                                self._log_trade(ticker, p_nm, 'BUY', price, st_nm, f"AI 승인 [{regime_label}] 1차({int(first_ratio*100)}%) ({ai_reason})")
-                                self._send_trade_telegram(self._fmt_trade_msg("📈", f"AI 매수 승인  ({int(first_ratio*100)}% 1차)", ticker, p_nm, price, qty, strategy=f"{st_nm}  ·  {regime_label}", ai_reason=ai_reason, note=regime_reason_str))
+                                    pos.initial_shares_for_exit  = 0
+                                    # third_buy는 위 decision 블록에서 이미 저장됨
+                                self._log_trade(ticker, p_nm, 'BUY', price, st_nm, f"AI 승인 [{regime_label}] 1차(30%) ({ai_reason})")
+                                self._send_trade_telegram(self._fmt_trade_msg("📈", "AI 매수 승인 (1차 30%)", ticker, p_nm, price, qty, strategy=f"{st_nm}  ·  {regime_label}", ai_reason=ai_reason, note=f"2차 -2%({price*0.98:,.0f}원) / 3차 -4%({price*0.96:,.0f}원) 예약"))
                                 self.claude.record_trade_event(f"KR 위성 매수: {p_nm}({ticker}) {qty}주 @ {price:,.0f}원 | {regime_label} | AI: {ai_reason[:60]}")
                         else:
                             pos.status     = "AI 거절 🛑"
@@ -2981,12 +3002,15 @@ class KRBotController:
                                 pos.second_buy_price         = price * 0.98
                                 pos.second_buy_cash          = reserve_cash
                                 pos.second_buy_done          = False
+                                pos.third_buy_price          = price * 0.96
+                                pos.third_buy_cash           = third_cash
+                                pos.third_buy_done           = False
                                 pos.pyramid_done             = False
                                 pos.partial_sold             = False
                                 pos.partial_sold_2           = False
                                 pos.initial_shares_for_exit  = 0
-                            self._log_trade(ticker, p_nm, 'BUY', price, st_nm, f"알고리즘 [{regime_label}] 1차({int(first_ratio*100)}%): {regime_reason_str}")
-                            self._send_trade_telegram(self._fmt_trade_msg("📈", f"알고리즘 매수  ({int(first_ratio*100)}% 1차)", ticker, p_nm, price, qty, strategy=f"{st_nm}  ·  {regime_label}", note=regime_reason_str))
+                            self._log_trade(ticker, p_nm, 'BUY', price, st_nm, f"알고리즘 [{regime_label}] 1차(30%): {regime_reason_str}")
+                            self._send_trade_telegram(self._fmt_trade_msg("📈", "알고리즘 매수 (1차 30%)", ticker, p_nm, price, qty, strategy=f"{st_nm}  ·  {regime_label}", note=f"2차 -2%({price*0.98:,.0f}원) / 3차 -4%({price*0.96:,.0f}원) 예약 | {regime_reason_str}"))
 
                 elif sig == 'SELL' and p_sh > 0 and is_cd_passed:
                     if self.claude:
@@ -3001,6 +3025,8 @@ class KRBotController:
                                     pos.status_msg               = f"AI 승인: {ai_reason}"
                                     pos.shares                   = 0
                                     pos.initial_shares_for_exit  = 0
+                                    pos.third_buy_done           = False
+                                    pos.third_buy_cash           = 0
                                 profit = _net_profit(price, p_avg, p_sh)
                                 self._log_trade(ticker, p_nm, 'SELL', price, st_nm, f"AI 승인 ({ai_reason})", profit=profit)
                                 self._send_trade_telegram(self._fmt_trade_msg("📉", "AI 매도 승인", ticker, p_nm, price, p_sh, profit=profit, strategy=st_nm, ai_reason=ai_reason))
@@ -3022,6 +3048,8 @@ class KRBotController:
                                 pos.last_order_time          = time.time(); pos.status = "체결 대기 ⏳"
                                 pos.shares                   = 0
                                 pos.initial_shares_for_exit  = 0
+                                pos.third_buy_done           = False
+                                pos.third_buy_cash           = 0
                             profit = _net_profit(price, p_avg, p_sh)
                             self._log_trade(ticker, p_nm, 'SELL', price, st_nm, "알고리즘 직통", profit=profit)
                             self._send_trade_telegram(self._fmt_trade_msg("📉", "알고리즘 매도", ticker, p_nm, price, p_sh, profit=profit, strategy=st_nm))
