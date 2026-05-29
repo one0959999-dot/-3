@@ -573,10 +573,38 @@ def _signal_stochastic_golden(df) -> tuple:
         return False, ""
 
 
+def _bear_macd_pullback(df) -> tuple:
+    """
+    [전략 11] 하락장 MACD 눌림목 반등 신호
+    - MACD 히스토그램이 음수 구간에 있으면서 직전 봉보다 개선(덜 음수)되고 있을 때
+    - hist < 0 이지만 hist_now > hist_prev → 음수 바닥에서 반등 중 = 최적 저점 진입 타이밍
+    - BULL/NEUTRAL 장의 MACD 역추세 보너스와 동일한 논리를 BEAR 장에도 적용
+    """
+    try:
+        if df is None or df.empty or len(df) < 30:
+            return False, ""
+        c = df['close'].dropna()
+        if len(c) < 30:
+            return False, ""
+        ema12 = c.ewm(span=12, adjust=False).mean()
+        ema26 = c.ewm(span=26, adjust=False).mean()
+        macd_line   = ema12 - ema26
+        signal_line = macd_line.ewm(span=9, adjust=False).mean()
+        hist_now  = float(macd_line.iloc[-1] - signal_line.iloc[-1])
+        hist_prev = float(macd_line.iloc[-2] - signal_line.iloc[-2])
+        # 음수 구간에서 히스토그램이 반등(개선) 중
+        if hist_now < 0 and hist_now > hist_prev:
+            return True, f"MACD눌림반등({hist_prev:+.3f}→{hist_now:+.3f})"
+        return False, ""
+    except Exception:
+        return False, ""
+
+
 def get_bear_bottom_score(df) -> tuple:
     """
     하락장 저점 포착 종합 스코어링.
-    10개 전략을 독립 실행 후 감지된 신호 수(score)와 사유 목록을 반환.
+    11개 전략을 독립 실행 후 감지된 신호 수(score)와 사유 목록을 반환.
+    (10개 저점 패턴 + MACD 눌림목 반등)
 
     Returns:
         (score: int, reasons: list[str])
@@ -596,6 +624,7 @@ def get_bear_bottom_score(df) -> tuple:
         _signal_consecutive_drop_reversal,
         _signal_volume_accumulation,
         _signal_stochastic_golden,
+        _bear_macd_pullback,         # [추가] 하락장 MACD 눌림목 반등
     ]
     score = 0
     reasons = []
