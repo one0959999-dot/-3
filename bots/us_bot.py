@@ -1268,6 +1268,14 @@ class USBotController:
         candidates = [c for c in candidates
                       if now_ts - self._satellite_rejects.get(c["ticker"], 0) >= self._SAT_REJECT_COOLDOWN]
 
+        # ── ROE 턴어라운드 보너스 반영 → 선정 점수에 가산 후 재정렬 ──
+        for c in candidates:
+            _rb, _rr = self._roe_turnaround_bonus(c["ticker"])
+            if _rb > 0:
+                c["score"] = c.get("score", 0) + _rb
+                c["ai_reason"] = (c.get("ai_reason", "") + f" | {_rr}").strip(" |")
+        candidates.sort(key=lambda x: x.get("score", 0), reverse=True)
+
         # 섹터 다양성: 같은 섹터 최대 2개
         seen_sec: dict = {}
         filtered: list = []
@@ -1397,12 +1405,6 @@ class USBotController:
                 )
             else:
                 entry_score, entry_reasons = 0, []
-
-            # ROE 턴어라운드 보너스 (음→양 전환 추세)
-            _roe_bonus, _roe_reason = self._roe_turnaround_bonus(ticker)
-            if _roe_bonus > 0:
-                entry_score += int(_roe_bonus)
-                entry_reasons.append(_roe_reason)
 
             entry_threshold = self.entry_thresholds.get(f'sat_{regime}', self.entry_thresholds.get(regime, get_entry_threshold(regime, 'satellite')))
 
