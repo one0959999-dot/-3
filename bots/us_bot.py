@@ -1228,6 +1228,7 @@ class USBotController:
 
         # satellite_info 에 선정된 종목 중 positions 에 없는 것 → 즉시 빈 포지션 생성
         # 대시보드에 "감시 중" 상태로 표시되고, 다음 매매 턴에 즉시 진입 시도
+        current_info_tickers = {s.get("ticker") for s in self.satellite_info if s.get("ticker")}
         for _sat in self.satellite_info:
             _t = _sat.get("ticker")
             if _t and _t not in self.satellite_positions:
@@ -1235,6 +1236,15 @@ class USBotController:
                     ticker=_t, name=_sat.get("name", _t),
                     status="감시 중 👀"
                 )
+
+        # [BUG-FIX] 탈락 종목(0주 보유) satellite_positions 에서 제거 → 대시보드 미반영 버그 수정
+        # 보유 중(shares > 0)인 종목은 satellite_info에 없어도 청산될 때까지 유지
+        for _t in list(self.satellite_positions.keys()):
+            if _t not in current_info_tickers:
+                _pos = self.satellite_positions[_t]
+                if getattr(_pos, 'shares', 0) <= 0:
+                    del self.satellite_positions[_t]
+                    self.add_log(f"🗑️ 위성 탈락 제거: {_t} (0주, 대시보드 정리)")
 
         # 신규 종목 선정 시 텔레그램 알림 (KR봇 initialize_portfolio 동일)
         if new_info:
@@ -1687,11 +1697,20 @@ class USBotController:
     # 위성 즉시 재스크리닝 (KR봇 _rescreen_satellites 동일 패턴)
     # ─────────────────────────────────────────────────────────────────
 
+    _last_rescreen_actual_ts: float = 0.0   # 연속 재스캔 방지 쿨다운
+
     def _rescreen_satellites(self):
         """위성 빈 슬롯 발생 / 주기적 교체 탐색 (KR봇 동일 패턴).
-        last_screen_date를 초기화해 _screen_satellites()를 강제 재실행."""
+        last_screen_date를 초기화해 _screen_satellites()를 강제 재실행.
+        AI 거절 연속 호출 방지: 5분 쿨다운."""
         if not _is_us_market_open():
             return
+        # [BUG-FIX] AI 거절 시 즉시 재스캔 반복 방지 — 5분 쿨다운
+        now = time.time()
+        if now - self._last_rescreen_actual_ts < 300:
+            self.add_log("⏸ 재스캔 쿨다운 중 (5분 이내 재실행 방지)")
+            return
+        self._last_rescreen_actual_ts = now
         self.add_log("🦅 [US] 위성 실시간 교체 탐색 중...")
         # 성장세 양호(+3%) 종목 유지 여부 사전 체크
         strong_keep: set = set()
