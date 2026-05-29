@@ -724,12 +724,6 @@
                         <input type="password" id="usAppSecret" value="{{ user.data.us_app_secret or '' }}">
                         <label>해외주식 계좌번호</label>
                         <input type="text" id="usAccountNo" value="{{ user.data.us_account_no or '' }}" placeholder="예: 50123456-01">
-                        <label style="margin-top:10px;">US 봇 운용 자본 (원화 기준)
-                            <span style="font-size:0.72rem; color:#6b7280; font-weight:400; margin-left:4px;">0 입력 시 US 봇 미운용</span>
-                        </label>
-                        <input type="number" id="usInitialCash"
-                               value="{{ user.data.us_initial_cash | int if user.data.us_initial_cash is not none else 0 }}"
-                               min="0" step="100000" placeholder="0">
                     </div>
 
                     <button class="btn-save-keys" onclick="saveAccountSettings()" style="background:#10b981;">설정 저장</button>

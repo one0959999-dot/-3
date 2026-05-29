@@ -1042,10 +1042,6 @@ window.saveAccountSettings = async function () {
     const isMock = document.getElementById('modeSwitch').checked ? 1 : 0;
     const coreJsonStr = JSON.stringify(_coreStockList);
 
-    // US 운용 자본 — 0 포함 유효 (미운용 의미)
-    const usInitialCashEl = document.getElementById('usInitialCash');
-    const usInitialCash = usInitialCashEl ? Number(usInitialCashEl.value) : 0;
-
     const data = {
         real_app_key: document.getElementById('realAppKey').value,
         real_app_secret: document.getElementById('realAppSecret').value,
@@ -1059,7 +1055,7 @@ window.saveAccountSettings = async function () {
         claude_api_key: document.getElementById('claudeApiKey').value,
         core_stocks: coreJsonStr,
         is_mock: isMock,
-        initial_cash: usInitialCash,   // US 모드일 때 us_initial_cash 컬럼에 저장됨
+        // initial_cash 제거: KR/US 모두 실계좌 잔고 자동 감지 (수동 입력값으로 덮어쓰기 금지)
     };
     try {
         const res = await fetch('/api/settings/keys', {
