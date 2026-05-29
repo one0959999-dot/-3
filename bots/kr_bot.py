@@ -2320,10 +2320,10 @@ class KRBotController:
                             if not approved:
                                 with self.lock:
                                     core.status     = "AI 거절 🛑"
-                                    core.status_msg = f"악재 리스크 감지: {ai_reason[:80]}"
-                                self.add_log(f"🛑 {c_nm} 코어 AI 거절(악재): {ai_reason[:80]}")
+                                    core.status_msg = f"악재 리스크 감지: {ai_reason}"
+                                self.add_log(f"🛑 {c_nm} 코어 AI 거절(악재): {ai_reason}")
                                 if self.claude:
-                                    self.claude.record_trade_event(f"KR 코어 AI 거절: {c_nm}({c_tk}) @ {cp:,}원 | {ai_reason[:80]}")
+                                    self.claude.record_trade_event(f"KR 코어 AI 거절: {c_nm}({c_tk}) @ {cp:,}원 | {ai_reason}")
                             elif self._buy_order(c_tk, qty, core, c_nm):
                                 with self.lock:
                                     core.last_order_time  = time.time()
@@ -2337,7 +2337,7 @@ class KRBotController:
                                     core.second_buy_cash  = reserve_cash
                                     core.second_buy_done  = False
                                 score_str = " | ".join(c_score_reasons[:3])
-                                self.add_log(f"💎 {c_nm} 코어 1차 매수 | {qty}주 @ {cp:,}원 | {c_score}pt [{score_str}] | 2차 예약 {cp*0.98:,.0f}원 | {ai_reason[:30]}")
+                                self.add_log(f"💎 {c_nm} 코어 1차 매수 | {qty}주 @ {cp:,}원 | {c_score}pt [{score_str}] | 2차 예약 {cp*0.98:,.0f}원 | {ai_reason}")
                                 if self.claude:
                                     self.claude.record_trade_event(f"KR 코어 1차 매수: {c_nm}({c_tk}) {qty}주 @ {cp:,}원 | {c_score}pt [{score_str}]")
                                 self._log_trade(c_tk, c_nm, 'BUY', cp, "RSI코어", f"RSI저평가+120MA {c_score}pt [{score_str}] — 1차({int(first_ratio*100)}%)")
@@ -2718,7 +2718,7 @@ class KRBotController:
                 # 당일 AI 거절 블랙리스트 종목은 매수 시도 자체를 차단
                 if p_sh == 0 and self._is_satellite_blacklisted(ticker):
                     pos.status = "당일 블랙리스트 🚫"
-                    pos.status_msg = f"오늘 거절됨: {self._satellite_rejects.get(ticker, '')[:30]}"
+                    pos.status_msg = f"오늘 거절됨: {self._satellite_rejects.get(ticker, '')}"
                     continue
 
                 # 실적 발표 D-3 이내 → 신규 진입 차단 (깜짝 손실 방지) — US봇 동일
@@ -2764,7 +2764,7 @@ class KRBotController:
                             # 하락장은 더 신중해야 하므로 AI 심사 필수
                             if self.claude:
                                 pos.status     = "AI 심사 중 🤖"
-                                pos.status_msg = f"하락장 저점 신호 | {bear_reason_str[:60]} — AI 최종 승인 대기 중..."
+                                pos.status_msg = f"하락장 저점 신호 | {bear_reason_str} — AI 최종 승인 대기 중..."
                                 trade_ctx = self._build_trade_context(ticker, p_nm, price, ex_df, st_nm, regime)
                                 decision, ai_reason = self.claude.ai_approve_trade(sig, p_nm, ticker, price, st_nm, ind_val, self.hot_sectors, get_recent_trades(self.user_id, ticker), load_ai_rules(self.user_id) + "\n" + getattr(self, 'current_ai_market_view', '') + ("\n\n[📊 섹터 가이드 / 커스텀 전략]\n" + self.sector_guide if self.sector_guide else ''), context=trade_ctx)
                                 if decision:
