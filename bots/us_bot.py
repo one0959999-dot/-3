@@ -2681,7 +2681,11 @@ class USBotController:
                     "budget":     round(pos.budget_usd * fx),
                     "floor":      round(pos.floor_shares * avg_p * fx) if avg_p > 0 else 0,
                     "status":     pos.status,
-                    "status_msg": f"${sp_usd:.2f} | {pnl_pct:+.1f}%",
+                    "status_msg": (
+                        f"현재가 {sp_usd * fx:,.0f}원 (${sp_usd:.2f}) | 수익 {pnl_pct:+.1f}%"
+                        if pos.shares > 0 and avg_p > 0
+                        else f"현재가 {sp_usd * fx:,.0f}원 (${sp_usd:.2f}) | {pos.status}"
+                    ),
                     "dca_mode":   False,
                 })
 
@@ -2707,7 +2711,11 @@ class USBotController:
                     "avg_price":  round(avg_p * fx),
                     "budget":     round(pos.budget_usd * fx),
                     "status":     pos.status,
-                    "status_msg": f"${sp_usd:.2f} | {pnl_pct:+.1f}%",
+                    "status_msg": (
+                        f"현재가 {sp_usd * fx:,.0f}원 (${sp_usd:.2f}) | 수익 {pnl_pct:+.1f}%"
+                        if pos.shares > 0 and avg_p > 0
+                        else f"현재가 {sp_usd * fx:,.0f}원 (${sp_usd:.2f}) | {pos.status}"
+                    ),
                 })
 
             # 표시 외 보유 종목도 총액에 합산
