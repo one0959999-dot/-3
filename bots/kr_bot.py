@@ -512,10 +512,21 @@ class KRBotController:
         - 사용자 지정 종목은 screener 결과보다 우선 배치
         - 중복 제거 후 num_satellites 한도 적용
         - 기본 지표(RSI, 수익률, 거래량비율) 자동 채움 → AI 리뷰어 "데이터 미제공" 방지
+        - 사용자 목록에서 제거됐고 보유주 없는 종목은 satellite_positions에서 즉시 정리
         """
+        user_tickers = {s['ticker'] for s in self.user_satellite_stocks if s.get('ticker')}
+
+        # BUG-FIX: 사용자 목록에서 제거됐고 보유주 없는 종목은 satellite_positions에서 정리
+        # (치우기 명령 후에도 ghost 포지션이 남아 재시작 시 복귀하는 버그 방지)
+        for _t in list(self.satellite_positions.keys()):
+            if _t not in user_tickers and int(self.satellite_positions[_t].shares) == 0:
+                # 스크리너 선정 or 이전에 user가 지정했다가 제거한 종목 → positions에서 제거
+                self.satellite_positions.pop(_t, None)
+                self.satellite_strategies.pop(_t, None)
+                self.satellite_info = [c for c in self.satellite_info if c.get('ticker') != _t]
+
         if not self.user_satellite_stocks:
             return
-        user_tickers = {s['ticker'] for s in self.user_satellite_stocks if s.get('ticker')}
         # screener 결과에서 사용자 종목 제거 (중복 방지)
         filtered = [c for c in self.satellite_info if c['ticker'] not in user_tickers]
         pinned = []
@@ -1265,12 +1276,17 @@ class KRBotController:
                 pos.second_buy_cash    = float(c.get("second_buy_cash", 0.0))
                 pos.second_buy_done    = bool(c.get("second_buy_done", False))
                 self.core_positions.append(pos)
+            _user_sat_tickers = {s['ticker'] for s in self.user_satellite_stocks if s.get('ticker')}
             self.satellite_positions = {}
             for ticker, s in state["satellites"].items():
                 # [BUG-FIX] KR 봇 상태 파일에 US 종목(알파벳 티커)이 섞이는 버그 방어
                 # KR 주식 티커는 반드시 6자리 숫자 — 알파벳 티커(MRVL, ARM 등)는 US 봇 전용
                 if not (ticker.isdigit() and len(ticker) == 6):
                     logger.warning(f"[KR봇] 상태 복구 중 비KR 티커 무시: {ticker} (US 봇 종목 혼입 방지)")
+                    continue
+                # [BUG-FIX] 보유주 없고 사용자지정도 아닌 종목(스크리너 선정) → ghost 복구 방지
+                # 재시작 시 치웠던 위성 종목이 다시 딸려오는 버그 수정
+                if int(s.get("shares", 0)) == 0 and ticker not in _user_sat_tickers:
                     continue
                 pos = Position(ticker, s["name"], s.get("initial_cash", 1400000))
                 pos.shares = s["shares"]; pos.cash = s["cash"]; pos.avg_price = s.get("avg_price", 0)
@@ -1284,10 +1300,15 @@ class KRBotController:
                 self.satellite_positions[ticker] = pos
 
             # [BUG-FIX] satellite_info / satellite_strategies 도 비KR 티커 제거
+            # + 사용자지정 or 보유 중인 종목만 복원 (스크리너 ghost 방지)
+            _restored_sat_tickers = set(self.satellite_positions.keys())
             self.satellite_info = [c for c in state.get("satellite_info", [])
-                                   if c.get('ticker','').isdigit() and len(c.get('ticker','')) == 6]
+                                   if c.get('ticker','').isdigit() and len(c.get('ticker','')) == 6
+                                   and (c.get('ticker') in _restored_sat_tickers
+                                        or c.get('ticker') in _user_sat_tickers)]
             self.satellite_strategies = {t: v for t, v in state.get("satellite_strategies", {}).items()
-                                         if t.isdigit() and len(t) == 6}
+                                         if t.isdigit() and len(t) == 6
+                                         and (t in _restored_sat_tickers or t in _user_sat_tickers)}
             self.hot_sectors = state.get("hot_sectors", [])
             self.num_satellites = state.get("num_satellites", 3)  # 저장된 값 복원
             self.last_screen_month = state.get("last_screen_month")
@@ -1325,11 +1346,12 @@ class KRBotController:
                 self.momentum_positions = [self._deserialize_one_momentum(old_single)] + [None] * (target_slots - 1)
 
             # satellite_info에 선정된 종목 중 positions에 없는 것 → 빈 포지션 생성
-            # 대시보드에 "감시 중" 상태로 표시되고, 다음 매매 턴에 즉시 진입 시도 가능
+            # BUG-FIX: 사용자지정 종목만 추가 (스크리너 선정 ghost 방지)
+            # 스크리너 종목은 다음 screener 실행 시 자연스럽게 재선정됨
             _existing_tickers = set(self.satellite_positions.keys())
             for _sat in self.satellite_info:
                 _t = _sat.get('ticker')
-                if _t and _t not in _existing_tickers:
+                if _t and _t not in _existing_tickers and _t in _user_sat_tickers:
                     self.satellite_positions[_t] = Position(_t, _sat.get('name', _t), 0.0)
                     self.satellite_strategies[_t] = _sat.get('strategy_name', 'RSI(9) 30/70')
                     _existing_tickers.add(_t)
