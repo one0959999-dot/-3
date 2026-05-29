@@ -1067,14 +1067,24 @@ REASON: (핵심 근거 1~2줄)"""
         try:
             res = self.generate_content(prompt, temperature=0.1, model=self._FAST_MODEL)
             upper = res.upper()
+            # ① DECISION: 라인 우선 파싱
             decision_line = next((ln for ln in upper.splitlines()
-                                  if ln.strip().startswith("DECISION:") or "DECISION:" in ln), "")
+                                  if "DECISION:" in ln), "")
             if decision_line:
                 after_colon = decision_line.split("DECISION:", 1)[-1].strip()
                 first_word  = after_colon.split()[0] if after_colon.split() else ""
                 decision = first_word == "CONFIRM"
             else:
-                decision = "CONFIRM" in upper and "REJECT" not in upper
+                # ② 폴백: 줄 맨 앞의 단독 CONFIRM/REJECT만 인식
+                # (본문에 "REJECT 사유 없음" 등이 있어도 오판 방지)
+                import re as _re
+                if _re.search(r'(?:^|\n)\s*CONFIRM\b', upper):
+                    decision = True
+                elif _re.search(r'(?:^|\n)\s*REJECT\b', upper):
+                    decision = False
+                else:
+                    # 코어는 기본 CONFIRM — 명백한 거절 사유 없으면 승인
+                    decision = True
             reason = res.split("REASON:")[-1].strip() if "REASON:" in res else res.strip()
             return decision, reason
         except Exception as e:
