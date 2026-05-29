@@ -914,6 +914,17 @@ def ai_chat():
         if _ai_view:
             stock_analysis_context += f"\n[🧠 장중 AI 시황 분석]\n{_ai_view[:600]}\n"
 
+        # ── 거래량 급증 종목 실제 리스트 ─────────────────────────────────
+        _surge_details = getattr(bot, 'volume_surge_details', [])
+        if _surge_details:
+            stock_analysis_context += f"\n[📈 거래량 2배 급증 종목 실제 리스트 — {len(_surge_details)}개]\n"
+            for _s in _surge_details[:30]:
+                stock_analysis_context += f"  · {_s.get('name','?')}({_s.get('ticker','?')}): {_s.get('ratio',0):.1f}배\n"
+            stock_analysis_context += (
+                "위 종목들에 대해 질문받으면 종목명과 배율을 직접 언급하세요. "
+                "'데이터 없음', '리스트 없음'이라고 하면 안 됩니다.\n"
+            )
+
         # ── 일일 리포트 (가장 최근 슬롯) ────────────────────────────────
         _daily_report = getattr(bot, 'daily_report', None)
         if isinstance(_daily_report, dict):

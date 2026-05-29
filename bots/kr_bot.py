@@ -99,6 +99,7 @@ class KRBotController:
         self.last_core_rebalance_date = None   # AI 코어 마지막 재선정 날짜 (매주 월요일 갱신)
         self.hot_sectors = []
         self.daily_report = None
+        self.volume_surge_details = []   # 거래량 급증 종목 실제 리스트 [{ticker, name, ratio}]
 
         # 예수금 즉시 반영용 내부 현금 추적기
         # KIS 모의 API는 체결 후 1~3분 지연이 있어 캐시 API 값 대신 내부 추적값 사용
@@ -3853,6 +3854,10 @@ class KRBotController:
                 if not isinstance(self.daily_report, dict) or self.daily_report.get('date') != today_str: self.daily_report = {'date': today_str, '15:40': None}
                 content = report_data.get('report_markdown') if isinstance(report_data, dict) else str(report_data)
                 self.daily_report[time_slot] = content
+                # 거래량 급증 종목 실제 리스트 저장 (채팅 AI가 종목명 조회 가능하도록)
+                _surge = report_data.get('volume_surge_details', [])
+                if _surge:
+                    self.volume_surge_details = _surge
                 self._save_state()
                 self._send_telegram(f"📝 [리포트 발간]\n\n{content[:4000]}")
         except Exception as e:

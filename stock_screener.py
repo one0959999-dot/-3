@@ -1438,11 +1438,24 @@ def generate_daily_market_report(claude_client=None, verbose=False, news_context
             raw_data_lines.append(f"- {sec}: {val:+.1f}%")
     except: pass
         
-    # 3. 거래량 급등 데이터
+    # 3. 거래량 급등 데이터 — 숫자만 아닌 실제 종목 리스트 전달
+    volume_surges = {}
+    volume_surge_details = []   # [{ticker, name, ratio}] — 봇에 저장용
     try:
         volume_surges = get_volume_surge_tickers(kis=kis, surge_ratio=2.0, verbose=False)
-        raw_data_lines.append(f"\n[수급 특이사항]\n- 거래량 2배 급증 종목 수: {len(volume_surges)}개")
-    except: pass
+        _surge_lines = [f"- 거래량 2배 급증 종목: 총 {len(volume_surges)}개 (상위 30개 상세)"]
+        for _t, _r in list(volume_surges.items())[:30]:
+            try:
+                from pykrx import stock as _krx
+                _name = _krx.get_market_ticker_name(_t)
+            except Exception:
+                _name = _t
+            _surge_lines.append(f"  · {_name}({_t}): {_r:.1f}배")
+            volume_surge_details.append({"ticker": _t, "name": _name, "ratio": round(_r, 2)})
+        raw_data_lines.append("\n[수급 특이사항 — 거래량 급증 종목 전체 목록]")
+        raw_data_lines.extend(_surge_lines)
+    except Exception:
+        pass
 
     # 🚨 [신규 추가] 주요 종목의 실시간 네이버 뉴스 텍스트 컨텍스트 결합
     if news_context:
@@ -1468,5 +1481,6 @@ def generate_daily_market_report(claude_client=None, verbose=False, news_context
         
     return {
         "date": datetime.today().strftime('%Y-%m-%d'),
-        "report_markdown": report_text
+        "report_markdown": report_text,
+        "volume_surge_details": volume_surge_details,   # 실제 종목 리스트 [{ticker, name, ratio}]
     }
