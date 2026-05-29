@@ -2102,8 +2102,31 @@ class KRBotController:
                                 core.avg_price = round((core.avg_price * core.shares + cp * sq) / new_shares, 2)
                             core.shares = new_shares
                         self.add_log(f"💎 {c_nm} 코어 2차 매수 | {sq}주 @ {cp:,}원 | 눌림목 -2%")
-                        self._log_trade(c_tk, c_nm, 'BUY', cp, "RSI코어", f"코어 2차 분할 매수 눌림목 ({sq}주)")
-                        self._send_trade_telegram(self._fmt_trade_msg("💎", "코어 2차 매수", c_tk, c_nm, cp, sq, strategy="RSI코어", note="-2% 눌림목 포착"))
+                        self._log_trade(c_tk, c_nm, 'BUY', cp, "RSI코어", f"코어 2차 분할 매수 눌림목 -2% ({sq}주)")
+                        self._send_trade_telegram(self._fmt_trade_msg("💎", "코어 2차 매수", c_tk, c_nm, cp, sq, strategy="RSI코어", note="-2% 눌림목 포착 | 3차 -4% 대기"))
+
+                # ── 코어 3차 분할 매수: 1차 진입가 -4% 눌림목 ─────────────────
+                if (c_sh > 0 and is_core_cd
+                        and getattr(core, 'second_buy_done', False)
+                        and not getattr(core, 'third_buy_done', False)
+                        and getattr(core, 'third_buy_price', 0) > 0
+                        and cp <= core.third_buy_price
+                        and getattr(core, 'third_buy_cash', 0) >= cp
+                        and c_sig != 'SELL'):
+                    sq3 = int((core.third_buy_cash * 0.98) // cp)
+                    if sq3 > 0 and self._buy_order(c_tk, sq3, core, c_nm):
+                        with self.lock:
+                            core.last_order_time = time.time()
+                            core.third_buy_done  = True
+                            core.third_buy_cash  = 0.0
+                            core.status          = "3차 매수 ✅"
+                            new_shares = core.shares + sq3
+                            if new_shares > 0:
+                                core.avg_price = round((core.avg_price * core.shares + cp * sq3) / new_shares, 2)
+                            core.shares = new_shares
+                        self.add_log(f"💎 {c_nm} 코어 3차 매수 | {sq3}주 @ {cp:,}원 | 눌림목 -4% | 예산 전액 투입 완료")
+                        self._log_trade(c_tk, c_nm, 'BUY', cp, "RSI코어", f"코어 3차 분할 매수 눌림목 -4% ({sq3}주)")
+                        self._send_trade_telegram(self._fmt_trade_msg("💎", "코어 3차 매수", c_tk, c_nm, cp, sq3, strategy="RSI코어", note="-4% 눌림목 포착 | 예산 전액 투입 완료"))
                 # ─────────────────────────────────────────────────────────────
 
                 # ── BULL 불타기 (코어 피라미딩) — +3% 돌파 + MA5 정배열 유지 ──
@@ -2356,9 +2379,11 @@ class KRBotController:
                             core.status_msg = f"진입점수 {c_score}/{c_threshold}pt | 충족: {', '.join(c_score_reasons[:3]) if c_score_reasons else '없음'}"
                     else:
                         budget_ratio  = get_budget_ratio_from_score(c_score, c_threshold)
-                        # 75 / 25 분할: 모두 c_cash 원금 기준 (잔여금 기준 아님)
-                        first_cash    = c_cash * budget_ratio * 0.75
-                        reserve_cash  = c_cash * budget_ratio * 0.25
+                        # 점수 비율을 각 회차에 동일 적용 — 배정 예산 초과 시 남은 예산으로 캡
+                        first_cash    = c_cash * budget_ratio
+                        _c_remain1    = max(0.0, c_cash - first_cash)
+                        reserve_cash  = min(c_cash * budget_ratio, _c_remain1)
+                        c_third_cash  = max(0.0, c_cash - first_cash - reserve_cash)
                         qty = int((first_cash * 0.98) // cp)
                         if qty > 0:
                             # ② 코어 전용 AI 승인 — 단기 모멘텀 무관, 악재 리스크만 판단
@@ -2402,11 +2427,15 @@ class KRBotController:
                                     core.second_buy_price        = cp * 0.98
                                     core.second_buy_cash         = reserve_cash
                                     core.second_buy_done         = False
+                                    core.third_buy_price         = cp * 0.96
+                                    core.third_buy_cash          = c_third_cash
+                                    core.third_buy_done          = False
                                 score_str = " | ".join(c_score_reasons[:3])
-                                self.add_log(f"💎 {c_nm} 코어 1차 매수 | {qty}주 @ {cp:,}원 | {c_score}pt [{score_str}] | 2차 예약 {cp*0.98:,.0f}원 | {ai_reason}")
+                                _c_ratio_pct = int(budget_ratio * 100)
+                                self.add_log(f"💎 {c_nm} 코어 1차 매수({_c_ratio_pct}%) | {qty}주 @ {cp:,}원 | {c_score}pt [{score_str}] | 2차:{cp*0.98:,.0f}(-2%) 3차:{cp*0.96:,.0f}(-4%) | {ai_reason}")
                                 if self.claude:
-                                    self.claude.record_trade_event(f"KR 코어 1차 매수: {c_nm}({c_tk}) {qty}주 @ {cp:,}원 | {c_score}pt [{score_str}]")
-                                self._log_trade(c_tk, c_nm, 'BUY', cp, "RSI코어", f"RSI저평가+120MA {c_score}pt [{score_str}] — 1차({int(budget_ratio*75):.0f}%)")
+                                    self.claude.record_trade_event(f"KR 코어 1차 매수({_c_ratio_pct}%): {c_nm}({c_tk}) {qty}주 @ {cp:,}원 | {c_score}pt [{score_str}]")
+                                self._log_trade(c_tk, c_nm, 'BUY', cp, "RSI코어", f"RSI저평가+120MA {c_score}pt [{score_str}] — 1차({_c_ratio_pct}%)")
                                 self._send_trade_telegram(self._fmt_trade_msg("💎", f"코어 1차 매수 ({int(budget_ratio*75):.0f}%)", c_tk, c_nm, cp, qty, strategy=f"RSI코어 · {c_score}pt/{c_threshold}pt", ai_reason=ai_reason, note=f"2차 예약: {cp*0.98:,.0f}원 (-2%)"))
 
                 elif c_sig == 'SELL' and c_sh > 0 and is_core_cd:
@@ -2424,6 +2453,9 @@ class KRBotController:
                             core.second_buy_price        = 0.0
                             core.second_buy_cash         = 0.0
                             core.second_buy_done         = False
+                            core.third_buy_price         = 0.0
+                            core.third_buy_cash          = 0.0
+                            core.third_buy_done          = False
                             core.bull_pyramid_done       = False
                             self.pnl_this_turn          += core_profit
                         self._record_daily_pnl(core_profit)
@@ -2907,9 +2939,11 @@ class KRBotController:
                             pos.status_msg = "최근 5분봉 하락 추세, 매수 보류 (BULL 국면 제외)"
                             continue
 
-                    # ── 국면별 타이밍 신호 (진입 여부 판단용 — 예산 비율에는 영향 없음) ──
+                    # ── 국면별 타이밍 신호 + 점수 기반 회차별 비율 결정 ──────
                     if regime == "BULL":
                         bull_score, bull_reasons = get_bull_momentum_score(ex_df)
+                        regime_bonus = 0.10 if bull_score >= 3 else (0.05 if bull_score >= 1 else 0.0)
+                        entry_ratio  = min(0.90, score_ratio + regime_bonus)
                         regime_label = f"BULL·점수{entry_score}pt+타이밍{bull_score}개"
                         regime_reason_str = " | ".join(bull_reasons) if bull_reasons else "상승 추세 추종"
                     else:  # NEUTRAL
@@ -2918,14 +2952,18 @@ class KRBotController:
                             pos.status = "횡보 관망 ⏸"
                             pos.status_msg = "NEUTRAL 국면 — 레인지 신호 없음, 매수 차단"
                             continue
+                        regime_bonus  = 0.10 if neutral_score >= 3 else (0.05 if neutral_score >= 2 else 0.0)
+                        entry_ratio   = min(0.90, score_ratio + regime_bonus)
                         regime_label  = f"NEUTRAL·점수{entry_score}pt+타이밍{neutral_score}개"
                         regime_reason_str = " | ".join(neutral_reasons)
 
-                    # 배정 예산 전체를 30 / 30 / 40으로 분할 (원금 기준 — 잔여금 기준 아님)
-                    # 점수는 진입 게이트만 결정, 투입 금액은 항상 배정 예산 100% 사용
-                    entry_cash   = p_cash * 0.30   # 1차: 즉시
-                    reserve_cash = p_cash * 0.30   # 2차: -2% 눌림목
-                    third_cash   = p_cash * 0.40   # 3차: -4% 눌림목
+                    # 점수 비율을 각 회차에 동일하게 적용 — 배정 예산 초과 시 남은 예산으로 자동 캡
+                    # 예) score=60%, budget=1000만 → 1차 600 / 2차 min(600,400)=400 / 3차 0
+                    # 예) score=30%, budget=1000만 → 1차 300 / 2차 300 / 3차 400
+                    entry_cash   = p_cash * entry_ratio
+                    _remain1     = max(0.0, p_cash - entry_cash)
+                    reserve_cash = min(p_cash * entry_ratio, _remain1)
+                    third_cash   = max(0.0, p_cash - entry_cash - reserve_cash)
 
                     # ── 매수 검토 리포트 발송 (친구 AI 스타일) ──────────────
                     try:
