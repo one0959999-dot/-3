@@ -1892,22 +1892,25 @@ class USBotController:
                     continue
 
                 if not _mkt_open:
-                    # 시간외(프리/애프터) → 가격 갱신 + 손절 체크만
                     h, m = now.hour, now.minute
-                    session = "프리마켓" if h < 9 or (h == 9 and m < 30) else "애프터마켓"
+                    _is_premarket   = h < 9 or (h == 9 and m < 30)
+                    _is_aftermarket = h >= 16
+                    session = "프리마켓" if _is_premarket else "애프터마켓"
+                    # 애프터마켓(16:00~20:00): 매수 허용 / 프리마켓: 매도(손절)만
+                    _buy_allowed_ext = _is_aftermarket
                     self.add_log(
-                        f"🌙 {session} ({now.strftime('%a %H:%M ET')})"
-                        f" — 손절 감시 중{api_hint}"
+                        f"{'🌆' if _is_aftermarket else '🌙'} {session} ({now.strftime('%a %H:%M ET')})"
+                        f" — {'매수+매도' if _buy_allowed_ext else '손절 감시 중'}{api_hint}"
                     )
                     # 장 시작 전 사전 스캔
-                    if h < 9 or (h == 9 and m < 30):
+                    if _is_premarket:
                         self._screen_satellites()
                         self._screen_cores()
-                    # 가격 갱신 후 매도(손절)만 실행
+                    # 가격 갱신 후 매매 실행
                     self._refresh_prices()
                     if self.kis_overseas:
-                        self._manage_cores(buy_allowed=False)
-                        self._manage_satellites(buy_allowed=False)
+                        self._manage_cores(buy_allowed=_buy_allowed_ext)
+                        self._manage_satellites(buy_allowed=_buy_allowed_ext)
                     time.sleep(60)
                     continue
 
