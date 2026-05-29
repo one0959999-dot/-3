@@ -3326,6 +3326,70 @@ class KRBotController:
                 except Exception as e:
                     logger.error(f"[{self.mode_name}] 모멘텀#{i+1} 청산 체크 오류: {e}", exc_info=True)
 
+        # ── A-2. 보유 슬롯 2차/3차 분할 매수 체크 ──────────────────────
+        for i, mp in enumerate(self.momentum_positions):
+            if mp is None:
+                continue
+            try:
+                m_price = self.live_prices.get(mp['ticker']) or self.kis.get_current_price(mp['ticker'])
+                if not m_price:
+                    continue
+
+                # 2차 분할 매수: 진입가 -2% 눌림목
+                if (not mp.get('second_buy_done', True)
+                        and mp.get('second_buy_cash', 0) >= m_price
+                        and mp.get('second_buy_price', 0) > 0
+                        and m_price <= mp['second_buy_price']):
+                    sq2 = int((mp['second_buy_cash'] * 0.98) // m_price)
+                    if sq2 > 0 and self.kis.buy_market_order(mp['ticker'], sq2):
+                        with self.lock:
+                            mp['shares'] = mp.get('shares', 0) + sq2
+                            old_avg = mp.get('avg_price', m_price)
+                            old_sh  = mp['shares'] - sq2
+                            mp['avg_price'] = (old_avg * old_sh + m_price * sq2) / mp['shares']
+                            mp['second_buy_done'] = True
+                            mp['second_buy_cash'] = 0.0
+                        self.add_log(f"📥 모멘텀#{i+1} 2차매수 | {mp['name']}({mp['ticker']}) {sq2}주 @ {m_price:,.0f}원")
+                        self._log_trade(mp['ticker'], mp['name'], 'BUY', m_price, "모멘텀2차", "2차 분할 -2%")
+                        self._send_trade_telegram(
+                            f"📥 모멘텀#{i+1} 2차매수  ·  {self.alert_icon} {self.mode_name}\n"
+                            f"━━━━━━━━━━━━━━━━━━━━\n"
+                            f"📌 <b>{mp['name']}</b>  <code>{mp['ticker']}</code>\n"
+                            f"💰 <b>{m_price:,.0f}원</b> × <b>{sq2}주</b> = <b>{m_price*sq2:,.0f}원</b>\n"
+                            f"📉 진입가 -2% 눌림목 매수\n"
+                            f"━━━━━━━━━━━━━━━━━━━━\n"
+                            f"⏰ {now.strftime('%H:%M KST')}"
+                        )
+
+                # 3차 분할 매수: 진입가 -4% 눌림목
+                elif (mp.get('second_buy_done', False)
+                        and not mp.get('third_buy_done', True)
+                        and mp.get('third_buy_cash', 0) >= m_price
+                        and mp.get('third_buy_price', 0) > 0
+                        and m_price <= mp['third_buy_price']):
+                    sq3 = int((mp['third_buy_cash'] * 0.98) // m_price)
+                    if sq3 > 0 and self.kis.buy_market_order(mp['ticker'], sq3):
+                        with self.lock:
+                            old_sh  = mp.get('shares', 0)
+                            old_avg = mp.get('avg_price', m_price)
+                            mp['shares'] = old_sh + sq3
+                            mp['avg_price'] = (old_avg * old_sh + m_price * sq3) / mp['shares']
+                            mp['third_buy_done'] = True
+                            mp['third_buy_cash'] = 0.0
+                        self.add_log(f"📥 모멘텀#{i+1} 3차매수 | {mp['name']}({mp['ticker']}) {sq3}주 @ {m_price:,.0f}원")
+                        self._log_trade(mp['ticker'], mp['name'], 'BUY', m_price, "모멘텀3차", "3차 분할 -4%")
+                        self._send_trade_telegram(
+                            f"📥 모멘텀#{i+1} 3차매수  ·  {self.alert_icon} {self.mode_name}\n"
+                            f"━━━━━━━━━━━━━━━━━━━━\n"
+                            f"📌 <b>{mp['name']}</b>  <code>{mp['ticker']}</code>\n"
+                            f"💰 <b>{m_price:,.0f}원</b> × <b>{sq3}주</b> = <b>{m_price*sq3:,.0f}원</b>\n"
+                            f"📉 진입가 -4% 눌림목 매수\n"
+                            f"━━━━━━━━━━━━━━━━━━━━\n"
+                            f"⏰ {now.strftime('%H:%M KST')}"
+                        )
+            except Exception as e:
+                logger.error(f"[{self.mode_name}] 모멘텀#{i+1} 분할매수 체크 오류: {e}", exc_info=True)
+
         # ── B. 빈 슬롯 진입 스캔 ────────────────────────────────────────
         empty_slots = [i for i, mp in enumerate(self.momentum_positions) if mp is None]
         if not empty_slots or regime == "BEAR":
@@ -3372,7 +3436,15 @@ class KRBotController:
                     if available_pm < budget_pm * 0.5:
                         break
 
-                    qty = int((budget_pm * 0.98) // b_price)
+                    # 스코어 기반 비율: score÷50 (cap 90%). 1차=ratio, 2차=min(ratio,남은), 3차=나머지
+                    _pm_score  = cand.get('score', cand.get('momentum_score', 30))
+                    _pm_ratio  = min(0.90, max(0.30, _pm_score / 50.0))
+                    _pm_1st    = budget_pm * _pm_ratio
+                    _pm_remain = max(0.0, budget_pm - _pm_1st)
+                    _pm_2nd    = min(budget_pm * _pm_ratio, _pm_remain)
+                    _pm_3rd    = max(0.0, budget_pm - _pm_1st - _pm_2nd)
+
+                    qty = int((_pm_1st * 0.98) // b_price)
                     if qty <= 0:
                         continue
 
@@ -3410,6 +3482,9 @@ class KRBotController:
                             'score': cand['score'],
                             'reason': f"사전단타 박스권돌파 | {entry_reason}",
                             'slot_idx': slot_idx,
+                            'second_buy_price': b_price * 0.98, 'second_buy_cash': _pm_2nd, 'second_buy_done': False,
+                            'third_buy_price':  b_price * 0.96, 'third_buy_cash':  _pm_3rd, 'third_buy_done':  False,
+                            'initial_shares_for_exit': 0,
                         }
                     except Exception as dict_err:
                         logger.error(f"[{self.mode_name}] 사전단타#{slot_idx+1} 포지션 저장 실패 → 즉시 청산: {dict_err}")
@@ -3524,7 +3599,15 @@ class KRBotController:
             if available_cash < budget * 0.5:
                 break  # 현금 부족 → 나머지 슬롯도 포기
 
-            qty = int((budget * 0.98) // b_price)
+            # 스코어 기반 비율: score÷50 (cap 90%). 1차=ratio, 2차=min(ratio,남은), 3차=나머지
+            _m_score   = best.get('momentum_score', best.get('score', 30))
+            _m_ratio   = min(0.90, max(0.30, _m_score / 50.0))
+            _m_1st     = budget * _m_ratio
+            _m_remain  = max(0.0, budget - _m_1st)
+            _m_2nd     = min(budget * _m_ratio, _m_remain)
+            _m_3rd     = max(0.0, budget - _m_1st - _m_2nd)
+
+            qty = int((_m_1st * 0.98) // b_price)
             if qty <= 0:
                 continue
 
@@ -3632,6 +3715,9 @@ class KRBotController:
                     'peak_volume': 0, 'enter_time': now,
                     'score': best['momentum_score'], 'reason': best['trigger_reason'],
                     'slot_idx': slot_idx,
+                    'second_buy_price': b_price * 0.98, 'second_buy_cash': _m_2nd, 'second_buy_done': False,
+                    'third_buy_price':  b_price * 0.96, 'third_buy_cash':  _m_3rd, 'third_buy_done':  False,
+                    'initial_shares_for_exit': 0,
                 }
             except Exception as dict_err:
                 logger.error(f"[{self.mode_name}] 모멘텀#{slot_idx+1} 포지션 저장 실패 → 즉시 시장가 청산: {dict_err}")

@@ -139,9 +139,13 @@ class USPosition:
     ai_exit_pending:     bool  = False
     ai_exit_decision:    str   = None   # 'SELL_PARTIAL' / 'SELL_ALL' / 'HOLD' / None
     ai_exit_asked_price: float = 0.0    # 마지막 AI 문의 시점 가격 (새 고점 갱신 시 재요청)
-    second_buy_price:    float = 0.0    # 2차 매수 발동가 (1차 진입가 × 0.98)
-    second_buy_cash:     float = 0.0    # 2차 매수 유보 예산 (USD)
-    second_buy_done:     bool  = False  # 2차 매수 완료 여부
+    second_buy_price:        float = 0.0    # 2차 매수 발동가 (1차 진입가 × 0.98)
+    second_buy_cash:         float = 0.0    # 2차 매수 유보 예산 (USD)
+    second_buy_done:         bool  = False  # 2차 매수 완료 여부
+    third_buy_price:         float = 0.0    # 3차 매수 발동가 (1차 진입가 × 0.96)
+    third_buy_cash:          float = 0.0    # 3차 매수 유보 예산 (USD)
+    third_buy_done:          bool  = False  # 3차 매수 완료 여부
+    initial_shares_for_exit: float = 0.0   # 첫 매도 트리거 시 원금 주수 고정
 
 
 # ══════════════════════════════════════════════════════════════════════
@@ -709,15 +713,19 @@ class USBotController:
                     proceeds = self._sell(ticker, pos.name, pos.shares, price)
                     pnl      = _net_profit_usd(price, avg, pos.shares)
                     with self.lock:
-                        pos.shares             = 0.0
-                        pos.floor_shares       = 0.0   # floor 리셋 — 재진입 시 새로 설정
-                        pos.partial_sold       = False
-                        pos.partial_sold_2     = False
-                        pos.second_buy_price   = 0.0
-                        pos.second_buy_cash    = 0.0
-                        pos.second_buy_done    = False
-                        pos.bull_pyramid_done  = False
-                        pos.status             = "코어 손절 🚨"
+                        pos.shares                  = 0.0
+                        pos.floor_shares            = 0.0
+                        pos.partial_sold            = False
+                        pos.partial_sold_2          = False
+                        pos.second_buy_price        = 0.0
+                        pos.second_buy_cash         = 0.0
+                        pos.second_buy_done         = False
+                        pos.third_buy_price         = 0.0
+                        pos.third_buy_cash          = 0.0
+                        pos.third_buy_done          = False
+                        pos.initial_shares_for_exit = 0.0
+                        pos.bull_pyramid_done       = False
+                        pos.status                  = "코어 손절 🚨"
                     self._record_pnl(pnl)
                     self.add_log(f"🚨 코어 손절 {pos.name}({ticker}) | ATR×{hard_mult:.1f} 이탈 | PnL ${pnl:+.0f}")
                     self._tg(f"🚨 [US 코어 손절] {pos.name}\nATR×{hard_mult:.1f} 이탈 | 재진입 타점 탐색 중\n손익: ${pnl:+,.0f}")
@@ -751,11 +759,13 @@ class USBotController:
                         pos.status = f"코어 진입 대기 ({c_score}/{c_threshold}pt) ⏳"
                     continue
 
-                budget_ratio  = max(0.5, c_score / max(c_threshold, 1) * 0.75)
-                # 75/25 분할: 1차 진입 후 나머지는 -2% 눌림목 예약
-                first_ratio   = budget_ratio * 0.75
-                reserve_usd   = budget * budget_ratio * 0.25
-                qty = int((budget * first_ratio) // price)
+                budget_ratio = max(0.5, c_score / max(c_threshold, 1) * 0.75)
+                # 3트랜치 분할: 1차=ratio, 2차=min(ratio,남은), 3차=나머지
+                first_usd    = budget * budget_ratio
+                _c_remain1   = max(0.0, budget - first_usd)
+                reserve_usd  = min(budget * budget_ratio, _c_remain1)
+                third_usd    = max(0.0, budget - first_usd - reserve_usd)
+                qty = int(first_usd // price)
                 if qty > 0:
                     # AI 승인 (위성과 동일)
                     approved, ai_reason = True, "AI 미설정"
@@ -810,7 +820,7 @@ class USBotController:
                                 pos.status = "분봉 하락 📉"
                             self.add_log(f"⏸ 코어 분봉 하락 보류: {pos.name}({ticker}) — 다음 턴 재시도")
                             continue
-                        bought_qty = self._buy(ticker, pos.name, budget * first_ratio, price)
+                        bought_qty = self._buy(ticker, pos.name, first_usd, price)
                         if bought_qty > 0:
                             with self.lock:
                                 pos.shares          = float(bought_qty)
@@ -821,13 +831,17 @@ class USBotController:
                                 pos.partial_sold    = False
                                 pos.partial_sold_2  = False
                                 pos.last_order_time = time.time()
-                                pos.second_buy_price= price * 0.98
-                                pos.second_buy_cash = reserve_usd
-                                pos.second_buy_done = False
+                                pos.second_buy_price       = price * 0.98
+                                pos.second_buy_cash        = reserve_usd
+                                pos.second_buy_done        = False
+                                pos.third_buy_price        = price * 0.96
+                                pos.third_buy_cash         = third_usd
+                                pos.third_buy_done         = False
+                                pos.initial_shares_for_exit= 0
                                 pos.status          = f"코어 보유 💎 ({c_score}pt)"
                             score_str = " | ".join(c_reasons[:3])
                             self.add_log(f"💎 코어 1차 매수 {pos.name}({ticker}) {bought_qty}주 @ ${price:.2f} | {c_score}pt [{score_str}] | 2차 예약 ${price*0.98:.2f} | AI: {ai_reason[:40]}")
-                            self._tg(f"💎 [US 코어 1차 매수] {pos.name} ({ticker})\n@ ${price:.2f}  점수 {c_score}pt\n2차 예약: ${price*0.98:.2f} (-2%)")
+                            self._tg(f"💎 [US 코어 1차 매수] {pos.name} ({ticker})\n@ ${price:.2f}  점수 {c_score}pt\n2차 예약: ${price*0.98:.2f} (-2%)\n3차 예약: ${price*0.96:.2f} (-4%)")
                             if self.claude:
                                 self.claude.record_trade_event(
                                     f"코어 매수 ✅ {pos.name}({ticker}) {bought_qty}주 @ ${price:.2f} | "
@@ -854,6 +868,27 @@ class USBotController:
                         pos.status         = "2차 매수 ✅"
                     self.add_log(f"💎 코어 2차 매수 {pos.name}({ticker}) {sq}주 @ ${price:.2f} | 눌림목 -2%")
                     self._tg(f"💎 [US 코어 2차 매수] {pos.name}\n@ ${price:.2f}  눌림목 -2% 포착")
+
+            # ── 코어 3차 분할 매수: 1차 진입가 -4% 눌림목 ──────────────
+            if (pos.shares > 0 and avg > 0 and is_cd
+                    and getattr(pos, 'second_buy_done', False)
+                    and not getattr(pos, 'third_buy_done', True)
+                    and getattr(pos, 'third_buy_price', 0) > 0
+                    and price <= pos.third_buy_price
+                    and getattr(pos, 'third_buy_cash', 0) >= price):
+                sq3 = self._buy(ticker, pos.name, pos.third_buy_cash, price)
+                if sq3 > 0:
+                    with self.lock:
+                        new_sh3 = pos.shares + sq3
+                        pos.avg_price_usd  = (pos.avg_price_usd * pos.shares + price * sq3) / new_sh3 if new_sh3 > 0 else price
+                        pos.shares         = new_sh3
+                        pos.floor_shares   = max(pos.floor_shares, pos.shares * 0.5)
+                        pos.third_buy_done = True
+                        pos.third_buy_cash = 0.0
+                        pos.last_order_time= time.time()
+                        pos.status         = "3차 매수 ✅"
+                    self.add_log(f"💎 코어 3차 매수 {pos.name}({ticker}) {sq3}주 @ ${price:.2f} | 눌림목 -4%")
+                    self._tg(f"💎 [US 코어 3차 매수] {pos.name}\n@ ${price:.2f}  눌림목 -4% 포착")
 
             # ── BULL 불타기 (코어 피라미딩) — +3% 돌파 + MA5 정배열 ──
             # BULL 장 + 보유 중 +3% 이상 + 정배열 확인 시 잔여현금 30% 추가 매수
@@ -910,16 +945,20 @@ class USBotController:
                             self._sell(ticker, pos.name, q, price)
                             pnl = _net_profit_usd(price, avg, q)
                             with self.lock:
-                                pos.shares            = 0.0
-                                pos.floor_shares      = 0.0   # floor 리셋 — 재진입 시 새로 설정
-                                pos.partial_sold      = False
-                                pos.partial_sold_2    = False
-                                pos.second_buy_price  = 0.0
-                                pos.second_buy_cash   = 0.0
-                                pos.second_buy_done   = False
-                                pos.bull_pyramid_done = False
-                                pos.ai_exit_decision  = None
-                                pos.status            = "코어 추세청산 📉"
+                                pos.shares                  = 0.0
+                                pos.floor_shares            = 0.0
+                                pos.partial_sold            = False
+                                pos.partial_sold_2          = False
+                                pos.second_buy_price        = 0.0
+                                pos.second_buy_cash         = 0.0
+                                pos.second_buy_done         = False
+                                pos.third_buy_price         = 0.0
+                                pos.third_buy_cash          = 0.0
+                                pos.third_buy_done          = False
+                                pos.initial_shares_for_exit = 0.0
+                                pos.bull_pyramid_done       = False
+                                pos.ai_exit_decision        = None
+                                pos.status                  = "코어 추세청산 📉"
                             self._record_pnl(pnl)
                             self.add_log(
                                 f"📉 코어 복합신호 전량청산 {pos.name}({ticker}) "
@@ -1351,7 +1390,12 @@ class USBotController:
             except Exception:
                 pass
 
-            actual_budget = min(sat_budget_per * budget_ratio, self.cash_usd)
+            # 3트랜치 분할: 1차=ratio, 2차=min(ratio,남은), 3차=나머지
+            _sat_1st     = sat_budget_per * budget_ratio
+            _sat_remain1 = max(0.0, sat_budget_per - _sat_1st)
+            _sat_2nd     = min(sat_budget_per * budget_ratio, _sat_remain1)
+            _sat_3rd     = max(0.0, sat_budget_per - _sat_1st - _sat_2nd)
+            actual_budget = min(_sat_1st, self.cash_usd)
 
             # ── AI 심사 전: 대시보드에 즉시 표시 (심사 중 상태) ──────
             if ticker not in self.satellite_positions:
@@ -1429,26 +1473,84 @@ class USBotController:
                 score_str = " | ".join(entry_reasons[:3])
                 with self.lock:
                     self.satellite_positions[ticker] = USPosition(
-                        ticker         = ticker,
-                        name           = info["name"],
-                        shares         = float(qty),
-                        floor_shares   = float(qty) * 0.5,  # 첫 매수 50% floor — 이 이하로 절대 안 팜
-                        avg_price_usd  = price,
-                        budget_usd     = sat_budget_per,
-                        status         = f"보유 중 🛰️ ({entry_score}pt)",
-                        last_order_time= time.time(),
-                        max_price_usd  = price,
+                        ticker                  = ticker,
+                        name                    = info["name"],
+                        shares                  = float(qty),
+                        floor_shares            = float(qty) * 0.5,
+                        avg_price_usd           = price,
+                        budget_usd              = sat_budget_per,
+                        status                  = f"보유 중 🛰️ ({entry_score}pt)",
+                        last_order_time         = time.time(),
+                        max_price_usd           = price,
+                        second_buy_price        = price * 0.98,
+                        second_buy_cash         = _sat_2nd,
+                        second_buy_done         = False,
+                        third_buy_price         = price * 0.96,
+                        third_buy_cash          = _sat_3rd,
+                        third_buy_done          = False,
+                        initial_shares_for_exit = 0.0,
                     )
-                self.add_log(f"🛰️ 위성 매수 {info['name']}({ticker}) {qty}주 @ ${price:.2f} | {entry_score}pt [{score_str}]")
+                self.add_log(f"🛰️ 위성 1차매수 {info['name']}({ticker}) {qty}주 @ ${price:.2f} | {entry_score}pt [{score_str}]")
                 self._tg(
-                    f"🛰️ [US 위성 매수] {info['name']} ({ticker})\n"
-                    f"@ ${price:.2f}  점수 {entry_score}pt  섹터: {info.get('sector','')}"
+                    f"🛰️ [US 위성 1차매수] {info['name']} ({ticker})\n"
+                    f"@ ${price:.2f}  점수 {entry_score}pt  섹터: {info.get('sector','')}\n"
+                    f"2차 예약: ${price*0.98:.2f} (-2%)  3차: ${price*0.96:.2f} (-4%)"
                 )
                 if self.claude:
                     self.claude.record_trade_event(
                         f"위성 매수 ✅ {info['name']}({ticker}) {qty}주 @ ${price:.2f} | "
                         f"점수 {entry_score}pt | 근거: {score_str}"
                     )
+
+        # ── 위성 2차/3차 분할 매수 체크 ─────────────────────────────
+        for ticker, pos in list(self.satellite_positions.items()):
+            if pos.shares <= 0:
+                continue
+            price = self._price(ticker)
+            if not price:
+                continue
+            is_cd_sat = time.time() - pos.last_order_time > self.ORDER_COOLDOWN
+
+            # 2차 분할 매수: 진입가 -2% 눌림목
+            if (is_cd_sat
+                    and not getattr(pos, 'second_buy_done', True)
+                    and getattr(pos, 'second_buy_price', 0) > 0
+                    and price <= pos.second_buy_price
+                    and getattr(pos, 'second_buy_cash', 0) >= price):
+                sq2 = self._buy(ticker, pos.name, pos.second_buy_cash, price)
+                if sq2 > 0:
+                    with self.lock:
+                        new_sh2 = pos.shares + sq2
+                        pos.avg_price_usd  = (pos.avg_price_usd * pos.shares + price * sq2) / new_sh2
+                        pos.shares         = new_sh2
+                        pos.floor_shares   = max(pos.floor_shares, pos.shares * 0.5)
+                        pos.second_buy_done= True
+                        pos.second_buy_cash= 0.0
+                        pos.last_order_time= time.time()
+                        pos.status         = "2차 매수 ✅"
+                    self.add_log(f"🛰️ 위성 2차매수 {pos.name}({ticker}) {sq2}주 @ ${price:.2f} | -2% 눌림목")
+                    self._tg(f"🛰️ [US 위성 2차매수] {pos.name}\n@ ${price:.2f}  눌림목 -2% 포착")
+
+            # 3차 분할 매수: 진입가 -4% 눌림목
+            elif (is_cd_sat
+                    and getattr(pos, 'second_buy_done', False)
+                    and not getattr(pos, 'third_buy_done', True)
+                    and getattr(pos, 'third_buy_price', 0) > 0
+                    and price <= pos.third_buy_price
+                    and getattr(pos, 'third_buy_cash', 0) >= price):
+                sq3 = self._buy(ticker, pos.name, pos.third_buy_cash, price)
+                if sq3 > 0:
+                    with self.lock:
+                        new_sh3 = pos.shares + sq3
+                        pos.avg_price_usd  = (pos.avg_price_usd * pos.shares + price * sq3) / new_sh3
+                        pos.shares         = new_sh3
+                        pos.floor_shares   = max(pos.floor_shares, pos.shares * 0.5)
+                        pos.third_buy_done = True
+                        pos.third_buy_cash = 0.0
+                        pos.last_order_time= time.time()
+                        pos.status         = "3차 매수 ✅"
+                    self.add_log(f"🛰️ 위성 3차매수 {pos.name}({ticker}) {sq3}주 @ ${price:.2f} | -4% 눌림목")
+                    self._tg(f"🛰️ [US 위성 3차매수] {pos.name}\n@ ${price:.2f}  눌림목 -4% 포착")
 
         # ── 보유 중 청산 조건 체크 (ATR 기반 — KR 동일) ─────────────
         for ticker, pos in list(self.satellite_positions.items()):
@@ -1657,9 +1759,16 @@ class USBotController:
         proceeds = self._sell(ticker, pos.name, shares, price)
         pnl      = _net_profit_usd(price, pos.avg_price_usd, shares)
         with self.lock:
-            pos.shares       = 0.0
-            pos.floor_shares = 0.0   # 응급 청산 후 floor 리셋 — 재진입 시 새로 설정
-            pos.status       = f"청산: {reason}"
+            pos.shares                  = 0.0
+            pos.floor_shares            = 0.0
+            pos.second_buy_price        = 0.0
+            pos.second_buy_cash         = 0.0
+            pos.second_buy_done         = False
+            pos.third_buy_price         = 0.0
+            pos.third_buy_cash          = 0.0
+            pos.third_buy_done          = False
+            pos.initial_shares_for_exit = 0.0
+            pos.status                  = f"청산: {reason}"
         self._record_pnl(pnl)
         icon = "🔴" if pnl < 0 else "🟢"
         self.add_log(f"{icon} 청산 {pos.name}({ticker}) | {reason} | PnL ${pnl:+.0f}")
@@ -2262,24 +2371,35 @@ class USBotController:
                         "partial_sold":     p.partial_sold,
                         "partial_sold_2":   p.partial_sold_2,
                         "max_price_usd":    p.max_price_usd,
-                        "status":           p.status,
-                        "second_buy_price": p.second_buy_price,
-                        "second_buy_cash":  p.second_buy_cash,
-                        "second_buy_done":  p.second_buy_done,
+                        "status":                  p.status,
+                        "second_buy_price":        p.second_buy_price,
+                        "second_buy_cash":         p.second_buy_cash,
+                        "second_buy_done":         p.second_buy_done,
+                        "third_buy_price":         p.third_buy_price,
+                        "third_buy_cash":          p.third_buy_cash,
+                        "third_buy_done":          p.third_buy_done,
+                        "initial_shares_for_exit": p.initial_shares_for_exit,
                     }
                     for t, p in self.core_positions.items()
                 },
                 "satellites": {
                     t: {
-                        "name":           p.name,
-                        "shares":         p.shares,
-                        "floor_shares":   p.floor_shares,
-                        "avg_price_usd":  p.avg_price_usd,
-                        "budget_usd":     p.budget_usd,
-                        "partial_sold":   p.partial_sold,
-                        "partial_sold_2": p.partial_sold_2,
-                        "max_price_usd":  p.max_price_usd,
-                        "status":         p.status,
+                        "name":                    p.name,
+                        "shares":                  p.shares,
+                        "floor_shares":            p.floor_shares,
+                        "avg_price_usd":           p.avg_price_usd,
+                        "budget_usd":              p.budget_usd,
+                        "partial_sold":            p.partial_sold,
+                        "partial_sold_2":          p.partial_sold_2,
+                        "max_price_usd":           p.max_price_usd,
+                        "status":                  p.status,
+                        "second_buy_price":        p.second_buy_price,
+                        "second_buy_cash":         p.second_buy_cash,
+                        "second_buy_done":         p.second_buy_done,
+                        "third_buy_price":         p.third_buy_price,
+                        "third_buy_cash":          p.third_buy_cash,
+                        "third_buy_done":          p.third_buy_done,
+                        "initial_shares_for_exit": p.initial_shares_for_exit,
                     }
                     for t, p in self.satellite_positions.items()
                 },
@@ -2327,12 +2447,16 @@ class USBotController:
                     max_price_usd  = float(s.get("max_price_usd", 0)),
                     status         = s.get("status", "코어 보유 💎"),
                 )
-                pos.second_buy_price = float(s.get("second_buy_price", 0.0))
-                pos.second_buy_cash  = float(s.get("second_buy_cash",  0.0))
-                pos.second_buy_done  = bool(s.get("second_buy_done",   False))
+                pos.second_buy_price        = float(s.get("second_buy_price", 0.0))
+                pos.second_buy_cash         = float(s.get("second_buy_cash",  0.0))
+                pos.second_buy_done         = bool(s.get("second_buy_done",   False))
+                pos.third_buy_price         = float(s.get("third_buy_price",  0.0))
+                pos.third_buy_cash          = float(s.get("third_buy_cash",   0.0))
+                pos.third_buy_done          = bool(s.get("third_buy_done",    False))
+                pos.initial_shares_for_exit = float(s.get("initial_shares_for_exit", 0.0))
                 self.core_positions[t] = pos
             for t, s in state.get("satellites", {}).items():
-                self.satellite_positions[t] = USPosition(
+                _sat_pos = USPosition(
                     ticker         = t,
                     name           = s.get("name", t),
                     shares         = float(s.get("shares", 0)),
@@ -2344,6 +2468,14 @@ class USBotController:
                     max_price_usd  = float(s.get("max_price_usd", 0)),
                     status         = s.get("status", "보유 중 🛰️"),
                 )
+                _sat_pos.second_buy_price        = float(s.get("second_buy_price", 0.0))
+                _sat_pos.second_buy_cash         = float(s.get("second_buy_cash",  0.0))
+                _sat_pos.second_buy_done         = bool(s.get("second_buy_done",   False))
+                _sat_pos.third_buy_price         = float(s.get("third_buy_price",  0.0))
+                _sat_pos.third_buy_cash          = float(s.get("third_buy_cash",   0.0))
+                _sat_pos.third_buy_done          = bool(s.get("third_buy_done",    False))
+                _sat_pos.initial_shares_for_exit = float(s.get("initial_shares_for_exit", 0.0))
+                self.satellite_positions[t] = _sat_pos
             # satellite_info에 선정된 종목 중 positions에 없는 것 → 빈 포지션 생성 (대시보드 표시용)
             _existing_us = set(self.satellite_positions.keys())
             for _sat in self.satellite_info:
