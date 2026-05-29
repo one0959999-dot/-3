@@ -121,7 +121,7 @@ class KRBotController:
         # ── 유휴 위성 예산 → 코어 임시 배분 추적 ──────────────────────────
         # 위성 슬롯 공석 시 freed_cash를 코어 매수대기 포지션에 임시 배분.
         # 다음 위성 선정 성공 시 해당 코어가 아직 매수 전이면 회수해서 위성에 배정.
-        self._sat_cash_lent: dict = {}  # {core_ticker: 빌려준 금액}
+        # _sat_cash_lent 제거 — 동적 균등 예산으로 대체됨
 
         # ── 종목당 당일 누적 손실 추적 (하루 최대 손실 캡) ──────────────
         # {ticker: cumulative_loss_krw}  — 손실(-) 누계, 날짜 바뀌면 초기화
@@ -3558,25 +3558,8 @@ class KRBotController:
             freed_cash = 0
             with self.lock: sat_items = list(self.satellite_positions.items())
 
-            # ── 이전에 코어에 임시 배분했던 위성 예산 회수 ─────────────────
-            # 코어가 아직 매수 전(shares==0)이면 현금 회수 → 이번 위성 배분에 사용.
-            # 이미 매수했으면 회수 불가 → 그냥 코어 자금으로 확정.
-            if self._sat_cash_lent:
-                with self.lock:
-                    _reclaimed = 0
-                    for _t, _lent in list(self._sat_cash_lent.items()):
-                        # 코어에서 회수
-                        _pos = next((c for c in self.core_positions if c.ticker == _t), None)
-                        # 코어에 없으면 위성에서 회수
-                        if _pos is None:
-                            _pos = self.satellite_positions.get(_t)
-                        if _pos and _pos.shares == 0 and _pos.cash >= _lent:
-                            _pos.cash -= _lent
-                            _reclaimed += _lent
-                            del self._sat_cash_lent[_t]
-                    if _reclaimed > 0:
-                        freed_cash += _reclaimed
-                        self.add_log(f"💰 임시예산 {_reclaimed:,.0f}원 회수 → 위성 재배분 대기")
+            # 예산은 동적 균등 배분(initial_cap / n_total)으로 매 사이클 처리.
+            # 위성 공석 임시 배분/회수 로직 제거 (이중 배분 방지)
 
             _GROWTH_KEEP = 3.0    # +3% 이상 → 성장세 양호, 교체 없이 강제 유지
             _LOSS_CUT    = -3.0   # -3% 이하 → 손절 교체 (관망 구간: -3%~+3%)
@@ -3733,32 +3716,8 @@ class KRBotController:
                         f"🚫 당일 블랙리스트: {bl_text}\n"
                         f"💡 내일 자정 블랙리스트 초기화 후 재시도"
                     )
-                # ── 유휴 위성 예산 → 선정된 코어/위성 매수대기 포지션에 임시 배분 ──
-                # TBD(AI선정대기) 제외, 실제 선정된 종목 중 shares==0인 것만 대상
-                _idle_cash = freed_cash - (len(new_info) / max(n_needed, 1)) * freed_cash if freed_cash > 0 else 0
-                if _idle_cash > 100_000:
-                    with self.lock:
-                        # 코어: TBD 제외 + shares == 0
-                        _core_waiting = [c for c in self.core_positions
-                                         if c.shares == 0 and c.ticker != "TBD"]
-                        # 위성: 선정된 종목(satellite_info) 중 shares == 0
-                        _sat_info_set = {s['ticker'] for s in self.satellite_info}
-                        _sat_waiting  = [pos for tk, pos in self.satellite_positions.items()
-                                         if pos.shares == 0 and tk in _sat_info_set]
-                        _waiting = _core_waiting + _sat_waiting
-                    if _waiting:
-                        _lend_each = _idle_cash / len(_waiting)
-                        with self.lock:
-                            for _pos in _waiting:
-                                _pos.cash += _lend_each
-                                self._sat_cash_lent[_pos.ticker] = (
-                                    self._sat_cash_lent.get(_pos.ticker, 0) + _lend_each
-                                )
-                        _names = ', '.join(p.name for p in _waiting)
-                        self.add_log(
-                            f"💰 위성 공석 예산 {_idle_cash:,.0f}원 → "
-                            f"매수대기 {len(_waiting)}개 임시 배분 ({_names}) | 위성 선정 시 자동 회수"
-                        )
+                # 공석 예산은 동적 균등 배분(initial_cap / n_total)이 매 사이클 자동 처리.
+                # 위성 공석 freed_cash를 별도 재배분하지 않음 (이중 배분 방지)
 
             # [BUG-FIX] 재스크리닝 도중 삭제된 종목이 keep_tickers에 남아 있으면 KeyError 발생
             keep_tickers = {t for t in keep_tickers if t in self.satellite_positions}
