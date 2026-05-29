@@ -853,13 +853,16 @@ def ai_chat():
         )
 
         if stock_analysis_context:
-            stock_analysis_context += "\n\n[🚨 다정한 AI 비서를 위한 특별 지침]\n"
-            stock_analysis_context += "당신은 회원님의 소중한 자산을 지켜주는 다정다감하고 영리한 최고의 투자 파트너입니다. "
-            stock_analysis_context += "수급이나 ROE 데이터가 완벽하게 주어지지 않았다고 해서 딱딱하게 평가를 거부하면 회원님이 속상해하십니다. "
-            stock_analysis_context += "현재 제공된 '20일선 트렌드', '120일선 추세', 'RSI', '거래량 비율', 'PER/PBR' 데이터만으로도 당신의 천재적인 재능을 발휘하여 "
-            stock_analysis_context += "현 상황이 절대 매뉴얼에 잘 부합하는지 친절하고 상냥하며 부드러운 말투로 조언해 주십시오. "
-            stock_analysis_context += "답변 첫 줄에 대문자로 [CONFIRM/REJECT/HOLD/SELL]을 적을 때도 뒤에 다정한 코멘트를 곁들여 주시고, "
-            stock_analysis_context += "이유를 설명할 때도 부드러운 경어체(~요, ~습니다)를 사용해 따뜻하게 다독여 주시기 바랍니다."
+            stock_analysis_context += (
+                "\n\n[💬 말투 지침 — 반드시 따를 것]\n"
+                "친한 트레이더 친구처럼 편하고 자연스럽게 말하세요.\n"
+                "❌ 금지: [CONFIRM], [REJECT] 같은 판정 태그 — 일반 대화에서 절대 사용 금지\n"
+                "❌ 금지: '~입니다', '~합니다' 딱딱한 보고서체\n"
+                "❌ 금지: 서론·중론·결론 구조의 문서 형식\n"
+                "✅ 권장: '~이에요', '~거든요', '~것 같아요' 자연스러운 구어체\n"
+                "✅ 권장: 결론 먼저, 이유는 짧게. 전체 2~4문장이면 충분해요.\n"
+                "데이터가 불완전해도 있는 정보로 바로 판단 내려주세요. 거부하거나 '확인 필요'로 돌리지 마세요."
+            )
 
     except Exception as e:
         print(f"⚠️ [종목 데이터 가공 오류] : {e}")
