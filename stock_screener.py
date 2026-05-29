@@ -854,9 +854,16 @@ def find_best_strategy(df):
 # ──────────────────────────────────────────────
 # 5. 메인 선정 함수
 # ──────────────────────────────────────────────
-def select_satellites(kis=None, n=NUM_SATELLITES, verbose=True, claude_client=None, bear_mode=False, sector_guide: str = '', real_kis=None):
+def select_satellites(kis=None, n=NUM_SATELLITES, verbose=True, claude_client=None, bear_mode=False, sector_guide: str = '', real_kis=None, exclude: set = None):
     """
     멀티팩터 위성 종목 선정 (딥러닝 PyTorch 확률 예측 엔진 연동 완료)
+
+    Parameters
+    ----------
+    exclude : set, optional
+        후보 풀에서 완전 제외할 티커 집합.
+        이미 보유 중인 종목, 모멘텀 슬롯, 당일 AI 거절 블랙리스트 등을 넘기면
+        첫 번째 AI(ai_select_satellites) 단계부터 제외되어 이중 필터링 낭비 방지.
     """
     # 모듈 레벨 AI 클라이언트 저장 — select_ai_core_stock()이 gemini 없이 호출될 때 재사용
     global _module_claude
@@ -932,9 +939,13 @@ def select_satellites(kis=None, n=NUM_SATELLITES, verbose=True, claude_client=No
 
     candidate_pool = set(volume_surges.keys()) | sector_tickers | frgn_inst_tickers
     candidate_pool -= EXCLUDE_TICKERS
+    # 호출자가 명시적으로 제외 요청한 티커 제거 (보유 중·모멘텀 슬롯·당일 AI 거절 블랙리스트 등)
+    if exclude:
+        candidate_pool -= exclude
 
     if verbose:
-        print(f"\n📋 후보 풀: 거래량 급등 {len(volume_surges)}개 + 강세 섹터 {len(sector_tickers)}개 + 외인기관 {len(frgn_inst_tickers)}개 → 합계 {len(candidate_pool)}개")
+        excl_note = f" (블랙리스트·보유 {len(exclude)}개 사전 제외)" if exclude else ""
+        print(f"\n📋 후보 풀: 거래량 급등 {len(volume_surges)}개 + 강세 섹터 {len(sector_tickers)}개 + 외인기관 {len(frgn_inst_tickers)}개 → 합계 {len(candidate_pool)}개{excl_note}")
 
     # 🤖 딥러닝 모델 로드 (모듈 레벨 싱글턴 — 매 호출마다 디스크 I/O 방지)
     # W-05: 락으로 멀티스레드 환경에서 중복 생성(레이스컨디션) 방지

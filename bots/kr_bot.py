@@ -3519,11 +3519,24 @@ class KRBotController:
                 self._refresh_blacklist()
             # [W-NEW-08] _satellite_rejects 를 락 안에서 스냅샷으로 읽어 경합 방지
             with self.lock:
-                n_rejects = len(self._satellite_rejects)
+                n_rejects       = len(self._satellite_rejects)
+                bl_set          = set(self._satellite_rejects.keys())
+            # 현재 모멘텀 슬롯에 있는 종목 — 성격/전략이 다르므로 위성 편입 금지
+            # ★ select_satellites() 호출 전에 미리 읽어야 exclude 집합에 포함 가능
+            with self.lock:
+                momentum_tickers = {
+                    mp['ticker'] for mp in self.momentum_positions
+                    if mp is not None and isinstance(mp, dict) and mp.get('ticker')
+                }
+            # ★ [BUG-FIX] exclude 집합을 select_satellites() 에 전달 →
+            #    첫 번째 AI(ai_select_satellites) 단계부터 블랙리스트·보유 종목 제외.
+            #    기존엔 후보풀이 블랙리스트 종목으로 꽉 차서 pre_filter 후 0개가 남는 문제 발생.
+            exclude_set = keep_tickers | momentum_tickers | bl_set
             raw_info, _new_hot = select_satellites(
-                kis=self.kis, n=self.num_satellites + n_needed + n_rejects + 3,
+                kis=self.kis, n=self.num_satellites + n_needed + 3,
                 verbose=False, claude_client=self.claude, bear_mode=(self.market_regime == "BEAR"),
-                sector_guide=self.sector_guide, real_kis=self.real_kis
+                sector_guide=self.sector_guide, real_kis=self.real_kis,
+                exclude=exclude_set,
             )
             if _new_hot:
                 self.hot_sectors = _new_hot
@@ -3534,13 +3547,7 @@ class KRBotController:
                 self.add_log(f"🔥 강세 섹터 TOP4: {', '.join(_top4)}{_rest_str} (가산점 적용)")
             else:
                 self.add_log("⚠️ 강세 섹터 없음 (전 섹터 하락 — 상대 강세 기준으로 후보 선정)")
-            # 현재 모멘텀 슬롯에 있는 종목 — 성격/전략이 다르므로 위성 편입 금지
-            with self.lock:
-                momentum_tickers = {
-                    mp['ticker'] for mp in self.momentum_positions
-                    if mp is not None and isinstance(mp, dict) and mp.get('ticker')
-                }
-            # 이미 보유 중인 종목 + 당일 AI 거절 블랙리스트 + 모멘텀 슬롯 종목 모두 제외
+            # exclude_set 이미 적용됐으므로 pre_filter 는 keep_tickers 중복 체크만 하면 됨
             pre_filter = [
                 c for c in raw_info
                 if c['ticker'] not in keep_tickers
