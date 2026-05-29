@@ -564,9 +564,9 @@ document.addEventListener('DOMContentLoaded', () => {
             });
             topCardsContainer.insertBefore(fragment, satCard);
 
-            // 위성 테이블 렌더
+            // 위성 테이블 렌더 — sats가 비어도 항상 덮어씌워야 US→KR 전환 시 잔상 방지
+            let satHtmlBuffer = '';
             if (sats.length > 0) {
-                let satHtmlBuffer = '';
                 sats.forEach(s => {
                     const isHolding = s.shares > 0;
                     const sText = s.status || "감시 중 👀";
@@ -590,8 +590,10 @@ document.addEventListener('DOMContentLoaded', () => {
                             <td><span class="badge" onclick="showStatusModal('${s.name}', '${sMsg.replace(/'/g, "\\'")}')" style="cursor:pointer; ${_positionBadgeStyle(sText)}">${sText}</span></td>
                         </tr>`;
                 });
-                satTbody.innerHTML = satHtmlBuffer;
+            } else {
+                satHtmlBuffer = '<tr><td colspan="5" class="muted-center">위성 종목 선정 중...</td></tr>';
             }
+            satTbody.innerHTML = satHtmlBuffer;
         }
 
         if (data.logs && data.logs.length > 0) {

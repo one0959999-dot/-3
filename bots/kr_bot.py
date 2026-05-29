@@ -514,6 +514,10 @@ class KRBotController:
             if not s.get('ticker') or not s.get('name'):
                 continue
             t = s['ticker']
+            # [BUG-FIX] KR 봇에 US 티커(알파벳) 주입 방지 — KR 티커는 6자리 숫자
+            if not (t.isdigit() and len(t) == 6):
+                logger.warning(f"[KR봇] 사용자지정 위성 무시: {t} (KR 형식 아님 — US 봇 전용 종목)")
+                continue
             # 기본 지표 계산 (OHLCV 캐시 활용 — 없으면 KIS 호출)
             _ret = 0.0; _rsi = None; _vol_ratio = None
             try:
@@ -1222,6 +1226,11 @@ class KRBotController:
                 self.core_positions.append(pos)
             self.satellite_positions = {}
             for ticker, s in state["satellites"].items():
+                # [BUG-FIX] KR 봇 상태 파일에 US 종목(알파벳 티커)이 섞이는 버그 방어
+                # KR 주식 티커는 반드시 6자리 숫자 — 알파벳 티커(MRVL, ARM 등)는 US 봇 전용
+                if not (ticker.isdigit() and len(ticker) == 6):
+                    logger.warning(f"[KR봇] 상태 복구 중 비KR 티커 무시: {ticker} (US 봇 종목 혼입 방지)")
+                    continue
                 pos = Position(ticker, s["name"], s.get("initial_cash", 1400000))
                 pos.shares = s["shares"]; pos.cash = s["cash"]; pos.avg_price = s.get("avg_price", 0)
                 pos.partial_sold     = bool(s.get("partial_sold",     False))
@@ -1233,8 +1242,11 @@ class KRBotController:
                 pos.max_price        = float(s.get("max_price",        0))  # W-04: 트레일링 스탑 기준가 복원
                 self.satellite_positions[ticker] = pos
 
-            self.satellite_info = state.get("satellite_info", [])
-            self.satellite_strategies = state.get("satellite_strategies", {})
+            # [BUG-FIX] satellite_info / satellite_strategies 도 비KR 티커 제거
+            self.satellite_info = [c for c in state.get("satellite_info", [])
+                                   if c.get('ticker','').isdigit() and len(c.get('ticker','')) == 6]
+            self.satellite_strategies = {t: v for t, v in state.get("satellite_strategies", {}).items()
+                                         if t.isdigit() and len(t) == 6}
             self.hot_sectors = state.get("hot_sectors", [])
             self.num_satellites = state.get("num_satellites", 3)  # 저장된 값 복원
             self.last_screen_month = state.get("last_screen_month")
