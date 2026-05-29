@@ -2277,27 +2277,9 @@ class KRBotController:
                         reserve_cash  = c_cash * reserve_ratio
                         qty = int((first_cash * 0.98) // cp)
                         if qty > 0:
-                            # ② AI 승인 (위성과 동일)
-                            approved, ai_reason = True, "AI 미설정"
-                            if self.claude:
-                                with self.lock:
-                                    core.status     = "AI 심사 중 🤖"
-                                    core.status_msg = f"매수 신호 발생 | {c_score}pt/{c_threshold}pt | RSI {c_rsi:.1f} — AI 최종 승인 대기 중..."
-                                trade_ctx = self._build_trade_context(c_tk, c_nm, cp, ex_df, 'RSI코어', regime)
-                                approved, ai_reason = self.claude.ai_approve_trade(
-                                    'BUY', c_nm, c_tk, cp, 'RSI코어', c_rsi,
-                                    self.hot_sectors, get_recent_trades(self.user_id, c_tk),
-                                    load_ai_rules(self.user_id),
-                                    context=trade_ctx
-                                )
-                            if not approved:
-                                with self.lock:
-                                    core.status     = "AI 거절 🛑"
-                                    core.status_msg = f"진입점수 {c_score}/{c_threshold}pt | 거절 이유: {ai_reason}"
-                                self.add_log(f"🛑 {c_nm} 코어 AI 거절: {ai_reason[:60]}")
-                                if self.claude:
-                                    self.claude.record_trade_event(f"KR 코어 AI 매수 거절: {c_nm}({c_tk}) @ {cp:,}원 | 사유: {ai_reason[:80]}")
-                            elif self._buy_order(c_tk, qty, core, c_nm):
+                            # ② 코어는 AI 승인 없이 즉시 매수
+                            # 코어 기준(RSI 저평가 + 120MA)을 통과했으면 모멘텀 무관하게 진입
+                            if self._buy_order(c_tk, qty, core, c_nm):
                                 with self.lock:
                                     core.last_order_time  = time.time()
                                     core.status           = "체결 대기 ⏳"
@@ -2306,15 +2288,15 @@ class KRBotController:
                                     core.cash             = max(0.0, core.cash - int(cp * qty))
                                     core.partial_sold     = False
                                     core.partial_sold_2   = False
-                                    core.second_buy_price = cp * 0.98   # 1차 진입가 -2%
+                                    core.second_buy_price = cp * 0.98
                                     core.second_buy_cash  = reserve_cash
                                     core.second_buy_done  = False
                                 score_str = " | ".join(c_score_reasons[:3])
-                                self.add_log(f"💎 {c_nm} 코어 1차 매수 | {qty}주 @ {cp:,}원 | 점수 {c_score}점 ({int(first_ratio*100)}%) | 2차 예약 {cp*0.98:,.0f}원 | AI: {ai_reason[:40]}")
+                                self.add_log(f"💎 {c_nm} 코어 1차 매수 | {qty}주 @ {cp:,}원 | {c_score}pt [{score_str}] | 2차 예약 {cp*0.98:,.0f}원")
                                 if self.claude:
-                                    self.claude.record_trade_event(f"KR 코어 1차 매수: {c_nm}({c_tk}) {qty}주 @ {cp:,}원 | 점수 {c_score}pt | AI: {ai_reason[:60]}")
-                                self._log_trade(c_tk, c_nm, 'BUY', cp, "RSI+멀티점수 코어", f"RSI골든크로스 + 점수{c_score}pt [{score_str}] AI승인 — 1차({int(first_ratio*100)}%)")
-                                self._send_trade_telegram(self._fmt_trade_msg("💎", f"코어 1차 매수 ({int(first_ratio*100)}%)", c_tk, c_nm, cp, qty, strategy=f"RSI코어 · {c_score}pt/{c_threshold}pt", ai_reason=ai_reason, note=f"2차 예약: {cp*0.98:,.0f}원 (-2%)"))
+                                    self.claude.record_trade_event(f"KR 코어 1차 매수: {c_nm}({c_tk}) {qty}주 @ {cp:,}원 | {c_score}pt [{score_str}]")
+                                self._log_trade(c_tk, c_nm, 'BUY', cp, "RSI코어", f"RSI저평가+120MA 점수{c_score}pt [{score_str}] — 1차({int(first_ratio*100)}%)")
+                                self._send_trade_telegram(self._fmt_trade_msg("💎", f"코어 1차 매수 ({int(first_ratio*100)}%)", c_tk, c_nm, cp, qty, strategy=f"RSI코어 · {c_score}pt/{c_threshold}pt", note=f"2차 예약: {cp*0.98:,.0f}원 (-2%)"))
 
                 elif c_sig == 'SELL' and c_sh > 0 and is_core_cd:
                     # RSI 데드크로스 → 전량 매도 (floor_shares 제거)
@@ -3436,14 +3418,18 @@ class KRBotController:
                 with self.lock:
                     _reclaimed = 0
                     for _t, _lent in list(self._sat_cash_lent.items()):
-                        _core = next((c for c in self.core_positions if c.ticker == _t), None)
-                        if _core and _core.shares == 0 and _core.cash >= _lent:
-                            _core.cash -= _lent
-                            _reclaimed  += _lent
+                        # 코어에서 회수
+                        _pos = next((c for c in self.core_positions if c.ticker == _t), None)
+                        # 코어에 없으면 위성에서 회수
+                        if _pos is None:
+                            _pos = self.satellite_positions.get(_t)
+                        if _pos and _pos.shares == 0 and _pos.cash >= _lent:
+                            _pos.cash -= _lent
+                            _reclaimed += _lent
                             del self._sat_cash_lent[_t]
                     if _reclaimed > 0:
                         freed_cash += _reclaimed
-                        self.add_log(f"💰 코어 임시예산 {_reclaimed:,.0f}원 회수 → 위성 재배분 대기")
+                        self.add_log(f"💰 임시예산 {_reclaimed:,.0f}원 회수 → 위성 재배분 대기")
 
             _GROWTH_KEEP = 3.0    # +3% 이상 → 성장세 양호, 교체 없이 강제 유지
             _LOSS_CUT    = -3.0   # -3% 이하 → 손절 교체 (관망 구간: -3%~+3%)
@@ -3600,25 +3586,31 @@ class KRBotController:
                         f"🚫 당일 블랙리스트: {bl_text}\n"
                         f"💡 내일 자정 블랙리스트 초기화 후 재시도"
                     )
-                # ── 유휴 위성 예산 → 코어 매수대기 포지션에 임시 배분 ──────────
-                # 빈 슬롯만큼 freed_cash 중 미사용분을 코어에 나눠줘 돈이 안 놀게 함.
-                # 다음 스캔에서 위성 후보 발견 시 회수 (위 코드 참고).
+                # ── 유휴 위성 예산 → 선정된 코어/위성 매수대기 포지션에 임시 배분 ──
+                # TBD(AI선정대기) 제외, 실제 선정된 종목 중 shares==0인 것만 대상
                 _idle_cash = freed_cash - (len(new_info) / max(n_needed, 1)) * freed_cash if freed_cash > 0 else 0
-                if _idle_cash > 100_000:   # 10만원 이상일 때만 배분 (소액 무시)
+                if _idle_cash > 100_000:
                     with self.lock:
-                        _waiting = [c for c in self.core_positions if c.shares == 0]
+                        # 코어: TBD 제외 + shares == 0
+                        _core_waiting = [c for c in self.core_positions
+                                         if c.shares == 0 and c.ticker != "TBD"]
+                        # 위성: 선정된 종목(satellite_info) 중 shares == 0
+                        _sat_info_set = {s['ticker'] for s in self.satellite_info}
+                        _sat_waiting  = [pos for tk, pos in self.satellite_positions.items()
+                                         if pos.shares == 0 and tk in _sat_info_set]
+                        _waiting = _core_waiting + _sat_waiting
                     if _waiting:
                         _lend_each = _idle_cash / len(_waiting)
                         with self.lock:
-                            for _core in _waiting:
-                                _core.cash += _lend_each
-                                self._sat_cash_lent[_core.ticker] = (
-                                    self._sat_cash_lent.get(_core.ticker, 0) + _lend_each
+                            for _pos in _waiting:
+                                _pos.cash += _lend_each
+                                self._sat_cash_lent[_pos.ticker] = (
+                                    self._sat_cash_lent.get(_pos.ticker, 0) + _lend_each
                                 )
-                        _names = ', '.join(c.name for c in _waiting)
+                        _names = ', '.join(p.name for p in _waiting)
                         self.add_log(
                             f"💰 위성 공석 예산 {_idle_cash:,.0f}원 → "
-                            f"코어 매수대기 {len(_waiting)}개 임시 배분 ({_names}) | 위성 선정 시 자동 회수"
+                            f"매수대기 {len(_waiting)}개 임시 배분 ({_names}) | 위성 선정 시 자동 회수"
                         )
 
             # [BUG-FIX] 재스크리닝 도중 삭제된 종목이 keep_tickers에 남아 있으면 KeyError 발생
