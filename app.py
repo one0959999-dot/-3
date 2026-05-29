@@ -887,29 +887,113 @@ def ai_chat():
             _budget_per = _total_asset * (1 - _momentum_budget_ratio) / _n_total if _total_asset > 0 else 0
             _budget_note = f"단타{int(_momentum_budget_ratio*100)}% 제외 후 {_tradable_pct}%를 {_n_total}종목 균등배분 | 종목당 약 {_budget_per:,.0f}원"
 
+        _mock_pnl    = current_status.get('mock_pnl', 0)
+        _mock_pnl_rt = current_status.get('mock_pnl_rt', 0)
+
         stock_analysis_context += f"\n\n[🏦 봇 운용 현황 요약 — 반드시 숙지]\n"
         stock_analysis_context += f"■ 시장 국면: {_regime_emoji} {_regime}\n"
         stock_analysis_context += f"■ 총 평가자산: {_total_asset:,.0f}원 | 가용 현금: {_avail_cash:,.0f}원\n"
+        stock_analysis_context += f"■ 누적 손익: {_mock_pnl:+,.0f}원 ({_mock_pnl_rt:+.2f}%)\n"
         stock_analysis_context += f"■ 예산 배분: {_budget_note}\n"
         stock_analysis_context += f"■ 코어 {_n_cores}개 / 위성 {_n_sats}개 / 단타 슬롯 {len(getattr(bot, 'momentum_positions', [None]))}개\n"
         if _hot_sectors:
             stock_analysis_context += f"■ 강세 섹터: {', '.join(_hot_sectors[:6])}\n"
 
+        # ── 코어 포지션 상세 (P&L + 봇 상태) ──────────────────────────
+        _cores = current_status.get('cores', [])
+        if _cores:
+            stock_analysis_context += "\n[📌 코어 포지션 상세]\n"
+            for c in _cores:
+                _avg = c.get('avg_price', 0)
+                _price = c.get('price', 0)
+                _pnl_pct = ((_price / _avg - 1) * 100) if _avg > 0 and _price > 0 else 0
+                _val = c.get('value', 0)
+                _budget = c.get('budget', 0)
+                stock_analysis_context += (
+                    f"  {c['name']}({c['ticker']}): {c['shares']}주 보유 | "
+                    f"평단 {int(_avg):,}원 → 현재 {int(_price):,}원 ({_pnl_pct:+.1f}%) | "
+                    f"평가 {int(_val):,}원 | 잔여예산 {int(_budget):,}원\n"
+                    f"  └ 봇상태: {c.get('status','?')} | {c.get('status_msg','')[:60]}\n"
+                )
+
+        # ── 위성 포지션 상세 (P&L + 전략 + 봇 상태) ───────────────────
+        _sats = current_status.get('satellites', [])
+        if _sats:
+            stock_analysis_context += "\n[🛰️ 위성 포지션 상세]\n"
+            for s in _sats:
+                _avg = s.get('avg_price', 0)
+                _price = s.get('price', 0)
+                _pnl_pct = ((_price / _avg - 1) * 100) if _avg > 0 and _price > 0 else 0
+                _val = s.get('value', 0)
+                _held = "보유중" if s.get('shares', 0) > 0 else "감시중(미매수)"
+                stock_analysis_context += (
+                    f"  {s['name']}({s['ticker']}): {_held} {s.get('shares',0)}주 | "
+                    f"평단 {int(_avg):,}원 → 현재 {int(_price):,}원 ({_pnl_pct:+.1f}%) | "
+                    f"전략: {s.get('strategy','-')}\n"
+                    f"  └ 봇상태: {s.get('status','?')} | {s.get('status_msg','')[:60]}\n"
+                )
+
+        # ── 방어자산 보유 현황 ──────────────────────────────────────────
+        _def_list = current_status.get('defensive_list', [])
+        if _def_list:
+            _def_held = [d for d in _def_list if d.get('shares', 0) > 0]
+            if _def_held:
+                stock_analysis_context += "\n[🛡️ 방어자산 현재 보유]\n"
+                for d in _def_held:
+                    stock_analysis_context += (
+                        f"  {d['emoji']} {d['name']}({d['ticker']}): {d['shares']}주 | "
+                        f"평가 {int(d.get('value',0)):,}원 | 등락 {d.get('change_pct',0):+.1f}%\n"
+                    )
+            else:
+                stock_analysis_context += f"[🛡️ 방어자산]: BEAR 아니거나 미매수 상태\n"
+
         # ── 단타(모멘텀) 슬롯 현황 ──────────────────────────────────────
         _momentum_list = current_status.get('momentum_list', [])
         _active_mom = [m for m in _momentum_list if m]
         if _active_mom:
-            stock_analysis_context += f"\n[🚀 단타 슬롯 현황]\n"
+            stock_analysis_context += "\n[🚀 단타 슬롯 현황]\n"
             for m in _active_mom:
                 stock_analysis_context += (
-                    f"- {m.get('name','?')}({m.get('ticker','?')}): "
+                    f"  {m.get('name','?')}({m.get('ticker','?')}): "
                     f"{m.get('shares',0)}주 | 수익률 {m.get('pnl_pct',0):+.1f}% | "
-                    f"{m.get('elapsed','')} | 사유: {m.get('reason','')[:50]}\n"
+                    f"{m.get('elapsed','')} | 진입사유: {m.get('reason','')[:60]}\n"
                 )
         else:
-            stock_analysis_context += f"[🚀 단타 슬롯]: 현재 비어있음 (스캔 대기 중)\n"
+            stock_analysis_context += "[🚀 단타 슬롯]: 현재 비어있음\n"
 
-        # ── 장중 AI 시황 분석 (있을 때만) ─────────────────────────────
+        # ── 오늘 AI 거절된 위성 종목 ────────────────────────────────────
+        _sat_rejects = getattr(bot, '_satellite_rejects', {})
+        if _sat_rejects:
+            stock_analysis_context += f"\n[🚫 오늘 AI 거절된 위성 종목 — 당일 재편입 금지]\n"
+            for _rt, _rr in list(_sat_rejects.items())[:10]:
+                stock_analysis_context += f"  · {_rt}: {str(_rr)[:50]}\n"
+
+        # ── 오늘 실제 체결된 매매 내역 ──────────────────────────────────
+        try:
+            from database import get_db_connection
+            _today_str = datetime.now(timezone(timedelta(hours=9))).strftime('%Y-%m-%d')
+            _db_conn = get_db_connection()
+            _today_trades = _db_conn.execute(
+                "SELECT action, ticker, stock_name, price, strategy, ai_reason, profit "
+                "FROM trade_journal WHERE user_id = ? AND date(created_at) = ? "
+                "ORDER BY created_at DESC LIMIT 20",
+                (current_user.id, _today_str)
+            ).fetchall()
+            _db_conn.close()
+            if _today_trades:
+                stock_analysis_context += f"\n[📒 오늘 체결된 매매 내역 ({_today_str})]\n"
+                for _tr in _today_trades:
+                    _action_icon = "🟢매수" if _tr['action'] == 'BUY' else "🔴매도"
+                    _profit_str = f" | 손익 {int(_tr['profit'] or 0):+,}원" if _tr['action'] == 'SELL' else ""
+                    stock_analysis_context += (
+                        f"  {_action_icon} {_tr['stock_name']}({_tr['ticker']}) "
+                        f"@ {int(_tr['price'] or 0):,}원 | {_tr['strategy']}"
+                        f"{_profit_str}\n"
+                    )
+        except Exception:
+            pass
+
+        # ── 장중 AI 시황 분석 ──────────────────────────────────────────
         _ai_view = getattr(bot, 'current_ai_market_view', '')
         if _ai_view:
             stock_analysis_context += f"\n[🧠 장중 AI 시황 분석]\n{_ai_view[:600]}\n"

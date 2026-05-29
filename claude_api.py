@@ -872,17 +872,42 @@ REASON: (핵심 근거 1~2줄)"""
 
         context_prefix = ""
         if portfolio_context:
-            cores = portfolio_context.get('cores', [])
+            cores      = portfolio_context.get('cores', [])
             satellites = portfolio_context.get('satellites', [])
-            mode_str = "US실전" if portfolio_context.get('is_mock', True) else "KR실전"
+            mode_str   = "US실전" if portfolio_context.get('is_mock', True) else "KR실전"
+            regime     = portfolio_context.get('market_regime', 'NEUTRAL')
+            total_asset = portfolio_context.get('mock_total_asset') or portfolio_context.get('us_total_asset', 0)
+            pnl        = portfolio_context.get('mock_pnl', 0)
+            pnl_rt     = portfolio_context.get('mock_pnl_rt', 0)
 
-            core_lines = [f"  * {c['name']}({c['ticker']}): {c['shares']}주 | 현재가 {c.get('price', 0):,}원" for c in cores]
-            sat_lines = [f"  * {s['name']}({s['ticker']}): {s['shares']}주 | 전략: {s['strategy']}" for s in satellites]
+            core_lines = []
+            for c in cores:
+                _avg = c.get('avg_price', 0)
+                _price = c.get('price', 0)
+                _pnl = ((_price / _avg - 1) * 100) if _avg > 0 and _price > 0 else 0
+                core_lines.append(
+                    f"  * {c['name']}({c['ticker']}): {c['shares']}주 | "
+                    f"평단 {int(_avg):,}원 → 현재 {int(_price):,}원 ({_pnl:+.1f}%) | "
+                    f"상태: {c.get('status','?')}"
+                )
+
+            sat_lines = []
+            for s in satellites:
+                _avg = s.get('avg_price', 0)
+                _price = s.get('price', 0)
+                _pnl = ((_price / _avg - 1) * 100) if _avg > 0 and _price > 0 else 0
+                _held = f"{s['shares']}주 보유" if s.get('shares', 0) > 0 else "감시중"
+                sat_lines.append(
+                    f"  * {s['name']}({s['ticker']}): {_held} | "
+                    f"수익률 {_pnl:+.1f}% | 전략: {s.get('strategy','-')} | "
+                    f"상태: {s.get('status','?')}"
+                )
 
             context_prefix += (
-                f"[📊 현재 내 자산 운용 현황 - {mode_str}]\n"
-                f"■ 코어: {chr(10).join(core_lines) if core_lines else '없음'}\n"
-                f"■ 위성: {chr(10).join(sat_lines) if sat_lines else '없음'}\n\n"
+                f"[📊 현재 자산 운용 현황 — {mode_str} | 국면: {regime}]\n"
+                f"■ 총자산: {int(total_asset):,}원 | 누적손익: {int(pnl):+,}원 ({pnl_rt:+.2f}%)\n"
+                f"■ 코어:\n{chr(10).join(core_lines) if core_lines else '  없음'}\n"
+                f"■ 위성:\n{chr(10).join(sat_lines) if sat_lines else '  없음'}\n\n"
             )
 
         if stock_analysis_context:
