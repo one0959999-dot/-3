@@ -1208,7 +1208,9 @@ class USBotController:
             return
 
         # ── 빈 슬롯만 새로 채움 ──────────────────────────────────────
-        holding = strong_keep_tickers | {t for t, p in self.satellite_positions.items() if p.shares > 0}
+        # 코어 감시/보유 종목도 위성 후보에서 제외 (중복 방지)
+        core_tickers = set(self.core_positions.keys())
+        holding = strong_keep_tickers | {t for t, p in self.satellite_positions.items() if p.shares > 0} | core_tickers
         self.add_log(f"🔍 미국 위성 종목 스캔 시작… (빈 슬롯 {slots_needed}개)")
 
         candidates: list = []
@@ -2671,10 +2673,6 @@ class USBotController:
                 cores_data.append({
                     "name":       pos.name,
                     "ticker":     t,
-                    "strategy":   next(
-                        (i.get("ai_reason", "US 코어") for i in self.core_info if i["ticker"] == t),
-                        "US 코어 💎",
-                    ),
                     "shares":     pos.shares,
                     "floor_shares": pos.floor_shares,
                     "price":      round(sp_usd * fx),
@@ -2703,10 +2701,6 @@ class USBotController:
                 satellites.append({
                     "name":       pos.name,
                     "ticker":     t,
-                    "strategy":   next(
-                        (i["sector"] for i in self.satellite_info if i["ticker"] == t),
-                        "US 모멘텀",
-                    ),
                     "shares":     int(pos.shares),
                     "price":      round(sp_usd * fx),
                     "value":      round(val_usd * fx),
