@@ -100,6 +100,7 @@ class KRBotController:
         self.hot_sectors = []
         self.daily_report = None
         self.volume_surge_details = []   # 거래량 급증 종목 실제 리스트 [{ticker, name, ratio}]
+        self._last_total_equity = 0.0    # 최근 총자산 스냅샷 (단타·방어자산 예산 계산용)
 
         # 예수금 즉시 반영용 내부 현금 추적기
         # KIS 모의 API는 체결 후 1~3분 지연이 있어 캐시 API 값 대신 내부 추적값 사용
@@ -313,6 +314,9 @@ class KRBotController:
                 real_stock_value = float(real_balance.get('total_value', 0))
                 real_purchase = float(real_balance.get('total_purchase', 0))
                 total_equity = real_cash + real_stock_value
+                # 단타·방어자산 예산 계산용으로 저장 (모멘텀 스캔 루프에서 참조)
+                if total_equity > 0:
+                    self._last_total_equity = total_equity
 
                 # 내부 현금 동기화:
                 # - 첫 조회 시 KIS 값으로 초기화
@@ -3256,8 +3260,9 @@ class KRBotController:
             except Exception:
                 available_pm = 0
 
-            initial_cap_pm = get_user_initial_cash(self.user_id, self._is_mock)
-            budget_pm      = initial_cap_pm * self.momentum_budget_ratio
+            # 단타 예산: total_equity 기준 10% (코어/위성과 동일 기준으로 통일)
+            _teq_pm   = self._last_total_equity or get_user_initial_cash(self.user_id, self._is_mock)
+            budget_pm = _teq_pm * self.momentum_budget_ratio
 
             for slot_idx in empty_slots:
                 for cand in self._premarket_candidates:
@@ -3423,9 +3428,9 @@ class KRBotController:
             b_name   = best['name']
             b_price  = best['price']
 
-            # 원금 기준 고정 예산 (총자산 변동 무관)
-            initial_cap = get_user_initial_cash(self.user_id, self._is_mock)
-            budget = initial_cap * self.momentum_budget_ratio
+            # 단타 예산: total_equity 기준 10% (코어/위성과 동일 기준으로 통일)
+            _teq = self._last_total_equity or get_user_initial_cash(self.user_id, self._is_mock)
+            budget = _teq * self.momentum_budget_ratio
             if available_cash < budget * 0.5:
                 break  # 현금 부족 → 나머지 슬롯도 포기
 
