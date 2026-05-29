@@ -2040,7 +2040,7 @@ class USBotController:
                 )
 
         _save_interval     = 300
-        _bal_interval      = 120   # 2분마다 (기존 5분 → 단축)
+        _bal_interval      = 30    # 30초마다 (KR봇 동일)
         _regime_interval   = 3600   # 1시간마다 시장 국면 갱신
         _rescreen_interval = 3600   # 1시간마다 위성 재스크리닝 (KR봇 동일)
         _REPORT_SLOT       = "16:10"
@@ -2144,11 +2144,11 @@ class USBotController:
                     self._save_state()
                     _last_save_ts = time.time()
 
-                time.sleep(30)   # 30초 루프 (기존 60초 → 단축)
+                time.sleep(60)   # 60초 루프 (KR봇 동일)
 
             except Exception as e:
                 logger.error(f"[US봇] 루프 오류: {e}", exc_info=True)
-                time.sleep(15)
+                time.sleep(30)
 
         self._save_state()
         self.add_log("⏹️ US 봇 루프 종료")
