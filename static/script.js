@@ -499,16 +499,16 @@ document.addEventListener('DOMContentLoaded', () => {
                     const isHolding = s.shares > 0;
                     const sText = s.status || "감시 중 👀";
                     const sMsg  = s.status_msg || "지표 점검 중...";
-                    const stratBadge = s.strategy
-                        ? `<span class="badge badge-strategy" style="cursor:pointer;" onclick="showStrategyInfo('${s.strategy}')">${s.strategy}</span>`
-                        : '<span style="color:#8b949e">-</span>';
+                    const priceCell = s.price > 0
+                        ? `<span style="font-weight:600;">${fmtMoney(s.price)}</span>`
+                        : '<span style="color:#64748b">-</span>';
                     const sharesCell = isHolding ? `${s.shares.toLocaleString()}주` : `<span style="color:#64748b">-</span>`;
                     const valueCell  = isHolding ? `<span style="font-weight:600;">${fmtMoney(s.value || 0)}</span>` : `<span style="color:#64748b">-</span>`;
                     buf += `<tr>
                         <td><b>${s.name}</b>
                             <span style="color:#64748b;font-size:0.78rem;margin-left:5px">${s.ticker}</span>
                         </td>
-                        <td>${stratBadge}</td>
+                        <td>${priceCell}</td>
                         <td>${sharesCell}</td>
                         <td>
                             <div>${valueCell}</div>
@@ -533,7 +533,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 const h2 = satSection.querySelector('h2');
                 if (h2) h2.innerHTML = '📡 Satellite Positions';
                 const thead = satSection.querySelector('thead tr');
-                if (thead) thead.innerHTML = '<th>종목</th><th>적용 전략</th><th>보유주식</th><th>평가금액</th><th>상태</th>';
+                if (thead) thead.innerHTML = '<th>종목</th><th>현재가</th><th>보유주식</th><th>평가금액</th><th>상태</th>';
             }
 
             // 코어 카드 렌더
@@ -599,9 +599,9 @@ document.addEventListener('DOMContentLoaded', () => {
                     const isHolding = s.shares > 0;
                     const sText = s.status || "감시 중 👀";
                     const sMsg  = s.status_msg || "지표 점검 중...";
-                    const stratBadge = s.strategy
-                        ? `<span class="badge badge-strategy" style="cursor:pointer;" onclick="showStrategyInfo('${s.strategy}')" title="클릭하여 전략 상세 설명 보기">${s.strategy}</span>`
-                        : '<span style="color:#8b949e">-</span>';
+                    const priceCell = s.price > 0
+                        ? `<span style="font-weight:600;">${fmtMoney(s.price)}</span>`
+                        : '<span style="color:#64748b">-</span>';
                     const sharesCell = isHolding ? `${s.shares.toLocaleString()}주` : `<span style="color:#64748b">-</span>`;
                     const valueCell  = isHolding ? `<span style="font-weight:600;">${fmtMoney(s.value || 0)}</span>` : `<span style="color:#64748b">-</span>`;
                     // 배정예산: 미매수 상태일 때만 표시
@@ -613,7 +613,7 @@ document.addEventListener('DOMContentLoaded', () => {
                             <td><b>${s.name}</b>
                                 <span style="color:#64748b;font-size:0.78rem;margin-left:5px">${s.ticker}</span>
                             </td>
-                            <td>${stratBadge}</td>
+                            <td>${priceCell}</td>
                             <td>${sharesCell}</td>
                             <td>
                                 <div>${valueCell}</div>
