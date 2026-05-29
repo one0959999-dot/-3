@@ -1759,9 +1759,9 @@ def calculate_entry_score(df, price: float, regime: str = 'NEUTRAL',
             score += 1
             reasons.append(f"20일모멘텀({momentum_20d:+.1f}%)")
 
-        # ⑩ 120일선 위 (+1) — 장기 우상향 확인
-        if len(c) >= 60:
-            ma120 = float(c.rolling(120, min_periods=60).mean().iloc[-1])
+        # ⑩ 120일선 위 (+1) — 장기 우상향 확인 (데이터 120일치 이상일 때만)
+        if len(c) >= 120:
+            ma120 = float(c.rolling(120).mean().iloc[-1])
             if price > ma120:
                 score += 1
                 reasons.append(f"가격>120MA({ma120:,.0f})")

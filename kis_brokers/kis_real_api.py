@@ -476,7 +476,7 @@ class KisRealApi:
         }
         
         end_dt = datetime.now(tz=timezone(timedelta(hours=9))).replace(tzinfo=None)  # [BUG-N1] KST 날짜 기준
-        start_dt = end_dt - timedelta(days=180)
+        start_dt = end_dt - timedelta(days=240)  # 120 거래일 확보 위해 달력 240일치 요청
         
         params = {
             "FID_COND_MRKT_DIV_CODE": "J",
