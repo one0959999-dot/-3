@@ -24,6 +24,64 @@ logger = logging.getLogger('lassi_bot')
 
 app = Flask(__name__)
 
+# ── pykrx 종목명 캐시 (당일 1회 전체 로드 → 이후 검색 O(n)) ─────────────
+_pykrx_name_cache: dict[str, str] = {}   # {ticker: name}
+_pykrx_cache_date: str = ""
+_pykrx_cache_lock = threading.Lock()
+
+
+def _search_pykrx_cached(query: str) -> list[dict]:
+    """KOSPI + KOSDAQ 전체 종목명 캐시에서 query 포함 종목 반환."""
+    global _pykrx_name_cache, _pykrx_cache_date
+    today = datetime.now().strftime('%Y-%m-%d')
+
+    with _pykrx_cache_lock:
+        if _pykrx_name_cache and _pykrx_cache_date == today:
+            cache = dict(_pykrx_name_cache)
+        else:
+            cache = {}
+            try:
+                from pykrx import stock as krx
+                for market in ("KOSPI", "KOSDAQ"):
+                    try:
+                        tickers = krx.get_market_tickers(today, market=market)
+                    except Exception:
+                        tickers = []
+                    for t in tickers:
+                        try:
+                            name = krx.get_market_ticker_name(t)
+                            if name:
+                                cache[t] = name
+                        except Exception:
+                            pass
+            except Exception:
+                pass
+            # SECTOR_STOCKS 보충 (pykrx 실패 시 최소 보장)
+            if not cache:
+                try:
+                    from pykrx import stock as krx
+                    from stock_screener import SECTOR_STOCKS
+                    for ts in SECTOR_STOCKS.values():
+                        for t in ts:
+                            if t not in cache:
+                                try:
+                                    name = krx.get_market_ticker_name(t)
+                                    if name:
+                                        cache[t] = name
+                                except Exception:
+                                    pass
+                except Exception:
+                    pass
+            _pykrx_name_cache = cache
+            _pykrx_cache_date = today
+
+    results = []
+    q_up = query.upper()
+    for ticker, name in cache.items():
+        if query in name or q_up in ticker:
+            results.append({"ticker": ticker, "name": name})
+    return results
+
 @app.errorhandler(500)
 def internal_error(error):
     import traceback
@@ -1145,30 +1203,69 @@ def search_stock():
     if not query:
         return jsonify({"results": []})
 
-    # 1순위: 네이버 Finance 자동완성 (키 불필요, 빠름)
+    import requests as _req
+
+    # ── 헬퍼: items 배열에서 {ticker, name} 추출 ──────────────────────────
+    def _parse_naver_items(items) -> list:
+        """네이버 AC 응답 items를 파싱 — flat / nested 모두 처리."""
+        out = []
+        for item in items:
+            if not isinstance(item, list):
+                continue
+            # flat: ["삼성전자", "005930", ...]
+            if len(item) >= 2 and isinstance(item[0], str) and isinstance(item[1], str):
+                code, name = item[1], item[0]
+                if code.isdigit() and len(code) == 6:
+                    out.append({"ticker": code, "name": name})
+                    continue
+            # nested: [["삼성전자", "005930", ...], ...]
+            if item and isinstance(item[0], list):
+                for sub in item:
+                    if isinstance(sub, list) and len(sub) >= 2:
+                        code, name = sub[1], sub[0]
+                        if isinstance(code, str) and code.isdigit() and len(code) == 6:
+                            out.append({"ticker": code, "name": name})
+        return out
+
+    # 1순위: 네이버 Finance 자동완성 AC
     try:
-        import requests as _req
         res = _req.get(
             "https://ac.finance.naver.com/ac",
-            params={"q": query, "r_format": "json", "r_enc": "utf-8", "r_unicode": "1", "t_kwd": "expr"},
-            headers={"User-Agent": "Mozilla/5.0", "Referer": "https://finance.naver.com/"},
+            params={"q": query, "r_format": "json", "r_enc": "utf-8",
+                    "r_unicode": "1", "t_kwd": "1"},
+            headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
+                     "Referer": "https://finance.naver.com/"},
+            timeout=4
+        )
+        if res.status_code == 200:
+            results = _parse_naver_items(res.json().get("items", []))
+            if results:
+                return jsonify({"results": results[:15]})
+    except Exception as e:
+        logger.warning(f"네이버 AC 종목검색 실패: {e}")
+
+    # 2순위: 네이버 모바일 검색 API (EC2에서 AC가 막힐 때 대안)
+    try:
+        res = _req.get(
+            "https://m.stock.naver.com/api/search/all",
+            params={"keyword": query, "size": 15},
+            headers={"User-Agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 15_0 like Mac OS X)"},
             timeout=4
         )
         if res.status_code == 200:
             data = res.json()
             results = []
-            for group in data.get("items", []):
-                if not isinstance(group, list):
-                    continue
-                for item in group:
-                    if len(item) >= 2 and isinstance(item[1], str) and item[1].isdigit() and len(item[1]) == 6:
-                        results.append({"ticker": item[1], "name": item[0]})
+            for item in data.get("result", {}).get("stocks", []):
+                code = str(item.get("itemCode", ""))
+                name = item.get("itemName", "")
+                if code.isdigit() and len(code) == 6 and name:
+                    results.append({"ticker": code, "name": name})
             if results:
                 return jsonify({"results": results[:15]})
     except Exception as e:
-        logger.warning(f"네이버 종목검색 실패: {e}")
+        logger.warning(f"네이버 모바일 종목검색 실패: {e}")
 
-    # 2순위: KIS 실전 API 검색 (실전 키가 있을 때)
+    # 3순위: KIS 실전 API 검색 (실전 키가 있을 때)
     try:
         bot = get_current_bot()
         if bot and bot.kis:
@@ -1178,16 +1275,9 @@ def search_stock():
     except Exception as e:
         logger.warning(f"KIS 종목검색 실패: {e}")
 
-    # 3순위: pykrx로 섹터 종목 풀에서 이름 매칭
+    # 4순위: pykrx — KOSPI + KOSDAQ 전체 검색 (캐시)
     try:
-        from pykrx import stock as krx
-        from stock_screener import SECTOR_STOCKS
-        all_tickers = list(dict.fromkeys(t for tickers in SECTOR_STOCKS.values() for t in tickers))
-        results = []
-        for ticker in all_tickers:
-            name = krx.get_market_ticker_name(ticker)
-            if name and query in name:
-                results.append({"ticker": ticker, "name": name})
+        results = _search_pykrx_cached(query)
         if results:
             return jsonify({"results": results[:15]})
     except Exception as e:
