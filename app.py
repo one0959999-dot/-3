@@ -24,6 +24,12 @@ logger = logging.getLogger('lassi_bot')
 
 app = Flask(__name__)
 
+# favicon 404 에러 방지
+from flask import send_from_directory
+@app.route('/favicon.ico')
+def favicon():
+    return '', 204
+
 # ── pykrx 종목명 캐시 (당일 1회 전체 로드 → 이후 검색 O(n)) ─────────────
 _pykrx_name_cache: dict[str, str] = {}   # {ticker: name}
 _pykrx_cache_date: str = ""

@@ -674,7 +674,7 @@ window.toggleMode = async function () {
             showToast(isMock ? 'US 모드로 전환됨' : 'KR 모드로 전환됨', 'info');
             fetch('/api/status').then(r => r.json()).then(data => {
                 updateUI(data);
-                fetchPnl();
+                // fetchPnl 제거됨
             });
         } else {
             showToast('모드 변경 실패', 'error');
