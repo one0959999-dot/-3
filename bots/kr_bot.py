@@ -34,6 +34,53 @@ from kis_brokers.kis_real_websocket import KisRealWebSocket
 _SELL_FEE = 0.00015   # 매도 수수료율 (0.015%)
 _SELL_TAX = 0.0018    # 증권거래세율 (0.18%)
 
+# ── KR 코어 ROE 턴어라운드 보너스 ────────────────────────────────────
+_roe_kr_cache: dict = {}  # {ticker: (ts, score, reason)}
+
+def _roe_turnaround_kr(ticker: str) -> tuple:
+    """pykrx EPS/BPS로 분기별 ROE 개선 추세 계산 → 코어 진입 보너스. 1시간 캐시."""
+    cached = _roe_kr_cache.get(ticker)
+    if cached and time.time() - cached[0] < 3600:
+        return cached[1], cached[2]
+    score, reason = 0, ""
+    try:
+        from pykrx import stock as pykrx_stock
+        from datetime import datetime, timedelta
+        today = datetime.now()
+        roe_vals = []
+        for i in range(1, 5):  # 최근 4분기 근사 (90일 간격)
+            d = (today - timedelta(days=90 * i)).strftime("%Y%m%d")
+            try:
+                for mkt in ("KOSPI", "KOSDAQ"):
+                    df_f = pykrx_stock.get_market_fundamental_by_ticker(d, d, mkt)
+                    if ticker in df_f.index:
+                        eps = float(df_f.loc[ticker, 'EPS'])
+                        bps = float(df_f.loc[ticker, 'BPS'])
+                        if bps != 0:
+                            roe_vals.append(eps / abs(bps))
+                        break
+            except Exception:
+                pass
+        roe_vals.reverse()  # 과거 → 최근 순
+        if len(roe_vals) < 3:
+            return 0, ""
+        # 최신 ROE 음수여야 턴어라운드 후보
+        if roe_vals[-1] >= 0:
+            return 0, ""
+        n = len(roe_vals)
+        improving = sum(1 for i in range(1, n) if roe_vals[i] > roe_vals[i-1])
+        if improving == n - 1:
+            if roe_vals[-1] > -0.02:
+                score, reason = 2, f"ROE 흑자전환 임박({roe_vals[-1]*100:.1f}%→0%) +2"
+            else:
+                score, reason = 1, f"ROE 개선 추세({roe_vals[0]*100:.1f}%→{roe_vals[-1]*100:.1f}%) +1"
+        elif improving >= n // 2:
+            score, reason = 1, f"ROE 부분개선 +1"
+    except Exception:
+        pass
+    _roe_kr_cache[ticker] = (time.time(), score, reason)
+    return score, reason
+
 def _net_profit(sell_price: float, avg_price: float, shares: int) -> float:
     """수수료·세금 반영 실현 손익 계산."""
     net_revenue = sell_price * shares * (1 - _SELL_FEE - _SELL_TAX)
@@ -116,8 +163,10 @@ class KRBotController:
         # momentum_ai_rejects  : {ticker: 거절횟수}  3회 거절 시 당일 블랙리스트
         self._bl_date               = ""       # 마지막 초기화 날짜 (YYYY-MM-DD)
         self._momentum_exit_times   : dict = {}  # {ticker: float(epoch)}
-        self._satellite_rejects     : dict = {}
+        self._satellite_rejects     : dict = {}  # {ticker: float(ts)} — 15분 쿨다운
+        self._satellite_reject_rsn  : dict = {}  # {ticker: str} — 거절 사유
         self._momentum_ai_rejects   : dict = {}  # {ticker: int}  당일 AI 거절 횟수
+        self._SAT_REJECT_COOLDOWN   = 900        # 위성 AI 거절 쿨다운 15분
 
         # ── 유휴 위성 예산 → 코어 임시 배분 추적 ──────────────────────────
         # 위성 슬롯 공석 시 freed_cash를 코어 매수대기 포지션에 임시 배분.
@@ -970,6 +1019,7 @@ class KRBotController:
             self._bl_date              = today
             self._momentum_exit_times  = {}
             self._satellite_rejects    = {}
+            self._satellite_reject_rsn = {}
             self._momentum_ai_rejects  = {}
             self._daily_loss_by_ticker = {}
 
@@ -980,11 +1030,11 @@ class KRBotController:
             self._momentum_exit_times[ticker] = time.time()
 
     def _add_satellite_reject(self, ticker: str, reason: str):
-        """AI 거절 위성 종목을 당일 재편입 금지 목록에 추가합니다."""
+        """AI 거절 위성 종목에 15분 쿨다운 적용 (영구 블랙리스트 아님)."""
         with self.lock:
             self._refresh_blacklist()
-            self._satellite_rejects[ticker] = reason
-        # 재시작 후에도 블랙리스트가 유지되도록 즉시 상태 저장
+            self._satellite_rejects[ticker]    = time.time()   # 타임스탬프 저장
+            self._satellite_reject_rsn[ticker] = reason
         try:
             self._save_state()
         except Exception:
@@ -1014,13 +1064,21 @@ class KRBotController:
             return False
 
     def _is_satellite_blacklisted(self, ticker: str) -> bool:
-        # 사용자 직접 지정 종목은 블랙리스트 적용 안 함 — 사용자 의도 우선
+        # 사용자 직접 지정 종목은 쿨다운 적용 안 함
         user_tickers = {s['ticker'] for s in self.user_satellite_stocks if s.get('ticker')}
         if ticker in user_tickers:
             return False
         with self.lock:
             self._refresh_blacklist()
-            return ticker in self._satellite_rejects
+            ts = self._satellite_rejects.get(ticker)
+            if ts is None:
+                return False
+            if time.time() - ts < self._SAT_REJECT_COOLDOWN:
+                return True   # 쿨다운 중
+            # 쿨다운 만료 → 재심사 허용
+            del self._satellite_rejects[ticker]
+            self._satellite_reject_rsn.pop(ticker, None)
+            return False
 
     def _fmt_scan_report(self, theme: str, candidates: list, regime: str, action_note: str) -> str:
         """친구 AI 스타일 매수 검토 리포트 포맷.
@@ -2355,6 +2413,11 @@ class KRBotController:
                     # ① 코어 전용 진입 점수 (RSI 저평가 + 120MA/60MA 위치만 판단)
                     # 모멘텀·거래량·MACD 무관 — 장기 프로젝트 원칙
                     c_score, c_score_reasons = calculate_core_entry_score(ex_df, cp, regime)
+                    # ROE 턴어라운드 보너스 (분기별 음→양 개선 추세)
+                    _roe_b, _roe_r = _roe_turnaround_kr(c_tk)
+                    if _roe_b > 0:
+                        c_score += _roe_b
+                        c_score_reasons.append(_roe_r)
                     c_threshold = self.entry_thresholds.get(f'core_{regime}', get_core_entry_threshold(regime))
                     if c_score < c_threshold:
                         with self.lock:

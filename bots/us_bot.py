@@ -223,9 +223,13 @@ class USBotController:
         self._defensive_sold_ts:   dict = {}      # 종목별 청산 타임스탬프 (24h 쿨다운)
         self._defensive_shares:    dict = {}      # 종목별 보유 수량 캐시
 
-        # ── 블랙리스트 ────────────────────────────────────────────────
-        self._bl_date           = ""
-        self._satellite_rejects: dict = {}
+        # ── 거절 쿨다운 (영구 블랙리스트 대신 15분/20분 쿨다운) ─────────
+        self._bl_date              = ""
+        self._satellite_rejects:   dict = {}   # {ticker: float(ts)}
+        self._satellite_reject_rsn:dict = {}   # {ticker: str}
+        self._core_reject_ts:      dict = {}   # {ticker: float(ts)}
+        self._SAT_REJECT_COOLDOWN  = 900       # 위성 15분
+        self._CORE_REJECT_COOLDOWN = 1200      # 코어 20분
 
         # ── AI 채팅으로 동적 조정 가능한 파라미터 ────────────────────
         self.entry_thresholds: dict = {}    # {'BULL': 4, 'NEUTRAL': 5, ...}
@@ -439,6 +443,55 @@ class USBotController:
 
     def _price(self, ticker: str) -> float:
         return self._price_cache.get(ticker, 0.0)
+
+    # ─────────────────────────────────────────────────────────────────
+    # ROE 턴어라운드 보너스 (분기별 ROE 개선 추세 감지)
+    # ─────────────────────────────────────────────────────────────────
+    _roe_cache: dict = {}  # {ticker: (ts, score, reason)}
+
+    def _roe_turnaround_bonus(self, ticker: str) -> tuple:
+        """분기별 ROE 음→양 전환 추세 → 진입 점수 보너스. 1시간 캐시."""
+        cached = self._roe_cache.get(ticker)
+        if cached and time.time() - cached[0] < 3600:
+            return cached[1], cached[2]
+        score, reason = 0.0, ""
+        try:
+            import yfinance as yf
+            stk = yf.Ticker(ticker)
+            fi  = stk.quarterly_financials
+            bs  = stk.quarterly_balance_sheet
+            if fi is None or fi.empty or bs is None or bs.empty:
+                return 0.0, ""
+            ni_key = next((k for k in fi.index if 'Net Income' in str(k)), None)
+            eq_key = next((k for k in bs.index
+                           if 'Stockholders Equity' in str(k) or 'Total Equity' in str(k)), None)
+            if not ni_key or not eq_key:
+                return 0.0, ""
+            ni  = fi.loc[ni_key].dropna().sort_index()
+            eq  = bs.loc[eq_key].dropna().sort_index().abs()
+            common = ni.index.intersection(eq.index)
+            if len(common) < 3:
+                return 0.0, ""
+            roe = (ni.loc[common] / (eq.loc[common] + 1)).sort_index()
+            vals = list(roe.values[-4:]) if len(roe) >= 4 else list(roe.values)
+            # 최신 분기 ROE 가 음수여야 턴어라운드 후보
+            if vals[-1] >= 0:
+                return 0.0, ""
+            n = len(vals)
+            improving = sum(1 for i in range(1, n) if vals[i] > vals[i-1])
+            if improving == n - 1:          # 모든 분기 지속 개선
+                if vals[-1] > -0.02:
+                    score, reason = 10.0, f"ROE 흑자전환 임박({vals[-1]*100:.1f}%→0%) +10"
+                elif vals[-1] > -0.08:
+                    score, reason = 6.0,  f"ROE 빠른개선({vals[0]*100:.1f}%→{vals[-1]*100:.1f}%) +6"
+                else:
+                    score, reason = 3.0,  f"ROE 턴어라운드 추세 +3"
+            elif improving >= max(1, n // 2):
+                score, reason = 2.0, f"ROE 부분개선 +2"
+        except Exception:
+            pass
+        self._roe_cache[ticker] = (time.time(), score, reason)
+        return score, reason
 
     # ─────────────────────────────────────────────────────────────────
     # 주문 — KIS 실주문 후 즉시 잔고 재동기화
@@ -759,6 +812,14 @@ class USBotController:
                         pos.status = f"코어 진입 대기 ({c_score}/{c_threshold}pt) ⏳"
                     continue
 
+                # AI 거절 쿨다운 체크 (20분)
+                _core_reject_elapsed = time.time() - self._core_reject_ts.get(ticker, 0)
+                if _core_reject_elapsed < self._CORE_REJECT_COOLDOWN:
+                    _remain_min = int((self._CORE_REJECT_COOLDOWN - _core_reject_elapsed) / 60) + 1
+                    with self.lock:
+                        pos.status = f"코어 AI 거절 쿨다운 ⏳ ({_remain_min}분 후 재심사)"
+                    continue
+
                 budget_ratio = max(0.5, c_score / max(c_threshold, 1) * 0.75)
                 # 3트랜치 분할: 1차=ratio, 2차=min(ratio,남은), 3차=나머지
                 first_usd    = budget * budget_ratio
@@ -798,8 +859,9 @@ class USBotController:
                         )
                     if not approved:
                         with self.lock:
-                            pos.status = f"코어 AI 거절 🛑 ({c_score}pt)"
-                        self.add_log(f"🛑 코어 AI 거절 {pos.name}({ticker}): {ai_reason[:60]}")
+                            pos.status = f"코어 AI 거절 🛑 ({c_score}pt) — 20분 후 재심사"
+                            self._core_reject_ts[ticker] = time.time()
+                        self.add_log(f"🛑 코어 AI 거절(20분 쿨다운) {pos.name}({ticker}): {ai_reason[:60]}")
                         if self.claude:
                             self.claude.record_trade_event(
                                 f"코어 매수 거절 🛑 {pos.name}({ticker}) @ ${price:.2f} | "
@@ -1201,8 +1263,10 @@ class USBotController:
             self.last_screen_date = today
             return
 
-        # 블랙리스트(당일 AI 거절) 종목 제거
-        candidates = [c for c in candidates if c["ticker"] not in self._satellite_rejects]
+        # 쿨다운 중인 종목 제거 (만료된 항목은 자동 통과)
+        now_ts = time.time()
+        candidates = [c for c in candidates
+                      if now_ts - self._satellite_rejects.get(c["ticker"], 0) >= self._SAT_REJECT_COOLDOWN]
 
         # 섹터 다양성: 같은 섹터 최대 2개
         seen_sec: dict = {}
@@ -1305,7 +1369,7 @@ class USBotController:
             pos    = self.satellite_positions.get(ticker)
             if pos and pos.shares > 0:
                 continue
-            if ticker in self._satellite_rejects:
+            if time.time() - self._satellite_rejects.get(ticker, 0) < self._SAT_REJECT_COOLDOWN:
                 continue
             if pos and (time.time() - pos.last_order_time < self.ORDER_COOLDOWN):
                 continue
@@ -1333,6 +1397,12 @@ class USBotController:
                 )
             else:
                 entry_score, entry_reasons = 0, []
+
+            # ROE 턴어라운드 보너스 (음→양 전환 추세)
+            _roe_bonus, _roe_reason = self._roe_turnaround_bonus(ticker)
+            if _roe_bonus > 0:
+                entry_score += int(_roe_bonus)
+                entry_reasons.append(_roe_reason)
 
             entry_threshold = self.entry_thresholds.get(f'sat_{regime}', self.entry_thresholds.get(regime, get_entry_threshold(regime, 'satellite')))
 
@@ -1436,8 +1506,9 @@ class USBotController:
                         news_headlines = _news_str,
                     )
                     if not approved:
-                        self._satellite_rejects[ticker] = ai_reason
-                        self.add_log(f"🤖 AI 매수 거절: {info['name']}({ticker}) — {ai_reason[:80]}")
+                        self._satellite_rejects[ticker]    = time.time()
+                        self._satellite_reject_rsn[ticker] = ai_reason
+                        self.add_log(f"🤖 AI 매수 거절(15분 쿨다운): {info['name']}({ticker}) — {ai_reason[:80]}")
                         if self.claude:
                             self.claude.record_trade_event(
                                 f"위성 매수 거절 🛑 {info['name']}({ticker}) @ ${price:.2f} | 거절이유: {ai_reason[:80]}"
