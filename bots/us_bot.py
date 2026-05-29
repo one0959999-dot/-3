@@ -2950,11 +2950,12 @@ class USBotController:
         # user_core_stocks를 core_info에도 반영
         self._inject_user_cores()
 
-        # 위성 재스캔 강제 실행 (다음 루프에서 즉시)
-        self.last_screen_date = None
+        # 코어·위성 재스캔 즉시 강제 (KR봇과 동일하게 설정 저장 시 즉시 반영)
+        self.last_screen_date      = None   # 위성 재스캔
+        self.last_core_screen_date = None   # 코어 재스캔
 
         self._save_state()
-        self.add_log(f"🔑 [US봇] 설정 갱신 완료 — 코어 {len(self.core_positions)}개 / 위성 재스캔 예약")
+        self.add_log(f"🔑 [US봇] 설정 갱신 완료 — 코어·위성 재스캔 즉시 예약")
 
     def reload_news_monitor(self, dart_key: str, naver_id: str, naver_secret: str):
         """BaseBot 호환 — US 봇은 한국 뉴스 모니터 미사용"""
