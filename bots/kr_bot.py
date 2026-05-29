@@ -2230,8 +2230,8 @@ class KRBotController:
                     c_threshold = self.entry_thresholds.get(f'core_{regime}', self.entry_thresholds.get(regime, get_entry_threshold(regime, 'core')))
                     if c_score < c_threshold:
                         with self.lock:
-                            core.status = "감시 중 👀"
-                            core.status_msg = f"코어 진입 점수 부족 ({c_score}/{c_threshold}pt) — {c_sig} | {', '.join(c_score_reasons[:2]) if c_score_reasons else '지표 점검 중'}"
+                            core.status = f"점수 대기 ({c_score}/{c_threshold}pt) ⏳"
+                            core.status_msg = f"진입점수 부족 | 충족: {', '.join(c_score_reasons[:3]) if c_score_reasons else '없음'}"
                     else:
                         budget_ratio  = get_budget_ratio_from_score(c_score, c_threshold)
                         # 위성과 동일하게 75/25 분할: 1차 진입 후 나머지는 -2% 눌림목 예약
