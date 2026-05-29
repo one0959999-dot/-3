@@ -327,11 +327,14 @@ class KRBotController:
                     #   봇이 재기동할 때마다 "현재 잔고"를 원금으로 덮어쓰는 버그가 있었음.
                     #   (예: 손실 발생 후 재시작 → 남은 잔고를 원금으로 저장 → 수익률 왜곡)
                     # ─ 수정: 파일 플래그 제거, DB 값이 기본값일 때만 업데이트 (재시작-덮어쓰기 방지).
-                    db_cash = get_user_initial_cash(self.user_id, self._is_mock)
-                    if db_cash == 10000000.0 and pure_principal > 0:
-                        set_user_initial_cash(self.user_id, pure_principal, self._is_mock)
-                        self.add_log(f"💰 [{self.mode_name} 원금 셋업] 투자 원금 {pure_principal:,.0f}원 확정 (첫 실행 감지).")
-                    self.initial_capital_captured = True
+                    # ─ BUG-FIX: KIS API 첫 응답이 0이면 pure_principal=0 → 조건 미충족 → 기본값 고착
+                    #   → pure_principal > 0인 경우에만 initial_capital_captured=True 확정
+                    if pure_principal > 0:
+                        db_cash = get_user_initial_cash(self.user_id, self._is_mock)
+                        if db_cash == 10000000.0:
+                            set_user_initial_cash(self.user_id, pure_principal, self._is_mock)
+                            self.add_log(f"💰 [{self.mode_name} 원금 셋업] 투자 원금 {pure_principal:,.0f}원 확정 (첫 실행 감지).")
+                        self.initial_capital_captured = True  # 실제 잔고 확인 후에만 플래그 확정
                 
                 current_asset_cost = real_cash + real_purchase
                 if self.last_asset_cost is not None:
@@ -358,11 +361,14 @@ class KRBotController:
                     # 코어/위성 고정 비율 폐지 → 선정된 전체 종목 수로 균등 분배
                     # 2개: 각 50% | 3개: 각 33% | 5개: 각 20%
                     # TBD(AI선정대기) 제외, 실제 선정된 종목만 카운트
-                    initial_cap = get_user_initial_cash(self.user_id, self._is_mock)
+                    #
+                    # BUG-FIX: 기존에는 DB initial_cap(기본값 천만원)으로 예산 계산
+                    # → DB 기본값이 고착되면 실제 잔고와 무관하게 천만원 기준 배정 버그
+                    # → 수정: 실시간 총자산(total_equity = 예수금 + 보유주식 평가액) 기준 균등 배분
                     _active_cores = [c for c in self.core_positions if c.ticker != "TBD"]
                     _active_sats  = list(self.satellite_positions.values())
                     n_total = max(1, len(_active_cores) + len(_active_sats))
-                    budget_per = initial_cap / n_total
+                    budget_per = total_equity / n_total if total_equity > 0 else 0
 
                     # 코어 예산 sync (TBD = 0, 매수 완료 = 0, 미매수 = budget_per)
                     for core in self.core_positions:
@@ -379,7 +385,7 @@ class KRBotController:
                         new_cash = round(max(0.0, budget_per - effective_val), 2)
                         if abs(new_cash - core.cash) > 10000:
                             logger.info(f"[{self.mode_name}] 코어 예산 sync | {core.ticker} | "
-                                        f"원금={initial_cap:,.0f} 1인당={budget_per:,.0f}(총{n_total}종목) "
+                                        f"총자산={total_equity:,.0f} 1인당={budget_per:,.0f}(총{n_total}종목) "
                                         f"api_val={api_val:,.0f} → cash {core.cash:,.0f} → {new_cash:,.0f}")
                         core.cash = new_cash
 
