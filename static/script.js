@@ -441,7 +441,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 const h2 = satSection.querySelector('h2');
                 if (h2) h2.innerHTML = '📊 US Holdings';
                 const thead = satSection.querySelector('thead tr');
-                if (thead) thead.innerHTML = '<th>종목</th><th>전략</th><th>보유주식</th><th>평가금액</th><th>상태</th>';
+                if (thead) thead.innerHTML = '<th>종목</th><th>현재가</th><th>보유주식</th><th>평가금액</th><th>상태</th>';
             }
 
             let buf = '';
@@ -474,7 +474,7 @@ document.addEventListener('DOMContentLoaded', () => {
                             <button onclick="toggleCoreDCA('${core.ticker}', '${core.name}', ${isDca})"
                                 style="margin-left:6px;font-size:0.65rem;padding:2px 6px;border-radius:5px;cursor:pointer;${dcaBtnStyle}" title="DCA ON/OFF">${isDca ? '💰 DCA' : '💰'}</button>
                         </td>
-                        <td><span class="badge" style="color:#94a3b8;">RSI 코어</span></td>
+                        <td>${core.price > 0 ? `<span style="font-weight:600;">${fmtMoney(core.price)}</span>` : '<span style="color:#64748b">-</span>'}</td>
                         <td>${sharesCell}</td>
                         <td>
                             <div>${valueCell}</div>
