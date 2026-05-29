@@ -753,9 +753,15 @@ def ai_chat():
         
         # ── 봇 명령 적용 가능 리마인더 (시스템 프롬프트 보강) ───────────
         stock_analysis_context += (
-            "\n[리마인더] 사용자가 봇 설정 변경을 요청하면 "
-            "[BOT_COMMAND]{\"action\":\"update_sector_guide\",\"content\":\"...\"}[/BOT_COMMAND] "
-            "블록을 답변 마지막에 포함하세요. 당신은 이 명령을 통해 봇 설정을 직접 바꿀 수 있습니다.\n"
+            "\n[리마인더] 사용자의 요청에 따라 아래 BOT_COMMAND 블록을 답변 마지막에 포함하세요. "
+            "당신은 이 명령을 통해 봇 설정을 직접 바꿀 수 있습니다.\n"
+            "① 전략 가이드 변경: [BOT_COMMAND]{\"action\":\"update_sector_guide\",\"content\":\"...\"}[/BOT_COMMAND]\n"
+            "② 위성 종목 교체(자동 재스캔): [BOT_COMMAND]{\"action\":\"trigger_rescreen\",\"market\":\"KR\"}[/BOT_COMMAND] "
+            "(US면 market을 'US'로)\n"
+            "③ 위성 종목 직접 지정: [BOT_COMMAND]{\"action\":\"update_satellite_stocks\",\"market\":\"KR\","
+            "\"stocks\":[{\"ticker\":\"005930\",\"name\":\"삼성전자\"}]}[/BOT_COMMAND]\n"
+            "사용자가 '위성 종목 교체', '위성 재선정', '위성 바꿔줘' 등을 요청하면 조건을 묻지 말고 "
+            "즉시 trigger_rescreen 명령을 실행하세요.\n"
         )
 
         if stock_analysis_context:
@@ -849,6 +855,22 @@ def ai_chat():
                         logging.getLogger('lassi_bot').info(
                             f"[AI봇명령] user={current_user.id} {target} core_stocks 교체: {valid}"
                         )
+
+            elif cmd.get('action') == 'trigger_rescreen':
+                # AI가 위성 종목 자동 재스캔 명령
+                target = cmd.get('market', 'KR').upper()
+                is_us = (target == 'US')
+                _is_mock_v = True if is_us else False
+                _b = manager.bots.get((current_user.id, _is_mock_v))
+                if _b and hasattr(_b, '_rescreen_satellites'):
+                    import threading as _threading
+                    _threading.Thread(target=_b._rescreen_satellites, daemon=True).start()
+                    applied_commands.append(f"✅ [{target}] 위성 종목 재스캔을 시작했습니다. 잠시 후 로그를 확인하세요.")
+                    logging.getLogger('lassi_bot').info(
+                        f"[AI봇명령] user={current_user.id} {target} _rescreen_satellites 트리거"
+                    )
+                else:
+                    applied_commands.append(f"⚠️ [{target}] 봇이 실행 중이지 않아 재스캔할 수 없습니다.")
 
             elif cmd.get('action') == 'update_satellite_stocks':
                 # AI가 위성 종목 교체 명령 — KR: [{"ticker":"005930","name":"삼성전자"}]
