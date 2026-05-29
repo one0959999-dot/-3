@@ -223,6 +223,10 @@ document.addEventListener('DOMContentLoaded', () => {
         document.getElementById('modalStatusMsg').innerText = message;
         document.getElementById('statusModal').style.display = 'flex';
     }
+    // 📦 onclick 속성용 — encodeURIComponent로 개행·특수문자 안전 처리
+    window.showStatusModalEncoded = function (name, encodedMsg) {
+        showStatusModal(name, decodeURIComponent(encodedMsg));
+    }
 
     // ── Main UI Update ──
     function updateUI(data) {
@@ -461,7 +465,7 @@ document.addEventListener('DOMContentLoaded', () => {
                             ${_pnlCell(core.shares, core.avg_price, core.price)}
                         </td>
                         <td>
-                            <span class="badge" onclick="showStatusModal('${core.name}', '${sMsg.replace(/'/g, "\\'")}')" style="cursor:pointer; ${_positionBadgeStyle(sText)}">${sText}</span>
+                            <span class="badge" onclick="showStatusModalEncoded('${core.name}', '${encodeURIComponent(sMsg)}')" style="cursor:pointer; ${_positionBadgeStyle(sText)}">${sText}</span>
                         </td>
                     </tr>`;
                 });
@@ -494,7 +498,7 @@ document.addEventListener('DOMContentLoaded', () => {
                             <div>${valueCell}</div>
                             ${_pnlCell(s.shares, s.avg_price, s.price)}
                         </td>
-                        <td><span class="badge" onclick="showStatusModal('${s.name}', '${sMsg.replace(/'/g, "\\'")}')" style="cursor:pointer; ${_positionBadgeStyle(sText)}">${sText}</span></td>
+                        <td><span class="badge" onclick="showStatusModalEncoded('${s.name}', '${encodeURIComponent(sMsg)}')" style="cursor:pointer; ${_positionBadgeStyle(sText)}">${sText}</span></td>
                     </tr>`;
                 });
             }
@@ -595,7 +599,7 @@ document.addEventListener('DOMContentLoaded', () => {
                                 <div>${valueCell}</div>
                                 ${_pnlCell(s.shares, s.avg_price, s.price)}
                             </td>
-                            <td><span class="badge" onclick="showStatusModal('${s.name}', '${sMsg.replace(/'/g, "\\'")}')" style="cursor:pointer; ${_positionBadgeStyle(sText)}">${sText}</span></td>
+                            <td><span class="badge" onclick="showStatusModalEncoded('${s.name}', '${encodeURIComponent(sMsg)}')" style="cursor:pointer; ${_positionBadgeStyle(sText)}">${sText}</span></td>
                         </tr>`;
                 });
             } else {
