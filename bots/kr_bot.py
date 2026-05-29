@@ -3528,7 +3528,10 @@ class KRBotController:
             if _new_hot:
                 self.hot_sectors = _new_hot
             if self.hot_sectors:
-                self.add_log(f"🔥 강세 섹터 감지: {', '.join(self.hot_sectors[:4])}")
+                _top4 = self.hot_sectors[:4]
+                _rest = len(self.hot_sectors) - 4
+                _rest_str = f" 외 {_rest}개 전 섹터 포함" if _rest > 0 else ""
+                self.add_log(f"🔥 강세 섹터 TOP4: {', '.join(_top4)}{_rest_str} (가산점 적용)")
             else:
                 self.add_log("⚠️ 강세 섹터 없음 (전 섹터 하락 — 상대 강세 기준으로 후보 선정)")
             # 현재 모멘텀 슬롯에 있는 종목 — 성격/전략이 다르므로 위성 편입 금지

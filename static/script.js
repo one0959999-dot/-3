@@ -1357,3 +1357,25 @@ window.resetInitialCash = async function () {
     }
 }
 
+// ── 위성 종목 수 조절 (+/- 버튼) ──────────────────────────────────────
+window.adjustSat = function (delta) {
+    const el = document.getElementById('sat-num-display');
+    if (!el) return;
+    let val = parseInt(el.textContent) + delta;
+    if (val < 1)  val = 1;
+    if (val > 15) val = 15;
+    el.textContent = val;
+
+    fetch('/api/settings/satellites', {
+        method:  'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body:    JSON.stringify({ count: val })
+    }).then(r => r.json()).then(res => {
+        if (res.status === 'success') {
+            console.log('위성 슬롯 →', res.num_satellites);
+        } else {
+            console.warn('위성 슬롯 변경 실패:', res.message);
+        }
+    }).catch(e => console.error('adjustSat 오류:', e));
+};
+
