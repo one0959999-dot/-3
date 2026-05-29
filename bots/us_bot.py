@@ -2682,9 +2682,11 @@ class USBotController:
                     "floor":      round(pos.floor_shares * avg_p * fx) if avg_p > 0 else 0,
                     "status":     pos.status,
                     "status_msg": (
-                        f"현재가 {sp_usd * fx:,.0f}원 (${sp_usd:.2f}) | 수익 {pnl_pct:+.1f}%"
+                        f"{pos.shares:.0f}주 보유 | 평단 {avg_p * fx:,.0f}원 (${avg_p:.2f}) | "
+                        f"수익 {pnl_pct:+.1f}% | 현재가 {sp_usd * fx:,.0f}원 | 시장: {self.market_regime}"
                         if pos.shares > 0 and avg_p > 0
-                        else f"현재가 {sp_usd * fx:,.0f}원 (${sp_usd:.2f}) | {pos.status}"
+                        else f"현재가 {sp_usd * fx:,.0f}원 (${sp_usd:.2f}) | "
+                             f"진입점수 확인 중 | 시장: {self.market_regime}"
                     ),
                     "dca_mode":   False,
                 })
@@ -2712,9 +2714,11 @@ class USBotController:
                     "budget":     round(pos.budget_usd * fx),
                     "status":     pos.status,
                     "status_msg": (
-                        f"현재가 {sp_usd * fx:,.0f}원 (${sp_usd:.2f}) | 수익 {pnl_pct:+.1f}%"
+                        f"{int(pos.shares)}주 보유 | 평단 {avg_p * fx:,.0f}원 (${avg_p:.2f}) | "
+                        f"수익 {pnl_pct:+.1f}% | 현재가 {sp_usd * fx:,.0f}원 | 시장: {self.market_regime}"
                         if pos.shares > 0 and avg_p > 0
-                        else f"현재가 {sp_usd * fx:,.0f}원 (${sp_usd:.2f}) | {pos.status}"
+                        else f"현재가 {sp_usd * fx:,.0f}원 (${sp_usd:.2f}) | "
+                             f"진입 대기 | 시장: {self.market_regime}"
                     ),
                 })
 
