@@ -544,7 +544,7 @@ document.addEventListener('DOMContentLoaded', () => {
                     <div style="display:flex;justify-content:space-between;align-items:flex-start;">
                         <h3 style="margin:0;display:flex;align-items:center;gap:8px;">
                             💎 ${core.name} (Core)
-                            <span onclick="showStatusModal('${core.name}', '${sMsg.replace(/'/g, "\\'")}')" class="badge" style="cursor:pointer; ${_positionBadgeStyle(sText)}">${sText}</span>
+                            <span class="badge core-status-badge" data-name="${core.name.replace(/"/g,'&quot;')}" style="cursor:pointer; ${_positionBadgeStyle(sText)}">${sText}</span>
                         </h3>
                         <div style="display:flex;gap:6px;align-items:center;">
                             <button onclick="toggleCoreDCA('${core.ticker}', '${core.name}', ${isDca})"
@@ -560,6 +560,14 @@ document.addEventListener('DOMContentLoaded', () => {
                     ${corePnlHtml}
                     <div class="card-subvalue" style="color:#f59e0b;font-size:0.8rem;margin-top:4px">🔒 floor: ${core.floor}주 보호</div>
                 `;
+                // data-msg는 innerHTML 외부에서 설정 — 특수문자(따옴표 등) 안전하게 처리
+                const badge = div.querySelector('.core-status-badge');
+                if (badge) {
+                    badge.dataset.msg = sMsg;
+                    badge.addEventListener('click', function() {
+                        showStatusModal(this.dataset.name, this.dataset.msg);
+                    });
+                }
                 fragment.appendChild(div);
             });
             topCardsContainer.insertBefore(fragment, satCard);
