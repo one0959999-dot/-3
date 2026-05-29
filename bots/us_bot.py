@@ -735,19 +735,22 @@ class USBotController:
 
     def _screen_cores(self):
         """
-        주 1회(월요일) 코어 종목 선정.
-        KIS 실시간 랭킹(거래량·신고가·모멘텀)에서 시장이 증명한 종목을 발굴,
-        AI가 장기 보유 적합성을 최종 판단.
-        KIS 미연결 시 하드코딩 유니버스(CORE_UNIVERSE) 폴백.
+        코어 종목 선정 — 매일 미보유 슬롯 대상 재스캔 (KR봇 동일).
+        - 보유 중인 슬롯: 유지 (강제 교체 없음)
+        - 미보유 슬롯: 더 좋은 후보 있으면 즉시 교체
+        - 오늘 이미 스캔했으면 스킵 (중복 방지)
         """
         now = _now_et()
         today = now.strftime("%Y-%m-%d")
         if self.last_core_screen_date == today:
             return
-        if now.weekday() != 0 and self.core_info:
-            return
 
+        # 미보유 슬롯이 없으면 스캔 불필요
         holding = {t for t, p in self.core_positions.items() if p.shares > 0}
+        empty_slots = self.num_cores - len(holding)
+        if self.core_info and empty_slots <= 0:
+            self.last_core_screen_date = today
+            return
         self.add_log("🔍 US 코어 종목 스캔 시작 (KIS 실시간 랭킹)…")
 
         try:
@@ -789,6 +792,23 @@ class USBotController:
                 self.core_info = candidates[:self.num_cores]
                 self.add_log(f"✅ 코어 종목(퀀트): {[c['ticker'] for c in self.core_info]}")
 
+            # 보유 중인 슬롯은 유지하고 미보유 슬롯만 새 후보로 교체
+            holding_info = [c for c in self.core_info
+                            if self.core_positions.get(c['ticker']) and
+                            self.core_positions[c['ticker']].shares > 0]
+            new_tickers   = {c['ticker'] for c in holding_info}
+            new_info = list(holding_info)
+            for c in (ai_result if self.claude and ai_result else candidates):
+                if len(new_info) >= self.num_cores:
+                    break
+                if c['ticker'] not in new_tickers and c['ticker'] not in holding:
+                    new_info.append(c)
+                    new_tickers.add(c['ticker'])
+            self.core_info = new_info[:self.num_cores]
+
+            changed = [c['ticker'] for c in self.core_info if c['ticker'] not in {x['ticker'] for x in holding_info}]
+            if changed:
+                self.add_log(f"🔄 코어 슬롯 교체 (미보유): {changed}")
             self._inject_user_cores()
             self.last_core_screen_date = today
         except Exception as e:
