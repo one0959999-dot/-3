@@ -821,7 +821,8 @@ def select_satellites(kis=None, n=NUM_SATELLITES, verbose=True, claude_client=No
         print("="*60)
 
     sector_momentum = get_sector_momentum(lookback=20, verbose=verbose)
-    sector_tickers, ticker_to_sector, hot_sectors, ticker_sector_rank, hot_sector_returns = get_sector_tickers(sector_momentum, top_n_sectors=4)
+    # 전체 섹터 종목을 후보 풀에 포함 (강세 섹터는 보너스 점수만 부여, 필수 조건 아님)
+    sector_tickers, ticker_to_sector, hot_sectors, ticker_sector_rank, hot_sector_returns = get_sector_tickers(sector_momentum, top_n_sectors=len(SECTOR_STOCKS))
 
     # 미국 섹터 선행 지수 사전 로드 (4시간 캐시 — 미장 마감 후 KR 개장 전에 한 번만 조회)
     us_sector_boosts = get_us_sector_boost(verbose=verbose)
@@ -1077,7 +1078,7 @@ def select_satellites(kis=None, n=NUM_SATELLITES, verbose=True, claude_client=No
     if claude_client:
         if verbose:
             print("\n🤖 [AI 자율 매매] Claude AI가 최종 위성 종목과 전략을 선정 중입니다...")
-        ai_result = claude_client.ai_select_satellites(results, hot_sectors, n, sector_guide=sector_guide)
+        ai_result = claude_client.ai_select_satellites(results, hot_sectors[:4], n, sector_guide=sector_guide)
         if ai_result:
             selected = ai_result
             if verbose: print("   ✅ AI 텍스트 선정 완료!")
