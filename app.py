@@ -586,6 +586,29 @@ def reset_initial_cash():
     return jsonify({"status": "ok", "message": msg})
 
 
+@app.route('/api/clear_blacklist', methods=['POST'])
+@login_required
+def clear_blacklist():
+    """당일 블랙리스트 즉시 초기화 — UI 버튼에서 호출."""
+    is_mock = bool(current_user.data.get('is_mock', 0))
+    bot = manager.bots.get((current_user.id, is_mock))
+    if not bot:
+        return jsonify({"status": "error", "message": "봇이 실행 중이지 않습니다."})
+    cleared = 0
+    if hasattr(bot, '_satellite_rejects'):
+        cleared += len(bot._satellite_rejects)
+        bot._satellite_rejects = {}
+    if hasattr(bot, '_momentum_ai_rejects'):
+        cleared += len(bot._momentum_ai_rejects)
+        bot._momentum_ai_rejects = {}
+    if hasattr(bot, '_momentum_exit_times'):
+        bot._momentum_exit_times = {}
+    if hasattr(bot, '_save_state'):
+        bot._save_state()
+    logger.info(f"[블랙리스트초기화] user={current_user.id} {cleared}개 항목 제거")
+    return jsonify({"status": "ok", "message": f"블랙리스트 초기화 완료 ({cleared}개 제거)"})
+
+
 @app.route('/api/set_core_dca', methods=['POST'])
 @login_required
 def set_core_dca():

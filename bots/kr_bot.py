@@ -978,6 +978,10 @@ class KRBotController:
             return False
 
     def _is_satellite_blacklisted(self, ticker: str) -> bool:
+        # 사용자 직접 지정 종목은 블랙리스트 적용 안 함 — 사용자 의도 우선
+        user_tickers = {s['ticker'] for s in self.user_satellite_stocks if s.get('ticker')}
+        if ticker in user_tickers:
+            return False
         with self.lock:
             self._refresh_blacklist()
             return ticker in self._satellite_rejects
