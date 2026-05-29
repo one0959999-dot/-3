@@ -1656,14 +1656,17 @@ def check_rsi_progressive_exit(df, current_price: float, avg_price: float) -> tu
 
 # ─────────────────────────────────────────────────────────────────────────────
 # 코어 전용 진입 점수 — RSI 저평가 + 장기 이동평균만 사용
-# 모멘텀·거래량·외국계·MACD 완전 제외 (장기 프로젝트 원칙)
+# 모멘텀·거래량·외국계 제외, MACD는 역추세(눌림목) 보너스로만 사용
 # ─────────────────────────────────────────────────────────────────────────────
 
 def calculate_core_entry_score(df, price: float, regime: str = 'NEUTRAL') -> tuple:
     """
-    코어 전용 진입 점수 (최대 6점).
-    RSI 저평가 + 120MA/60MA 위치만 판단.
-    모멘텀, 거래량, 외국계, MACD 완전 무시.
+    코어 전용 진입 점수 (최대 8점).
+    ① RSI 저평가 (max +3)  ② 120MA 위 (+2)  ③ 60MA 위 (+1)
+    ④ MACD 눌림목 역추세 보너스 (max +2) — 게이트가 아닌 보너스
+       MACD 데드크로스 = 단기 눌림 + 장기 추세 유지 → 저점 진입 타이밍 가산
+       MACD 골든크로스 = 이미 오름 → 0점 (가산 없음)
+    threshold는 그대로라 RSI+120MA 조건만으로 여전히 진입 가능.
 
     Returns: (score: int, reasons: list[str])
     """
@@ -1703,6 +1706,23 @@ def calculate_core_entry_score(df, price: float, regime: str = 'NEUTRAL') -> tup
                 score += 1
                 reasons.append(f"60MA 위({ma60:,.0f})")
 
+        # ④ MACD 역추세 저점 보너스 (최대 +2) — 진입 게이트 아님
+        # 데드크로스 구간 = 단기 눌림 = 저가 매수 기회 → 가산
+        # 골든크로스 구간 = 이미 반등 후 = 타이밍 불리 → 0점
+        if len(c) >= 30:
+            ema12       = c.ewm(span=12, adjust=False).mean()
+            ema26       = c.ewm(span=26, adjust=False).mean()
+            macd_line   = ema12 - ema26
+            signal_line = macd_line.ewm(span=9, adjust=False).mean()
+            hist_now    = float(macd_line.iloc[-1] - signal_line.iloc[-1])
+            hist_prev   = float(macd_line.iloc[-2] - signal_line.iloc[-2])
+            if hist_now < 0 and hist_now > hist_prev:
+                score += 2
+                reasons.append(f"MACD눌림반등({hist_prev:+.2f}→{hist_now:+.2f}) +2")
+            elif hist_now < 0:
+                score += 1
+                reasons.append(f"MACD눌림목({hist_now:+.2f}) +1")
+
     except Exception:
         pass
 
@@ -1711,10 +1731,11 @@ def calculate_core_entry_score(df, price: float, regime: str = 'NEUTRAL') -> tup
 
 def get_core_entry_threshold(regime: str) -> int:
     """
-    코어 전용 진입 기준점.
+    코어 전용 진입 기준점 (최대 8점 중).
     - BULL:    RSI만 저평가여도 진입 (threshold=2 → RSI≤38만으로 충족)
-    - NEUTRAL: RSI≤45(+1) + 120MA(+2) = 3점 충족
+    - NEUTRAL: RSI≤45(+1) + 120MA(+2) = 3점 충족 (MACD 없어도 진입)
     - BEAR:    RSI≤38(+2) + 120MA(+2) = 4점 충족 (하락장 안전 강화)
+    MACD 눌림목 보너스는 threshold를 낮추는 게 아닌 '더 좋은 타이밍' 확인용.
     """
     return {'BULL': 2, 'NEUTRAL': 3, 'BEAR': 4}.get(regime, 3)
 
@@ -1764,16 +1785,23 @@ def calculate_entry_score(df, price: float, regime: str = 'NEUTRAL',
                 score += 1
                 reasons.append("5MA>20MA 정배열")
 
-        # ④ MACD 히스토그램 플러스 (+1)
+        # ④ MACD 역추세 진입 신호 (최대 +2)
+        # 눌림목(데드크로스 구간)이 위성 저점 진입 기회 — 골든크로스 후 진입은 이미 늦음
         if len(c) >= 30:
             ema12       = c.ewm(span=12, adjust=False).mean()
             ema26       = c.ewm(span=26, adjust=False).mean()
             macd_line   = ema12 - ema26
             signal_line = macd_line.ewm(span=9, adjust=False).mean()
-            hist        = float(macd_line.iloc[-1] - signal_line.iloc[-1])
-            if hist > 0:
+            hist_now    = float(macd_line.iloc[-1] - signal_line.iloc[-1])
+            hist_prev   = float(macd_line.iloc[-2] - signal_line.iloc[-2])
+            if hist_now < 0 and hist_now > hist_prev:
+                # 음수 구간에서 개선 중 = 바닥 찍고 반등 시작 (최적 진입)
+                score += 2
+                reasons.append(f"MACD눌림반등({hist_prev:+.2f}→{hist_now:+.2f}) +2")
+            elif hist_now < 0:
+                # 단순 눌림목 = 저점 진입 기회
                 score += 1
-                reasons.append(f"MACD히스토그램+({hist:+.2f})")
+                reasons.append(f"MACD눌림목({hist_now:+.2f}) +1")
 
         # ⑤ RSI 과매도 근접 (최대 +2) — 30 근처일수록 높은 점수
         if len(c) >= 16:
