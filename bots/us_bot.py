@@ -2574,7 +2574,7 @@ class USBotController:
     # ─────────────────────────────────────────────────────────────────
 
     def reload_api_keys(self, kis_config, telegram_config, gemini_config, core_stocks):
-        """API 키 갱신 (설정 저장 시 호출)"""
+        """API 키 및 코어 설정 갱신 — KR봇과 동일하게 즉시 반영"""
         self._init_api(kis_config)
         if self.kis_overseas:
             self.add_log("🔑 KIS 해외주식 API 갱신 완료")
@@ -2591,6 +2591,33 @@ class USBotController:
                 self.telegram = None
         else:
             self.telegram = None
+
+        # ── 코어/위성 설정 즉시 반영 (KR봇과 동일) ──────────────────
+        try:
+            self.user_core_stocks = json.loads(core_stocks) if core_stocks else []
+        except Exception:
+            self.user_core_stocks = []
+
+        # 코어 포지션 즉시 재구성 — 기존 보유 데이터 보존
+        existing = dict(self.core_positions)
+        self.core_positions = {}
+        for uc in self.user_core_stocks:
+            t = uc.get('ticker')
+            if not t:
+                continue
+            pos = existing.get(t) or USPosition(ticker=t, name=uc.get('name', t))
+            pos.ticker = t
+            pos.name   = uc.get('name', t)
+            self.core_positions[t] = pos
+
+        # user_core_stocks를 core_info에도 반영
+        self._inject_user_cores()
+
+        # 위성 재스캔 강제 실행 (다음 루프에서 즉시)
+        self.last_screen_date = None
+
+        self._save_state()
+        self.add_log(f"🔑 [US봇] 설정 갱신 완료 — 코어 {len(self.core_positions)}개 / 위성 재스캔 예약")
 
     def reload_news_monitor(self, dart_key: str, naver_id: str, naver_secret: str):
         """BaseBot 호환 — US 봇은 한국 뉴스 모니터 미사용"""
