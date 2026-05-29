@@ -1,12 +1,13 @@
 ﻿"""
 us_screener.py — 미국장 위성 종목 스크리너 (yfinance 기반)
 ─────────────────────────────────────────────────────────
-① 섹터별 유니버스 정의 (~60개 종목)
+① S&P 500 동적 유니버스 (Wikipedia, 일 1회 캐싱) + 기존 고성장 목록
 ② 모멘텀(20일/60일) + 골든크로스 + 거래량 서지 + RSI 필터
-③ 종합 스코어 → 상위 N개 반환
+③ 종합 스코어 → AI에 전체 전달 → 최종 N개 선정
 """
 
 import time
+import datetime
 import logging
 import threading
 
@@ -45,6 +46,69 @@ US_UNIVERSE: dict[str, list[str]] = {
 
 # 코어 ETF — 스캔에서 제외
 CORE_ETF_EXCLUDE = {"SPY", "QQQ", "IWM", "VTI", "VOO", "TQQQ", "SOXL", "UPRO", "TNA"}
+
+# ── NASDAQ 100 폴백 (S&P 500 동적 로드 실패 시 사용) ─────────────────────
+NASDAQ100_FALLBACK: list[str] = [
+    "AAPL", "MSFT", "NVDA", "AMZN", "META", "GOOGL", "TSLA", "AVGO", "COST", "NFLX",
+    "AMD", "ADBE", "QCOM", "INTC", "PEP", "CSCO", "TMUS", "INTU", "TXN", "AMGN",
+    "HON", "SBUX", "AMAT", "ISRG", "LRCX", "BKNG", "ADI", "MU", "VRTX", "MDLZ",
+    "REGN", "PANW", "KLAC", "CDNS", "SNPS", "MRVL", "ABNB", "CEG", "CRWD", "MAR",
+    "ORLY", "CTAS", "MNST", "FTNT", "WDAY", "DXCM", "PYPL", "PCAR", "CPRT", "ROST",
+    "PAYX", "FAST", "ODFL", "IDXX", "EXC", "FANG", "BKR", "ON", "CHTR", "VRSK",
+    "SMCI", "PLTR", "ARM", "SNOW", "NET", "DDOG", "ZS", "COIN", "SHOP", "UBER",
+    "RKLB", "HOOD", "SOFI", "GTLB", "RXRX", "MRNA", "NVAX", "CELH", "SQ", "ACHR",
+    "LMT", "NOC", "RTX", "CRM", "ORCL", "NOW", "VEEV", "HUBS", "RBLX", "ZM",
+    "IONQ", "SOUN", "BBAI", "ACMR", "WOLF", "LSCC", "ONTO", "AMBA", "AEHR", "NPKI",
+]
+
+# ── 동적 유니버스 캐시 ─────────────────────────────────────────────────────
+_dyn_cache: dict = {'universe': {}, 'date': ''}
+_dyn_lock  = threading.Lock()
+
+
+def _get_dynamic_satellite_universe() -> dict[str, list[str]]:
+    """
+    S&P 500을 Wikipedia에서 동적 로드 + 기존 SATELLITE_UNIVERSE 병합.
+    일 1회 캐싱. Wikipedia 실패 시 NASDAQ100_FALLBACK 사용.
+    """
+    global _dyn_cache
+    today = datetime.date.today().isoformat()
+
+    with _dyn_lock:
+        if _dyn_cache['universe'] and _dyn_cache['date'] == today:
+            return _dyn_cache['universe']
+
+    # 기존 고성장 목록 먼저 포함
+    universe: dict[str, list[str]] = {}
+    for sec, tickers in SATELLITE_UNIVERSE.items():
+        universe[sec] = list(tickers)
+
+    try:
+        tables = pd.read_html('https://en.wikipedia.org/wiki/List_of_S%26P_500_companies',
+                              attrs={'id': 'constituents'})
+        df = tables[0]
+        loaded = 0
+        for _, row in df.iterrows():
+            ticker = str(row['Symbol']).replace('.', '-')  # BRK.B → BRK-B
+            sector = str(row.get('GICS Sector', '기타'))
+            if ticker in CORE_ETF_EXCLUDE:
+                continue
+            universe.setdefault(sector, [])
+            if ticker not in universe[sector]:
+                universe[sector].append(ticker)
+                loaded += 1
+        logger.info(f"[US스크리너] S&P500 동적 유니버스 로드 완료: {loaded}개 추가")
+    except Exception as e:
+        logger.warning(f"[US스크리너] S&P500 동적 로드 실패 → NASDAQ100 폴백: {e}")
+        universe.setdefault('NASDAQ100', [])
+        for t in NASDAQ100_FALLBACK:
+            if t not in universe['NASDAQ100']:
+                universe['NASDAQ100'].append(t)
+
+    with _dyn_lock:
+        _dyn_cache = {'universe': universe, 'date': today}
+
+    return universe
 
 # 종목명 캐시 (yfinance info 조회 비용 절감)
 _name_cache: dict[str, str] = {}
@@ -232,13 +296,14 @@ def scan_us_cores(n: int = 3, exclude: set = None) -> list[dict]:
 
 def scan_us_satellites(n: int = 5, exclude: set = None) -> list[dict]:
     """
-    미국 위성 종목 스캔 — 고성장 신흥주 유니버스에서 단기 폭발력 종목 선정.
+    미국 위성 종목 스캔 — S&P 500 동적 유니버스 + 고성장 목록에서 단기 폭발력 종목 선정.
     제2의 엔비디아·테슬라·로켓랩 후보군.
 
     Returns list of dicts:
       ticker, name, sector, score, price, momentum_20d, rsi, golden, vol_ratio
     """
-    return _scan_universe(SATELLITE_UNIVERSE, n, exclude or set(), _satellite_score)
+    universe = _get_dynamic_satellite_universe()
+    return _scan_universe(universe, n, exclude or set(), _satellite_score)
 
 
 # ── KIS 기반 스크리너 ─────────────────────────────────────────────────
