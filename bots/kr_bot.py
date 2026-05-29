@@ -1836,7 +1836,8 @@ class KRBotController:
                 for core in self.core_positions:
                     if "대기" not in core.status and "심사" not in core.status:
                         if core.shares > 0:
-                            _pnl = ((core.kis_current_price - core.avg_price) / core.avg_price * 100) if core.avg_price > 0 and core.kis_current_price > 0 else 0
+                            _cp = getattr(core, 'kis_current_price', 0) or self.live_prices.get(core.ticker, 0)
+                            _pnl = ((_cp - core.avg_price) / core.avg_price * 100) if core.avg_price > 0 and _cp > 0 else 0
                             core.status = "보유 중 💎"
                             core.status_msg = f"{core.shares}주 보유 중 | 평단 {core.avg_price:,.0f}원 | 수익률 {_pnl:+.1f}% | {_regime_label}"
                         elif core.cash > 0:
@@ -1849,7 +1850,8 @@ class KRBotController:
                 for sat in self.satellite_positions.values():
                     if "대기" not in sat.status and "심사" not in sat.status:
                         if sat.shares > 0:
-                            _pnl = ((sat.kis_current_price - sat.avg_price) / sat.avg_price * 100) if sat.avg_price > 0 and sat.kis_current_price > 0 else 0
+                            _sp = getattr(sat, 'kis_current_price', 0) or self.live_prices.get(sat.ticker, 0)
+                            _pnl = ((_sp - sat.avg_price) / sat.avg_price * 100) if sat.avg_price > 0 and _sp > 0 else 0
                             sat.status = "보유 중 ✅"
                             sat.status_msg = f"{sat.shares}주 보유 중 | 평단 {sat.avg_price:,.0f}원 | 수익률 {_pnl:+.1f}% | {_regime_label}"
                         elif sat.cash > 0:
