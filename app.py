@@ -277,42 +277,6 @@ def kis_balance():
         traceback.print_exc()
         return jsonify({"status": "error", "message": f"잔고 조회 중 오류: {str(e)}"})
 
-@app.route('/api/test_order', methods=['POST'])
-@login_required
-def test_order():
-    """KIS 해외주식 주문 API 연결 테스트 — US 봇으로 실행"""
-    data = request.get_json() or {}
-    ticker = data.get('ticker', '').strip()
-    side   = data.get('side', 'BUY').upper()
-    if not ticker or side not in ('BUY', 'SELL'):
-        return jsonify({"status": "error", "message": "ticker와 side(BUY/SELL) 필요"}), 400
-    try:
-        use_real = data.get('use_real', False)
-        is_mock = not use_real
-        mode_label = "KR실전" if use_real else "US실전"
-
-        target_bot = manager.bots.get((current_user.id, is_mock))
-        if not target_bot:
-            user_data = dict(current_user.data)
-            user_data['is_mock'] = 1 if is_mock else 0
-            target_bot = manager.get_bot(current_user.id, user_data)
-        if not target_bot:
-            return jsonify({"status": "error", "message": "봇 인스턴스를 찾을 수 없습니다."})
-
-        # KR 봇: target_bot.kis  /  US 봇: target_bot.kis_overseas
-        api = getattr(target_bot, 'kis_overseas', None) or getattr(target_bot, 'kis', None)
-        if not api or not hasattr(api, 'buy_market_order'):
-            return jsonify({"status": "error", "message": f"KIS API 미설정 — API 키를 확인하세요"})
-        if side == 'BUY':
-            ok = api.buy_market_order(ticker, 1)
-        else:
-            ok = api.sell_market_order(ticker, 1)
-        if ok:
-            return jsonify({"status": "success", "message": f"[{mode_label}] {ticker} 1주 {side} 주문 접수 완료"})
-        return jsonify({"status": "error", "message": "주문 접수 실패 — 서버 로그 확인"})
-    except Exception as e:
-        return jsonify({"status": "error", "message": str(e)})
-
 @app.route('/api/toggle', methods=['POST'])
 @login_required
 def toggle_bot():
