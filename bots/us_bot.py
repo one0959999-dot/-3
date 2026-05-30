@@ -1443,8 +1443,8 @@ class USBotController:
             return
 
         # ── 빈 슬롯만 새로 채움 ──────────────────────────────────────
-        # 코어 감시/보유 종목도 위성 후보에서 제외 (중복 방지)
-        core_tickers = set(self.core_positions.keys())
+        # 코어 positions + core_info 모두 제외 (코어 교체 직후에도 중복 방지)
+        core_tickers = set(self.core_positions.keys()) | {c["ticker"] for c in self.core_info}
         holding = strong_keep_tickers | {t for t, p in self.satellite_positions.items() if p.shares > 0} | core_tickers
         self.add_log(f"🔍 미국 위성 종목 스캔 시작… (빈 슬롯 {slots_needed}개)")
 
