@@ -2370,12 +2370,15 @@ class USBotController:
                 api_hint    = "" if self.kis_overseas else " (⚠️ KIS 미연결)"
 
                 if not _sell_ok:
-                    # 완전 장외 (20:00~04:00 ET) → 대기
-                    self.add_log(
-                        f"💤 장 외 시간 ({now.strftime('%a %H:%M ET')})"
-                        f" — 04:00 프리마켓 대기 중{api_hint}"
-                    )
-                    time.sleep(300)
+                    # 완전 장외 / 주말 — 매매는 없지만 가격·잔고는 계속 갱신 (대시보드 유지)
+                    self._refresh_prices()
+                    if time.time() - _last_bal_ts >= 60:
+                        self._sync_balance_from_kis()
+                        _last_bal_ts = time.time()
+                    if time.time() - _last_save_ts >= _save_interval:
+                        self._save_state()
+                        _last_save_ts = time.time()
+                    time.sleep(60)   # 300s → 60s (대시보드 반응성 유지)
                     continue
 
                 if not _mkt_open:
