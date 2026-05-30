@@ -169,8 +169,8 @@
         body.theme-us .fut-card-desc  { color: #64748b !important; border-top-color: rgba(0,0,0,0.08) !important; }
         body.theme-us #fut-popup-footer { border-top-color: rgba(0,0,0,0.08) !important; }
         body.theme-us #fut-popup-btn-close { background: #2563eb !important; }
-        /* US 모드: 주문 테스트 input */
-        body.theme-us #testOrderTicker {
+        /* US 모드 input */
+        body.theme-us #usAccountNo {
             border: 1px solid rgba(0,0,0,0.25) !important;
             background: #ffffff !important;
             color: #0f172a !important;
@@ -728,20 +728,7 @@
 
                     <button class="btn-save-keys" onclick="saveAccountSettings()" style="background:#10b981;">설정 저장</button>
 
-                    <div style="margin-top:1rem; padding:1rem; background:rgba(245,158,11,0.08); border:1px solid rgba(245,158,11,0.3); border-radius:10px;">
-                        <div style="font-size:0.8rem; color:#f59e0b; font-weight:600; margin-bottom:0.6rem;">🧪 주문 API 연결 테스트 (1주)</div>
-                        <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap; margin-bottom:6px;">
-                            <label style="font-size:0.78rem; color:#94a3b8;">모드:</label>
-                            <label style="font-size:0.82rem; color:#94a3b8; cursor:pointer;"><input type="radio" name="testMode" value="us" checked onchange="updateTestModeLabel()"> US</label>
-                            <label style="font-size:0.82rem; color:#f85149; cursor:pointer;"><input type="radio" name="testMode" value="real" onchange="updateTestModeLabel()"> KR ⚠️</label>
-                        </div>
-                        <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
-                            <input type="text" id="testOrderTicker" placeholder="종목코드 (예: 005930)" style="flex:1; min-width:140px; padding:6px 10px; border-radius:8px; border:1px solid rgba(255,255,255,0.15); background:rgba(255,255,255,0.05); color:white; font-size:0.85rem;">
-                            <button onclick="runTestOrder('BUY')" style="padding:6px 14px; background:rgba(248,81,73,0.2); border:1px solid rgba(248,81,73,0.5); color:#f85149; border-radius:8px; cursor:pointer; font-size:0.83rem; font-weight:600;">매수 1주</button>
-                            <button onclick="runTestOrder('SELL')" style="padding:6px 14px; background:rgba(88,166,255,0.2); border:1px solid rgba(88,166,255,0.5); color:#58a6ff; border-radius:8px; cursor:pointer; font-size:0.83rem; font-weight:600;">매도 1주</button>
-                        </div>
-                        <div id="testOrderResult" style="margin-top:6px; font-size:0.8rem; color:#94a3b8;"></div>
-                    </div>
+                    <!-- 테스트 주문 UI 제거됨 (실전 운영) -->
                 </div>
 
                 <!-- ════ TAB 2: 알림 & AI ════ -->
