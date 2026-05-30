@@ -837,6 +837,23 @@ class USBotController:
             if changed:
                 self.add_log(f"🔄 코어 슬롯 교체 (미보유): {changed}")
             self._inject_user_cores()
+
+            # ── 탈락 코어 즉시 제거 + 신규 코어 포지션 생성 ──────────────
+            info_tickers = {c["ticker"] for c in self.core_info}
+            # 탈락 코어(0주) → positions에서 제거
+            for t in list(self.core_positions.keys()):
+                if t not in info_tickers and self.core_positions[t].shares == 0:
+                    del self.core_positions[t]
+                    self.add_log(f"🗑️ 코어 탈락 제거: {t} (0주, 신규 종목으로 교체)")
+            # 신규 코어 → positions에 즉시 추가
+            for c in self.core_info:
+                if c["ticker"] not in self.core_positions:
+                    self.core_positions[c["ticker"]] = USPosition(
+                        ticker=c["ticker"], name=c.get("name", c["ticker"]),
+                        status="감시 중 👀"
+                    )
+                    self.add_log(f"✅ 코어 신규 등록: {c['ticker']} {c.get('name','')}")
+
             self.last_core_screen_date = today
         except Exception as e:
             logger.warning(f"[US봇] 코어 스캔 오류: {e}")
@@ -1556,6 +1573,18 @@ class USBotController:
             if self.satellite_positions[_dup].shares == 0:
                 del self.satellite_positions[_dup]
                 self.satellite_info = [s for s in self.satellite_info if s.get("ticker") != _dup]
+
+        # satellite_info에서 탈락한 종목(0주)은 positions에서도 제거
+        _info_t = {s.get("ticker") for s in self.satellite_info}
+        for _t in list(self.satellite_positions.keys()):
+            if _t not in _info_t and self.satellite_positions[_t].shares == 0:
+                del self.satellite_positions[_t]
+
+        # satellite_info에 새로 추가된 종목은 positions에 즉시 생성
+        for _s in self.satellite_info:
+            _t = _s.get("ticker")
+            if _t and _t not in self.satellite_positions:
+                self.satellite_positions[_t] = USPosition(ticker=_t, name=_s.get("name", _t), status="감시 중 👀")
 
         import pandas as pd
         # ── 위성 풀 내 동적 균등 배분 ────────────────────────────────────
