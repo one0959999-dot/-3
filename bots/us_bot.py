@@ -731,7 +731,60 @@ class USBotController:
         return self.cash_usd + pos_value
 
     # ─────────────────────────────────────────────────────────────────
-    # 코어 스크리닝 (주 1회 — 월요일 KR 봇과 동일 패턴)
+    # 중앙 포지션 재구성 — KR봇 _init_dummy_cores() + initialize_portfolio() 통합
+    # 모든 포지션 변경은 이 함수를 통해야 info↔positions 동기화 보장
+    # ─────────────────────────────────────────────────────────────────
+
+    def _rebuild_positions(self):
+        """
+        core_info / satellite_info 기준으로 positions를 완전 동기화.
+        - info에 있고 positions에 없으면 → 즉시 생성
+        - info에 없고 positions에 있고 0주면 → 즉시 제거
+        - 보유 중(shares>0)인 종목은 info에 없어도 유지 (청산 대기)
+        - 코어 종목이 위성에 중복이면 위성에서 제거
+
+        reload_api_keys, _restore_state, _screen_cores, _screen_satellites
+        어디서든 호출 가능 — 항상 일관된 상태 보장.
+        """
+        with self.lock:
+            # ── 코어: info → positions 동기화 ────────────────────────
+            core_info_tickers = {c["ticker"] for c in self.core_info}
+            # 탈락 코어(0주) 제거
+            for t in list(self.core_positions.keys()):
+                if t not in core_info_tickers and self.core_positions[t].shares == 0:
+                    del self.core_positions[t]
+            # 신규 코어 생성
+            for c in self.core_info:
+                t = c["ticker"]
+                if t not in self.core_positions:
+                    self.core_positions[t] = USPosition(
+                        ticker=t, name=c.get("name", t), status="감시 중 👀"
+                    )
+
+            # ── 코어 중복 제거 (위성에서) ────────────────────────────
+            core_t = set(self.core_positions.keys())
+            self.satellite_info = [s for s in self.satellite_info
+                                   if s.get("ticker") not in core_t]
+            for t in list(self.satellite_positions.keys()):
+                if t in core_t and self.satellite_positions[t].shares == 0:
+                    del self.satellite_positions[t]
+
+            # ── 위성: info → positions 동기화 ────────────────────────
+            sat_info_tickers = {s.get("ticker") for s in self.satellite_info}
+            # 탈락 위성(0주) 제거
+            for t in list(self.satellite_positions.keys()):
+                if t not in sat_info_tickers and self.satellite_positions[t].shares == 0:
+                    del self.satellite_positions[t]
+            # 신규 위성 생성
+            for s in self.satellite_info:
+                t = s.get("ticker")
+                if t and t not in self.satellite_positions:
+                    self.satellite_positions[t] = USPosition(
+                        ticker=t, name=s.get("name", t), status="감시 중 👀"
+                    )
+
+    # ─────────────────────────────────────────────────────────────────
+    # 코어 스크리닝 (매일 미보유 슬롯 재스캔)
     # ─────────────────────────────────────────────────────────────────
 
     def _inject_user_cores(self):
@@ -838,22 +891,7 @@ class USBotController:
                 self.add_log(f"🔄 코어 슬롯 교체 (미보유): {changed}")
             self._inject_user_cores()
 
-            # ── 탈락 코어 즉시 제거 + 신규 코어 포지션 생성 ──────────────
-            info_tickers = {c["ticker"] for c in self.core_info}
-            # 탈락 코어(0주) → positions에서 제거
-            for t in list(self.core_positions.keys()):
-                if t not in info_tickers and self.core_positions[t].shares == 0:
-                    del self.core_positions[t]
-                    self.add_log(f"🗑️ 코어 탈락 제거: {t} (0주, 신규 종목으로 교체)")
-            # 신규 코어 → positions에 즉시 추가
-            for c in self.core_info:
-                if c["ticker"] not in self.core_positions:
-                    self.core_positions[c["ticker"]] = USPosition(
-                        ticker=c["ticker"], name=c.get("name", c["ticker"]),
-                        status="감시 중 👀"
-                    )
-                    self.add_log(f"✅ 코어 신규 등록: {c['ticker']} {c.get('name','')}")
-
+            self._rebuild_positions()
             self.last_core_screen_date = today
         except Exception as e:
             logger.warning(f"[US봇] 코어 스캔 오류: {e}")
@@ -1511,36 +1549,13 @@ class USBotController:
         self.satellite_info   = strong_keep_info + new_info
         self._inject_user_satellites()
 
-        # 코어 종목이 위성에 포함되면 제거 (스크리너가 동일 종목을 중복 선정하는 경우 방지)
-        _core_t = set(self.core_positions.keys())
-        self.satellite_info = [s for s in self.satellite_info if s.get("ticker") not in _core_t]
-        for _dup in [t for t in list(self.satellite_positions.keys()) if t in _core_t and self.satellite_positions[t].shares == 0]:
-            del self.satellite_positions[_dup]
-
         _new_hot = list({c["sector"] for c in self.satellite_info if c.get("sector")})
         if _new_hot:
             self.hot_sectors = _new_hot
         self.last_screen_date = today
 
-        # satellite_info 에 선정된 종목 중 positions 에 없는 것 → 즉시 빈 포지션 생성
-        # 대시보드에 "감시 중" 상태로 표시되고, 다음 매매 턴에 즉시 진입 시도
-        current_info_tickers = {s.get("ticker") for s in self.satellite_info if s.get("ticker")}
-        for _sat in self.satellite_info:
-            _t = _sat.get("ticker")
-            if _t and _t not in self.satellite_positions:
-                self.satellite_positions[_t] = USPosition(
-                    ticker=_t, name=_sat.get("name", _t),
-                    status="감시 중 👀"
-                )
-
-        # [BUG-FIX] 탈락 종목(0주 보유) satellite_positions 에서 제거 → 대시보드 미반영 버그 수정
-        # 보유 중(shares > 0)인 종목은 satellite_info에 없어도 청산될 때까지 유지
-        for _t in list(self.satellite_positions.keys()):
-            if _t not in current_info_tickers:
-                _pos = self.satellite_positions[_t]
-                if getattr(_pos, 'shares', 0) <= 0:
-                    del self.satellite_positions[_t]
-                    self.add_log(f"🗑️ 위성 탈락 제거: {_t} (0주, 대시보드 정리)")
+        # 중앙 재구성: info↔positions 완전 동기화 (중복 제거 포함)
+        self._rebuild_positions()
 
         # 신규 종목 선정 시 텔레그램 알림 (KR봇 initialize_portfolio 동일)
         if new_info:
@@ -1566,24 +1581,8 @@ class USBotController:
         if not self.kis_overseas:
             return
 
-        # 코어 종목이 위성에 남아있으면 실시간 제거
-        _core_t = set(self.core_positions.keys())
-        for _dup in [t for t in list(self.satellite_positions.keys()) if t in _core_t]:
-            if self.satellite_positions[_dup].shares == 0:
-                del self.satellite_positions[_dup]
-                self.satellite_info = [s for s in self.satellite_info if s.get("ticker") != _dup]
-
-        # satellite_info에서 탈락한 종목(0주)은 positions에서도 제거
-        _info_t = {s.get("ticker") for s in self.satellite_info}
-        for _t in list(self.satellite_positions.keys()):
-            if _t not in _info_t and self.satellite_positions[_t].shares == 0:
-                del self.satellite_positions[_t]
-
-        # satellite_info에 새로 추가된 종목은 positions에 즉시 생성
-        for _s in self.satellite_info:
-            _t = _s.get("ticker")
-            if _t and _t not in self.satellite_positions:
-                self.satellite_positions[_t] = USPosition(ticker=_t, name=_s.get("name", _t), status="감시 중 👀")
+        # 중앙 재구성: info↔positions 동기화 (매 루프마다 일관성 보장)
+        self._rebuild_positions()
 
         import pandas as pd
         # ── 위성 풀 내 동적 균등 배분 ────────────────────────────────────
@@ -2982,14 +2981,8 @@ class USBotController:
                     )
                     _existing_us.add(_t)
 
-            # 코어 종목이 위성에도 있으면 제거 (중복 방지)
-            _core_tickers = set(self.core_positions.keys())
-            _dup = [t for t in list(self.satellite_positions.keys()) if t in _core_tickers]
-            for t in _dup:
-                del self.satellite_positions[t]
-                self.satellite_info = [s for s in self.satellite_info if s.get("ticker") != t]
-                self.add_log(f"🧹 위성 중복 제거: {t} (코어 종목)")
-
+            # 중앙 재구성: 복원된 info↔positions 완전 동기화
+            self._rebuild_positions()
             self.add_log("📂 이전 상태 복원 완료")
         except Exception as e:
             logger.warning(f"[US봇] 상태 복원 실패: {e}")
@@ -3038,9 +3031,10 @@ class USBotController:
         # user_core_stocks를 core_info에도 반영
         self._inject_user_cores()
 
-        # 코어·위성 재스캔 즉시 강제 (KR봇과 동일하게 설정 저장 시 즉시 반영)
-        self.last_screen_date      = None   # 위성 재스캔
-        self.last_core_screen_date = None   # 코어 재스캔
+        # 중앙 재구성 + 재스캔 강제
+        self._rebuild_positions()
+        self.last_screen_date      = None
+        self.last_core_screen_date = None
 
         self._save_state()
         self.add_log(f"🔑 [US봇] 설정 갱신 완료 — 코어·위성 재스캔 즉시 예약")
