@@ -1421,7 +1421,7 @@ class KRBotController:
                                    and (c.get('ticker') in _restored_sat_tickers
                                         or c.get('ticker') in _user_sat_tickers)]
             self.hot_sectors = state.get("hot_sectors", [])
-            self.num_satellites = state.get("num_satellites", 3)  # 저장된 값 복원
+            self.num_satellites = min(3, state.get("num_satellites", 3))  # 최대 3개 강제
             self.last_screen_month = state.get("last_screen_month")
             lsd_str = state.get("last_screen_date")
             self.last_screen_date = datetime.strptime(lsd_str, '%Y-%m-%d').date() if lsd_str else None

@@ -1383,8 +1383,8 @@ window.adjustSat = function (delta) {
     const el = document.getElementById('sat-num-display');
     if (!el) return;
     let val = parseInt(el.textContent) + delta;
-    if (val < 1)  val = 1;
-    if (val > 15) val = 15;
+    if (val < 1) val = 1;
+    if (val > 3) val = 3;
     el.textContent = val;
 
     fetch('/api/settings/satellites', {

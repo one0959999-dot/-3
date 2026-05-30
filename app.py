@@ -1265,10 +1265,10 @@ def set_satellites_count():
     """위성 종목 개수 변경 설정을 저장합니다."""
     data = request.json or {}
     try:
-        count = int(data.get('count', 5))
-        count = max(1, min(10, count))  # [BUG-M6] 1~10 범위 강제 — 0 이하 입력 시 ZeroDivisionError 방지
+        count = int(data.get('count', 3))
+        count = max(1, min(3, count))   # 1~3 범위 강제
     except (TypeError, ValueError):
-        count = 5
+        count = 3
 
     bot = get_current_bot()
     if bot:

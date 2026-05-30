@@ -171,7 +171,7 @@ class USBotController:
         self.is_running = False
         self.thread     = None
         self.logs: collections.deque = collections.deque(maxlen=100)
-        self.num_satellites = 5   # 상한 — 좋은 종목만 채움 (강제 X)
+        self.num_satellites = 3   # 최대 3개
 
         # DB 슬롯: US 봇은 is_mock=True 슬롯 재사용
         self._is_mock  = True
