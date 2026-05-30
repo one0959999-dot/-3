@@ -436,6 +436,10 @@ class USBotController:
         if tickers is None:
             tickers = set()
         tickers = set(tickers)
+        for t in self.core_positions:
+            tickers.add(t)
+        for info in self.core_info:
+            tickers.add(info["ticker"])
         for t in self.satellite_positions:
             tickers.add(t)
         for info in self.satellite_info:
