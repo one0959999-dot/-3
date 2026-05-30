@@ -171,7 +171,7 @@ class USBotController:
         self.is_running = False
         self.thread     = None
         self.logs: collections.deque = collections.deque(maxlen=100)
-        self.num_satellites = 3
+        self.num_satellites = 5   # 상한 — 좋은 종목만 채움 (강제 X)
 
         # DB 슬롯: US 봇은 is_mock=True 슬롯 재사용
         self._is_mock  = True
@@ -195,7 +195,7 @@ class USBotController:
         # ── 포트폴리오 ────────────────────────────────────────────────
         self.core_positions:      dict[str, USPosition] = {}  # 코어 40%
         self.core_info:           list = []     # AI 선정 코어 종목 메타
-        self.num_cores            = 3
+        self.num_cores            = 3   # 상한 — AI가 좋은 종목만 채움
         self.last_core_screen_date = None       # 코어 스크리닝 날짜 (주 1회)
         self.satellite_positions: dict[str, USPosition] = {}
         self.satellite_info:      list = []
