@@ -1447,7 +1447,6 @@ class USBotController:
         if slots_needed <= 0:
             self.add_log(f"✅ 위성 {len(strong_keep_tickers)}개 성장세 양호 — 재스크리닝 스킵")
             self.satellite_info   = strong_keep_info
-            self._inject_user_satellites()
             self.last_screen_date = today
             return
 
@@ -1505,7 +1504,6 @@ class USBotController:
             self.add_log("⚠️ 스캔 결과 없음 — 기존 위성 유지")
             self.satellite_info   = strong_keep_info + [i for i in self.satellite_info
                                                         if i["ticker"] not in strong_keep_tickers]
-            self._inject_user_satellites()
             self.last_screen_date = today
             return
 
@@ -1556,7 +1554,8 @@ class USBotController:
             self.add_log(f"✅ 위성 종목 선정 (신규): {', '.join(names)}")
 
         self.satellite_info   = strong_keep_info + new_info
-        self._inject_user_satellites()
+        # US봇은 100% AI 자율 운영 — 사용자 지정 위성 무시
+        # self._inject_user_satellites()
         self.add_log(f"📋 위성 info 확정: {[s.get('ticker') for s in self.satellite_info]}")
 
         _new_hot = list({c["sector"] for c in self.satellite_info if c.get("sector")})
