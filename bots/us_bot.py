@@ -2370,15 +2370,18 @@ class USBotController:
                 api_hint    = "" if self.kis_overseas else " (⚠️ KIS 미연결)"
 
                 if not _sell_ok:
-                    # 완전 장외 / 주말 — 매매는 없지만 가격·잔고는 계속 갱신 (대시보드 유지)
+                    # 완전 장외 / 주말 — 매매 없음, 가격·잔고·스크리닝은 유지
                     self._refresh_prices()
                     if time.time() - _last_bal_ts >= 60:
                         self._sync_balance_from_kis()
                         _last_bal_ts = time.time()
+                    # 주말에도 종목 스크리닝 — 월요일 장 열리면 바로 매수 시도
+                    self._run_threaded(self._screen_cores)
+                    self._run_threaded(self._screen_satellites)
                     if time.time() - _last_save_ts >= _save_interval:
                         self._save_state()
                         _last_save_ts = time.time()
-                    time.sleep(60)   # 300s → 60s (대시보드 반응성 유지)
+                    time.sleep(60)
                     continue
 
                 if not _mkt_open:
