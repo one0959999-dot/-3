@@ -1557,6 +1557,7 @@ class USBotController:
 
         self.satellite_info   = strong_keep_info + new_info
         self._inject_user_satellites()
+        self.add_log(f"📋 위성 info 확정: {[s.get('ticker') for s in self.satellite_info]}")
 
         _new_hot = list({c["sector"] for c in self.satellite_info if c.get("sector")})
         if _new_hot:
@@ -1564,7 +1565,12 @@ class USBotController:
         self.last_screen_date = today
 
         # 중앙 재구성: info↔positions 완전 동기화 (중복 제거 포함)
-        self._rebuild_positions()
+        try:
+            self.add_log("🔧 위성 rebuild 호출...")
+            self._rebuild_positions()
+            self.add_log(f"✅ 위성 rebuild 완료 — positions: {list(self.satellite_positions.keys())}")
+        except Exception as _rb_err:
+            logger.error(f"[US봇] 위성 rebuild 오류: {_rb_err}", exc_info=True)
 
         # 신규 종목 선정 시 텔레그램 알림 (KR봇 initialize_portfolio 동일)
         if new_info:
