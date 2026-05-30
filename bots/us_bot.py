@@ -395,6 +395,33 @@ class USBotController:
                         pos.shares = 0.0
                         pos.status = "청산됨 (KIS 동기화)"
 
+                # ── KR봇 동일: 계좌에 있는데 대시보드에 없는 종목 강제 편입 ──
+                tracked = set(self.satellite_positions.keys()) | set(self.core_positions.keys())
+                for s in stocks:
+                    t = s.get("ticker", "")
+                    if not t or t in tracked:
+                        continue
+                    kis_shares = float(s.get("shares", 0))
+                    if kis_shares <= 0:
+                        continue
+                    kis_avg  = float(s.get("avg_price", 0))
+                    kis_name = s.get("name", t)
+                    self.add_log(f"🌟 [US봇] 계좌 미등록 종목 '{kis_name}'({t}) 위성으로 강제 편입!")
+                    new_pos = USPosition(
+                        ticker        = t,
+                        name          = kis_name,
+                        shares        = kis_shares,
+                        avg_price_usd = kis_avg,
+                        status        = "계좌편입 ✅",
+                    )
+                    self.satellite_positions[t] = new_pos
+                    if not any(x.get("ticker") == t for x in self.satellite_info):
+                        self.satellite_info.append({
+                            "ticker": t, "name": kis_name,
+                            "sector": "계좌편입", "score": 0, "ai_reason": "계좌 보유 종목"
+                        })
+                    tracked.add(t)
+
             logger.debug(f"[US봇] 잔고 동기화 완료: 현금 ${cash_usd:,.2f} / 총 ${total_usd:,.2f}")
 
         except Exception as e:
