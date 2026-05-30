@@ -1462,10 +1462,9 @@ class USBotController:
             self.last_screen_date = today
             return
 
-        # 쿨다운 중인 종목 제거 (만료된 항목은 자동 통과)
-        now_ts = time.time()
-        candidates = [c for c in candidates
-                      if now_ts - self._satellite_rejects.get(c["ticker"], 0) >= self._SAT_REJECT_COOLDOWN]
+        # 이미 보유 중인 종목은 중복 선정 방지
+        holding_tickers = {t for t, p in self.satellite_positions.items() if p.shares > 0}
+        candidates = [c for c in candidates if c["ticker"] not in holding_tickers]
 
         # ── ROE 턴어라운드 보너스 반영 → 선정 점수에 가산 후 재정렬 ──
         for c in candidates:
@@ -1602,8 +1601,7 @@ class USBotController:
             pos    = self.satellite_positions.get(ticker)
             if pos and pos.shares > 0:
                 continue
-            if time.time() - self._satellite_rejects.get(ticker, 0) < self._SAT_REJECT_COOLDOWN:
-                continue
+            # 블랙리스트 없음 — satellite_info에서 이미 제거됐으므로 여기까지 오지 않음
             if pos and (time.time() - pos.last_order_time < self.ORDER_COOLDOWN):
                 continue
             price = self._price(ticker)
@@ -1759,13 +1757,11 @@ class USBotController:
                         news_headlines = _news_str,
                     )
                     if not approved:
-                        # 당일 블랙리스트 (5분 쿨다운) + satellite_info에서 즉시 제거 → 재스캔 시 다시 안 뽑힘
-                        self._satellite_rejects[ticker]    = time.time()
-                        self._satellite_reject_rsn[ticker] = ai_reason
+                        # 거절 즉시 제거 → 재스캔에서 더 좋은 종목으로 교체 (블랙리스트 불필요)
                         self.satellite_info = [s for s in self.satellite_info if s.get("ticker") != ticker]
                         if ticker in self.satellite_positions and self.satellite_positions[ticker].shares == 0:
                             del self.satellite_positions[ticker]
-                        self.add_log(f"🤖 AI 매수 거절 + satellite_info 제거: {info['name']}({ticker}) — {ai_reason[:80]}")
+                        self.add_log(f"🤖 AI 거절 → 제거 후 교체 탐색: {info['name']}({ticker}) — {ai_reason[:80]}")
                         if self.claude:
                             self.claude.record_trade_event(
                                 f"위성 매수 거절 🛑 {info['name']}({ticker}) @ ${price:.2f} | 거절이유: {ai_reason[:80]}"
