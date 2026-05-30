@@ -2383,9 +2383,12 @@ class USBotController:
                     if time.time() - _last_bal_ts >= 60:
                         self._sync_balance_from_kis()
                         _last_bal_ts = time.time()
-                    # 주말에도 종목 스크리닝 — 월요일 장 열리면 바로 매수 시도
-                    self._run_threaded(self._screen_cores)
-                    self._run_threaded(self._screen_satellites)
+                    # 주말에도 종목 스크리닝 — 순차 실행 (rebuild 경합 방지)
+                    try:
+                        self._screen_cores()
+                        self._screen_satellites()
+                    except Exception as _scr_err:
+                        logger.error(f"[US봇] 장외 스크리닝 오류: {_scr_err}", exc_info=True)
                     if time.time() - _last_save_ts >= _save_interval:
                         self._save_state()
                         _last_save_ts = time.time()
