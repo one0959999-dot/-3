@@ -747,13 +747,14 @@ class USBotController:
         어디서든 호출 가능 — 항상 일관된 상태 보장.
         """
         with self.lock:
+            _before_core = set(self.core_positions.keys())
+            _before_sat  = set(self.satellite_positions.keys())
+
             # ── 코어: info → positions 동기화 ────────────────────────
             core_info_tickers = {c["ticker"] for c in self.core_info}
-            # 탈락 코어(0주) 제거
             for t in list(self.core_positions.keys()):
                 if t not in core_info_tickers and self.core_positions[t].shares == 0:
                     del self.core_positions[t]
-            # 신규 코어 생성
             for c in self.core_info:
                 t = c["ticker"]
                 if t not in self.core_positions:
@@ -771,17 +772,25 @@ class USBotController:
 
             # ── 위성: info → positions 동기화 ────────────────────────
             sat_info_tickers = {s.get("ticker") for s in self.satellite_info}
-            # 탈락 위성(0주) 제거
             for t in list(self.satellite_positions.keys()):
                 if t not in sat_info_tickers and self.satellite_positions[t].shares == 0:
                     del self.satellite_positions[t]
-            # 신규 위성 생성
             for s in self.satellite_info:
                 t = s.get("ticker")
                 if t and t not in self.satellite_positions:
                     self.satellite_positions[t] = USPosition(
                         ticker=t, name=s.get("name", t), status="감시 중 👀"
                     )
+
+            # ── 변경 로그 ──────────────────────────────────────────────
+            _after_core = set(self.core_positions.keys())
+            _after_sat  = set(self.satellite_positions.keys())
+            _removed = (_before_core | _before_sat) - (_after_core | _after_sat)
+            _added   = (_after_core | _after_sat) - (_before_core | _before_sat)
+            if _removed or _added:
+                self.add_log(f"🔄 [rebuild] 제거: {_removed or '없음'} | 추가: {_added or '없음'}")
+                self.add_log(f"   코어: {list(_after_core)} | 위성: {list(_after_sat)}")
+            self._save_state()
 
     # ─────────────────────────────────────────────────────────────────
     # 코어 스크리닝 (매일 미보유 슬롯 재스캔)
