@@ -1759,9 +1759,13 @@ class USBotController:
                         news_headlines = _news_str,
                     )
                     if not approved:
+                        # 당일 블랙리스트 (5분 쿨다운) + satellite_info에서 즉시 제거 → 재스캔 시 다시 안 뽑힘
                         self._satellite_rejects[ticker]    = time.time()
                         self._satellite_reject_rsn[ticker] = ai_reason
-                        self.add_log(f"🤖 AI 매수 거절(15분 쿨다운): {info['name']}({ticker}) — {ai_reason[:80]}")
+                        self.satellite_info = [s for s in self.satellite_info if s.get("ticker") != ticker]
+                        if ticker in self.satellite_positions and self.satellite_positions[ticker].shares == 0:
+                            del self.satellite_positions[ticker]
+                        self.add_log(f"🤖 AI 매수 거절 + satellite_info 제거: {info['name']}({ticker}) — {ai_reason[:80]}")
                         if self.claude:
                             self.claude.record_trade_event(
                                 f"위성 매수 거절 🛑 {info['name']}({ticker}) @ ${price:.2f} | 거절이유: {ai_reason[:80]}"
@@ -2283,10 +2287,9 @@ class USBotController:
         AI 거절 연속 호출 방지: 5분 쿨다운."""
         if not _is_us_market_open():
             return
-        # [BUG-FIX] AI 거절 시 즉시 재스캔 반복 방지 — 5분 쿨다운
+        # 연속 재스캔 방지 — 1분 쿨다운 (거절 즉시 교체 허용)
         now = time.time()
-        if now - self._last_rescreen_actual_ts < 300:
-            self.add_log("⏸ 재스캔 쿨다운 중 (5분 이내 재실행 방지)")
+        if now - self._last_rescreen_actual_ts < 60:
             return
         self._last_rescreen_actual_ts = now
         self.add_log("🦅 [US] 위성 실시간 교체 탐색 중...")
