@@ -36,6 +36,23 @@ _pykrx_cache_date: str = ""
 _pykrx_cache_lock = threading.Lock()
 
 
+def _last_trading_date() -> str:
+    """오늘 포함 최근 7일 중 pykrx에서 종목이 조회되는 날짜 반환 (주말/공휴일 대응)."""
+    from pykrx import stock as krx
+    from datetime import timedelta
+    d = datetime.now()
+    for _ in range(7):
+        ds = d.strftime('%Y%m%d')
+        try:
+            tickers = krx.get_market_ticker_list(ds, market="KOSPI")
+            if tickers:
+                return ds
+        except Exception:
+            pass
+        d -= timedelta(days=1)
+    return datetime.now().strftime('%Y%m%d')
+
+
 def _search_pykrx_cached(query: str) -> list[dict]:
     """KOSPI + KOSDAQ 전체 종목명 캐시에서 query 포함 종목 반환."""
     global _pykrx_name_cache, _pykrx_cache_date
@@ -48,9 +65,10 @@ def _search_pykrx_cached(query: str) -> list[dict]:
             cache = {}
             try:
                 from pykrx import stock as krx
+                trade_date = _last_trading_date()
                 for market in ("KOSPI", "KOSDAQ"):
                     try:
-                        tickers = krx.get_market_tickers(today, market=market)
+                        tickers = krx.get_market_ticker_list(trade_date, market=market)
                     except Exception:
                         tickers = []
                     for t in tickers:
@@ -1412,11 +1430,13 @@ def search_stock():
     except Exception as e:
         logger.warning(f"네이버 모바일 종목검색 실패: {e}")
 
-    # 3순위: KIS 실전 API 검색 (실전 키가 있을 때)
+    # 3순위: KIS 실전 API 검색 — KR 봇 우선, 현재 봇 차선 (EC2에서 Naver 차단 시 주 경로)
     try:
-        bot = get_current_bot()
-        if bot and bot.kis:
-            results = bot.kis.search_stock_name(query)
+        kr_bot = manager.bots.get((current_user.id, False))  # KR 봇 (is_mock=False)
+        _kis = (kr_bot.kis if kr_bot and kr_bot.kis else
+                (get_current_bot().kis if get_current_bot() and get_current_bot().kis else None))
+        if _kis:
+            results = _kis.search_stock_name(query)
             if results:
                 return jsonify({"results": results})
     except Exception as e:
