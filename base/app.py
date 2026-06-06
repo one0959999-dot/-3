@@ -193,12 +193,17 @@ def home():
 @app.route('/dashboard')
 @login_required
 def index():
+    from flask import make_response
     user_data = current_user.data
     ai_enabled = bool(user_data.get('claude_api_key'))
     manager.get_bot(current_user.id, user_data)
     is_us = bool(user_data.get('is_mock', 0))
     template = 'US/index.html' if is_us else 'KR/index.html'
-    return render_template(template, user=current_user, claude_enabled=ai_enabled)
+    resp = make_response(render_template(template, user=current_user, claude_enabled=ai_enabled))
+    # KR/US 전환 시 브라우저 캐시로 이전 템플릿이 보이는 문제 방지
+    resp.headers['Cache-Control'] = 'no-store, no-cache, must-revalidate'
+    resp.headers['Pragma'] = 'no-cache'
+    return resp
 
 @app.route('/login', methods=['GET', 'POST'])
 def login():
