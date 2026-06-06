@@ -2931,7 +2931,7 @@ class USBotController:
             self.cash_usd               = float(state.get("cash_usd", 0))
             self.last_asset_cost        = state.get("last_asset_cost")
             self.initial_capital_captured = bool(state.get("initial_capital_captured", False))
-            self.core_info              = state.get("core_info", [])
+            self.core_info              = state.get("core_info", [])[:self.num_cores]
             self.last_core_screen_date  = None   # 재시작 시 항상 재스캔 (교체 즉시 반영)
             self.satellite_info         = state.get("satellite_info", [])
             self.hot_sectors            = state.get("hot_sectors", [])
