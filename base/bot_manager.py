@@ -1,6 +1,6 @@
 ﻿from KR.bot import KRBotController   # KR 실전 봇
 from US.bot import USBotController   # US 실전 매매 봇
-from claude.claude_api import ClaudeApi
+from ai.claude_api import ClaudeApi
 from KR.kis.real_api import KisRealApi
 
 

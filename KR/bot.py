@@ -24,7 +24,7 @@ from base.telegram_bot import TelegramNotifier
 from KR.strategy import CorePosition, Position, get_rsi_signal, get_composite_signal, REINVEST_RATIO, get_market_regime, get_market_regime_detail, get_bear_bounce_signal, get_bear_bottom_score, get_bull_momentum_score, get_neutral_range_score, INVERSE_ETF_TICKER, INVERSE_ETF_NAME, INVERSE_BUDGET_RATIO, DEFENSIVE_ASSETS, check_giveback_stop, check_early_drop_stop, check_theme_overextension_exit, check_rsi_progressive_exit, calculate_entry_score, get_entry_threshold, get_budget_ratio_from_score, calc_rsi, calculate_core_entry_score, get_core_entry_threshold
 from KR.screener import select_satellites, generate_daily_market_report
 from base.database import update_bot_status, save_portfolio_state, load_portfolio_state, log_trade_journal, get_recent_trades, save_ai_rules, load_ai_rules, get_ai_rules_history, get_user_initial_cash, set_user_initial_cash, add_user_initial_cash, get_news_api_keys, get_sector_guide
-from claude.news_monitor import NewsMonitor
+from ai.news_monitor import NewsMonitor
 from KR.kis.real_api import KisRealApi
 from KR.kis.real_websocket import KisRealWebSocket
 
