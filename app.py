@@ -36,25 +36,52 @@ _pykrx_cache_date: str = ""
 _pykrx_cache_lock = threading.Lock()
 
 
-def _last_trading_date() -> str:
-    """오늘 포함 최근 7일 중 pykrx에서 종목이 조회되는 날짜 반환 (주말/공휴일 대응)."""
-    from pykrx import stock as krx
-    from datetime import timedelta
-    d = datetime.now()
-    for _ in range(7):
-        ds = d.strftime('%Y%m%d')
+def _load_krx_stock_list() -> dict[str, str]:
+    """KRX KIND 포털에서 KOSPI+KOSDAQ 전체 종목 로드 → {ticker: name}.
+    인증 불필요, EC2에서도 동작. 실패 시 pykrx SECTOR_STOCKS fallback."""
+    import requests as _req
+    from bs4 import BeautifulSoup
+    cache: dict[str, str] = {}
+    try:
+        res = _req.get(
+            "https://kind.krx.co.kr/corpgeneral/corpList.do",
+            params={"method": "download", "searchType": "13"},
+            headers={"User-Agent": "Mozilla/5.0"},
+            timeout=10,
+        )
+        if res.status_code == 200:
+            soup = BeautifulSoup(res.content, "html.parser", from_encoding="euc-kr")
+            for row in soup.find_all("tr"):
+                cols = row.find_all("td")
+                if len(cols) >= 3:
+                    name   = cols[0].text.strip()
+                    ticker = cols[2].text.strip()
+                    if ticker.isdigit() and len(ticker) == 6 and name:
+                        cache[ticker] = name
+    except Exception as e:
+        logger.warning(f"KRX KIND 종목 목록 로드 실패: {e}")
+
+    # fallback: pykrx SECTOR_STOCKS 개별 이름 조회
+    if not cache:
         try:
-            tickers = krx.get_market_ticker_list(ds, market="KOSPI")
-            if tickers:
-                return ds
+            from pykrx import stock as krx
+            from stock_screener import SECTOR_STOCKS
+            for ts in SECTOR_STOCKS.values():
+                for t in ts:
+                    if t not in cache:
+                        try:
+                            name = krx.get_market_ticker_name(t)
+                            if name:
+                                cache[t] = name
+                        except Exception:
+                            pass
         except Exception:
             pass
-        d -= timedelta(days=1)
-    return datetime.now().strftime('%Y%m%d')
+    return cache
 
 
 def _search_pykrx_cached(query: str) -> list[dict]:
-    """KOSPI + KOSDAQ 전체 종목명 캐시에서 query 포함 종목 반환."""
+    """KRX 전체 종목 캐시(당일 1회)에서 query 포함 종목 반환. KOSPI+KOSDAQ 모두 검색."""
     global _pykrx_name_cache, _pykrx_cache_date
     today = datetime.now().strftime('%Y-%m-%d')
 
@@ -62,40 +89,7 @@ def _search_pykrx_cached(query: str) -> list[dict]:
         if _pykrx_name_cache and _pykrx_cache_date == today:
             cache = dict(_pykrx_name_cache)
         else:
-            cache = {}
-            try:
-                from pykrx import stock as krx
-                trade_date = _last_trading_date()
-                for market in ("KOSPI", "KOSDAQ"):
-                    try:
-                        tickers = krx.get_market_ticker_list(trade_date, market=market)
-                    except Exception:
-                        tickers = []
-                    for t in tickers:
-                        try:
-                            name = krx.get_market_ticker_name(t)
-                            if name:
-                                cache[t] = name
-                        except Exception:
-                            pass
-            except Exception:
-                pass
-            # SECTOR_STOCKS 보충 (pykrx 실패 시 최소 보장)
-            if not cache:
-                try:
-                    from pykrx import stock as krx
-                    from stock_screener import SECTOR_STOCKS
-                    for ts in SECTOR_STOCKS.values():
-                        for t in ts:
-                            if t not in cache:
-                                try:
-                                    name = krx.get_market_ticker_name(t)
-                                    if name:
-                                        cache[t] = name
-                                except Exception:
-                                    pass
-                except Exception:
-                    pass
+            cache = _load_krx_stock_list()
             _pykrx_name_cache = cache
             _pykrx_cache_date = today
 

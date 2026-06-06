@@ -517,7 +517,7 @@ class KRBotController:
         self.core_positions = []
         user_tickers_seen: set = set()
         # 사용자 지정 종목 전부 사용 (최대 3개까지)
-        for c in self.user_core_stocks[:3]:
+        for c in self.user_core_stocks[:2]:
             if c.get('ticker') and c['ticker'] not in user_tickers_seen:
                 pos = CorePosition(c['ticker'], c['name'], initial_cash=0)
                 if c.get('dca'):
@@ -1209,7 +1209,7 @@ class KRBotController:
         user_tickers: set = set()
 
         # 사용자 지정 종목 전부 등록 (최대 3개)
-        for user_pick in self.user_core_stocks[:3]:
+        for user_pick in self.user_core_stocks[:2]:
             if user_pick.get('ticker') and user_pick['ticker'] not in user_tickers:
                 self.core_positions.append(CorePosition(user_pick['ticker'], user_pick['name'], initial_cash=0))
                 user_tickers.add(user_pick['ticker'])
@@ -1291,7 +1291,7 @@ class KRBotController:
             # user_core_stocks 기준으로 슬롯 재구성 (reload_api_keys와 동일한 로직)
             self.core_positions = []
             user_tickers_seen: set = set()
-            for uc in self.user_core_stocks[:3]:
+            for uc in self.user_core_stocks[:2]:
                 if not uc.get('ticker') or uc['ticker'] in user_tickers_seen:
                     continue
                 t = uc['ticker']
@@ -1316,7 +1316,7 @@ class KRBotController:
                 t = c["ticker"]
                 if t in user_tickers_seen or t == "TBD":
                     continue
-                if len(self.core_positions) >= 3:
+                if len(self.core_positions) >= 2:
                     break
                 pos = CorePosition(t, c["name"], initial_cash=c.get("initial_cash", 0))
                 pos.shares         = c.get("shares", 0)
@@ -1334,7 +1334,7 @@ class KRBotController:
                 self.core_positions.append(pos)
                 user_tickers_seen.add(t)
             # 나머지 빈 슬롯 TBD 채움
-            while len(self.core_positions) < 3:
+            while len(self.core_positions) < 2:
                 ph = CorePosition("TBD", f"AI선정대기#{len(self.core_positions)+1}", initial_cash=0)
                 ph.status = "AI 선정 대기 🤖"
                 self.core_positions.append(ph)
