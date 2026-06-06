@@ -23,9 +23,6 @@ def _now_kst():
 from telegram_bot import TelegramNotifier
 from strategy import CorePosition, Position, get_rsi_signal, get_composite_signal, REINVEST_RATIO, get_market_regime, get_market_regime_detail, get_bear_bounce_signal, get_bear_bottom_score, get_bull_momentum_score, get_neutral_range_score, INVERSE_ETF_TICKER, INVERSE_ETF_NAME, INVERSE_BUDGET_RATIO, DEFENSIVE_ASSETS, check_giveback_stop, check_early_drop_stop, check_theme_overextension_exit, check_rsi_progressive_exit, calculate_entry_score, get_entry_threshold, get_budget_ratio_from_score, calc_rsi, calculate_core_entry_score, get_core_entry_threshold
 from stock_screener import select_satellites, generate_daily_market_report
-from hot_momentum_scanner import scan_hot_momentum, clear_expired_cache
-from upper_limit_pattern_scanner import collect_and_save_pattern, scan_pattern_matches
-from premarket_scanner import scan_premarket_candidates, check_morning_entry
 from database import update_bot_status, save_portfolio_state, load_portfolio_state, log_trade_journal, get_recent_trades, save_ai_rules, load_ai_rules, get_ai_rules_history, get_user_initial_cash, set_user_initial_cash, add_user_initial_cash, get_news_api_keys, get_sector_guide
 from news_monitor import NewsMonitor
 from kis_brokers.kis_real_api import KisRealApi
@@ -116,8 +113,7 @@ class KRBotController:
         self.alert_icon = "🔴"
 
         self.core_ratio = 0.40        # 코어 40% — 중기 누적 매수
-        self.satellite_ratio = 0.40   # 위성 40% — 중기 성장주 (단타 아님)
-        # 나머지 20%는 단타 or 현금 — AI 재량 보유
+        self.satellite_ratio = 0.60   # 위성 60% — 중기 성장주
         self.core_min_floor_ratio = 0.5
         self.market_indices = [("069500", "KOSPI"), ("229200", "KOSDAQ")]
 
@@ -146,7 +142,7 @@ class KRBotController:
         self.hot_sectors = []
         self.daily_report = None
         self.volume_surge_details = []   # 거래량 급증 종목 실제 리스트 [{ticker, name, ratio}]
-        self._last_total_equity = 0.0    # 최근 총자산 스냅샷 (단타·방어자산 예산 계산용)
+        self._last_total_equity = 0.0    # 최근 총자산 스냅샷 (방어자산 예산 계산용)
 
         # 예수금 즉시 반영용 내부 현금 추적기
         # KIS 모의 API는 체결 후 1~3분 지연이 있어 캐시 API 값 대신 내부 추적값 사용
@@ -158,14 +154,10 @@ class KRBotController:
         self.fundamental_cache = {}
 
         # ── 당일 블랙리스트 (날짜가 바뀌면 자동 초기화) ──────────────────
-        # momentum_exit_times  : {ticker: exit_timestamp}  30분 재진입 금지
         # satellite_rejects    : 오늘 AI 거절된 위성 종목 {ticker: reason}
-        # momentum_ai_rejects  : {ticker: 거절횟수}  3회 거절 시 당일 블랙리스트
         self._bl_date               = ""       # 마지막 초기화 날짜 (YYYY-MM-DD)
-        self._momentum_exit_times   : dict = {}  # {ticker: float(epoch)}
         self._satellite_rejects     : dict = {}  # {ticker: float(ts)} — 5분 쿨다운
         self._satellite_reject_rsn  : dict = {}  # {ticker: str} — 거절 사유
-        self._momentum_ai_rejects   : dict = {}  # {ticker: int}  당일 AI 거절 횟수
         self._SAT_REJECT_COOLDOWN   = 300        # 위성 AI 거절 쿨다운 5분
 
         # ── 유휴 위성 예산 → 코어 임시 배분 추적 ──────────────────────────
@@ -189,16 +181,6 @@ class KRBotController:
         self._regime_check_interval = 3600  # 1시간마다 재판단
         self._last_defensive_check = 0.0     # 방어 자산 체크 캐시 (5분)
         self._defensive_sold_ts   = {}      # 방어 자산 종목별 청산 타임스탬프 {ticker: ts} (24h 쿨다운)
-
-        # ── 🚀 테마·급등주 모멘텀 전용 슬롯 ──────────────────────────
-        # 위성과 완전히 별개의 단일 포지션. AI 심사 후 진입, BEAR 시 현금 보유.
-        # 코어 40% + 위성 40% + 단타 10% + 예비 10% = 총 100%
-        self.momentum_positions = [None]      # 모멘텀 슬롯 1개 (원금의 10%)
-        self.momentum_budget_ratio = 0.10    # 원금의 10% (단일 슬롯)
-        self._last_momentum_scan = 0.0       # 마지막 스캔 타임스탬프
-        self._momentum_scan_interval = 60    # 1분마다 스캔
-        self._premarket_candidates: list = []       # 전날 선정된 사전 단타 후보
-        self._premarket_scan_date: str = ""         # 마지막 사전 스캔 날짜
 
         # ── 🧠 자가학습 트리거 ───────────────────────────────────────
         self._trades_since_reflection = 0        # 누적 거래 수 (10건마다 반성)
@@ -362,7 +344,7 @@ class KRBotController:
                 real_stock_value = float(real_balance.get('total_value', 0))
                 real_purchase = float(real_balance.get('total_purchase', 0))
                 total_equity = real_cash + real_stock_value
-                # 단타·방어자산 예산 계산용으로 저장 (모멘텀 스캔 루프에서 참조)
+                # 방어자산 예산 계산용으로 저장
                 if total_equity > 0:
                     self._last_total_equity = total_equity
 
@@ -411,11 +393,10 @@ class KRBotController:
                 
                 if total_equity >= 0:
                     # ── 동적 균등 예산 배분 ──────────────────────────────────
-                    # 단타(모멘텀) 예산 먼저 차감 → 나머지를 코어/위성 균등 배분
-                    # 예: 단타 10% 먼저 제외 → 90%를 n개 종목으로 나눔
+                    # 코어/위성 균등 배분
                     # BEAR 국면: 방어자산 40% + 현금 60% 전략
                     #   → 코어/위성 예산 = 총자산 × 60% / n (저점매수 탄약 확보)
-                    # BULL/NEUTRAL: 단타 10% 제외 → 나머지 90% / n
+                    # BULL/NEUTRAL: 100%를 n개 종목으로 나눔
                     _active_cores = [c for c in self.core_positions if c.ticker != "TBD"]
                     _active_sats  = list(self.satellite_positions.values())
                     n_total = max(1, len(_active_cores) + len(_active_sats))
@@ -424,8 +405,7 @@ class KRBotController:
                         # BEAR: 방어자산 40% 제외 후 60% 현금을 저점매수 예산으로
                         _tradable = total_equity * 0.60
                     else:
-                        # BULL/NEUTRAL: 단타 슬롯 예산 먼저 제외
-                        _tradable = total_equity * (1.0 - self.momentum_budget_ratio)
+                        _tradable = total_equity
                     budget_per = _tradable / n_total if total_equity > 0 else 0
 
                     # 코어 예산 sync (TBD = 0, 매수 완료 = 0, 미매수 = budget_per)
@@ -768,7 +748,7 @@ class KRBotController:
                    strategy: str = "", ai_reason: str = "") -> bool:
         """매수 주문 실행 + KIS 응답 체크. 성공 True, 실패 False (봇 로그에 에러 기록).
         limit_price = 0 → 현재가 +0.3% 지정가 자동 계산 (슬리피지 제한)
-        limit_price = -1 → 강제 시장가 (모멘텀 전용)"""
+        limit_price = -1 → 강제 시장가"""
         if not self.kis:
             return False
         if limit_price == 0:
@@ -1010,24 +990,15 @@ class KRBotController:
                     logger.warning(f"[{self.mode_name}] 실적 발표 체크 오류 ({ticker}): {e}")
 
     _MAX_DAILY_LOSS_PER_TICKER = -5_000   # 종목당 하루 최대 허용 손실 (원)
-    _MOMENTUM_COOLDOWN_SEC    = 1_800     # 손절 후 재진입 금지 시간 (30분)
 
     def _refresh_blacklist(self):
         """날짜가 바뀌면 당일 블랙리스트를 초기화합니다. [BUG-M1] 락 내부에서 호출 전제."""
         today = _now_kst().strftime('%Y-%m-%d')
         if self._bl_date != today:
             self._bl_date              = today
-            self._momentum_exit_times  = {}
             self._satellite_rejects    = {}
             self._satellite_reject_rsn = {}
-            self._momentum_ai_rejects  = {}
             self._daily_loss_by_ticker = {}
-
-    def _add_momentum_exit(self, ticker: str):
-        """모멘텀 청산 종목을 30분 재진입 금지 목록에 추가합니다."""
-        with self.lock:
-            self._refresh_blacklist()
-            self._momentum_exit_times[ticker] = time.time()
 
     def _add_satellite_reject(self, ticker: str, reason: str):
         """AI 거절 위성 종목에 15분 쿨다운 적용 (영구 블랙리스트 아님)."""
@@ -1049,19 +1020,6 @@ class KRBotController:
             self._daily_loss_by_ticker[ticker] = (
                 self._daily_loss_by_ticker.get(ticker, 0) + profit
             )
-
-    def _is_momentum_blacklisted(self, ticker: str) -> bool:
-        """30분 쿨다운 또는 당일 손실 캡 초과 시 True."""
-        with self.lock:
-            self._refresh_blacklist()
-            # 30분 쿨다운
-            exit_ts = self._momentum_exit_times.get(ticker, 0)
-            if time.time() - exit_ts < self._MOMENTUM_COOLDOWN_SEC:
-                return True
-            # 하루 최대 손실 캡 (누계 손실이 캡 미만[더 깊은 마이너스]이면 차단)
-            if self._daily_loss_by_ticker.get(ticker, 0) < self._MAX_DAILY_LOSS_PER_TICKER:
-                return True
-            return False
 
     def _is_satellite_blacklisted(self, ticker: str) -> bool:
         # 사용자 직접 지정 종목은 쿨다운 적용 안 함
@@ -1225,12 +1183,6 @@ class KRBotController:
             )
         else:
             self.add_log("⚠️ 전 섹터 스캔 완료 — 강세 섹터 없음 (상대 강세 기준 후보 선정)")
-        # 모멘텀 슬롯 종목은 위성 편입 금지
-        momentum_tickers = {
-            mp['ticker'] for mp in self.momentum_positions
-            if mp is not None and isinstance(mp, dict) and mp.get('ticker')
-        }
-        raw_info = [c for c in raw_info if c['ticker'] not in momentum_tickers]
         # AI 검토: 부적합 종목 제거 후 num_satellites 개수만 사용
         filtered_info = self._ai_filter_satellites(raw_info)
         self.satellite_info = filtered_info[:self.num_satellites]
@@ -1320,13 +1272,9 @@ class KRBotController:
                 "last_screen_month": getattr(self, 'last_screen_month', None), "last_screen_date": self.last_screen_date.strftime('%Y-%m-%d') if getattr(self, 'last_screen_date', None) else None,
                 "last_core_rebalance_date": self.last_core_rebalance_date.strftime('%Y-%m-%d') if getattr(self, 'last_core_rebalance_date', None) else None,
                 "daily_pnl": self.daily_pnl, "daily_report": self.daily_report,
-                "momentum_positions": [self._serialize_one_momentum(mp) for mp in self.momentum_positions],
                 # 당일 블랙리스트 — 재시작 후에도 AI 거절 종목이 재심사 요청되지 않도록 저장
                 "bl_date":              self._bl_date,
                 "satellite_rejects":    dict(self._satellite_rejects),
-                "momentum_ai_rejects":  dict(self._momentum_ai_rejects),
-                # 모멘텀 당일 차단 타임스탬프 — 재시작 후에도 3회 거절 차단이 해제되지 않도록
-                "momentum_exit_times":  {k: float(v) for k, v in self._momentum_exit_times.items()},
             }
             save_portfolio_state(self.user_id, state, self._is_mock)
         except Exception as e: logger.error(f"[{self.mode_name}] 상태 저장 실패: {e}", exc_info=True)
@@ -1435,26 +1383,9 @@ class KRBotController:
             if saved_bl_date == today_str:
                 self._bl_date             = saved_bl_date
                 self._satellite_rejects   = state.get("satellite_rejects",   {})
-                self._momentum_ai_rejects = state.get("momentum_ai_rejects", {})
-                # 모멘텀 당일 차단 타임스탬프 복원 — 재시작 후에도 3회 거절 종목이 재심사받지 않도록
-                self._momentum_exit_times = {k: float(v) for k, v in state.get("momentum_exit_times", {}).items()}
                 n_rej = len(self._satellite_rejects)
-                n_mom = len(self._momentum_ai_rejects)
-                if n_rej or n_mom:
-                    self.add_log(f"🚫 당일 AI 거절 블랙리스트 복원: 위성 {n_rej}개 / 모멘텀 {n_mom}개 재심사 제외")
-            # 모멘텀 슬롯 복원 (구버전 단일 포지션 호환)
-            # __init__ 에서 설정한 슬롯 수를 먼저 저장 (덮어쓰기 전)
-            target_slots = len(self.momentum_positions)
-            saved_slots = state.get("momentum_positions")
-            if saved_slots is not None:
-                restored = [self._deserialize_one_momentum(mp) for mp in saved_slots]
-                # 현재 슬롯 수에 맞게 자르거나 None 으로 채움
-                while len(restored) < target_slots:
-                    restored.append(None)
-                self.momentum_positions = restored[:target_slots]
-            else:
-                old_single = state.get("momentum_position")
-                self.momentum_positions = [self._deserialize_one_momentum(old_single)] + [None] * (target_slots - 1)
+                if n_rej:
+                    self.add_log(f"🚫 당일 AI 거절 블랙리스트 복원: 위성 {n_rej}개 재심사 제외")
 
             # satellite_info에 선정된 종목 중 positions에 없는 것 → 빈 포지션 생성
             # BUG-FIX: 사용자지정 종목만 추가 (스크리너 선정 ghost 방지)
@@ -1930,53 +1861,6 @@ class KRBotController:
                         self._run_threaded(lambda t=slot_time: self.generate_daily_report(t))
                     break
 
-        # ── 15:35 장 마감 직후: 오늘 급등/상한가 패턴 수집 → 내일 선제 매수용 ──
-        if current_time_str == '15:35':
-            if not getattr(self, '_pattern_collected_date', None) == today_str:
-                self._pattern_collected_date = today_str
-                def _collect_pattern():
-                    try:
-                        prof = collect_and_save_pattern(kis=self.kis, verbose=False)
-                        if prof:
-                            self.add_log(
-                                f"📊 [급등패턴] 오늘 급등 {prof['sample_count']}종목 패턴 저장 완료 "
-                                f"| RSI평균 {prof['rsi']:.0f} / BB {prof['bb_pct']:.0f}% "
-                                f"| 내일 유사 종목 선제 매수 준비"
-                            )
-                            self._send_telegram(
-                                f"📊 <b>급등패턴 수집 완료</b>\n"
-                                f"━━━━━━━━━━━━━━━━━━━━\n"
-                                f"오늘 급등 {prof['sample_count']}종목 전일 패턴 분석 완료\n"
-                                f"📈 평균 RSI: {prof['rsi']:.0f} | BB: {prof['bb_pct']:.0f}%\n"
-                                f"🔍 내일 장 시작 전 유사 종목 자동 스캔 예정", 'misc'
-                            )
-                    except Exception as e:
-                        logger.warning(f"[{self.mode_name}] 급등패턴 수집 오류: {e}")
-                threading.Thread(target=_collect_pattern, daemon=True).start()
-
-                # ── 사전 단타 후보 선정 (다음날 09:00~09:15 선제 진입용) ──
-                def _scan_premarket():
-                    try:
-                        candidates = scan_premarket_candidates(kis=self.kis, top_n=10, verbose=False)
-                        self._premarket_candidates = candidates
-                        self._premarket_scan_date  = today_str
-                        if candidates:
-                            names = ', '.join(c['name'] for c in candidates[:5])
-                            self.add_log(f"🌙 [사전단타] 내일 후보 {len(candidates)}개 선정: {names} 등")
-                            self._send_telegram(
-                                f"🌙 <b>내일 단타 사전 후보 선정</b>\n"
-                                f"━━━━━━━━━━━━━━━━━━━━\n"
-                                + "\n".join(
-                                    f"• {c['name']}({c['ticker']}) {c['price']:,}원 | 점수 {c['score']:.0f}"
-                                    for c in candidates[:5]
-                                )
-                                + "\n🕘 내일 09:00~09:15 거래량 확인 후 진입", 'misc'
-                            )
-                        else:
-                            self.add_log("🌙 [사전단타] 조건 충족 후보 없음 — 내일 장중 실시간 스캔으로 대체")
-                    except Exception as e:
-                        logger.warning(f"[{self.mode_name}] 사전 단타 스캔 오류: {e}")
-                threading.Thread(target=_scan_premarket, daemon=True).start()
         
         if not is_golden_hours:
             with self.lock:
@@ -3250,7 +3134,6 @@ class KRBotController:
             time.sleep(0.2)
 
         # ── 위성 매도 후 재스캔: 이번 턴에 빈 슬롯이 생겼으면 즉시 새 종목 탐색 ─
-        # 모멘텀은 매도 즉시 다음 분에 새 종목 스캔, 위성도 동일하게 대응.
         # 쿨다운(120초): 잦은 스캔 방지 (AI 호출 비용, API 부하)
         with self.lock:
             _sat_full_after = {t for t, p in self.satellite_positions.items() if p.shares > 0}
@@ -3262,645 +3145,7 @@ class KRBotController:
                 self.add_log(f"🔄 위성 전량 매도 감지 ({', '.join(_just_sold)}) → 즉시 재스캔")
                 threading.Thread(target=self._rescreen_satellites, daemon=True).start()
 
-        # ── 🚀 테마·급등주 모멘텀 슬롯 매매 ─────────────────────────────
-        if is_golden_hours:
-            self._run_momentum_slot(regime)
-
         self._save_state()
-
-    def _serialize_one_momentum(self, mp):
-        """단일 모멘텀 포지션 dict → JSON 직렬화 (datetime→str)."""
-        if mp is None:
-            return None
-        mp = dict(mp)
-        et = mp.get('enter_time')
-        if isinstance(et, datetime):
-            mp['enter_time'] = et.strftime('%Y-%m-%dT%H:%M:%S')
-        return mp
-
-    def _deserialize_one_momentum(self, mp):
-        """JSON → 단일 모멘텀 포지션 dict 복원 (str→datetime)."""
-        if mp is None:
-            return None
-        mp = dict(mp)
-        et = mp.get('enter_time')
-        if isinstance(et, str):
-            try:
-                mp['enter_time'] = datetime.strptime(et, '%Y-%m-%dT%H:%M:%S')
-            except Exception:
-                mp['enter_time'] = None
-        return mp
-
-    def _check_momentum_exit_one(self, slot_idx: int, mp: dict, now, regime: str = "NEUTRAL") -> bool:
-        """슬롯 idx의 모멘텀 포지션 청산 조건 체크. 청산 시 True 반환."""
-        # C-01: kis가 None이면 체크 불가 → 청산 없이 리턴 (멀티스레드 재시작 타이밍 안전)
-        if not self.kis:
-            return False
-
-        ticker  = mp['ticker']
-        name    = mp['name']
-        shares  = mp.get('shares', 0)
-        avg_p   = mp.get('avg_price', 0)
-        atr     = mp.get('atr', avg_p * 0.02)
-        enter_t = mp.get('enter_time')
-
-        if shares <= 0:
-            self.momentum_positions[slot_idx] = None
-            return True
-
-        price = self.live_prices.get(ticker) or self.kis.get_current_price(ticker)
-        if not price or price <= 0:
-            return False
-
-        if price > mp.get('peak_price', avg_p):
-            mp['peak_price'] = price
-        peak_p = mp.get('peak_price', avg_p)
-
-        # 상한가 여부
-        is_upper_limit = price >= avg_p * 1.295
-        is_post_upper  = (not is_upper_limit) and avg_p > 0 and (price / avg_p - 1) >= 0.20
-
-        vol_fade = False
-        giveback_signal = 'HOLD'
-        giveback_reason = ''
-        try:
-            # 5분봉 집계: 1분봉 25개 조회 후 5개씩 묶어 5분봉 거래량 산출
-            candles = self.kis.get_minute_candles(ticker, count=25)
-            if candles and len(candles) >= 5:
-                # 5분봉 단위 거래량 집계 (5개씩 묶음, 최신봉이 마지막)
-                five_min_vols = []
-                chunk_count = len(candles) // 5
-                for i in range(chunk_count):
-                    chunk = candles[i*5:(i+1)*5]
-                    five_min_vols.append(sum(float(c.get('volume', 0)) for c in chunk))
-                # 잔여 1분봉(최신 미완성 5분봉)은 제외 → 완성된 5분봉만 사용
-                if len(five_min_vols) >= 2:
-                    peak_vol   = mp.get('peak_volume', 0)
-                    recent_vol = five_min_vols[-1]          # 가장 최근 완성 5분봉 거래량
-                    if recent_vol > peak_vol:
-                        mp['peak_volume'] = recent_vol
-                        peak_vol = recent_vol
-                    if peak_vol > 0:
-                        if is_upper_limit:
-                            pass  # 상한가 구간: 페이드 체크 스킵
-                        elif is_post_upper:
-                            if recent_vol <= peak_vol * 0.30:
-                                vol_fade = True
-                        else:
-                            if recent_vol <= peak_vol * 0.5:   # 이하(≤)
-                                vol_fade = True
-                is_ride = (peak_p / avg_p - 1) * 100 >= 10 if avg_p > 0 else False
-                giveback_signal, _gpct, giveback_reason = check_giveback_stop(
-                    candles, avg_p, peak_p, is_momentum_ride=is_ride
-                )
-        except Exception:
-            pass
-
-        # W-06: enter_t가 None(역직렬화 실패)이면 timeout 체크 비활성화
-        # 국면별 최대 보유 시간: BULL 추세 추종 → 90분, NEUTRAL → 60분
-        _max_hold_min = 90 if regime == "BULL" else 60
-        try:
-            time_over = enter_t is not None and (now - enter_t).total_seconds() / 60 > _max_hold_min
-        except Exception:
-            time_over = False
-
-        # ── PARTIAL_EXIT_30: MA5 이탈+고점미달 → 보유량 30% 축소 (슬롯 유지) ─────
-        if giveback_signal == 'PARTIAL_EXIT_30' and shares > 1:
-            partial_qty = max(1, int(shares * 0.30))
-            if self.kis.sell_market_order(ticker, partial_qty):
-                partial_profit = _net_profit(price, avg_p, partial_qty)
-                with self.lock:
-                    if self.internal_cash is not None:
-                        self.internal_cash += price * partial_qty * (1 - _SELL_FEE - _SELL_TAX)
-                    self._last_trade_ts = time.time()
-                    self.pnl_this_turn += partial_profit
-                    mp['shares'] = shares - partial_qty   # [BUG-C2] 락 내부로 이동 — 레이스 컨디션 방지
-                self._log_trade(ticker, name, 'SELL', price, "모멘텀슬롯",
-                                  f"giveback MA5 이탈 → 30% 축소 ({giveback_reason})", profit=partial_profit)
-                self.add_log(f"✂️ 모멘텀#{slot_idx+1} 부분청산 30% | {name} {partial_qty}주 @ {price:,.0f}원 | {giveback_reason} | 손익: {partial_profit:+,.0f}원")
-                self._send_trade_telegram(self._fmt_trade_msg("✂️", f"모멘텀#{slot_idx+1} 30% 축소",
-                    ticker, name, price, partial_qty, profit=partial_profit,
-                    strategy="모멘텀슬롯", note=f"MA5 이탈 30% 축소 — 잔여 {mp['shares']}주 홀딩"))
-                self._record_daily_pnl(partial_profit)
-                self._record_ticker_loss(ticker, partial_profit)  # [BUG-4] 부분 손실도 종목별 캡에 반영
-            return False  # 슬롯 유지 (잔여 70% 포지션 계속 관리)
-
-        # ── PARTIAL_EXIT_70: 30% 반납 신호 → 보유량 70% 선익절 (슬롯은 유지) ──────
-        if giveback_signal == 'PARTIAL_EXIT_70' and shares > 1:
-            partial_qty = max(1, int(shares * 0.70))
-            if self.kis.sell_market_order(ticker, partial_qty):
-                partial_profit = _net_profit(price, avg_p, partial_qty)
-                with self.lock:
-                    if self.internal_cash is not None:
-                        self.internal_cash += price * partial_qty * (1 - _SELL_FEE - _SELL_TAX)
-                    self._last_trade_ts = time.time()
-                    self.pnl_this_turn += partial_profit
-                    mp['shares'] = shares - partial_qty   # [BUG-C2] 락 내부로 이동 — 레이스 컨디션 방지
-                self._log_trade(ticker, name, 'SELL', price, "모멘텀슬롯",
-                                  f"giveback 30% 반납 → 70% 선익절 ({giveback_reason})", profit=partial_profit)
-                self.add_log(f"✂️ 모멘텀#{slot_idx+1} 부분청산 70% | {name} {partial_qty}주 @ {price:,.0f}원 | {giveback_reason} | 손익: {partial_profit:+,.0f}원")
-                self._send_trade_telegram(self._fmt_trade_msg("✂️", f"모멘텀#{slot_idx+1} 70% 부분청산",
-                    ticker, name, price, partial_qty, profit=partial_profit,
-                    strategy="모멘텀슬롯", note=f"giveback 30% 반납 — 잔여 {mp['shares']}주 홀딩"))
-                self._record_daily_pnl(partial_profit)
-                self._record_ticker_loss(ticker, partial_profit)  # [BUG-4] 부분 손실도 종목별 캡에 반영
-            return False  # 슬롯 유지 (잔여 포지션 계속 관리)
-
-        # 모멘텀 슬롯 출구 전략 (국면별 차등 적용):
-        # BULL : 손절 -4% / 익절 +8% / 90분 → 추세 추종, 수익 극대화
-        # NEUTRAL: 손절 -3% / 익절 +5% / 60분 → 빠른 수익 실현 (기존)
-        if regime == "BULL":
-            MOMENTUM_STOP_PCT   = 0.96   # -4%  (추세장 정상 눌림에 손절 방지)
-            MOMENTUM_TARGET_PCT = 1.08   # +8%  (추세 올라타기)
-        else:  # NEUTRAL
-            MOMENTUM_STOP_PCT   = 0.97   # -3%
-            MOMENTUM_TARGET_PCT = 1.05   # +5%
-
-        sell_reason = None
-        if vol_fade:
-            sell_reason = "거래량 페이드(5분봉 고점 대비 50% 이하)"
-        elif avg_p > 0 and price >= avg_p * MOMENTUM_TARGET_PCT:
-            sell_reason = f"+5% 목표 달성 ({avg_p:,.0f}→{price:,.0f})"
-        elif giveback_signal == 'FULL_EXIT':
-            sell_reason = f"5분봉 반납률 전량 이탈: {giveback_reason}"
-        elif avg_p > 0 and price <= avg_p * MOMENTUM_STOP_PCT:
-            sell_reason = f"고정 -3% 손절 ({avg_p:,.0f}→{price:,.0f}) [손익비 1:1.7]"
-        elif time_over:
-            sell_reason = "보유 60분 초과 강제 청산"
-
-        if sell_reason:
-            if not self.kis.sell_market_order(ticker, shares):
-                self.add_log(f"⚠️ 모멘텀#{slot_idx+1} 청산 주문 실패: {name}({ticker})")
-                return False
-            profit = _net_profit(price, avg_p, shares)
-            with self.lock:
-                if self.internal_cash is not None:
-                    self.internal_cash += price * shares * (1 - _SELL_FEE - _SELL_TAX)
-                self._last_trade_ts = time.time()
-                self.pnl_this_turn += profit  # [BUG-9] 두 번의 락 취득 → 하나로 합침 (레이스 컨디션 방지)
-            self._log_trade(ticker, name, 'SELL', price, "모멘텀슬롯", sell_reason, profit=profit)
-            self.add_log(f"🏁 모멘텀#{slot_idx+1} 청산 | {name}({ticker}) {shares}주 @ {price:,.0f}원 | {sell_reason} | 손익: {profit:+,.0f}원")
-            if self.claude:
-                self.claude.record_trade_event(f"KR 모멘텀 청산: {name}({ticker}) {shares}주 @ {price:,.0f}원 | 손익: {profit:+,.0f}원 | 사유: {sell_reason[:60]}")
-            self._send_trade_telegram(self._fmt_trade_msg("🏁", f"모멘텀#{slot_idx+1} 청산", ticker, name, price, shares, profit=profit, strategy="모멘텀슬롯", note=sell_reason))
-            self._record_daily_pnl(profit)
-            self._record_ticker_loss(ticker, profit)   # 종목별 일일 손실 추적
-            # 수익의 REINVEST_RATIO(50%) → 코어 슬롯 재투자  [I-NEW-05] 상수 통일
-            if profit > 0 and self.core_positions:
-                reinvest = profit * REINVEST_RATIO
-                per_core = reinvest / len(self.core_positions)
-                with self.lock:
-                    for core in self.core_positions:
-                        core.cash += per_core
-                self.add_log(f"💰 모멘텀 수익 재투자: {reinvest:,.0f}원 → 코어 {len(self.core_positions)}종목 ({per_core:,.0f}원씩)")
-            self._add_momentum_exit(ticker)
-            self.momentum_positions[slot_idx] = None
-            return True
-        return False
-
-    def _run_momentum_slot(self, regime: str):
-        """모멘텀 슬롯 3개 독립 관리 — 진입/청산 각 슬롯 독립 운영."""
-        if not self.kis:
-            return
-        now = _now_kst()
-
-        # ── A. 보유 중인 슬롯 청산 체크 ────────────────────────────────
-        for i, mp in enumerate(self.momentum_positions):
-            if mp is not None:
-                try:
-                    self._check_momentum_exit_one(i, mp, now, regime=regime)
-                except Exception as e:
-                    logger.error(f"[{self.mode_name}] 모멘텀#{i+1} 청산 체크 오류: {e}", exc_info=True)
-
-        # ── A-2. 보유 슬롯 2차/3차 분할 매수 체크 ──────────────────────
-        for i, mp in enumerate(self.momentum_positions):
-            if mp is None:
-                continue
-            try:
-                m_price = self.live_prices.get(mp['ticker']) or self.kis.get_current_price(mp['ticker'])
-                if not m_price:
-                    continue
-
-                # 2차 분할 매수: 진입가 -2% 눌림목
-                if (not mp.get('second_buy_done', True)
-                        and mp.get('second_buy_cash', 0) >= m_price
-                        and mp.get('second_buy_price', 0) > 0
-                        and m_price <= mp['second_buy_price']):
-                    sq2 = int((mp['second_buy_cash'] * 0.98) // m_price)
-                    if sq2 > 0 and self.kis.buy_market_order(mp['ticker'], sq2):
-                        with self.lock:
-                            mp['shares'] = mp.get('shares', 0) + sq2
-                            old_avg = mp.get('avg_price', m_price)
-                            old_sh  = mp['shares'] - sq2
-                            mp['avg_price'] = (old_avg * old_sh + m_price * sq2) / mp['shares']
-                            mp['second_buy_done'] = True
-                            mp['second_buy_cash'] = 0.0
-                        self.add_log(f"📥 모멘텀#{i+1} 2차매수 | {mp['name']}({mp['ticker']}) {sq2}주 @ {m_price:,.0f}원")
-                        self._log_trade(mp['ticker'], mp['name'], 'BUY', m_price, "모멘텀2차", "2차 분할 -2%")
-                        self._send_trade_telegram(
-                            f"📥 모멘텀#{i+1} 2차매수  ·  {self.alert_icon} {self.mode_name}\n"
-                            f"━━━━━━━━━━━━━━━━━━━━\n"
-                            f"📌 <b>{mp['name']}</b>  <code>{mp['ticker']}</code>\n"
-                            f"💰 <b>{m_price:,.0f}원</b> × <b>{sq2}주</b> = <b>{m_price*sq2:,.0f}원</b>\n"
-                            f"📉 진입가 -2% 눌림목 매수\n"
-                            f"━━━━━━━━━━━━━━━━━━━━\n"
-                            f"⏰ {now.strftime('%H:%M KST')}"
-                        )
-
-                # 3차 분할 매수: 진입가 -4% 눌림목
-                elif (mp.get('second_buy_done', False)
-                        and not mp.get('third_buy_done', True)
-                        and mp.get('third_buy_cash', 0) >= m_price
-                        and mp.get('third_buy_price', 0) > 0
-                        and m_price <= mp['third_buy_price']):
-                    sq3 = int((mp['third_buy_cash'] * 0.98) // m_price)
-                    if sq3 > 0 and self.kis.buy_market_order(mp['ticker'], sq3):
-                        with self.lock:
-                            old_sh  = mp.get('shares', 0)
-                            old_avg = mp.get('avg_price', m_price)
-                            mp['shares'] = old_sh + sq3
-                            mp['avg_price'] = (old_avg * old_sh + m_price * sq3) / mp['shares']
-                            mp['third_buy_done'] = True
-                            mp['third_buy_cash'] = 0.0
-                        self.add_log(f"📥 모멘텀#{i+1} 3차매수 | {mp['name']}({mp['ticker']}) {sq3}주 @ {m_price:,.0f}원")
-                        self._log_trade(mp['ticker'], mp['name'], 'BUY', m_price, "모멘텀3차", "3차 분할 -4%")
-                        self._send_trade_telegram(
-                            f"📥 모멘텀#{i+1} 3차매수  ·  {self.alert_icon} {self.mode_name}\n"
-                            f"━━━━━━━━━━━━━━━━━━━━\n"
-                            f"📌 <b>{mp['name']}</b>  <code>{mp['ticker']}</code>\n"
-                            f"💰 <b>{m_price:,.0f}원</b> × <b>{sq3}주</b> = <b>{m_price*sq3:,.0f}원</b>\n"
-                            f"📉 진입가 -4% 눌림목 매수\n"
-                            f"━━━━━━━━━━━━━━━━━━━━\n"
-                            f"⏰ {now.strftime('%H:%M KST')}"
-                        )
-            except Exception as e:
-                logger.error(f"[{self.mode_name}] 모멘텀#{i+1} 분할매수 체크 오류: {e}", exc_info=True)
-
-        # ── B. 빈 슬롯 진입 스캔 ────────────────────────────────────────
-        empty_slots = [i for i, mp in enumerate(self.momentum_positions) if mp is None]
-        if not empty_slots or regime == "BEAR":
-            return
-
-        now_time_str = now.strftime('%H:%M')
-        _today       = now.strftime('%Y%m%d')
-
-        # ── B-1. 사전 선정 후보 선제 진입 (09:00~09:15) ─────────────────
-        # 전날 15:35에 박스권+거래량증가로 선정된 후보를 장 시작 직후 진입
-        if ("09:00" <= now_time_str <= "09:15"
-                and self._premarket_candidates
-                and self._premarket_scan_date == _today):
-
-            with self.lock:
-                held_pm = {mp['ticker'] for mp in self.momentum_positions if mp is not None}
-                held_pm |= {t for t, p in self.satellite_positions.items() if p.shares > 0}
-
-            try:
-                balance_pm   = self.kis.get_account_balance()
-                available_pm = float(balance_pm.get('total_cash', 0)) if balance_pm else 0
-            except Exception:
-                available_pm = 0
-
-            # 단타 예산: total_equity 기준 10% (코어/위성과 동일 기준으로 통일)
-            _teq_pm   = self._last_total_equity or get_user_initial_cash(self.user_id, self._is_mock)
-            budget_pm = _teq_pm * self.momentum_budget_ratio
-
-            for slot_idx in empty_slots:
-                for cand in self._premarket_candidates:
-                    ct = cand['ticker']
-                    if ct in held_pm or self._is_momentum_blacklisted(ct):
-                        continue
-
-                    ok, entry_reason = check_morning_entry(cand, self.kis)
-                    if not ok:
-                        self.add_log(f"⏭️ [사전단타] {cand['name']}({ct}) 진입 불가: {entry_reason}")
-                        continue
-
-                    b_price = self.live_prices.get(ct) or self.kis.get_current_price(ct)
-                    if not b_price:
-                        continue
-
-                    if available_pm < budget_pm * 0.5:
-                        break
-
-                    # 스코어 기반 비율: score÷50 (cap 90%). 1차=ratio, 2차=min(ratio,남은), 3차=나머지
-                    _pm_score  = cand.get('score', cand.get('momentum_score', 30))
-                    _pm_ratio  = min(0.90, max(0.30, _pm_score / 50.0))
-                    _pm_1st    = budget_pm * _pm_ratio
-                    _pm_remain = max(0.0, budget_pm - _pm_1st)
-                    _pm_2nd    = min(budget_pm * _pm_ratio, _pm_remain)
-                    _pm_3rd    = max(0.0, budget_pm - _pm_1st - _pm_2nd)
-
-                    qty = int((_pm_1st * 0.98) // b_price)
-                    if qty <= 0:
-                        continue
-
-                    b_ticker = ct
-                    b_name   = cand['name']
-
-                    # ── 사전단타 AI 심사 (장중 스캔 경로와 동일하게 적용) ──────
-                    if self.claude:
-                        _pm_ind = {"buy": cand.get('score', 0), "sell": 0, "signals": [entry_reason]}
-                        _pm_decision, _pm_ai_reason = self.claude.ai_approve_trade(
-                            'BUY', b_name, b_ticker, b_price, "사전단타",
-                            _pm_ind, self.hot_sectors,
-                            get_recent_trades(self.user_id, b_ticker),
-                            load_ai_rules(self.user_id),
-                        )
-                        if not _pm_decision:
-                            self.add_log(f"🛑 사전단타 AI 거절: {b_name}({b_ticker}) — {_pm_ai_reason[:60]}")
-                            self._add_satellite_reject(b_ticker, _pm_ai_reason)
-                            continue
-
-                    atr_val = b_price * 0.02
-                    try:
-                        df_m = self._get_cached_base_ohlcv(b_ticker)
-                        if not df_m.empty and all(c in df_m.columns for c in ['high', 'low', 'close']):
-                            tr = pd.concat([
-                                df_m['high'] - df_m['low'],
-                                (df_m['high'] - df_m['close'].shift(1)).abs(),
-                                (df_m['low']  - df_m['close'].shift(1)).abs(),
-                            ], axis=1).max(axis=1)
-                            atr_val = float(tr.rolling(14, min_periods=1).mean().iloc[-1])
-                    except Exception:
-                        pass
-
-                    if not self.kis.buy_market_order(b_ticker, qty):
-                        self.add_log(f"⚠️ 사전단타#{slot_idx+1} 매수 실패: {b_name}({b_ticker})")
-                        continue
-
-                    with self.lock:
-                        if self.internal_cash is not None:
-                            self.internal_cash = max(0.0, self.internal_cash - b_price * qty * 1.00015)
-                        self._last_trade_ts = time.time()
-                    available_pm = max(0.0, available_pm - b_price * qty)
-
-                    try:
-                        self.momentum_positions[slot_idx] = {
-                            'ticker': b_ticker, 'name': b_name, 'shares': qty,
-                            'avg_price': b_price, 'atr': atr_val, 'peak_price': b_price,
-                            'peak_volume': 0, 'enter_time': now,
-                            'score': cand['score'],
-                            'reason': f"사전단타 박스권돌파 | {entry_reason}",
-                            'slot_idx': slot_idx,
-                            'second_buy_price': b_price * 0.98, 'second_buy_cash': _pm_2nd, 'second_buy_done': False,
-                            'third_buy_price':  b_price * 0.96, 'third_buy_cash':  _pm_3rd, 'third_buy_done':  False,
-                            'initial_shares_for_exit': 0,
-                        }
-                    except Exception as dict_err:
-                        logger.error(f"[{self.mode_name}] 사전단타#{slot_idx+1} 포지션 저장 실패 → 즉시 청산: {dict_err}")
-                        self.kis.sell_market_order(b_ticker, qty)
-                        continue
-
-                    buy_note = f"[사전단타] 박스권 후보 | {entry_reason}"
-                    self._log_trade(b_ticker, b_name, 'BUY', b_price, "모멘텀슬롯", buy_note)
-                    self.add_log(f"🌅 사전단타#{slot_idx+1} 진입 | {b_name}({b_ticker}) {qty}주 @ {b_price:,.0f}원 | {entry_reason}")
-                    if self.claude:
-                        self.claude.record_trade_event(f"KR 사전단타 매수: {b_name}({b_ticker}) {qty}주 @ {b_price:,.0f}원 | {entry_reason}")
-                    self._send_trade_telegram(
-                        f"🌅 사전단타#{slot_idx+1} 진입!  ·  {self.alert_icon} {self.mode_name}\n"
-                        f"━━━━━━━━━━━━━━━━━━━━\n"
-                        f"📌 <b>{b_name}</b>  <code>{b_ticker}</code>\n"
-                        f"💰 <b>{b_price:,.0f}원</b> × <b>{qty}주</b> = <b>{b_price*qty:,.0f}원</b>\n"
-                        f"🎯 박스권 횡보 후 거래량 돌파 — 전날 선정 후보\n"
-                        f"📊 {entry_reason}\n"
-                        f"🛡️ 손절: ATR <b>{atr_val:,.0f}원</b>  ·  🎯 익절: <b>+10% 1차 / +20% 2차</b>\n"
-                        f"━━━━━━━━━━━━━━━━━━━━\n"
-                        f"⏰ {now.strftime('%H:%M KST')}"
-                    )
-                    held_pm.add(b_ticker)
-                    break  # 이 슬롯 완료
-
-            self._last_momentum_scan = time.time()
-            return  # 09:15 이전엔 사전 후보만 사용
-
-        # ── B-2. 장중 실시간 스캔 (09:15 이후, 기존 hot_momentum 방식) ──
-        if time.time() - self._last_momentum_scan < self._momentum_scan_interval:
-            return
-        self._last_momentum_scan = time.time()
-
-        try:
-            clear_expired_cache()
-            hits = scan_hot_momentum(kis=self.kis, top_n=len(empty_slots) * 3, verbose=False)
-        except Exception as e:
-            logger.warning(f"[{self.mode_name}] 모멘텀 스캔 오류: {e}")
-            return
-
-        # ── 급등패턴 매칭 후보 합산 (보너스 점수 부여) ──────────────────
-        # 장 시작 전(09:00~09:30) 또는 오전장(09:00~11:00)에 패턴 후보를 우선 추가
-        try:
-            with self.lock:
-                _held_now = {mp['ticker'] for mp in self.momentum_positions if mp is not None}
-                _held_now |= {t for t, p in self.satellite_positions.items() if p.shares > 0}
-            pattern_hits = scan_pattern_matches(
-                kis=self.kis, top_n=len(empty_slots) * 2,
-                exclude_tickers=_held_now, verbose=False,
-            )
-            if pattern_hits:
-                # 중복 제거: hot_momentum에 이미 있으면 패턴 보너스 +5점만 추가
-                hot_tickers = {h['ticker'] for h in hits}
-                for ph in pattern_hits:
-                    if ph['ticker'] in hot_tickers:
-                        for h in hits:
-                            if h['ticker'] == ph['ticker']:
-                                h['momentum_score'] += 5.0
-                                h['trigger_reason'] += ' | 🎯패턴매칭보너스'
-                    else:
-                        hits.append(ph)
-                self.add_log(f"🎯 [급등패턴] 유사종목 {len(pattern_hits)}개 모멘텀 후보 합산")
-        except Exception as _pe:
-            logger.debug(f"[{self.mode_name}] 패턴 매칭 스캔 오류(무시): {_pe}")
-
-        if not hits:
-            return
-
-        # 이미 보유 중인 종목 전부 수집 (슬롯 + 위성)
-        with self.lock:
-            held = {mp['ticker'] for mp in self.momentum_positions if mp is not None}
-            held |= {t for t, p in self.satellite_positions.items() if p.shares > 0}
-
-        # 예산 산정 (1회 조회 공유)
-        try:
-            balance = self.kis.get_account_balance()
-            if not balance:
-                return
-            available_cash = float(balance.get('total_cash', 0))
-        except Exception:
-            return
-
-        used_tickers: set = set()
-        for slot_idx in empty_slots:
-            # 이 슬롯용 후보 탐색
-            best = None
-            for candidate in hits:
-                ct = candidate['ticker']
-                if ct in held or ct in used_tickers or self._is_momentum_blacklisted(ct):
-                    continue
-                # ── 당일 +20% 초과 종목 진입 금지 (이미 고점, 손실 가능성 높음) ──
-                # scan_hot_momentum 반환 키: 'price_chg_pct' (hot_momentum_scanner.py 참조)
-                chg = candidate.get('price_chg_pct', 0)
-                if chg > 20.0:
-                    self.add_log(f"⛔ 모멘텀 진입 금지: {candidate.get('name','?')}({ct}) 당일 +{chg:.1f}% 고점 과열")
-                    # C-02: 락 안에서 공유 dict 수정 (레이스컨디션 방지)
-                    with self.lock:
-                        self._momentum_exit_times[ct] = time.time() + self._MOMENTUM_COOLDOWN_SEC
-                    continue
-                best = candidate
-                break
-            if best is None:
-                continue
-
-            b_ticker = best['ticker']
-            b_name   = best['name']
-            b_price  = best['price']
-
-            # 단타 예산: total_equity 기준 10% (코어/위성과 동일 기준으로 통일)
-            _teq = self._last_total_equity or get_user_initial_cash(self.user_id, self._is_mock)
-            budget = _teq * self.momentum_budget_ratio
-            if available_cash < budget * 0.5:
-                break  # 현금 부족 → 나머지 슬롯도 포기
-
-            # 스코어 기반 비율: score÷50 (cap 90%). 1차=ratio, 2차=min(ratio,남은), 3차=나머지
-            _m_score   = best.get('momentum_score', best.get('score', 30))
-            _m_ratio   = min(0.90, max(0.30, _m_score / 50.0))
-            _m_1st     = budget * _m_ratio
-            _m_remain  = max(0.0, budget - _m_1st)
-            _m_2nd     = min(budget * _m_ratio, _m_remain)
-            _m_3rd     = max(0.0, budget - _m_1st - _m_2nd)
-
-            qty = int((_m_1st * 0.98) // b_price)
-            if qty <= 0:
-                continue
-
-            # ATR 계산
-            atr_val = b_price * 0.02
-            try:
-                df_m = self._get_cached_base_ohlcv(b_ticker)
-                if not df_m.empty and all(c in df_m.columns for c in ['high', 'low', 'close']):
-                    tr = pd.concat([
-                        df_m['high'] - df_m['low'],
-                        (df_m['high'] - df_m['close'].shift(1)).abs(),
-                        (df_m['low']  - df_m['close'].shift(1)).abs(),
-                    ], axis=1).max(axis=1)
-                    atr_val = float(tr.rolling(14, min_periods=1).mean().iloc[-1])
-            except Exception:
-                pass
-
-            # ── 매수 검토 리포트 (친구 AI 스타일) ──────────────────────────
-            try:
-                _df_stat = self._get_cached_base_ohlcv(b_ticker)
-                _stats   = self._calc_price_stats(_df_stat, b_price)
-                _stats['extra'] = f"거래량 {best.get('vol_ratio', 0):.1f}x↑"
-                _report = self._fmt_scan_report(
-                    theme=f"🚀 모멘텀 급등 포착 — 슬롯#{slot_idx+1}",
-                    candidates=[{'name': b_name, 'ticker': b_ticker, 'price': b_price, 'stats': _stats}],
-                    regime=regime,
-                    action_note="AI 심사 후 자동주문"
-                )
-                self._send_telegram(_report, 'misc')
-            except Exception:
-                pass
-
-            # AI 심사
-            if self.claude:
-                # 풀 기술 지표 컨텍스트 + 모멘텀 전용 신호 정보 결합
-                _ex_df_m = self._get_extended_ohlcv(b_ticker, b_price)
-                trade_ctx = self._build_trade_context(
-                    b_ticker, b_name, b_price, _ex_df_m, "모멘텀슬롯", regime
-                )
-                trade_ctx += (
-                    f"\n[모멘텀 신호] 슬롯#{slot_idx+1} | "
-                    f"트리거: {best['trigger_reason']} | "
-                    f"점수: {best['momentum_score']:.1f}점 | "
-                    f"ATR: {atr_val:,.0f}원"
-                )
-                m_decision, m_ai_reason = self.claude.ai_approve_trade(
-                    'BUY', b_name, b_ticker, b_price, "모멘텀슬롯",
-                    {"momentum_score": best['momentum_score']}, self.hot_sectors,
-                    get_recent_trades(self.user_id, b_ticker),
-                    load_ai_rules(self.user_id) + ("\n\n[📊 섹터 가이드]\n" + self.sector_guide if self.sector_guide else ''),
-                    context=trade_ctx
-                )
-                if not m_decision:
-                    # 당일 AI 거절 횟수 카운트
-                    with self.lock:
-                        self._refresh_blacklist()
-                        reject_count = self._momentum_ai_rejects.get(b_ticker, 0) + 1
-                        self._momentum_ai_rejects[b_ticker] = reject_count
-
-                    if reject_count >= 3:
-                        # 3회 거절 → 당일 블랙리스트 (오늘 더 이상 심사 없음)
-                        self.add_log(f"🚫 모멘텀#{slot_idx+1} 당일 블랙리스트: {b_name} (AI {reject_count}회 거절)")
-                        self._send_reject_telegram(
-                            f"🚫 <b>모멘텀#{slot_idx+1} 당일 차단</b>  ·  {self.alert_icon} {self.mode_name}\n"
-                            f"━━━━━━━━━━━━━━━━━━━━\n"
-                            f"📌 <b>{b_name}</b>  <code>{b_ticker}</code>\n"
-                            f"💰 {b_price:,.0f}원\n"
-                            f"🔒 AI {reject_count}회 거절 — 오늘 하루 진입 차단"
-                        )
-                        with self.lock:
-                            # exit_ts를 현재 시각으로 → 하루 종일 차단 (장 마감 후 _refresh_blacklist 초기화)
-                            self._momentum_exit_times[b_ticker] = time.time() + 86400
-                    else:
-                        # 1~2회 거절 → 10분 쿨다운 후 재심사 (손절 30분보다 짧게, 모멘텀 창 유지)
-                        # C-03: COOLDOWN_SEC=1800에서 600초 남김 → 실제 10분 후 재진입 가능
-                        _AI_REJECT_COOLDOWN = 600  # 10분
-                        self.add_log(f"🛑 모멘텀#{slot_idx+1} AI 거절({reject_count}/3): {b_name} — {m_ai_reason}")
-                        with self.lock:
-                            self._refresh_blacklist()
-                            self._momentum_exit_times[b_ticker] = time.time() - (self._MOMENTUM_COOLDOWN_SEC - _AI_REJECT_COOLDOWN)
-                    used_tickers.add(b_ticker)
-                    continue
-                buy_label  = f"🚀 AI승인 모멘텀#{slot_idx+1}"
-                m_buy_note = f"[AI승인] {best['trigger_reason']} 점수:{best['momentum_score']:.1f} ({m_ai_reason})"
-            else:
-                m_ai_reason = "알고리즘 자동승인"
-                buy_label   = f"🚀 모멘텀#{slot_idx+1}"
-                m_buy_note  = f"[알고리즘] {best['trigger_reason']} 점수:{best['momentum_score']:.1f}"
-
-            if not self.kis.buy_market_order(b_ticker, qty):
-                self.add_log(f"⚠️ 모멘텀#{slot_idx+1} 매수 실패: {b_name}({b_ticker})")
-                continue
-
-            with self.lock:
-                if self.internal_cash is not None:
-                    self.internal_cash = max(0.0, self.internal_cash - b_price * qty * 1.00015)
-                self._last_trade_ts = time.time()
-            available_cash = max(0.0, available_cash - b_price * qty)  # 로컬 잔고 갱신
-
-            # [C-NEW-06] 포지션 딕셔너리 저장 실패 시 실매수 후 미추적 상태 방지 — try-except 보호
-            try:
-                self.momentum_positions[slot_idx] = {
-                    'ticker': b_ticker, 'name': b_name, 'shares': qty,
-                    'avg_price': b_price, 'atr': atr_val, 'peak_price': b_price,
-                    'peak_volume': 0, 'enter_time': now,
-                    'score': best['momentum_score'], 'reason': best['trigger_reason'],
-                    'slot_idx': slot_idx,
-                    'second_buy_price': b_price * 0.98, 'second_buy_cash': _m_2nd, 'second_buy_done': False,
-                    'third_buy_price':  b_price * 0.96, 'third_buy_cash':  _m_3rd, 'third_buy_done':  False,
-                    'initial_shares_for_exit': 0,
-                }
-            except Exception as dict_err:
-                logger.error(f"[{self.mode_name}] 모멘텀#{slot_idx+1} 포지션 저장 실패 → 즉시 시장가 청산: {dict_err}")
-                self.kis.sell_market_order(b_ticker, qty)
-                continue
-            self._log_trade(b_ticker, b_name, 'BUY', b_price, "모멘텀슬롯", m_buy_note)
-            self.add_log(f"{buy_label} | {b_name}({b_ticker}) {qty}주 @ {b_price:,.0f}원 | {best['trigger_reason']}")
-            if self.claude:
-                self.claude.record_trade_event(f"KR 모멘텀 매수: {b_name}({b_ticker}) {qty}주 @ {b_price:,.0f}원 | {best['trigger_reason']} | 점수: {best['momentum_score']:.1f}")
-            self._send_trade_telegram(
-                f"{buy_label} 진입!  ·  {self.alert_icon} {self.mode_name}\n"
-                f"━━━━━━━━━━━━━━━━━━━━\n"
-                f"📌 <b>{b_name}</b>  <code>{b_ticker}</code>\n"
-                f"💰 <b>{b_price:,.0f}원</b> × <b>{qty}주</b> = <b>{b_price*qty:,.0f}원</b>\n"
-                f"🔥 {best['trigger_reason']}\n"
-                f"📊 모멘텀 점수 <b>{best['momentum_score']:.1f}점</b>\n"
-                f"🤖 {m_ai_reason}\n"
-                f"🛡️ 손절: ATR <b>{atr_val:,.0f}원</b>  ·  🎯 익절: <b>+10% 1차 / +20% 2차</b>\n"
-                f"━━━━━━━━━━━━━━━━━━━━\n"
-                f"⏰ {now.strftime('%H:%M KST')}"
-            )
-            used_tickers.add(b_ticker)
-            held.add(b_ticker)
 
     def _ai_swing_check_kr(self, pos, ticker: str, price: float, reason: str) -> str:
         """KR봇 ATR 손절/트레일링 발동 시 AI 전권 판단 — SELL_REBUY / ACCUMULATE / EXIT"""
@@ -4090,17 +3335,10 @@ class KRBotController:
             with self.lock:
                 n_rejects       = len(self._satellite_rejects)
                 bl_set          = set(self._satellite_rejects.keys())
-            # 현재 모멘텀 슬롯에 있는 종목 — 성격/전략이 다르므로 위성 편입 금지
-            # ★ select_satellites() 호출 전에 미리 읽어야 exclude 집합에 포함 가능
-            with self.lock:
-                momentum_tickers = {
-                    mp['ticker'] for mp in self.momentum_positions
-                    if mp is not None and isinstance(mp, dict) and mp.get('ticker')
-                }
             # ★ [BUG-FIX] exclude 집합을 select_satellites() 에 전달 →
             #    첫 번째 AI(ai_select_satellites) 단계부터 블랙리스트·보유 종목 제외.
             #    기존엔 후보풀이 블랙리스트 종목으로 꽉 차서 pre_filter 후 0개가 남는 문제 발생.
-            exclude_set = keep_tickers | momentum_tickers | bl_set
+            exclude_set = keep_tickers | bl_set
             raw_info, _new_hot = select_satellites(
                 kis=self.kis, n=self.num_satellites + n_needed + 3,
                 verbose=False, claude_client=self.claude, bear_mode=(self.market_regime == "BEAR"),
@@ -4122,7 +3360,6 @@ class KRBotController:
             pre_filter = [
                 c for c in raw_info
                 if c['ticker'] not in keep_tickers
-                and c['ticker'] not in momentum_tickers
                 and not self._is_satellite_blacklisted(c['ticker'])
             ]
             # AI 종목·전략 검토 (여유분 포함해서 검토 후 필요 개수만큼 잘라냄)
@@ -4342,7 +3579,6 @@ class KRBotController:
         # 리포트는 trading_job 안에서 _now_kst() 시간을 직접 체크해 발행 → 시스템 타임존 무관
         self.scheduler.every(1).minutes.do(self.trading_job)
         self.scheduler.every(30).minutes.do(lambda: self._run_threaded(self.analyze_continuous_market_flow))
-        self.scheduler.every(30).minutes.do(clear_expired_cache)
 
         def _hourly_rescreen_if_empty():
             """1시간마다 — 빈 위성 슬롯 있을 때만 재스크리닝 (슬롯 다 채워지면 스킵)."""
@@ -4549,51 +3785,8 @@ class KRBotController:
                 current_initial_cash = get_user_initial_cash(self.user_id, self._is_mock)
             except Exception: current_initial_cash = 10000000.0
 
-            # 모멘텀 슬롯 3개 상태
+            # 모멘텀 기능 제거됨 — UI 호환을 위해 빈 리스트 유지
             momentum_list = []
-            for mp in self.momentum_positions:
-                if mp:
-                    try:
-                        mp_ticker = mp.get('ticker', '')
-                        # live_prices 우선, 없으면 저장된 avg_price 사용 (KIS API 호출 제거 — get_status는 빠르게)
-                        mp_price = (self.live_prices.get(mp_ticker)
-                                    or float(mp.get('avg_price', 0)))
-                        mp_val  = float(mp.get('shares', 0)) * float(mp_price or 0)
-                        total_realtime_stock_val += mp_val
-                        tracked_tickers.add(mp_ticker)
-                        avg_p   = float(mp.get('avg_price', 0))
-                        pnl_pct = ((mp_price / avg_p) - 1) * 100 if avg_p > 0 and mp_price else 0
-                        elapsed = ""
-                        et = mp.get('enter_time')
-                        if et:
-                            try:
-                                elapsed = f"{(_now_kst() - et).total_seconds() / 60:.0f}분 보유"
-                            except Exception:
-                                pass
-                        momentum_list.append({
-                            "ticker":    mp_ticker,
-                            "name":      mp.get('name', mp_ticker),
-                            "shares":    mp.get('shares', 0),
-                            "price":     mp_price,
-                            "value":     mp_val,
-                            "avg_price": avg_p,
-                            "pnl_pct":   round(pnl_pct, 2),
-                            "reason":    mp.get('reason', ''),
-                            "elapsed":   elapsed,
-                            "status":    "🚀 보유 중",
-                        })
-                    except Exception as slot_err:
-                        logger.warning(f"[{self.mode_name}] 모멘텀 슬롯 status 오류: {slot_err}")
-                        # 오류가 나도 슬롯은 보유 중으로 표시 (avg_price 폴백)
-                        momentum_list.append({
-                            "ticker": mp.get('ticker', '?'), "name": mp.get('name', '?'),
-                            "shares": mp.get('shares', 0), "price": mp.get('avg_price', 0),
-                            "value": 0, "avg_price": mp.get('avg_price', 0),
-                            "pnl_pct": 0, "reason": mp.get('reason', ''),
-                            "elapsed": "조회 중", "status": "🚀 보유 중",
-                        })
-                else:
-                    momentum_list.append(None)
 
             # [BUG-FIX] 봇이 추적하지 않는 종목(위성 교체로 빠진 보유주, 수동 매수 등)도 평가금액에 포함.
             # cached_balance에 실계좌 전체 잔고가 있으므로, 추적 중인 종목을 제외한 나머지를 합산.
@@ -4605,7 +3798,7 @@ class KRBotController:
                         _p = self.live_prices.get(_t) or float(_s.get('current_price', 0))
                         total_realtime_stock_val += _sh * _p
 
-            # mock_total_asset: 코어+위성+모멘텀+미추적 종목 전체 반영 후 계산
+            # mock_total_asset: 코어+위성+미추적 종목 전체 반영 후 계산
             if self.cached_balance or self.internal_cash is not None:
                 # internal_cash 우선 사용 — KIS 모의 API 1~3분 반영 지연 보정
                 if self.internal_cash is not None:
@@ -4655,4 +3848,4 @@ class KRBotController:
             recent_logs = list(self.logs)[-30:]
             return {"is_running": self.is_running, "is_mock": self._is_mock, "has_keys": self.kis is not None, "logs": recent_logs, "hot_sectors": self.hot_sectors, "num_satellites": self.num_satellites, "cores": cores_data, "satellites": satellites, "momentum_list": momentum_list, "defensive_list": defensive_list, "market_regime": self.market_regime, "mock_total_asset": mock_total_asset, "mock_pnl": mock_pnl, "mock_pnl_rt": mock_pnl_rt, "initial_cash": current_initial_cash, "available_cash": available_cash}
         except Exception as critical_e:
-            return {"is_running": False, "is_mock": self._is_mock, "has_keys": False, "logs": [{"time": "Error", "message": f"오류: {str(critical_e)}"}], "hot_sectors": [], "num_satellites": self.num_satellites, "cores": [], "satellites": [], "momentum_list": [None] * len(self.momentum_positions), "mock_total_asset": 0, "mock_pnl": 0, "mock_pnl_rt": 0, "initial_cash": 10000000}
+            return {"is_running": False, "is_mock": self._is_mock, "has_keys": False, "logs": [{"time": "Error", "message": f"오류: {str(critical_e)}"}], "hot_sectors": [], "num_satellites": self.num_satellites, "cores": [], "satellites": [], "momentum_list": [], "mock_total_asset": 0, "mock_pnl": 0, "mock_pnl_rt": 0, "initial_cash": 10000000}

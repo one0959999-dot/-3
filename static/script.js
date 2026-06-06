@@ -173,50 +173,6 @@ document.addEventListener('DOMContentLoaded', () => {
         }).join('');
     }
 
-    function renderMomentumSlots(momentumList) {
-        const container = document.getElementById('momentum-slots');
-        const badge     = document.getElementById('momentum-slot-badge');
-        if (!container) return;
-
-        const occupied = (momentumList || []).filter(mp => mp && mp.ticker);
-
-        // 배지 업데이트 — 총 슬롯 수는 momentumList 길이 기준 (하드코딩 제거)
-        const totalSlots = (momentumList || []).length;
-        if (badge) badge.textContent = `${occupied.length} / ${totalSlots}`;
-
-        // 보유 없으면 안내 메시지만 표시
-        if (occupied.length === 0) {
-            container.style.display = 'block';
-            container.innerHTML = `<div style="color:#6b7280;font-size:0.84rem;padding:14px 4px;text-align:center;">현재 보유 중인 모멘텀 종목 없음 — 스캔 대기 중</div>`;
-            return;
-        }
-
-        // 보유 수에 따라 그리드 열 수 조정 (1~3개)
-        const cols = Math.min(occupied.length, 3);
-        container.style.display = 'grid';
-        container.style.gridTemplateColumns = `repeat(${cols}, 1fr)`;
-
-        container.innerHTML = occupied.map((mp, i) => {
-            const pnl     = mp.pnl_pct || 0;
-            const pnlSign = pnl >= 0 ? '+' : '';
-            const pnlClr  = pnl > 0 ? '#f85149' : (pnl < 0 ? '#58a6ff' : '#8b949e');
-            const avgPStr = mp.avg_price > 0 ? fmtPrice(mp.avg_price) : '-';
-            const curPStr = mp.price > 0 ? fmtPrice(mp.price) : '-';
-            const cls     = 'momentum-slot-card occupied' + (pnl > 0 ? ' profit' : pnl < 0 ? ' loss' : '');
-            return `<div class="${cls}">
-                <div class="mslot-label">슬롯 #${i + 1} · 🚀 보유 중</div>
-                <div class="mslot-name">${mp.name} <span style="color:#64748b;font-size:0.75rem;">${mp.ticker}</span></div>
-                <div class="mslot-pnl pnl-rate" data-pnl="${pnl > 0 ? 'profit' : pnl < 0 ? 'loss' : 'neutral'}" style="color:${pnlClr}">${pnlSign}${pnl.toFixed(2)}%
-                    <span style="font-size:0.75rem;font-weight:400;color:#94a3b8;margin-left:6px;">${fmtMoney(mp.value || 0)}</span>
-                </div>
-                <div class="mslot-meta">
-                    ${(mp.shares || 0).toLocaleString()}주 · 단가 ${avgPStr} → 현재 ${curPStr}<br>
-                    ${mp.elapsed || ''} · ${mp.reason || ''}
-                </div>
-            </div>`;
-        }).join('');
-    }
-
     // 🟢 팝업창(모달)을 띄우는 함수
     window.showStatusModal = function (name, message) {
         document.getElementById('modalTickerName').innerText = `[${name}] 진행 상황`;
@@ -336,15 +292,6 @@ document.addEventListener('DOMContentLoaded', () => {
         // 선물 위젯 가시성 (모드별 다름)
         if (window.applyFuturesVisibility) window.applyFuturesVisibility(isUS);
 
-        // 단타 모멘텀 섹션: KR 모드에서만 표시, US 모드에서는 숨김
-        const momentumSection = document.getElementById('momentum-section');
-        if (momentumSection) {
-            momentumSection.style.display = isUS ? 'none' : '';
-        }
-        if (!isUS) {
-            renderMomentumSlots(data.momentum_list);
-        }
-
         const pnlTitle = document.getElementById('pnl-title');
         if (pnlTitle && data.is_mock !== undefined) {
             pnlTitle.textContent = data.is_mock ? 'US 수익률' : 'KR 수익률';
@@ -436,7 +383,7 @@ document.addEventListener('DOMContentLoaded', () => {
             document.querySelectorAll('.core-card').forEach(e => e.remove());
 
             // 섹션 타이틀 & 헤더 변경
-            const satSection = document.querySelector('.satellite-card:not(#defensive-section):not(#momentum-section)');
+            const satSection = document.querySelector('.satellite-card:not(#defensive-section)');
             if (satSection) {
                 const h2 = satSection.querySelector('h2');
                 if (h2) h2.innerHTML = '📊 US Holdings';
@@ -528,7 +475,7 @@ document.addEventListener('DOMContentLoaded', () => {
             topCardsContainer.style.display = '';
 
             // 섹션 타이틀 & 헤더 원복
-            const satSection = document.querySelector('.satellite-card:not(#defensive-section):not(#momentum-section)');
+            const satSection = document.querySelector('.satellite-card:not(#defensive-section)');
             if (satSection) {
                 const h2 = satSection.querySelector('h2');
                 if (h2) h2.innerHTML = '📡 Satellite Positions';

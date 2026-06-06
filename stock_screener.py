@@ -35,11 +35,10 @@ _us_sector_cache: dict = {'ts': 0.0, 'boosts': {}}
 _us_sector_lock  = threading.Lock()
 _US_SECTOR_TTL   = 14400  # 4시간 (미국장 마감 → KR장 개장 사이클 커버)
 
-# 당일 위성 후보 기준 (단타 모멘텀 슬롯과 역할 분리)
+# 당일 위성 후보 기준
 # 위성: 완만한 상승 추세 (0.3% ~ 3%) → 중기 홀딩, 한달 20% 목표
-# 모멘텀: 급등주 (3%↑) → hot_momentum_scanner 전담
 _MOVER_CHG_MIN  = 0.3           # 등락률 최소 0.3% — 완전히 멈춘 종목 제외
-_MOVER_CHG_MAX  = 3.0           # 등락률 3% 이상은 급등주 → 모멘텀 슬롯으로
+_MOVER_CHG_MAX  = 3.0           # 등락률 3% 이상은 급등주 → 제외
 _MOVER_VAL_MIN  = 500_000_000   # 거래대금 5억 이상 → 유동성 확보 종목
 
 from pykrx import stock

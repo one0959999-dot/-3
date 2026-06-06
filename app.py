@@ -568,11 +568,6 @@ def clear_blacklist():
     if hasattr(bot, '_satellite_rejects'):
         cleared += len(bot._satellite_rejects)
         bot._satellite_rejects = {}
-    if hasattr(bot, '_momentum_ai_rejects'):
-        cleared += len(bot._momentum_ai_rejects)
-        bot._momentum_ai_rejects = {}
-    if hasattr(bot, '_momentum_exit_times'):
-        bot._momentum_exit_times = {}
     if hasattr(bot, '_save_state'):
         bot._save_state()
     logger.info(f"[블랙리스트초기화] user={current_user.id} {cleared}개 항목 제거")
@@ -846,19 +841,16 @@ def ai_chat():
         _total_asset = current_status.get('mock_total_asset', 0) or current_status.get('us_total_asset', 0)
         _avail_cash  = current_status.get('available_cash', 0)
         _regime_emoji = {"BULL": "🐂", "BEAR": "🐻", "NEUTRAL": "📊"}.get(_regime, "📊")
-        _momentum_budget_ratio = getattr(bot, 'momentum_budget_ratio', 0.10)
         _n_cores = len([c for c in current_status.get('cores', []) if c.get('ticker') != 'TBD'])
         _n_sats  = len(current_status.get('satellites', []))
         _n_total = max(1, _n_cores + _n_sats)
 
         if _regime == "BEAR":
-            _tradable_pct = 60
             _budget_per = _total_asset * 0.60 / _n_total if _total_asset > 0 else 0
             _budget_note = f"BEAR: 방어자산40% + 저점매수현금60% | 종목당 예산 약 {_budget_per:,.0f}원"
         else:
-            _tradable_pct = int((1 - _momentum_budget_ratio) * 100)
-            _budget_per = _total_asset * (1 - _momentum_budget_ratio) / _n_total if _total_asset > 0 else 0
-            _budget_note = f"단타{int(_momentum_budget_ratio*100)}% 제외 후 {_tradable_pct}%를 {_n_total}종목 균등배분 | 종목당 약 {_budget_per:,.0f}원"
+            _budget_per = _total_asset / _n_total if _total_asset > 0 else 0
+            _budget_note = f"100%를 {_n_total}종목 균등배분 | 종목당 약 {_budget_per:,.0f}원"
 
         _mock_pnl    = current_status.get('mock_pnl', 0)
         _mock_pnl_rt = current_status.get('mock_pnl_rt', 0)
@@ -868,7 +860,7 @@ def ai_chat():
         stock_analysis_context += f"■ 총 평가자산: {_total_asset:,.0f}원 | 가용 현금: {_avail_cash:,.0f}원\n"
         stock_analysis_context += f"■ 누적 손익: {_mock_pnl:+,.0f}원 ({_mock_pnl_rt:+.2f}%)\n"
         stock_analysis_context += f"■ 예산 배분: {_budget_note}\n"
-        stock_analysis_context += f"■ 코어 {_n_cores}개 / 위성 {_n_sats}개 / 단타 슬롯 {len(getattr(bot, 'momentum_positions', [None]))}개\n"
+        stock_analysis_context += f"■ 코어 {_n_cores}개 / 위성 {_n_sats}개\n"
         if _hot_sectors:
             stock_analysis_context += f"■ 강세 섹터: {', '.join(_hot_sectors[:6])}\n"
 

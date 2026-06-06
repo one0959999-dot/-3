@@ -488,34 +488,6 @@
             color: #f8fafc !important;
         }
 
-        /* 모멘텀 슬롯 카드 */
-        .momentum-slot-card {
-            background: rgba(255,255,255,0.05);
-            border: 1.5px solid rgba(255,255,255,0.14);
-            border-radius: 12px;
-            padding: 14px;
-            min-height: 120px;
-            display: flex;
-            flex-direction: column;
-            gap: 6px;
-            transition: border-color 0.25s, background 0.25s;
-            box-shadow: inset 0 0 0 1px rgba(255,255,255,0.04), 0 2px 8px rgba(0,0,0,0.18);
-        }
-        .momentum-slot-card.occupied {
-            border-color: rgba(245,158,11,0.55);
-            background: rgba(245,158,11,0.07);
-        }
-        .momentum-slot-card.profit { border-color: rgba(248,81,73,0.55); background: rgba(248,81,73,0.05); }
-        .momentum-slot-card.loss   { border-color: rgba(88,166,255,0.55); background: rgba(88,166,255,0.05); }
-        .mslot-label { font-size:0.7rem; color:#8b949e; font-weight:600; text-transform:uppercase; letter-spacing:0.5px; }
-        .mslot-name  { font-size:0.95rem; font-weight:700; color:#e6edf3; }
-        .mslot-pnl   { font-size:1rem; font-weight:700; }
-        .mslot-meta  { font-size:0.75rem; color:#94a3b8; }
-        .mslot-empty { color:#6b7280; font-size:0.82rem; margin:auto; text-align:center; line-height:1.7; }
-
-        @media (max-width: 640px) {
-            #momentum-slots { grid-template-columns: 1fr; }
-        }
     </style>
 
     <script>
@@ -661,15 +633,6 @@
             <div id="defensive-slots" style="display:grid; grid-template-columns: repeat(3, 1fr); gap:12px; margin-top:10px;"></div>
         </div>
 
-        <!-- 모멘텀 슬롯 섹션: 보유 중인 종목만 표시 -->
-        <div class="satellite-card glass-card" id="momentum-section">
-            <h2 style="display:flex; align-items:center; gap:10px;">
-                🚀 단타 모멘텀 슬롯
-                <span id="momentum-slot-badge" style="font-size:0.72rem; background:rgba(245,158,11,0.2); color:#fcd34d; border:1px solid rgba(245,158,11,0.4); padding:2px 8px; border-radius:8px;">0 / 3</span>
-            </h2>
-            <!-- 카드는 JS가 동적으로 생성 (보유 중인 슬롯만) -->
-            <div id="momentum-slots" style="display:grid; grid-template-columns: repeat(3, 1fr); gap:12px; margin-top:10px;"></div>
-        </div>
 
 
     </div>
