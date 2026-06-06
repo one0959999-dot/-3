@@ -539,12 +539,7 @@ class KRBotController:
                     pos.last_dca_time    = getattr(_old, 'last_dca_time',    0.0)
                 self.core_positions.append(pos)
                 user_tickers_seen.add(c['ticker'])
-        # 빈 슬롯만 TBD 플레이스홀더로 채움
-        ai_needed = 3 - len(self.core_positions)
-        for i in range(ai_needed):
-            ph = CorePosition("TBD", f"AI선정대기#{i+1}", initial_cash=0)
-            ph.status = "AI 선정 대기 🤖"
-            self.core_positions.append(ph)
+        # 사용자 지정 종목이 없는 슬롯은 빈 상태로 유지 (AI 자동 선정 없음)
             
         if self.kis:
             def _async_init_balance():
@@ -618,88 +613,6 @@ class KRBotController:
                 entry['vol_ratio'] = _vol_ratio
             pinned.append(entry)
         self.satellite_info = (pinned + filtered)[:self.num_satellites]
-
-    def _rebalance_ai_cores(self):
-        """
-        AI 코어 슬롯 재선정 (매주 월요일 자동 호출).
-        - 사용자 지정 슬롯(user_core_stocks 전체)은 유지
-        - AI 슬롯 중 보유 주식이 없는(shares==0) 슬롯만 교체
-        - 보유 중인 AI 코어는 자연 청산 신호가 날 때까지 유지
-        """
-        from KR.screener import select_ai_core_stock
-        now = _now_kst()
-
-        # 마지막 재선정으로부터 7일 미만이면 스킵
-        if self.last_core_rebalance_date:
-            diff = (now.date() - self.last_core_rebalance_date).days
-            if diff < 7:
-                return
-
-        self.add_log("📅 [주간 AI 코어 재선정] 월요일 — AI 코어 슬롯 재검토 시작")
-
-        # 사용자 지정 티커 전체 파악 (1개가 아닌 최대 3개)
-        user_tickers: set = {s['ticker'] for s in self.user_core_stocks if s.get('ticker')}
-
-        # 현재 코어 중 AI 슬롯(사용자 아닌 것) 파악
-        with self.lock:
-            ai_cores_snapshot = [
-                (i, c) for i, c in enumerate(self.core_positions)
-                if c.ticker not in user_tickers
-            ]
-
-        # 교체 가능한 슬롯: AI 코어 중 보유 주식 없는 것
-        empty_ai_slots = [(i, c) for i, c in ai_cores_snapshot if c.shares == 0]
-        if not empty_ai_slots:
-            self.add_log("   ℹ️ 모든 AI 코어 보유 중 — 교체 없음 (자연 청산 대기)")
-            self.last_core_rebalance_date = now.date()
-            self._save_state()
-            return
-
-        # 현재 모든 코어 티커 제외하고 새 AI 후보 선정
-        all_current_tickers = {c.ticker for c in self.core_positions}
-        n_needed = len(empty_ai_slots)
-        new_ai_list = select_ai_core_stock(
-            n=n_needed,
-            exclude_tickers=all_current_tickers,
-            verbose=False
-        )
-
-        if not new_ai_list:
-            self.add_log("   ⚠️ AI 코어 신규 후보 없음 (정배열 조건 미충족) — 기존 유지")
-            self.last_core_rebalance_date = now.date()
-            self._save_state()
-            return
-
-        # 초기 원금 기준으로 예산 계산
-        try:
-            from base.database import get_user_initial_cash
-            initial_cap = get_user_initial_cash(self.user_id, self._is_mock)
-            per_core_budget = (initial_cap * self.core_ratio) / max(1, len(self.core_positions))
-        except Exception:
-            per_core_budget = 0
-
-        changed = []
-        with self.lock:
-            for (slot_idx, old_core), new_core_info in zip(empty_ai_slots, new_ai_list):
-                old_name = old_core.name
-                new_pos = CorePosition(new_core_info['ticker'], new_core_info['name'], initial_cash=per_core_budget)
-                new_pos.cash = per_core_budget
-                self.core_positions[slot_idx] = new_pos
-                changed.append(f"{old_name} → {new_core_info['name']}({new_core_info['ticker']}) [{new_core_info.get('sector','-')}]")
-
-        self.last_core_rebalance_date = now.date()
-        self._save_state()
-
-        # 알림
-        change_lines = "\n".join([f"   · {c}" for c in changed])
-        self.add_log(f"✅ [AI 코어 재선정] 교체 완료:\n{change_lines}")
-        self._send_telegram(
-            f"🔄 AI 코어 주간 재선정  ·  {self.alert_icon} {self.mode_name}\n"
-            f"━━━━━━━━━━━━━━━━━━━━\n"
-            f"{chr(10).join(['· ' + c for c in changed])}\n"
-            f"━━━━━━━━━━━━━━━━━━━━\n"
-            f"⏰ {now.strftime('%H:%M KST')}"
-        )
 
     def _get_cached_base_ohlcv(self, ticker):
         today_str = _now_kst().strftime('%Y-%m-%d')
@@ -1187,7 +1100,6 @@ class KRBotController:
         filtered_info = self._ai_filter_satellites(raw_info)
         self.satellite_info = filtered_info[:self.num_satellites]
         self._inject_user_satellites()  # 사용자 지정 종목 우선 고정
-        from KR.screener import select_ai_core_stock
         log_lines = [f"  {i+1}. {c['name']} ({c['ticker']}) {c.get('momentum_20d', 0):+.1f}%" for i, c in enumerate(self.satellite_info)]
         for line in log_lines: self.add_log(f"✅ {line.strip()}")
         log_html = "\n".join([f"  · {c['name']} <code>{c['ticker']}</code>" for c in self.satellite_info])
@@ -1204,23 +1116,14 @@ class KRBotController:
         n_sat       = len(self.satellite_info) if self.satellite_info else self.num_satellites
         per_sat     = sat_budget / n_sat if n_sat > 0 else 0
 
-        # ── 코어 구성: 사용자 지정 최대 3개 → 남은 자리만 AI 선정 ──
+        # ── 코어 구성: 사용자 지정 종목만 사용 (AI 자동 선정 없음) ──
         self.core_positions = []
         user_tickers: set = set()
 
-        # 사용자 지정 종목 전부 등록 (최대 3개)
         for user_pick in self.user_core_stocks[:2]:
             if user_pick.get('ticker') and user_pick['ticker'] not in user_tickers:
                 self.core_positions.append(CorePosition(user_pick['ticker'], user_pick['name'], initial_cash=0))
                 user_tickers.add(user_pick['ticker'])
-
-        # AI 슬롯: 빈 자리만 채우기 (사용자가 3개 다 지정하면 AI 선정 없음)
-        ai_needed = 3 - len(self.core_positions)
-        if ai_needed > 0:
-            self.add_log(f"🔍 AI 코어 종목 선정 중... (목표 {ai_needed}개, 섹터 분산 적용)")
-            ai_core_list = select_ai_core_stock(n=ai_needed, exclude_tickers=user_tickers, verbose=False)
-            for ai_core in ai_core_list:
-                self.core_positions.append(CorePosition(ai_core['ticker'], ai_core['name'], initial_cash=0))
 
         # 코어 예산 균등 배분
         n_cores = max(1, len(self.core_positions))
@@ -1905,10 +1808,6 @@ class KRBotController:
                         else:
                             sat.status = "감시 중 👀"
                             sat.status_msg = f"예산 소진 — 다음 종목 교체 대기 | 시장: {_regime_label}"
-
-        # ── 📅 월요일 AI 코어 재선정 (09:10~09:20 사이 1회) ──────────────
-        if now.weekday() == 0 and "09:10" <= current_time_str <= "09:20":
-            self._run_threaded(self._rebalance_ai_cores)
 
         # ── 📡 뉴스 모니터: 악재 공시 감지 + 실적 발표 예정 체크 ───────────
         if self.news_monitor and is_golden_hours:
