@@ -307,6 +307,7 @@ class KisRealApi:
             "appkey": self.app_key,
             "appsecret": self.app_secret,
             "tr_id": tr_id,
+            "custtype": "P",
         }
         
         params = {
