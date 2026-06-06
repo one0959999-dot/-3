@@ -398,23 +398,23 @@ document.addEventListener('DOMContentLoaded', () => {
             const sMsg  = core.status_msg || "지표 점검 중...";
             const isDca = !!core.dca_mode;
             const dcaBtnStyle = isDca
-                ? 'background:rgba(16,185,129,0.25);color:#34d399;border:1px solid rgba(16,185,129,0.5);'
-                : 'background:rgba(255,255,255,0.07);color:#64748b;border:1px solid rgba(255,255,255,0.15);';
+                ? 'background:rgba(16,185,129,0.15);color:#065f46;border:1px solid rgba(16,185,129,0.4);'
+                : 'background:rgba(0,0,0,0.05);color:#374151;border:1px solid rgba(0,0,0,0.15);';
             let corePnlHtml = '';
             const coreAvgP = core.avg_price || 0, coreCurP = core.price || 0;
             if (core.shares > 0 && coreAvgP > 0 && coreCurP > 0) {
                 const pct = ((coreCurP / coreAvgP) - 1) * 100;
                 const state = pct > 0 ? 'profit' : (pct < 0 ? 'loss' : 'neutral');
-                const clr   = pct > 0 ? '#f85149' : (pct < 0 ? '#58a6ff' : '#8b949e');
+                const clr   = pct > 0 ? '#dc2626' : (pct < 0 ? '#2563eb' : '#475569');
                 corePnlHtml = `<div class="pnl-rate" data-pnl="${state}" style="font-size:0.85rem;font-weight:700;margin-top:3px;color:${clr};">${pct >= 0 ? '+' : ''}${pct.toFixed(2)}%</div>`;
             } else if (core.shares > 0) {
-                corePnlHtml = `<div class="pnl-rate" data-pnl="neutral" style="font-size:0.8rem;color:#8b949e;margin-top:3px;">수익률 계산 중...</div>`;
+                corePnlHtml = `<div class="pnl-rate" data-pnl="neutral" style="font-size:0.8rem;color:#6b7280;margin-top:3px;">수익률 계산 중...</div>`;
             }
             const div = document.createElement('div');
             div.className = 'info-card glass-card core-card';
             div.innerHTML = `
                 <div style="display:flex;justify-content:space-between;align-items:flex-start;">
-                    <h3 style="margin:0;display:flex;align-items:center;gap:8px;">
+                    <h3 style="margin:0;display:flex;align-items:center;gap:8px;color:#111827;">
                         🏛️ ${core.name} (Core)
                         <span class="badge core-status-badge" data-name="${core.name.replace(/"/g,'&quot;')}" style="cursor:pointer; ${_positionBadgeStyle(sText)}">${sText}</span>
                     </h3>
@@ -423,13 +423,13 @@ document.addEventListener('DOMContentLoaded', () => {
                             style="font-size:0.7rem;padding:3px 8px;border-radius:6px;cursor:pointer;${dcaBtnStyle}" title="적립식 자동매수 ON/OFF">${isDca ? '💰 DCA ON' : '💰 DCA'}</button>
                     </div>
                 </div>
-                <div class="card-value highlight">${(core.shares || 0).toLocaleString()} 주</div>
-                <div class="card-subvalue">
+                <div class="card-value highlight" style="color:#111827;">${(core.shares || 0).toLocaleString()} 주</div>
+                <div class="card-subvalue" style="color:#374151;">
                     평가금액 ${fmtMoney(core.value || 0)}<br>
-                    <span style="color:#64748b;font-size:0.8rem;">(배정 예산: ${fmtMoney(core.budget || 0)})</span>
+                    <span style="color:#6b7280;font-size:0.8rem;">(배정 예산: ${fmtMoney(core.budget || 0)})</span>
                 </div>
                 ${corePnlHtml}
-                <div class="card-subvalue" style="color:#f59e0b;font-size:0.8rem;margin-top:4px">🔒 floor: ${core.floor || 0}주 보호</div>
+                <div class="card-subvalue" style="color:#d97706;font-size:0.8rem;margin-top:4px">🔒 floor: ${core.floor || 0}주 보호</div>
             `;
             const badge = div.querySelector('.core-status-badge');
             if (badge) {
@@ -445,41 +445,41 @@ document.addEventListener('DOMContentLoaded', () => {
         insightCard.id = 'market-insight-card';
         insightCard.className = 'info-card glass-card';
         const regime = data.market_regime || 'NEUTRAL';
-        const regimeColor = regime === 'BULL' ? '#f85149' : regime === 'BEAR' ? '#58a6ff' : '#94a3b8';
+        const regimeColor = regime === 'BULL' ? '#dc2626' : regime === 'BEAR' ? '#2563eb' : '#475569';
         const regimeEmoji = regime === 'BULL' ? '🐂' : regime === 'BEAR' ? '🐻' : '〰️';
         const pnl = data.us_pnl ?? 0;
         const pnlRt = data.us_pnl_rt ?? 0;
-        const pnlColor = pnl > 0 ? '#f85149' : pnl < 0 ? '#58a6ff' : '#94a3b8';
+        const pnlColor = pnl > 0 ? '#dc2626' : pnl < 0 ? '#2563eb' : '#475569';
         const pnlSign  = pnl >= 0 ? '+' : '';
         const avail = data.available_cash ?? 0;
         const satInfo = (data.satellite_info || []).slice(0, 3);
         const candidateRows = satInfo.length > 0
             ? satInfo.map(c => {
                 const ret = (c.return_pct ?? 0);
-                const retColor = ret >= 0 ? '#f85149' : '#58a6ff';
-                return `<div style="display:flex;justify-content:space-between;align-items:center;padding:4px 0;border-bottom:1px solid rgba(255,255,255,0.05);">
-                    <span style="font-size:0.82rem;font-weight:600;">${c.name}<span style="color:#64748b;font-size:0.72rem;margin-left:4px">${c.ticker}</span></span>
+                const retColor = ret >= 0 ? '#dc2626' : '#2563eb';
+                return `<div style="display:flex;justify-content:space-between;align-items:center;padding:4px 0;border-bottom:1px solid rgba(0,0,0,0.07);">
+                    <span style="font-size:0.82rem;font-weight:600;color:#111827;">${c.name}<span style="color:#6b7280;font-size:0.72rem;margin-left:4px">${c.ticker}</span></span>
                     <span style="font-size:0.8rem;font-weight:700;color:${retColor};">${ret >= 0 ? '+' : ''}${ret.toFixed(1)}%</span>
                 </div>`;
             }).join('')
-            : `<div style="color:#64748b;font-size:0.82rem;padding:6px 0;">후보 선정 중...</div>`;
+            : `<div style="color:#6b7280;font-size:0.82rem;padding:6px 0;">후보 선정 중...</div>`;
         insightCard.innerHTML = `
             <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">
-                <h3 style="margin:0;font-size:0.95rem;color:#e2e8f0;">📊 시장 & 다음 후보</h3>
-                <span style="font-size:0.85rem;font-weight:700;color:${regimeColor};background:rgba(255,255,255,0.06);padding:3px 10px;border-radius:8px;border:1px solid ${regimeColor}40;">${regimeEmoji} ${regime}</span>
+                <h3 style="margin:0;font-size:0.95rem;color:#111827;font-weight:700;">📊 시장 & 다음 후보</h3>
+                <span style="font-size:0.82rem;font-weight:700;color:${regimeColor};background:${regimeColor}18;padding:3px 10px;border-radius:8px;border:1px solid ${regimeColor}40;">${regimeEmoji} ${regime}</span>
             </div>
-            <div style="display:flex;gap:16px;margin-bottom:12px;padding-bottom:10px;border-bottom:1px solid rgba(255,255,255,0.08);">
+            <div style="display:flex;gap:16px;margin-bottom:12px;padding-bottom:10px;border-bottom:1px solid rgba(0,0,0,0.08);">
                 <div>
-                    <div style="font-size:0.7rem;color:#64748b;margin-bottom:2px;">오늘 수익</div>
+                    <div style="font-size:0.7rem;color:#6b7280;margin-bottom:2px;font-weight:600;">오늘 수익</div>
                     <div style="font-size:1rem;font-weight:700;color:${pnlColor};">${pnlSign}${fmtMoney(pnl)}</div>
                     <div style="font-size:0.75rem;color:${pnlColor};">${pnlSign}${pnlRt.toFixed(2)}%</div>
                 </div>
                 <div>
-                    <div style="font-size:0.7rem;color:#64748b;margin-bottom:2px;">가용 현금</div>
-                    <div style="font-size:1rem;font-weight:700;color:#e2e8f0;">${fmtMoney(avail)}</div>
+                    <div style="font-size:0.7rem;color:#6b7280;margin-bottom:2px;font-weight:600;">가용 현금</div>
+                    <div style="font-size:1rem;font-weight:700;color:#111827;">${fmtMoney(avail)}</div>
                 </div>
             </div>
-            <div style="font-size:0.72rem;color:#94a3b8;margin-bottom:6px;font-weight:600;">🚀 Growth 감시 상위</div>
+            <div style="font-size:0.72rem;color:#374151;margin-bottom:6px;font-weight:700;">🚀 Growth 감시 상위</div>
             ${candidateRows}
         `;
         fragment.appendChild(insightCard);
