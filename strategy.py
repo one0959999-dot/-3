@@ -13,7 +13,7 @@ import numpy as np
 
 CORE_TICKER        = "003850"
 CORE_NAME          = "보령"
-REINVEST_RATIO     = 1.00   # 위성·단타 수익의 코어 재투자 비율 (1.00 = 수익 전액 코어로 재분배)
+REINVEST_RATIO     = 0.50   # 위성 수익금의 50%만 코어로 재분배 (원금 아님, 순수익 기준)
 CORE_MIN_FLOOR_RATIO = 0.30  # 매도 후에도 초기 보유량의 최소 30%는 항상 유지
 RSI_PERIOD         = 9
 RSI_OVERSOLD       = 30
