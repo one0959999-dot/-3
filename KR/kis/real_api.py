@@ -17,7 +17,7 @@ class KisRealApi:
         print(f"[KIS 실전] 실전투자 API 모드 연동 완료 (URL: {self.base_url})")
 
     def get_access_token(self):
-        print("[KIS 실전] 접속 토큰(Access Token) 발급을 요청합니다...")
+        logger.info("[KIS실전] 토큰 발급 요청")
         url = f"{self.base_url}/oauth2/tokenP"
         headers = {"content-type": "application/json"}
         body = {
@@ -30,10 +30,10 @@ class KisRealApi:
         if res.status_code == 200:
             self.access_token = res.json().get('access_token')
             self.token_expiry = datetime.now() + timedelta(hours=23)
-            print("[KIS 실전] 토큰 발급 완료! (유효기간 24시간)")
+            logger.info("[KIS실전] 토큰 발급 완료")
             return self.access_token
         else:
-            print(f"[KIS 실전] 토큰 발급 실패: {res.text}")
+            logger.error(f"[KIS실전] 토큰 발급 실패: {res.text}")
             return None
 
     def get_approval_key(self):
@@ -367,10 +367,7 @@ class KisRealApi:
                         _prvs = summary.get('prvs_rcdl_excc_amt', '0') or '0'
                         _dnca = summary.get('dnca_tot_amt', '0') or '0'
                         _nxdy = summary.get('nxdy_excc_amt', '0') or '0'
-                        print(f"[KIS 실전 잔고 진단] ord_psbl_cash={_ord} "
-                              f"prvs_rcdl_excc_amt={_prvs} "
-                              f"nxdy_excc_amt={_nxdy} "
-                              f"dnca_tot_amt={_dnca}")
+                        logger.info(f"[KIS실전] 잔고 진단 ord_psbl_cash={_ord} prvs={_prvs} nxdy={_nxdy} dnca={_dnca}")
                         return {
                             "stocks": parsed_stocks,
                             "total_cash": (_safe_parse('ord_psbl_cash', 'prvs_rcdl_excc_amt')
@@ -381,7 +378,7 @@ class KisRealApi:
                     else:
                         msg1 = data.get('msg1', '')
                         rt_cd = data.get('rt_cd', '')
-                        print(f"[KIS 실전] 잔고 조회 실패: rt_cd={rt_cd}, msg={msg1}, data={data}")
+                        logger.warning(f"[KIS실전] 잔고 조회 실패: rt_cd={rt_cd}, msg={msg1}")
                         if msg1 in ('EGW00123', 'EGW00121'):
                             # BUG-FIX: 재귀 호출 → continue로 교체 (mock fix와 동일)
                             # return self.get_account_balance() 는 무한재귀 유발
@@ -389,10 +386,10 @@ class KisRealApi:
                             if self._ensure_token():
                                 continue
                 else:
-                    print(f"[KIS 실전] 잔고 조회 통신 오류: status={res.status_code}, text={res.text}")
+                    logger.warning(f"[KIS실전] 잔고 조회 통신 오류: status={res.status_code}")
                 return None
             except (requests.exceptions.Timeout, requests.exceptions.ConnectionError) as e:
-                print(f"[KIS 실전] 잔고조회 타임아웃: {e}")
+                logger.warning(f"[KIS실전] 잔고조회 타임아웃: {e}")
                 return None
         return None
 
