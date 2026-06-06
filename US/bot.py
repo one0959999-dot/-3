@@ -267,11 +267,14 @@ class USBotController:
         # 상태 복원
         self._restore_state()
 
-        # 백그라운드 가격 갱신 (60초 주기)
+        # 백그라운드 가격 갱신 (30초 주기)
         self._sync_thread = threading.Thread(
             target=self._perpetual_price_sync, daemon=True
         )
         self._sync_thread.start()
+
+        # 백그라운드 잔고 동기화 (60초 주기 — 봇 정지 상태에서도 실행)
+        threading.Thread(target=self._perpetual_balance_sync, daemon=True).start()
 
         has_api = "✅ KIS API 연결됨" if self.kis_overseas else "⚠️ KIS API 미설정 (설정 필요)"
         self.add_log(f"🇺🇸 US 실전 매매 봇 초기화 완료 — {has_api}")
@@ -475,6 +478,16 @@ class USBotController:
             except Exception as e:
                 logger.debug(f"[US봇] 가격 동기화 오류: {e}")
             time.sleep(30)
+
+    def _perpetual_balance_sync(self):
+        """백그라운드 잔고 동기화 루프 — 60초마다, 봇 정지 상태에서도 실행."""
+        while True:
+            try:
+                if self.kis_overseas:
+                    self._sync_balance_from_kis()
+            except Exception as e:
+                logger.debug(f"[US봇] 잔고 동기화 오류: {e}")
+            time.sleep(60)
 
     def _price(self, ticker: str) -> float:
         return self._price_cache.get(ticker, 0.0)

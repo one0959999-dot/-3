@@ -287,11 +287,6 @@ class KRBotController:
 
     def _perpetual_sync_loop(self):
         while True:
-            # 봇이 정지 상태일 때는 KIS API 호출 및 잔고 동기화 건너뜀
-            # (정지 중에도 cached_balance/internal_cash가 변경되면 UI 혼선 유발)
-            if not self.is_running:
-                time.sleep(30)
-                continue
             try:
                 if self.kis:
                     # 잔고 조회를 별도 스레드에서 실행해 메인 sync 루프 블록 방지
