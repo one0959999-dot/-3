@@ -376,96 +376,138 @@ document.addEventListener('DOMContentLoaded', () => {
         }
 
         // ══════════════════════════════════════════════════════════
-        // US 모드: 코어 카드 섹션 숨기고 US Holdings 통합 테이블
+        // US 모드: KR과 동일한 카드 레이아웃
         // ══════════════════════════════════════════════════════════
-        topCardsContainer.style.display = 'none';
-        document.querySelectorAll('.core-card').forEach(e => e.remove());
+        topCardsContainer.style.display = '';
 
-        // 섹션 타이틀 & 헤더 변경
         const satSection = document.querySelector('.satellite-card:not(#defensive-section)');
         if (satSection) {
             const h2 = satSection.querySelector('h2');
-            if (h2) h2.innerHTML = '📊 US Holdings';
+            if (h2) h2.innerHTML = '🚀 Growth Positions';
             const thead = satSection.querySelector('thead tr');
             if (thead) thead.innerHTML = '<th>종목</th><th>현재가</th><th>보유주식</th><th>평가금액</th><th>상태</th>';
         }
 
-        let buf = '';
+        // 코어 카드 렌더
+        const satCard = topCardsContainer.lastElementChild;
+        document.querySelectorAll('.core-card').forEach(e => e.remove());
+        const fragment = document.createDocumentFragment();
 
-        // ── 🏛️ Core 그룹 ──────────────────────────────────────────
-        buf += `<tr class="holdings-group-header">
-            <td colspan="5"><span class="holdings-group-label holdings-core-label">🏛️ Core</span></td>
-        </tr>`;
-
-        if (cores.length === 0) {
-            buf += `<tr><td colspan="5" class="muted-center" style="padding:10px 0;">코어 종목 선정 중...</td></tr>`;
-        } else {
-            cores.forEach(core => {
-                const sText = core.status || "감시 중 👀";
-                const sMsg  = core.status_msg || "지표 점검 중...";
-                const isDca = !!core.dca_mode;
-                const dcaBtnStyle = isDca
-                    ? 'background:rgba(16,185,129,0.18);color:#34d399;border:1px solid rgba(16,185,129,0.4);'
-                    : 'background:rgba(255,255,255,0.05);color:#475569;border:1px solid rgba(255,255,255,0.12);';
-                const sharesCell = core.shares > 0
-                    ? `${(core.shares).toLocaleString()}주`
-                    : `<span style="color:#64748b">-</span>`;
-                const valueCell = core.shares > 0
-                    ? `<span style="font-weight:600;">${fmtMoney(core.value || 0)}</span>`
-                    : `<span style="color:#64748b">-</span>`;
-                buf += `<tr>
-                    <td>
-                        <b>${core.name}</b>
-                        <span style="color:#64748b;font-size:0.78rem;margin-left:5px">${core.ticker}</span>
+        cores.forEach((core) => {
+            const sText = core.status || "감시 중 👀";
+            const sMsg  = core.status_msg || "지표 점검 중...";
+            const isDca = !!core.dca_mode;
+            const dcaBtnStyle = isDca
+                ? 'background:rgba(16,185,129,0.25);color:#34d399;border:1px solid rgba(16,185,129,0.5);'
+                : 'background:rgba(255,255,255,0.07);color:#64748b;border:1px solid rgba(255,255,255,0.15);';
+            let corePnlHtml = '';
+            const coreAvgP = core.avg_price || 0, coreCurP = core.price || 0;
+            if (core.shares > 0 && coreAvgP > 0 && coreCurP > 0) {
+                const pct = ((coreCurP / coreAvgP) - 1) * 100;
+                const state = pct > 0 ? 'profit' : (pct < 0 ? 'loss' : 'neutral');
+                const clr   = pct > 0 ? '#f85149' : (pct < 0 ? '#58a6ff' : '#8b949e');
+                corePnlHtml = `<div class="pnl-rate" data-pnl="${state}" style="font-size:0.85rem;font-weight:700;margin-top:3px;color:${clr};">${pct >= 0 ? '+' : ''}${pct.toFixed(2)}%</div>`;
+            } else if (core.shares > 0) {
+                corePnlHtml = `<div class="pnl-rate" data-pnl="neutral" style="font-size:0.8rem;color:#8b949e;margin-top:3px;">수익률 계산 중...</div>`;
+            }
+            const div = document.createElement('div');
+            div.className = 'info-card glass-card core-card';
+            div.innerHTML = `
+                <div style="display:flex;justify-content:space-between;align-items:flex-start;">
+                    <h3 style="margin:0;display:flex;align-items:center;gap:8px;">
+                        🏛️ ${core.name} (Core)
+                        <span class="badge core-status-badge" data-name="${core.name.replace(/"/g,'&quot;')}" style="cursor:pointer; ${_positionBadgeStyle(sText)}">${sText}</span>
+                    </h3>
+                    <div style="display:flex;gap:6px;align-items:center;">
                         <button onclick="toggleCoreDCA('${core.ticker}', '${core.name}', ${isDca})"
-                            style="margin-left:6px;font-size:0.65rem;padding:2px 6px;border-radius:5px;cursor:pointer;${dcaBtnStyle}" title="DCA ON/OFF">${isDca ? '💰 DCA' : '💰'}</button>
-                    </td>
-                    <td>${core.price > 0 ? `<span style="font-weight:600;">${fmtMoney(core.price)}</span>` : '<span style="color:#64748b">-</span>'}</td>
-                    <td>${sharesCell}</td>
-                    <td>
-                        <div>${valueCell}</div>
-                        ${_pnlCell(core.shares, core.avg_price, core.price)}
-                    </td>
-                    <td>
-                        <span class="badge" onclick="showStatusModalEncoded('${core.name}', '${encodeURIComponent(sMsg)}')" style="cursor:pointer; ${_positionBadgeStyle(sText)}">${sText}</span>
-                    </td>
-                </tr>`;
-            });
-        }
+                            style="font-size:0.7rem;padding:3px 8px;border-radius:6px;cursor:pointer;${dcaBtnStyle}" title="적립식 자동매수 ON/OFF">${isDca ? '💰 DCA ON' : '💰 DCA'}</button>
+                    </div>
+                </div>
+                <div class="card-value highlight">${(core.shares || 0).toLocaleString()} 주</div>
+                <div class="card-subvalue">
+                    평가금액 ${fmtMoney(core.value || 0)}<br>
+                    <span style="color:#64748b;font-size:0.8rem;">(배정 예산: ${fmtMoney(core.budget || 0)})</span>
+                </div>
+                ${corePnlHtml}
+                <div class="card-subvalue" style="color:#f59e0b;font-size:0.8rem;margin-top:4px">🔒 floor: ${core.floor || 0}주 보호</div>
+            `;
+            const badge = div.querySelector('.core-status-badge');
+            if (badge) {
+                badge.dataset.msg = sMsg;
+                badge.addEventListener('click', function() { showStatusModal(this.dataset.name, this.dataset.msg); });
+            }
+            fragment.appendChild(div);
+        });
 
-        // ── 🚀 Growth 그룹 ────────────────────────────────────────
-        buf += `<tr class="holdings-group-header">
-            <td colspan="5"><span class="holdings-group-label holdings-growth-label">🚀 Growth</span></td>
-        </tr>`;
+        // 시장 & 다음 후보 카드 (3번째 슬롯)
+        document.getElementById('market-insight-card')?.remove();
+        const insightCard = document.createElement('div');
+        insightCard.id = 'market-insight-card';
+        insightCard.className = 'info-card glass-card';
+        const regime = data.market_regime || 'NEUTRAL';
+        const regimeColor = regime === 'BULL' ? '#f85149' : regime === 'BEAR' ? '#58a6ff' : '#94a3b8';
+        const regimeEmoji = regime === 'BULL' ? '🐂' : regime === 'BEAR' ? '🐻' : '〰️';
+        const pnl = data.us_pnl ?? 0;
+        const pnlRt = data.us_pnl_rt ?? 0;
+        const pnlColor = pnl > 0 ? '#f85149' : pnl < 0 ? '#58a6ff' : '#94a3b8';
+        const pnlSign  = pnl >= 0 ? '+' : '';
+        const avail = data.available_cash ?? 0;
+        const satInfo = (data.satellite_info || []).slice(0, 3);
+        const candidateRows = satInfo.length > 0
+            ? satInfo.map(c => {
+                const ret = (c.return_pct ?? 0);
+                const retColor = ret >= 0 ? '#f85149' : '#58a6ff';
+                return `<div style="display:flex;justify-content:space-between;align-items:center;padding:4px 0;border-bottom:1px solid rgba(255,255,255,0.05);">
+                    <span style="font-size:0.82rem;font-weight:600;">${c.name}<span style="color:#64748b;font-size:0.72rem;margin-left:4px">${c.ticker}</span></span>
+                    <span style="font-size:0.8rem;font-weight:700;color:${retColor};">${ret >= 0 ? '+' : ''}${ret.toFixed(1)}%</span>
+                </div>`;
+            }).join('')
+            : `<div style="color:#64748b;font-size:0.82rem;padding:6px 0;">후보 선정 중...</div>`;
+        insightCard.innerHTML = `
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">
+                <h3 style="margin:0;font-size:0.95rem;color:#e2e8f0;">📊 시장 & 다음 후보</h3>
+                <span style="font-size:0.85rem;font-weight:700;color:${regimeColor};background:rgba(255,255,255,0.06);padding:3px 10px;border-radius:8px;border:1px solid ${regimeColor}40;">${regimeEmoji} ${regime}</span>
+            </div>
+            <div style="display:flex;gap:16px;margin-bottom:12px;padding-bottom:10px;border-bottom:1px solid rgba(255,255,255,0.08);">
+                <div>
+                    <div style="font-size:0.7rem;color:#64748b;margin-bottom:2px;">오늘 수익</div>
+                    <div style="font-size:1rem;font-weight:700;color:${pnlColor};">${pnlSign}${fmtMoney(pnl)}</div>
+                    <div style="font-size:0.75rem;color:${pnlColor};">${pnlSign}${pnlRt.toFixed(2)}%</div>
+                </div>
+                <div>
+                    <div style="font-size:0.7rem;color:#64748b;margin-bottom:2px;">가용 현금</div>
+                    <div style="font-size:1rem;font-weight:700;color:#e2e8f0;">${fmtMoney(avail)}</div>
+                </div>
+            </div>
+            <div style="font-size:0.72rem;color:#94a3b8;margin-bottom:6px;font-weight:600;">🚀 Growth 감시 상위</div>
+            ${candidateRows}
+        `;
+        fragment.appendChild(insightCard);
+        topCardsContainer.insertBefore(fragment, satCard);
 
-        if (sats.length === 0) {
-            buf += `<tr><td colspan="5" class="muted-center" style="padding:10px 0;">위성 종목 탐색 중...</td></tr>`;
-        } else {
+        // Growth(위성) 테이블
+        let satHtmlBuffer = '';
+        if (sats.length > 0) {
             sats.forEach(s => {
                 const isHolding = s.shares > 0;
                 const sText = s.status || "감시 중 👀";
                 const sMsg  = s.status_msg || "지표 점검 중...";
-                const priceCell = s.price > 0
-                    ? `<span style="font-weight:600;">${fmtMoney(s.price)}</span>`
-                    : '<span style="color:#64748b">-</span>';
+                const priceCell = s.price > 0 ? `<span style="font-weight:600;">${fmtMoney(s.price)}</span>` : '<span style="color:#64748b">-</span>';
                 const sharesCell = isHolding ? `${s.shares.toLocaleString()}주` : `<span style="color:#64748b">-</span>`;
                 const valueCell  = isHolding ? `<span style="font-weight:600;">${fmtMoney(s.value || 0)}</span>` : `<span style="color:#64748b">-</span>`;
-                buf += `<tr>
-                    <td><b>${s.name}</b>
-                        <span style="color:#64748b;font-size:0.78rem;margin-left:5px">${s.ticker}</span>
-                    </td>
+                const budgetLine = (!isHolding && s.budget > 0) ? `<div style="color:#60a5fa;font-size:0.75rem;margin-top:2px">💰 ${fmtMoney(s.budget)}</div>` : '';
+                satHtmlBuffer += `<tr>
+                    <td><b>${s.name}</b><span style="color:#64748b;font-size:0.78rem;margin-left:5px">${s.ticker}</span></td>
                     <td>${priceCell}</td>
                     <td>${sharesCell}</td>
-                    <td>
-                        <div>${valueCell}</div>
-                        ${_pnlCell(s.shares, s.avg_price, s.price)}
-                    </td>
+                    <td><div>${valueCell}</div>${_pnlCell(s.shares, s.avg_price, s.price)}${budgetLine}</td>
                     <td><span class="badge" onclick="showStatusModalEncoded('${s.name}', '${encodeURIComponent(sMsg)}')" style="cursor:pointer; ${_positionBadgeStyle(sText)}">${sText}</span></td>
                 </tr>`;
             });
+        } else {
+            satHtmlBuffer = '<tr><td colspan="5" class="muted-center">Growth 종목 탐색 중...</td></tr>';
         }
-
-        satTbody.innerHTML = buf;
+        satTbody.innerHTML = satHtmlBuffer;
 
 
         if (data.logs && data.logs.length > 0) {
