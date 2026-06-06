@@ -571,11 +571,8 @@ window.toggleMode = async function () {
         });
         const result = await res.json();
         if (result.status === 'success') {
-            showToast(isMock ? 'US 모드로 전환됨' : 'KR 모드로 전환됨', 'info');
-            fetch('/api/status').then(r => r.json()).then(data => {
-                updateUI(data);
-                // fetchPnl 제거됨
-            });
+            showToast(isMock ? 'US 모드로 전환됩니다...' : 'KR 모드로 전환됩니다...', 'info');
+            setTimeout(() => window.location.href = '/dashboard?' + Date.now(), 800);
         } else {
             showToast('모드 변경 실패', 'error');
             cb.checked = !cb.checked;
