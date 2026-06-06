@@ -5,7 +5,7 @@ import threading
 from datetime import datetime
 from werkzeug.security import generate_password_hash, check_password_hash
 
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))  # 프로젝트 루트
 DB_PATH = os.path.join(BASE_DIR, 'lassi.db')
 
 # 🔒 DB 쓰기 충돌 방지를 위한 전역 락
