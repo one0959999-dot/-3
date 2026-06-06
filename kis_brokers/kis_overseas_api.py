@@ -432,7 +432,7 @@ class KisOverseasApi:
                 params={
                     "CANO":           self.cano,
                     "ACNT_PRDT_CD":   self.acnt_cd,
-                    "OVRS_EXCG_CD":   "NASD",
+                    "OVRS_EXCG_CD":   "",      # 빈 문자열 = 전체 해외 거래소 (NASD/NYSE/AMEX 모두)
                     "TR_CRCY_CD":     "USD",
                     "CTX_AREA_FK200": "",
                     "CTX_AREA_NK200": "",
