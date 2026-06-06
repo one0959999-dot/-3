@@ -10,8 +10,8 @@ if [ -d "venv" ]; then
 fi
 
 # 봇 실행
-export FLASK_APP=app.py
+export FLASK_APP=base/app.py
 export FLASK_ENV=production
-nohup python app.py > bot_stdout.log 2> bot_stderr.log &
+nohup python base/app.py > bot_stdout.log 2> bot_stderr.log &
 
 echo "Bot is running in the background! (PID: $!)"

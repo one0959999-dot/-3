@@ -7,7 +7,7 @@ User=ubuntu
 Group=ubuntu
 WorkingDirectory=/home/ubuntu/lassi_bot
 Environment="PATH=/home/ubuntu/lassi_bot/venv/bin"
-ExecStart=/home/ubuntu/lassi_bot/venv/bin/python app.py
+ExecStart=/home/ubuntu/lassi_bot/venv/bin/python base/app.py
 Restart=always
 RestartSec=5
 
