@@ -534,7 +534,12 @@ class KRBotController:
                     pos.last_dca_time    = getattr(_old, 'last_dca_time',    0.0)
                 self.core_positions.append(pos)
                 user_tickers_seen.add(c['ticker'])
-        # 사용자 지정 종목이 없는 슬롯은 빈 상태로 유지 (AI 자동 선정 없음)
+        # 빈 슬롯은 플레이스홀더로 채움 (사용자가 ⚙️에서 종목 지정하도록 안내)
+        for i in range(len(self.core_positions), 2):
+            ph = CorePosition("TBD", f"종목 미지정 #{i+1}", initial_cash=0)
+            ph.status = "⚙️ 종목 설정 필요"
+            ph.status_msg = "상단 ⚙️ 버튼을 눌러 코어 종목을 지정해주세요."
+            self.core_positions.append(ph)
             
         if self.kis:
             def _async_init_balance():
