@@ -906,7 +906,7 @@ window.saveCoreStocks = async function () {
         telegram_token: document.getElementById('teleToken').value,
         telegram_chat_id: document.getElementById('teleChatId').value,
         claude_api_key: document.getElementById('claudeApiKey').value,
-        core_stocks: coreJsonStr,
+        us_core_stocks: coreJsonStr,
         is_mock: isMock,
     };
     try {
@@ -939,7 +939,7 @@ window.saveAccountSettings = async function () {
         telegram_token: document.getElementById('teleToken').value,
         telegram_chat_id: document.getElementById('teleChatId').value,
         claude_api_key: document.getElementById('claudeApiKey').value,
-        core_stocks: coreJsonStr,
+        us_core_stocks: coreJsonStr,
         is_mock: isMock,
         // initial_cash 제거: KR/US 모두 실계좌 잔고 자동 감지 (수동 입력값으로 덮어쓰기 금지)
     };

@@ -1329,6 +1329,11 @@ def set_sector_guide_route():
 @login_required
 def set_keys():
     data = request.json or {}
+    is_mock = int(data.get('is_mock', 1))
+    # KR/US 코어 종목은 별도 컬럼으로 분리 저장
+    kr_core = data.get('core_stocks')    # KR 코어 (is_mock=0)
+    us_core = data.get('us_core_stocks') # US 코어 (is_mock=1)
+
     update_data = {
         'real_app_key': data.get('real_app_key'),
         'real_app_secret': data.get('real_app_secret'),
@@ -1339,8 +1344,9 @@ def set_keys():
         'telegram_token': data.get('telegram_token'),
         'telegram_chat_id': data.get('telegram_chat_id'),
         'claude_api_key': data.get('claude_api_key'),
-        'core_stocks': data.get('core_stocks'),
-        'is_mock': int(data.get('is_mock', 1)),
+        'core_stocks':    kr_core,
+        'us_core_stocks': us_core,
+        'is_mock': is_mock,
         'initial_cash': float(data.get('initial_cash', 10000000))
     }
 
@@ -1349,9 +1355,7 @@ def set_keys():
     for k, v in update_data.items():
         current_user.data[k] = v
 
-    is_mock = update_data['is_mock']
     prefix = 'us_' if is_mock else 'real_'
-    
     bot = get_current_bot()
     if bot:
         bot.reload_api_keys(
@@ -1365,7 +1369,7 @@ def set_keys():
                 "chat_id": data.get('telegram_chat_id')
             },
             gemini_config={},
-            core_stocks=data.get('core_stocks')
+            core_stocks=us_core if is_mock else kr_core   # 현재 모드 코어만 전달
         )
 
     other_mock = not bool(is_mock)
@@ -1383,7 +1387,7 @@ def set_keys():
                 "chat_id": data.get('telegram_chat_id')
             },
             gemini_config={},
-            core_stocks=data.get('core_stocks')
+            core_stocks=kr_core if other_mock else us_core  # 반대 모드 코어 전달
         )
 
     return jsonify({"status": "success"})
