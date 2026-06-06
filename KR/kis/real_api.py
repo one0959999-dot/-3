@@ -1,8 +1,11 @@
 import time
 import requests
 import json
+import logging
 import pandas as pd
 from datetime import datetime, timedelta, timezone
+
+logger = logging.getLogger('lassi_bot')
 
 class KisRealApi:
     """한국투자증권 실전투자 전용 OpenAPI 연동 클래스"""
