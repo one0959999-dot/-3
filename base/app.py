@@ -96,7 +96,7 @@ def _load_krx_stock_list() -> dict[str, str]:
     if not cache:
         try:
             from pykrx import stock as krx
-            from stock_screener import SECTOR_STOCKS
+            from KR.screener import SECTOR_STOCKS
             for ts in SECTOR_STOCKS.values():
                 for t in ts:
                     if t not in cache:
@@ -564,7 +564,7 @@ def get_futures_snapshot_api():
     if _futures_cache['data'] and now_ts - _futures_cache['ts'] < 60:
         return jsonify(_futures_cache['data'])
     try:
-        from us_screener import get_futures_snapshot
+        from US.screener import get_futures_snapshot
         data = get_futures_snapshot()
         _futures_cache = {'data': data, 'ts': now_ts}
         return jsonify(data)
@@ -749,7 +749,7 @@ def ai_chat():
         # ── KR 봇 전용 컨텍스트 (pykrx / fetch_ohlcv 는 KR 전용) ──────
         if not is_us_mode:
             from pykrx import stock as krx_stock
-            from stock_screener import fetch_ohlcv, calc_rsi
+            from KR.screener import fetch_ohlcv, calc_rsi
 
             macro_lines = []
             for m_ticker, m_name in [("069500", "KOSPI 대용(KODEX 200)"), ("229200", "KOSDAQ 대용(KODEX 코스닥150)")]:
