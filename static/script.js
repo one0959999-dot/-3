@@ -537,6 +537,54 @@ document.addEventListener('DOMContentLoaded', () => {
                 }
                 fragment.appendChild(div);
             });
+            // ── 시장 레짐 + 위성 후보 요약 카드 (3번째 슬롯) ──────────────
+            document.getElementById('market-insight-card')?.remove();
+            const insightCard = document.createElement('div');
+            insightCard.id = 'market-insight-card';
+            insightCard.className = 'info-card glass-card';
+
+            const regime = data.market_regime || 'NEUTRAL';
+            const regimeColor = regime === 'BULL' ? '#f85149' : regime === 'BEAR' ? '#58a6ff' : '#94a3b8';
+            const regimeEmoji = regime === 'BULL' ? '🐂' : regime === 'BEAR' ? '🐻' : '〰️';
+            const pnl = data.mock_pnl ?? 0;
+            const pnlRt = data.mock_pnl_rt ?? 0;
+            const pnlColor = pnl > 0 ? '#f85149' : pnl < 0 ? '#58a6ff' : '#94a3b8';
+            const pnlSign  = pnl >= 0 ? '+' : '';
+            const avail = data.available_cash ?? 0;
+
+            const satInfo = (data.satellite_info || []).slice(0, 3);
+            const candidateRows = satInfo.length > 0
+                ? satInfo.map(c => {
+                    const ret = (c.return_pct ?? c.momentum_20d ?? 0);
+                    const retColor = ret >= 0 ? '#f85149' : '#58a6ff';
+                    const sector = c.sector && c.sector !== '-' ? `<span style="color:#64748b;font-size:0.7rem;"> · ${c.sector}</span>` : '';
+                    return `<div style="display:flex;justify-content:space-between;align-items:center;padding:4px 0;border-bottom:1px solid rgba(255,255,255,0.05);">
+                        <span style="font-size:0.82rem;font-weight:600;">${c.name}<span style="color:#64748b;font-size:0.72rem;margin-left:4px">${c.ticker}</span>${sector}</span>
+                        <span style="font-size:0.8rem;font-weight:700;color:${retColor};">${ret >= 0 ? '+' : ''}${ret.toFixed(1)}%</span>
+                    </div>`;
+                }).join('')
+                : `<div style="color:#64748b;font-size:0.82rem;padding:6px 0;">위성 후보 선정 중...</div>`;
+
+            insightCard.innerHTML = `
+                <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">
+                    <h3 style="margin:0;font-size:0.95rem;color:#e2e8f0;">📊 시장 & 다음 후보</h3>
+                    <span style="font-size:0.85rem;font-weight:700;color:${regimeColor};background:rgba(255,255,255,0.06);padding:3px 10px;border-radius:8px;border:1px solid ${regimeColor}40;">${regimeEmoji} ${regime}</span>
+                </div>
+                <div style="display:flex;gap:16px;margin-bottom:12px;padding-bottom:10px;border-bottom:1px solid rgba(255,255,255,0.08);">
+                    <div>
+                        <div style="font-size:0.7rem;color:#64748b;margin-bottom:2px;">오늘 수익</div>
+                        <div style="font-size:1rem;font-weight:700;color:${pnlColor};">${pnlSign}${fmtMoney(pnl)}</div>
+                        <div style="font-size:0.75rem;color:${pnlColor};">${pnlSign}${pnlRt.toFixed(2)}%</div>
+                    </div>
+                    <div>
+                        <div style="font-size:0.7rem;color:#64748b;margin-bottom:2px;">가용 현금</div>
+                        <div style="font-size:1rem;font-weight:700;color:#e2e8f0;">${fmtMoney(avail)}</div>
+                    </div>
+                </div>
+                <div style="font-size:0.72rem;color:#94a3b8;margin-bottom:6px;font-weight:600;letter-spacing:0.03em;">📡 위성 감시 상위</div>
+                ${candidateRows}
+            `;
+            fragment.appendChild(insightCard);
             topCardsContainer.insertBefore(fragment, satCard);
 
             // 위성 테이블 렌더 — sats가 비어도 항상 덮어씌워야 US→KR 전환 시 잔상 방지
