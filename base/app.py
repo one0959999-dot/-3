@@ -26,8 +26,9 @@ logging.basicConfig(
 )
 logger = logging.getLogger('lassi_bot')
 
-import pathlib
+import pathlib, time as _time
 _BASE_DIR = pathlib.Path(__file__).parent.parent  # lassi_bot/
+_STATIC_VER = str(int(_time.time()))  # 서버 시작 시 고정 — 재시작마다 갱신
 
 app = Flask(
     __name__,
@@ -199,7 +200,7 @@ def index():
     manager.get_bot(current_user.id, user_data)
     is_us = bool(user_data.get('is_mock', 0))
     template = 'US/index.html' if is_us else 'KR/index.html'
-    resp = make_response(render_template(template, user=current_user, claude_enabled=ai_enabled))
+    resp = make_response(render_template(template, user=current_user, claude_enabled=ai_enabled, sv=_STATIC_VER))
     # KR/US 전환 시 브라우저 캐시로 이전 템플릿이 보이는 문제 방지
     resp.headers['Cache-Control'] = 'no-store, no-cache, must-revalidate'
     resp.headers['Pragma'] = 'no-cache'
