@@ -1,0 +1,1128 @@
+﻿<!DOCTYPE html>
+<html lang="ko">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>라씨 매매비서 봇 대시보드</title>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600;700;800&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@500;700&display=swap" rel="stylesheet">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+    <style>
+        .navbar {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 1rem clamp(1rem, 2.5vw, 2.5rem);
+            background: rgba(15, 23, 42, 0.4);
+            backdrop-filter: blur(12px);
+            border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+            margin-bottom: 1.5rem;
+            min-width: 0;          /* flex 자식이 줄어들 수 있게 */
+        }
+
+        /* 환율·선물 위젯 공통 — clamp로 뷰포트에 비례 축소 */
+        .nav-fx {
+            display: flex;
+            align-items: center;
+            gap: clamp(4px, 0.5vw, 8px);
+            background: rgba(255, 255, 255, 0.05);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            padding: clamp(4px, 0.4vw, 6px) clamp(8px, 1vw, 14px);
+            border-radius: 20px;
+            font-size: clamp(0.62rem, 1vw, 0.82rem);
+            white-space: nowrap;
+            cursor: default;
+            transition: background 0.2s;
+        }
+        .nav-fx:hover { background: rgba(255, 255, 255, 0.09); }
+        .fx-label { color: #94a3b8; font-size: clamp(0.58rem, 0.85vw, 0.75rem); }
+        .fx-rate  { color: #f1f5f9; font-weight: 700; letter-spacing: 0.3px;
+                    font-size: clamp(0.62rem, 1vw, 0.82rem); }
+        /* ID 기반 선택자로 명시도 높임 → 테마 !important 규칙 극복 */
+        #fx-change.fx-up   { color: #f87171 !important; -webkit-text-fill-color: #f87171 !important; font-size: clamp(0.58rem, 0.85vw, 0.78rem); }
+        #fx-change.fx-down { color: #60a5fa !important; -webkit-text-fill-color: #60a5fa !important; font-size: clamp(0.58rem, 0.85vw, 0.78rem); }
+        #fx-change.fx-flat { color: #94a3b8 !important; -webkit-text-fill-color: #94a3b8 !important; font-size: clamp(0.58rem, 0.85vw, 0.78rem); }
+
+        /* 중앙 위젯 그룹 */
+        .nav-center { display: flex; align-items: center; gap: clamp(6px, 0.8vw, 10px); flex-wrap: nowrap; }
+
+        /* 환율·선물 위젯 고정 크기 — 두 칸 동일 */
+        .nav-fx {
+            display: flex !important;
+            align-items: center !important;
+            width: clamp(200px, 22vw, 280px) !important;
+            height: clamp(28px, 3vw, 34px) !important;
+            box-sizing: border-box !important;
+            justify-content: space-between;
+            overflow: hidden;
+        }
+        #fut-inner { display:flex; align-items:center; gap:clamp(4px,0.5vw,8px); width:100%; height:100%; }
+        @keyframes fut-in  { from { opacity:0; transform:translateY(-6px); } to { opacity:1; transform:translateY(0); } }
+        @keyframes fut-out { from { opacity:1; transform:translateY(0);    } to { opacity:0; transform:translateY(6px); } }
+        #fut-inner.fut-anim-in  { animation: fut-in  0.28s ease forwards; }
+        #fut-inner.fut-anim-out { animation: fut-out 0.22s ease forwards; }
+
+        /* 선물 모달 — statusModal 동일 구조: 오버레이가 flex로 자식을 화면 중앙에 배치 */
+        #fut-overlay {
+            display: none;
+            position: fixed;
+            z-index: 9999;
+            left: 0; top: 0;
+            width: 100%; height: 100%;
+            background-color: rgba(0, 0, 0, 0.6);
+            align-items: center;
+            justify-content: center;
+        }
+        /* 선물 모달 내부 카드 */
+        #fut-popup {
+            background: #1e293b;
+            border-radius: 12px;
+            width: 90%;
+            max-width: 520px;
+            border: 1px solid rgba(255,255,255,0.1);
+            box-shadow: 0 4px 15px rgba(0,0,0,0.4);
+            overflow: hidden;
+            position: relative;
+        }
+        /* 모달 헤더 — 타이틀 중앙 정렬 */
+        #fut-popup-header {
+            text-align: center;
+            padding: 18px 18px 12px;
+        }
+        #fut-popup-title {
+            font-size: 1.05rem;
+            font-weight: 700;
+            color: #3b82f6;
+            letter-spacing: 0.3px;
+        }
+        /* 카드 그리드 */
+        #fut-popup-cards {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 0;
+        }
+        .fut-card {
+            padding: 14px 16px;
+            border-right: 1px solid rgba(255,255,255,0.07);
+            text-align: center;
+        }
+        .fut-card:last-child { border-right: none; }
+        .fut-card-top {
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            gap: 6px;
+            margin-bottom: 8px;
+        }
+        .fut-card-label { color: #94a3b8; font-size: 0.72rem; font-weight: 600; }
+        .fut-card-trend {
+            font-size: 0.60rem;
+            padding: 2px 7px;
+            border-radius: 20px;
+            font-weight: 700;
+            border: 1px solid currentColor;
+        }
+        .fut-card-price { color: #f1f5f9; font-size: 1rem; font-weight: 700; margin-bottom: 4px; }
+        .fut-card-chg   { font-size: 0.78rem; margin-bottom: 10px; }
+        .fut-card-desc  { color: #475569; font-size: 0.67rem; line-height: 1.45; border-top: 1px solid rgba(255,255,255,0.07); padding-top: 8px; text-align: left; }
+        /* 모달 하단 닫기 버튼 */
+        #fut-popup-footer {
+            padding: 12px 18px;
+            border-top: 1px solid rgba(255,255,255,0.08);
+            display: flex;
+            justify-content: center;
+        }
+        #fut-popup-btn-close {
+            background: #3b82f6;
+            color: #ffffff;
+            border: none;
+            border-radius: 9px;
+            padding: 8px 36px;
+            font-size: 0.82rem;
+            font-weight: 600;
+            cursor: pointer;
+            transition: background 0.15s;
+        }
+        #fut-popup-btn-close:hover { background: #2563eb; }
+
+        /* US 모드: nav-fx pill 테두리 + 배경 */
+        body.theme-us .nav-fx {
+            background: rgba(255,255,255,0.85) !important;
+            border: 1px solid rgba(0,0,0,0.22) !important;
+        }
+        body.theme-us .nav-fx:hover { background: rgba(255,255,255,0.97) !important; }
+        body.theme-us .fx-label { color: #475569 !important; -webkit-text-fill-color: #475569 !important; }
+        body.theme-us .fx-rate  { color: #0f172a !important; -webkit-text-fill-color: #0f172a !important; }
+        /* US 모드: 선물 모달 — 흰색 배경 + 검은 글씨 */
+        body.theme-us #fut-overlay { background-color: rgba(0,0,0,0.4) !important; }
+        body.theme-us #fut-popup {
+            background: #ffffff !important;
+            border: 1px solid rgba(0,0,0,0.18) !important;
+            box-shadow: 0 4px 15px rgba(0,0,0,0.18) !important;
+        }
+        body.theme-us #fut-popup-title  { color: #2563eb !important; }
+        body.theme-us .fut-card { border-right-color: rgba(0,0,0,0.07) !important; }
+        body.theme-us .fut-card-label { color: #64748b !important; }
+        body.theme-us .fut-card-price { color: #0f172a !important; }
+        body.theme-us .fut-card-desc  { color: #64748b !important; border-top-color: rgba(0,0,0,0.08) !important; }
+        body.theme-us #fut-popup-footer { border-top-color: rgba(0,0,0,0.08) !important; }
+        body.theme-us #fut-popup-btn-close { background: #2563eb !important; }
+        /* US 모드 input */
+        body.theme-us #usAccountNo {
+            border: 1px solid rgba(0,0,0,0.25) !important;
+            background: #ffffff !important;
+            color: #0f172a !important;
+        }
+
+        .nav-user {
+            display: flex;
+            align-items: center;
+            gap: clamp(0.6rem, 1.2vw, 1.5rem);
+            flex-shrink: 0;        /* 오른쪽 메뉴는 고정 */
+        }
+
+        .btn-settings {
+            background: rgba(255, 255, 255, 0.05);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            color: white;
+            padding: 0.5rem 1rem;
+            border-radius: 8px;
+            cursor: pointer;
+            font-size: 0.9rem;
+            transition: all 0.2s;
+        }
+
+        .btn-settings:hover {
+            background: rgba(255, 255, 255, 0.1);
+        }
+
+        .btn-logout {
+            color: #94a3b8;
+            text-decoration: none;
+            font-size: 0.85rem;
+        }
+
+        .btn-logout:hover {
+            color: #ef4444;
+        }
+
+        /* 위성 수 조절 (버튼 위) */
+        .sat-controls {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            background: rgba(255, 255, 255, 0.05);
+            border: 1px solid rgba(255, 255, 255, 0.08);
+            padding: 6px 12px;
+            border-radius: 10px;
+            margin-bottom: 8px;
+        }
+
+        .sat-controls span {
+            font-size: 0.8rem;
+            color: #94a3b8;
+        }
+
+        .sat-controls .sat-count-val {
+            font-weight: 700;
+            color: white;
+            font-size: 1rem;
+            min-width: 20px;
+            text-align: center;
+        }
+
+        .sat-adj-btn {
+            background: rgba(255, 255, 255, 0.08);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            color: white;
+            width: 24px;
+            height: 24px;
+            border-radius: 5px;
+            cursor: pointer;
+            font-size: 1rem;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .sat-adj-btn:hover {
+            background: rgba(255, 255, 255, 0.18);
+        }
+
+        /* 모달 공통 */
+        .modal {
+            display: none;
+            position: fixed;
+            z-index: 2000;
+            left: 0;
+            top: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0, 0, 0, 0.8);
+            backdrop-filter: blur(5px);
+        }
+
+        .modal-content {
+            background: #1e293b;
+            margin: 5% auto;
+            padding: 2rem;
+            border-radius: 20px;
+            width: 90%;
+            max-width: 480px;
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            position: relative;
+        }
+
+        .close-modal {
+            position: absolute;
+            right: 1.2rem;
+            top: 1.2rem;
+            cursor: pointer;
+            color: #94a3b8;
+            font-size: 1.5rem;
+        }
+
+        .settings-group {
+            margin-bottom: 1.2rem;
+        }
+
+        .settings-group label {
+            display: block;
+            margin-bottom: 0.4rem;
+            font-size: 0.8rem;
+            color: #94a3b8;
+        }
+
+        .settings-group input {
+            width: 100%;
+            padding: 0.7rem;
+            background: rgba(0, 0, 0, 0.25);
+            /* 👈 투명도를 주어 어떤 배경이든 자연스럽게 녹아들게 함 */
+            border: 1px solid rgba(255, 255, 255, 0.15);
+            /* 👈 코어 종목 입력칸과 테두리 밝기 통일 */
+            border-radius: 8px;
+            color: white;
+            box-sizing: border-box;
+            font-size: 0.9rem;
+            /* 👈 글자 크기도 통일 */
+        }
+
+        .btn-save-keys {
+            width: 100%;
+            padding: 0.9rem;
+            background: #10b981;
+            /* 👈 오른쪽 버튼과 동일한 안정적인 초록색으로 변경 */
+            border: none;
+            border-radius: 10px;
+            color: white;
+            font-weight: 700;
+            cursor: pointer;
+            margin-top: 1rem;
+        }
+
+        /* 코어 검색 모달 전용 */
+        .core-search-box {
+            display: flex;
+            gap: 8px;
+            margin-bottom: 1rem;
+        }
+
+        .core-search-box input {
+            flex: 1;
+            padding: 0.7rem;
+            background: #0f172a;
+            border: 1px solid rgba(255, 255, 255, 0.15);
+            border-radius: 8px;
+            color: white;
+            font-size: 0.9rem;
+        }
+
+        .core-search-box button {
+            padding: 0.7rem 1rem;
+            background: #3b82f6;
+            border: none;
+            border-radius: 8px;
+            color: white;
+            cursor: pointer;
+            font-weight: 600;
+        }
+
+        .search-results {
+            max-height: 200px;
+            overflow-y: auto;
+            margin-bottom: 1rem;
+        }
+
+        .search-result-item {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 0.6rem 0.8rem;
+            border-radius: 8px;
+            cursor: pointer;
+            transition: background 0.15s;
+        }
+
+        .search-result-item:hover {
+            background: rgba(255, 255, 255, 0.08);
+        }
+
+        .search-result-item .stock-name {
+            font-weight: 600;
+            font-size: 0.9rem;
+        }
+
+        .search-result-item .stock-code {
+            font-size: 0.75rem;
+            color: #94a3b8;
+        }
+
+        .btn-add-core {
+            padding: 4px 10px;
+            background: #10b981;
+            border: none;
+            border-radius: 6px;
+            color: white;
+            font-size: 0.75rem;
+            cursor: pointer;
+            font-weight: 600;
+        }
+
+        .core-list {
+            margin-bottom: 1rem;
+        }
+
+        .core-list-title {
+            font-size: 0.78rem;
+            color: #94a3b8;
+            margin-bottom: 0.5rem;
+        }
+
+        .core-tag {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            background: rgba(16, 185, 129, 0.15);
+            border: 1px solid #10b981;
+            color: #10b981;
+            padding: 4px 10px;
+            border-radius: 20px;
+            font-size: 0.82rem;
+            margin: 3px;
+        }
+
+        .core-tag .remove-core {
+            cursor: pointer;
+            color: #ef4444;
+            font-weight: 700;
+            font-size: 0.9rem;
+        }
+
+        /* Mode Toggle Switch */
+        .mode-toggle {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            margin-right: 15px;
+            background: rgba(0, 0, 0, 0.2);
+            padding: 4px 10px;
+            border-radius: 20px;
+            border: 1px solid rgba(255, 255, 255, 0.05);
+        }
+
+        .mode-toggle span {
+            font-size: 0.75rem;
+            font-weight: 600;
+            color: #64748b;
+            transition: 0.3s;
+        }
+
+        .switch {
+            position: relative;
+            display: inline-block;
+            width: 36px;
+            height: 20px;
+        }
+
+        .switch input {
+            opacity: 0;
+            width: 0;
+            height: 0;
+        }
+
+        .slider {
+            position: absolute;
+            cursor: pointer;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background-color: #ef4444;
+            transition: .4s;
+            border-radius: 20px;
+        }
+
+        .slider:before {
+            position: absolute;
+            content: "";
+            height: 14px;
+            width: 14px;
+            left: 3px;
+            bottom: 3px;
+            background-color: white;
+            transition: .4s;
+            border-radius: 50%;
+        }
+
+        input:checked+.slider {
+            background-color: #10b981;
+        }
+
+        input:checked+.slider:before {
+            transform: translateX(16px);
+        }
+
+        .mode-active {
+            color: #f8fafc !important;
+        }
+
+    </style>
+
+    <script>
+        // 전역 변수로 유저의 누적 투자원금을 설정합니다. (봇이 자동 갱신할 수 있도록 let 사용)
+        let USER_INVESTED_CAPITAL = Number("{{ user.data.initial_cash or 10000000 }}");
+    </script>
+</head>
+
+<body>
+    <div class="background-blobs">
+        <div class="blob blob1"></div>
+        <div class="blob blob2"></div>
+        <div class="blob blob3"></div>
+    </div>
+
+    <nav class="navbar">
+        <div class="nav-logo">
+            <a href="/" style="font-family:'Outfit',sans-serif;font-size:1rem;font-weight:700;color:#94a3b8;text-decoration:none;display:flex;align-items:center;gap:6px;padding:5px 12px;border:1px solid rgba(255,255,255,0.1);border-radius:8px;transition:color .2s,border-color .2s;" onmouseover="this.style.color='#e6edf3';this.style.borderColor='rgba(255,255,255,0.25)'" onmouseout="this.style.color='#94a3b8';this.style.borderColor='rgba(255,255,255,0.1)'">🏠 홈</a>
+        </div>
+
+        <!-- 중앙 위젯 그룹: 환율 + 선물 지표 -->
+        <div class="nav-center">
+
+            <!-- USD/KRW (항상 표시) -->
+            <div class="nav-fx" title="USD/KRW 실시간 환율 (1분 캐시)">
+                <span class="fx-label">💵 USD/KRW</span>
+                <span class="fx-rate" id="fx-rate">로딩중…</span>
+                <span id="fx-change" class="fx-flat">—</span>
+            </div>
+
+            <!-- 선물 사이클링 ticker (클릭 시 전체 팝업) -->
+            <div class="nav-fx" id="nav-fut-ticker"
+                 style="display:none; cursor:pointer; justify-content:center;"
+                 onclick="toggleFutPopup(event)" title="클릭하면 전체 선물 지표 보기">
+                <span id="fut-inner" style="display:flex;align-items:center;justify-content:center;gap:clamp(4px,0.5vw,8px);">
+                    <span class="fx-label" id="fut-lbl">—</span>
+                    <span class="fx-rate"  id="fut-price">—</span>
+                    <span id="fut-chg" style="font-size:clamp(0.58rem,0.85vw,0.78rem); color:#94a3b8;">—</span>
+                </span>
+            </div>
+
+        </div>
+
+        <div class="nav-user">
+
+            <span style="font-size: 0.9rem; font-weight: 600; margin-right: 10px;">👤 {{ user.username }}</span>
+            <button class="btn-settings" onclick="openReportModal()" style="margin-right: 8px;">📜 오늘의 리포트</button>
+            <button class="btn-settings" onclick="openSettingsModal()">계좌 설정</button>
+            <a href="/logout" class="btn-logout">로그아웃</a>
+        </div>
+    </nav>
+
+    <div class="dashboard-container">
+
+        <header>
+            <!-- 1행: 타이틀(좌) + 자산숫자(우) -->
+            <div class="header-top">
+                <div class="title-left">
+                    <h1>Trading Bot</h1>
+                    <p>AI Automated Trading Assistant</p>
+                    <div id="hot-sectors" class="hot-sectors">🔥 강세 섹터: 분석 대기중...</div>
+                </div>
+                <div class="header-stats">
+                    <div class="header-stats-value">
+                        <span id="total-value" class="header-total-val">-</span>
+                        <span id="currency-toggle-wrap" style="display:none; margin-left:6px;">
+                            <button id="btn-currency-krw" onclick="setCurrency('KRW')"
+                                style="font-size:0.62rem;padding:1px 5px;border-radius:3px 0 0 3px;border:1px solid rgba(255,255,255,0.18);background:rgba(255,255,255,0.12);color:#f1f5f9;cursor:pointer;font-weight:700;">₩</button><button id="btn-currency-usd" onclick="setCurrency('USD')"
+                                style="font-size:0.62rem;padding:1px 5px;border-radius:0 3px 3px 0;border:1px solid rgba(255,255,255,0.18);border-left:none;background:rgba(255,255,255,0.04);color:#94a3b8;cursor:pointer;font-weight:700;">$</button>
+                        </span>
+                    </div>
+                    <div id="available-cash-row">예수금 <span id="available-cash-val">-</span></div>
+                    <div id="total-pnl">수익: -</div>
+                    <button id="reset-principal-btn" onclick="resetInitialCash()" title="원금 기준 리셋">⚙ 원금 리셋</button>
+                </div>
+            </div>
+            <!-- 2행: 로그 + 컨트롤 -->
+            <div class="header-bottom">
+                <div class="mini-log glass-card" id="mini-log">
+                    <div class="mini-log-entry muted">봇을 시작하면 로그가 표시됩니다...</div>
+                </div>
+                <div class="header-right">
+                    <div class="sat-controls">
+                        <span>📡 위성</span>
+                        <button class="sat-adj-btn" onclick="adjustSat(-1)">−</button>
+                        <span class="sat-count-val" id="sat-num-display">5</span>
+                        <button class="sat-adj-btn" onclick="adjustSat(1)">+</button>
+                        <span>종목</span>
+                    </div>
+                    <button id="btn-toggle" class="btn-toggle btn-stopped" title="클릭하여 봇 시작/정지">
+                        <span class="toggle-dot"></span>
+                        <span id="toggle-label">Stopped</span>
+                    </button>
+                </div>
+            </div>
+        </header>
+
+        <div class="grid-container" id="top-cards-container">
+            <!-- sentinel: JS가 코어 카드 삽입 기준점으로 사용 (시각적 효과 없음) -->
+            <div id="core-sentinel" style="display:none;"></div>
+        </div>
+
+        <div class="satellite-card glass-card">
+            <h2 style="display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:6px;">
+                <span>📡 Satellite Positions</span>
+                <button onclick="clearBlacklist()" id="clearBlBtn"
+                    style="font-size:0.72rem; padding:4px 10px; background:rgba(239,68,68,0.15); color:#f87171; border:1px solid rgba(239,68,68,0.35); border-radius:6px; cursor:pointer; flex-shrink:0;">
+                    🚫 블랙리스트 초기화
+                </button>
+            </h2>
+            <table class="sat-table">
+                <thead>
+                    <tr>
+                        <th>종목</th>
+                        <th>현재가</th>
+                        <th>보유주식</th>
+                        <th>평가금액 / 배정예산</th>
+                        <th>상태</th>
+                    </tr>
+                </thead>
+                <tbody id="sat-tbody">
+                    <tr>
+                        <td colspan="5" class="muted-center">봇 시작 후 표시됩니다</td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+
+        <!-- 방어자산 섹션: 고정 3종목 항상 표시 -->
+        <div class="satellite-card glass-card" id="defensive-section">
+            <h2 style="display:flex; align-items:center; gap:10px;">
+                🛡️ 방어 자산
+                <span id="defensive-regime-badge" style="font-size:0.72rem; padding:2px 8px; border-radius:8px; border:1px solid rgba(255,255,255,0.15); color:#8b949e;">대기 중</span>
+            </h2>
+            <div id="defensive-slots" style="display:grid; grid-template-columns: repeat(3, 1fr); gap:12px; margin-top:10px;"></div>
+        </div>
+
+
+
+    </div>
+    <div id="settingsModal" class="modal">
+        <div class="modal-content" style="max-height:88vh; display:flex; flex-direction:column;">
+            <span class="close-modal" onclick="closeSettingsModal()">&times;</span>
+            <h2 style="font-family:'Outfit',sans-serif; margin-bottom:0.8rem; flex-shrink:0;">⚙️ 설정</h2>
+
+            <!-- ── 탭 버튼 ── -->
+            <div style="display:flex; gap:6px; margin-bottom:1rem; flex-shrink:0;">
+                <button id="stab-1" onclick="switchSettingsTab(1)"
+                    style="flex:1; padding:8px 0; border-radius:8px; border:1px solid rgba(16,185,129,0.5);
+                           background:rgba(16,185,129,0.2); color:#10b981; font-size:0.85rem; font-weight:600; cursor:pointer;">
+                    🏦 계좌 &amp; 원금
+                </button>
+                <button id="stab-2" onclick="switchSettingsTab(2)"
+                    style="flex:1; padding:8px 0; border-radius:8px; border:1px solid rgba(255,255,255,0.1);
+                           background:transparent; color:#8b949e; font-size:0.85rem; font-weight:600; cursor:pointer;">
+                    🔔 알림 &amp; AI
+                </button>
+            </div>
+
+            <!-- ── 스크롤 영역 ── -->
+            <div style="overflow-y:auto; flex:1; padding-right:4px;">
+
+                <!-- ════ TAB 1: 계좌 & 원금 ════ -->
+                <div id="stab-panel-1">
+
+                    <!-- KR API 설정 (항상 표시) -->
+                    <div class="settings-group"
+                        style="border:1px solid rgba(239,68,68,0.3); padding:10px; border-radius:8px; margin-bottom:14px;">
+                        <h3 style="color:#ef4444; font-size:0.9rem; margin-bottom:10px;">🇰🇷 KR API 설정 (한국투자증권)</h3>
+                        <label>App Key</label>
+                        <input type="text" id="realAppKey" value="{{ user.data.real_app_key or '' }}">
+                        <label>App Secret</label>
+                        <input type="password" id="realAppSecret" value="{{ user.data.real_app_secret or '' }}">
+                        <label>계좌번호</label>
+                        <input type="text" id="realAccountNo" value="{{ user.data.real_account_no or '' }}">
+                    </div>
+
+                    <!-- US API 설정 (항상 표시) -->
+                    <div class="settings-group"
+                        style="border:1px solid rgba(16,185,129,0.3); padding:10px; border-radius:8px; margin-bottom:14px; background:rgba(16,185,129,0.04);">
+                        <h3 style="color:#10b981; font-size:0.9rem; margin-bottom:10px;">🇺🇸 US API 설정 (KIS 해외주식)</h3>
+                        <p style="font-size:0.78rem; color:#6b7280; line-height:1.4; margin-bottom:10px;">
+                            한국투자증권 해외주식 전용 App Key / Secret / 계좌번호를 입력하세요.<br>
+                            KR 봇과 동일한 키를 사용하거나, 해외주식 전용 키를 별도 발급할 수 있습니다.
+                        </p>
+                        <label>App Key</label>
+                        <input type="text" id="usAppKey" value="{{ user.data.us_app_key or '' }}">
+                        <label>App Secret</label>
+                        <input type="password" id="usAppSecret" value="{{ user.data.us_app_secret or '' }}">
+                        <label>해외주식 계좌번호</label>
+                        <input type="text" id="usAccountNo" value="{{ user.data.us_account_no or '' }}" placeholder="예: 50123456-01">
+                    </div>
+
+                    <button class="btn-save-keys" onclick="saveAccountSettings()" style="background:#10b981;">설정 저장</button>
+
+                    <!-- 테스트 주문 UI 제거됨 (실전 운영) -->
+                </div>
+
+                <!-- ════ TAB 2: 알림 & AI ════ -->
+                <div id="stab-panel-2" style="display:none;">
+                    <div class="settings-group">
+                        <label>텔레그램 봇 토큰</label>
+                        <input type="text" id="teleToken" value="{{ user.data.telegram_token or '' }}">
+                    </div>
+                    <div class="settings-group">
+                        <label>텔레그램 Chat ID</label>
+                        <input type="text" id="teleChatId" value="{{ user.data.telegram_chat_id or '' }}">
+                    </div>
+                    <div class="settings-group">
+                        <label>Claude API Key <span style="font-size:0.75rem; color:#94a3b8;">(console.anthropic.com)</span></label>
+                        <input type="password" id="claudeApiKey" value="{{ user.data.claude_api_key or '' }}" placeholder="sk-ant-... 입력 시 AI 비서 활성화">
+                    </div>
+                    <button class="btn-save-keys" onclick="saveAccountSettings()" style="background:#10b981; margin-bottom:1.2rem;">알림 설정 저장</button>
+
+                    <hr style="border:0; border-top:1px solid rgba(255,255,255,0.07); margin-bottom:1rem;">
+
+                    <div class="settings-group"
+                        style="border:1px solid rgba(99,102,241,0.35); padding:12px; border-radius:8px; margin-bottom:12px;">
+                        <h3 style="color:#818cf8; font-size:0.9rem; margin-bottom:8px;">📰 뉴스 &amp; 공시 알림 <span style="font-size:0.72rem; color:#94a3b8; font-weight:400;">(선택)</span></h3>
+                        <p style="font-size:0.74rem; color:#94a3b8; margin-bottom:10px; line-height:1.5;">
+                            악재 공시 자동 손절 · 실적 전 포지션 축소 · 매수 전 AI 뉴스 심사에 활용됩니다.<br>
+                            미입력 시 해당 기능만 비활성화, 봇 동작에는 영향 없습니다.
+                        </p>
+                        <label>DART API Key <span style="font-size:0.72rem; color:#94a3b8;">(opendart.fss.or.kr)</span></label>
+                        <input type="password" id="dartApiKey" placeholder="40자리 DART 인증키">
+                        <label>Naver Client ID <span style="font-size:0.72rem; color:#94a3b8;">(developers.naver.com)</span></label>
+                        <input type="text" id="naverClientId" placeholder="Naver Client ID">
+                        <label>Naver Client Secret</label>
+                        <input type="password" id="naverClientSecret" placeholder="Naver Client Secret">
+                    </div>
+                    <button class="btn-save-keys" onclick="saveNewsKeys()" style="background:#6366f1;">뉴스 API 저장</button>
+                    <div id="newsKeysSavedMsg" style="font-size:0.78rem; color:#10b981; display:none; margin-top:6px;">✅ 저장 완료 — 봇에 즉시 적용됩니다.</div>
+
+                    <hr style="border:0; border-top:1px solid rgba(255,255,255,0.07); margin:1.2rem 0;">
+
+                    <div class="settings-group"
+                        style="border:1px solid rgba(234,179,8,0.3); padding:12px; border-radius:8px; margin-bottom:12px;">
+                        <h3 style="color:#fbbf24; font-size:0.9rem; margin-bottom:8px;">📊 섹터 가이드 / 커스텀 전략 <span style="font-size:0.72rem; color:#94a3b8; font-weight:400;">(선택)</span></h3>
+                        <p style="font-size:0.74rem; color:#94a3b8; margin-bottom:10px; line-height:1.5;">
+                            MD 형식으로 작성된 섹터 분석·종목 전략을 붙여넣거나 파일로 업로드하면<br>
+                            Claude AI가 매수 심사·종목 선정 시 자동으로 참고합니다.
+                        </p>
+                        <!-- 파일 업로드: .md/.txt 복수 선택 → 내용을 textarea에 자동 추가 -->
+                        <div style="display:flex; align-items:center; gap:8px; margin-bottom:8px; flex-wrap:wrap;">
+                            <label for="sectorGuideFileInput"
+                                style="cursor:pointer; background:rgba(251,191,36,0.15); border:1px solid rgba(251,191,36,0.4);
+                                       color:#fbbf24; border-radius:6px; padding:5px 12px; font-size:0.78rem; white-space:nowrap;">
+                                📂 파일 추가 (.md / .txt)
+                            </label>
+                            <input type="file" id="sectorGuideFileInput" accept=".md,.txt" multiple
+                                style="display:none;" onchange="appendSectorGuideFiles(this)">
+                            <button onclick="document.getElementById('sectorGuideText').value=''"
+                                style="background:rgba(239,68,68,0.15); border:1px solid rgba(239,68,68,0.35);
+                                       color:#f87171; border-radius:6px; padding:5px 10px; font-size:0.78rem; cursor:pointer;">
+                                🗑 전체 지우기
+                            </button>
+                            <span id="sectorGuideFileMsg" style="font-size:0.75rem; color:#10b981; display:none;"></span>
+                        </div>
+                        <textarea id="sectorGuideText"
+                            placeholder="예시)&#10;## 강세 섹터&#10;- 반도체: 삼성전자, SK하이닉스&#10;- 2차전지: LG에너지솔루션, 삼성SDI&#10;&#10;## 약세 섹터&#10;- 금융: 매수 자제"
+                            style="width:100%; min-height:160px; background:rgba(255,255,255,0.04); border:1px solid rgba(255,255,255,0.12); border-radius:8px; color:#e2e8f0; padding:10px; font-size:0.82rem; line-height:1.6; resize:vertical; font-family:monospace;"></textarea>
+                    </div>
+                    <button class="btn-save-keys" onclick="saveSectorGuide()" style="background:#d97706;">섹터 가이드 저장</button>
+                    <div id="sectorGuideSavedMsg" style="font-size:0.78rem; color:#10b981; display:none; margin-top:6px;">✅ 저장 완료 — 다음 매수 심사부터 즉시 반영됩니다.</div>
+                </div>
+
+            </div><!-- /scroll -->
+        </div>
+    </div>
+
+    <div id="coreModal" class="modal">
+        <div class="modal-content">
+            <span class="close-modal" onclick="closeCoreModal()">&times;</span>
+            <h2 style="font-family:'Outfit',sans-serif; margin-bottom:0.5rem;">💎 코어 종목 설정</h2>
+            <p style="font-size:0.8rem; color:#94a3b8; margin-bottom:1.2rem;">장기 보유할 코어 주식을 검색해서 추가하세요.</p>
+
+            <div class="core-search-box">
+                <input type="text" id="coreSearchInput" placeholder="종목명 또는 종목코드 입력..."
+                    onkeydown="if(event.key==='Enter') searchCoreStock()">
+                <button onclick="searchCoreStock()">검색</button>
+            </div>
+            <div class="search-results" id="coreSearchResults"></div>
+
+            <div class="core-list">
+                <div class="core-list-title">현재 코어 종목 <span style="color:#94a3b8; font-size:0.7rem;">(비우면 기본값:
+                        보령+AI선정주)</span></div>
+                <div id="coreTagList"></div>
+            </div>
+
+            <button class="btn-save-keys" onclick="saveCoreStocks()" style="background:#10b981;">코어 종목 적용 및 재시작</button>
+        </div>
+    </div>
+
+    <div id="strategyModal" class="modal">
+        <div class="modal-content" style="max-width: 500px; text-align: center; padding: 2rem;">
+            <span class="close-modal" onclick="closeStrategyModal()">&times;</span>
+            <h2 id="strat-title" style="font-family:'Outfit',sans-serif; margin-bottom:1rem; color: #a78bfa;">전략 이름</h2>
+
+            <canvas id="strat-canvas" width="400" height="180"
+                style="width:100%; border-radius:12px; background: rgba(0,0,0,0.4); margin-bottom:1rem; box-shadow: inset 0 0 10px rgba(0,0,0,0.5);"></canvas>
+
+            <div
+                style="background: rgba(167, 139, 250, 0.1); border: 1px solid rgba(167, 139, 250, 0.3); padding: 1.2rem; border-radius: 12px; margin-bottom: 1.5rem;">
+                <p id="strat-desc"
+                    style="font-size:0.95rem; line-height: 1.6; color: #f8fafc; margin: 0; word-break: keep-all;">전략에 대한
+                    상세 설명이 표시됩니다.</p>
+            </div>
+            <button class="btn-save-keys" onclick="closeStrategyModal()">닫기</button>
+        </div>
+    </div>
+
+    <div id="reportModal" class="modal">
+        <div class="modal-content" style="max-width: 600px;">
+            <span class="close-modal" onclick="closeReportModal()">&times;</span>
+            <h2 style="margin-top:0; font-size: 1.5rem; color: var(--accent-blue);">📜 실시간 시장 분석 리포트</h2>
+            <div id="report-time-tabs"
+                style="display:flex; gap:10px; margin-top:10px; border-bottom:1px solid rgba(255,255,255,0.1); padding-bottom:10px;">
+            </div>
+            <div id="report-content"
+                style="margin-top: 1rem; color: #cbd5e1; font-size: 0.95rem; line-height: 1.6; max-height: 60vh; overflow-y: auto; padding-right: 10px;">
+                로딩 중...
+            </div>
+            <div style="margin-top: 1.5rem; display: flex; justify-content: space-between; align-items: center;">
+                <button onclick="hideReportToday()"
+                    style="background: rgba(255,255,255,0.1); border: none; color: #94a3b8; padding: 10px 15px; border-radius: 8px; cursor: pointer; font-size: 0.9rem;">
+                    오늘 하루 다시 보지 않기
+                </button>
+                <button onclick="closeReportModal()"
+                    style="background: var(--accent-blue); border: none; color: white; padding: 10px 20px; border-radius: 8px; cursor: pointer; font-weight: bold;">
+                    닫기
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- 선물 모달 — statusModal과 동일 구조: 오버레이가 자식을 flex로 중앙배치 -->
+    <div id="fut-overlay" onclick="toggleFutPopup(event)">
+        <div id="fut-popup" onclick="event.stopPropagation()"></div>
+    </div>
+
+    <div id="statusModal"
+        style="display:none; position:fixed; z-index:9999; left:0; top:0; width:100%; height:100%; background-color:rgba(0,0,0,0.6); align-items:center; justify-content:center;">
+        <div
+            style="background:#1e293b; border-radius:10px; width:85%; max-width:340px; padding:14px; border: 1px solid rgba(255,255,255,0.1); box-shadow:0 4px 15px rgba(0,0,0,0.4); position:relative; text-align:center;">
+            <h3 style="margin:0 0 6px; color:#3b82f6; font-size:0.95rem;">상태 점검 리포트 📋</h3>
+            <p id="modalTickerName" style="font-weight:bold; font-size:0.9rem; color:#f8fafc; margin:0 0 8px;"></p>
+            <div id="modalStatusMsg"
+                style="background:#0f172a; padding:10px; border-radius:8px; font-size:0.78rem; color:#cbd5e1; line-height:1.45; text-align:left; word-break:keep-all; white-space:pre-wrap; overflow-y:auto; max-height:55vh;">
+            </div>
+            <button onclick="document.getElementById('statusModal').style.display='none'"
+                style="margin-top:10px; background:#3b82f6; color:#fff; border:none; padding:7px 20px; border-radius:6px; cursor:pointer; font-weight:bold; font-size:0.85rem;">닫기</button>
+        </div>
+    </div>
+
+    <script src="{{ url_for('kr.static', filename='script.js') }}"></script>
+
+    <script>
+    // ── USD/KRW 환율 위젯 ────────────────────────────────────────────────
+    function updateExchangeRate() {
+        fetch('/api/exchange_rate')
+            .then(r => r.json())
+            .then(d => {
+                if (d.error) {
+                    document.getElementById('fx-rate').textContent = '—';
+                    document.getElementById('fx-change').textContent = d.error;
+                    document.getElementById('fx-change').className = 'fx-flat';
+                    return;
+                }
+                // 환율 저장 (통화 변환에 사용)
+                window.FX.rate = d.rate;
+                // 환율 표시: 소수점 2자리
+                document.getElementById('fx-rate').textContent =
+                    d.rate.toLocaleString('ko-KR', {minimumFractionDigits: 2, maximumFractionDigits: 2}) + '원';
+
+                // 등락폭 표시 (USD/KRW 오름 = 원화 약세 = 빨강)
+                const chgEl = document.getElementById('fx-change');
+                const up = d.change > 0.005;
+                const dn = d.change < -0.005;
+                const arrow = up ? '▲' : (dn ? '▼' : '—');
+                const absChg = Math.abs(d.change).toFixed(2);
+                const pct = (d.change >= 0 ? '+' : '') + d.change_pct.toFixed(2) + '%';
+                chgEl.textContent = `${arrow} ${absChg} (${pct})`;
+                chgEl.className = up ? 'fx-up' : (dn ? 'fx-down' : 'fx-flat');
+            })
+            .catch(() => {
+                document.getElementById('fx-rate').textContent = '오류';
+                document.getElementById('fx-change').textContent = '';
+            });
+    }
+    updateExchangeRate();                       // 페이지 로드 시 즉시 실행
+    setInterval(updateExchangeRate, 60000);     // 이후 1분마다 갱신
+
+    // ── 선물 사이클링 ticker + 팝업 ──────────────────────────────────
+    let _futData  = {};
+    let _futIsUS  = false;
+    let _futItems = [];   // 순환용 (현재 모드 지표)
+    let _futIdx   = 0;
+    let _futTimer = null;
+
+    // 지표 메타 (팝업 설명용)
+    const _futMeta = {
+        nq:  { lbl:'📈 NQ선물', key:'nq',  priceFmt: p => _fmt(p,2),
+               desc:'나스닥100 선물(NQ=F)\n미국 기술주·성장주의 방향성 선행지표.\n개장 전 나스닥이 어떻게 열릴지 예측하는 데 사용.' },
+        es:  { lbl:'📊 ES선물', key:'es',  priceFmt: p => _fmt(p,2),
+               desc:'S&P 500 선물(ES=F)\n미국 전체 시장 방향성 지표.\n글로벌 리스크온/오프 신호로 활용.' },
+        ewy: { lbl:'🇰🇷 KR야선(1x)', key:'ewy', priceFmt: p => '$'+_fmt(p,2),
+               desc:'iShares MSCI 한국 ETF(EWY) — 1배 비레버리지\n코스피 야간선물 프록시.\nCME 코스피선물 대신 미국 시간대에서\n한국 증시 흐름을 간접적으로 확인.' },
+    };
+
+    function _fmt(n, d) {
+        return n.toLocaleString('en-US', {minimumFractionDigits:d, maximumFractionDigits:d});
+    }
+
+    // KR·US 공통으로 3개 전부 순환 (NQ→ES→EWY 순서, 가격 0이어도 포함)
+    function _buildFutItems() {
+        _futItems = [];
+        ['nq','es','ewy'].forEach(k => {
+            const raw  = _futData[k] || {};
+            const meta = _futMeta[k];
+            _futItems.push({
+                lbl: meta.lbl,
+                price: raw.price ? meta.priceFmt(raw.price) : '—',
+                c1h: raw.change_1h || 0,
+                c5d: raw.change_5d || 0,
+                trend: raw.trend || 'NEUTRAL',
+                desc: meta.desc,
+            });
+        });
+    }
+
+    function _chgColor(c1h) {
+        // 한국 관례: 상승=빨강(red), 하락=파랑(blue)
+        return c1h >  0.01 ? '#f87171' : (c1h < -0.01 ? '#60a5fa' : '#94a3b8');
+    }
+    // pill용: 화살표+1h% 만 (짧게)
+    function _chgTextShort(c1h) {
+        const arrow = c1h > 0.01 ? '▲' : (c1h < -0.01 ? '▼' : '—');
+        return `${arrow}${Math.abs(c1h).toFixed(2)}%`;
+    }
+    function _trendLabel(trend) {
+        // 한국 관례: 상승=빨강(red), 하락=파랑(blue)
+        if (trend === 'UPTREND')   return { text:'상승추세', bg:'rgba(248,113,113,0.15)', color:'#f87171' };
+        if (trend === 'DOWNTREND') return { text:'하락추세', bg:'rgba(96,165,250,0.15)',  color:'#60a5fa' };
+        return { text:'중립', bg:'rgba(148,163,184,0.15)', color:'#94a3b8' };
+    }
+
+    function _paintTicker(item, animate) {
+        const ticker  = document.getElementById('nav-fut-ticker');
+        const inner   = document.getElementById('fut-inner');  // 애니메이션 대상 (pill 고정, 내부만 슬라이드)
+        const lblEl   = document.getElementById('fut-lbl');
+        const priceEl = document.getElementById('fut-price');
+        const chgEl   = document.getElementById('fut-chg');
+        if (!ticker || !item) return;
+        const doWrite = () => {
+            lblEl.textContent   = item.lbl;
+            priceEl.textContent = item.price;
+            chgEl.textContent   = _chgTextShort(item.c1h);
+            const col = _chgColor(item.c1h);
+            // setProperty + 'important' → theme-us span !important 규칙을 이김
+            chgEl.style.setProperty('color', col, 'important');
+            chgEl.style.setProperty('-webkit-text-fill-color', col, 'important');
+            if (animate && inner) {
+                inner.classList.remove('fut-anim-out');
+                inner.classList.add('fut-anim-in');
+                setTimeout(() => inner.classList.remove('fut-anim-in'), 300);
+            }
+        };
+        if (animate && inner) {
+            inner.classList.add('fut-anim-out');
+            setTimeout(() => { inner.classList.remove('fut-anim-out'); doWrite(); }, 230);
+        } else {
+            doWrite();
+        }
+    }
+
+    function _startCycle() {
+        if (_futTimer) clearInterval(_futTimer);
+        if (_futItems.length > 1) {
+            _futTimer = setInterval(() => {
+                _futIdx = (_futIdx + 1) % _futItems.length;
+                _paintTicker(_futItems[_futIdx], true);
+            }, 4000);
+        }
+    }
+
+    // ── 팝업 ──────────────────────────────────────────────────────────
+    let _futPopupOpen = false;
+
+    function _buildPopup() {
+        const popup = document.getElementById('fut-popup');
+        if (!popup) return;
+        const cards = _futItems.map(item => {
+            const col   = _chgColor(item.c1h);
+            const tr    = _trendLabel(item.trend);
+            const descLines = item.desc.split('\n');
+            const title = descLines[0];
+            const body  = descLines.slice(1).join('<br>');
+            return `
+            <div class="fut-card">
+                <div class="fut-card-top">
+                    <span class="fut-card-label">${item.lbl}</span>
+                    <span class="fut-card-trend"
+                          style="background:${tr.bg};color:${tr.color};">
+                        ${tr.text}
+                    </span>
+                </div>
+                <div class="fut-card-price">${item.price}</div>
+                <div class="fut-card-chg" style="color:${col};">${_chgTextShort(item.c1h)}</div>
+                <div class="fut-card-desc"><strong>${title}</strong><br>${body}</div>
+            </div>`;
+        }).join('');
+        popup.innerHTML = `
+            <div id="fut-popup-header">
+                <span id="fut-popup-title">📊 선물 현황</span>
+            </div>
+            <div id="fut-popup-cards">${cards}</div>
+            <div id="fut-popup-footer">
+                <button id="fut-popup-btn-close" onclick="toggleFutPopup(event)">닫기</button>
+            </div>`;
+    }
+
+    function _setFutModal(open) {
+        const overlay = document.getElementById('fut-overlay');
+        if (!overlay) return;
+        _futPopupOpen = open;
+        if (open) {
+            _buildPopup();
+            overlay.style.display = 'flex';
+        } else {
+            overlay.style.display = 'none';
+        }
+    }
+
+    window.toggleFutPopup = function(e) {
+        e.stopPropagation();
+        _setFutModal(!_futPopupOpen);
+    };
+
+    // 오버레이 클릭 / ESC 키로 닫기
+    document.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape' && _futPopupOpen) _setFutModal(false);
+    });
+
+    function updateFuturesWidgets() {
+        fetch('/api/futures_snapshot')
+            .then(r => r.json())
+            .then(d => {
+                if (d.error) return;
+                _futData = d;
+                _buildFutItems();
+                _futIdx = 0;
+                const ticker = document.getElementById('nav-fut-ticker');
+                if (ticker && _futItems.length) {
+                    ticker.style.display = '';
+                    _paintTicker(_futItems[0], false);
+                    _startCycle();
+                }
+                // 팝업이 열려 있으면 내용 갱신
+                if (_futPopupOpen) _buildPopup();
+            })
+            .catch(() => {});
+    }
+
+    // 모드 전환 시 호출 (KR·US 모두 동일 3개 순환)
+    // _futIsUS가 실제로 바뀔 때만 _futIdx 리셋 — updateUI 5초 폴링 시 불필요 리셋 방지
+    window.applyFuturesVisibility = function(isUS) {
+        const modeChanged = (_futIsUS !== isUS);
+        _futIsUS = isUS;
+        if (_futItems.length) {
+            if (modeChanged) {
+                _futIdx = 0;
+                _paintTicker(_futItems[0], false);
+                _startCycle();
+            }
+            document.getElementById('nav-fut-ticker').style.display = '';
+        }
+    };
+
+    updateFuturesWidgets();
+    setInterval(updateFuturesWidgets, 300000);  // 5분마다 데이터 갱신
+    </script>
+
+    {% if claude_enabled %}
+    <button id="ai-chat-fab" onclick="toggleAiChat()" title="라씨 AI와 대화하기">
+        🤖
+        <span class="fab-badge" id="ai-new-badge">!</span>
+    </button>
+
+    <div id="ai-chat-panel">
+        <div class="chat-header">
+            <div class="chat-avatar">🤖</div>
+            <div class="chat-header-info">
+                <div class="chat-header-title">
+                    라씨 AI
+                    <span class="chat-status-dot"></span>
+                </div>
+                <div class="chat-header-sub">시장 · 차트 · 재무제표 분석 전문</div>
+            </div>
+            <div class="chat-header-actions">
+                <button class="chat-icon-btn" onclick="resetAiChat()" title="대화 초기화">↺</button>
+                <button class="chat-icon-btn" onclick="toggleAiChat()" title="닫기">✕</button>
+            </div>
+        </div>
+
+        <div class="chat-chips" id="chat-chips">
+            <button class="chat-chip" onclick="sendChip('오늘 시장 상황 분석해줘')">📈 시장 분석</button>
+            <button class="chat-chip" onclick="sendChip('내 포트폴리오 분석해줘')">💼 포트폴리오</button>
+            <button class="chat-chip" onclick="sendChip('삼성전자 차트 분석해줘')">📊 차트 분석</button>
+            <button class="chat-chip" onclick="sendChip('삼성전자 재무제표 분석해줘')">💰 재무 분석</button>
+            <button class="chat-chip" onclick="sendChip('지금 어떤 섹터가 강세야?')">🔥 강세 섹터</button>
+            <button class="chat-chip" onclick="sendChip('RSI 전략 설명해줘')">📐 전략 설명</button>
+        </div>
+
+        <div class="chat-messages" id="chat-messages">
+            <div class="chat-msg ai">
+                <div class="chat-bubble">
+                    안녕하세요! 저는 <strong>라씨 AI</strong>입니다 🤖<br><br>
+                    아래 기능들을 도와드릴 수 있습니다:<br>
+                    • 📈 <strong>시장 분석</strong> — 지수 동향, 수급, 섹터 흐름<br>
+                    • 📊 <strong>차트 분석</strong> — RSI, MACD, 이동평균 등<br>
+                    • 💰 <strong>재무제표 분석</strong> — PER, ROE, 성장성 지표<br><br>
+                    위 버튼을 누르거나 직접 질문해보세요!
+                </div>
+                <span class="chat-msg-time">라씨 AI</span>
+            </div>
+        </div>
+
+        <div class="chat-input-area">
+            <textarea id="ai-chat-input" placeholder="질문을 입력하세요... (Shift+Enter 줄바꿈)" rows="1"
+                onkeydown="handleChatKey(event)" oninput="autoResizeTextarea(this)"></textarea>
+            <button id="ai-chat-send" onclick="sendAiMessage()" title="전송">➤</button>
+        </div>
+    </div>
+    {% endif %}
+
+</body>
+
+</html>
