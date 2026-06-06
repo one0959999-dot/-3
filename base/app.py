@@ -1340,18 +1340,26 @@ def set_keys():
     kr_core = data.get('core_stocks')    # KR 코어 (is_mock=0)
     us_core = data.get('us_core_stocks') # US 코어 (is_mock=1)
 
+    def _val(key, fallback=None):
+        """빈 문자열/None이면 기존 DB 값 유지 (키 덮어쓰기 방지)"""
+        v = data.get(key)
+        if v is None or (isinstance(v, str) and v.strip() == ''):
+            return fallback  # None이면 update_user_keys에서 해당 컬럼 스킵
+        return v.strip() if isinstance(v, str) else v
+
+    existing = current_user.data  # 현재 저장된 값
     update_data = {
-        'real_app_key': data.get('real_app_key'),
-        'real_app_secret': data.get('real_app_secret'),
-        'real_account_no': data.get('real_account_no'),
-        'us_app_key': data.get('us_app_key'),
-        'us_app_secret': data.get('us_app_secret'),
-        'us_account_no': data.get('us_account_no'),
-        'telegram_token': data.get('telegram_token'),
-        'telegram_chat_id': data.get('telegram_chat_id'),
-        'claude_api_key': data.get('claude_api_key'),
-        'core_stocks':    kr_core,
-        'us_core_stocks': us_core,
+        'real_app_key':    _val('real_app_key',    existing.get('real_app_key')),
+        'real_app_secret': _val('real_app_secret', existing.get('real_app_secret')),
+        'real_account_no': _val('real_account_no', existing.get('real_account_no')),
+        'us_app_key':      _val('us_app_key',      existing.get('us_app_key')),
+        'us_app_secret':   _val('us_app_secret',   existing.get('us_app_secret')),
+        'us_account_no':   _val('us_account_no',   existing.get('us_account_no')),
+        'telegram_token':  _val('telegram_token',  existing.get('telegram_token')),
+        'telegram_chat_id':_val('telegram_chat_id',existing.get('telegram_chat_id')),
+        'claude_api_key':  _val('claude_api_key',  existing.get('claude_api_key')),
+        'core_stocks':    kr_core if kr_core is not None else existing.get('core_stocks'),
+        'us_core_stocks': us_core if us_core is not None else existing.get('us_core_stocks'),
         'is_mock': is_mock,
         'initial_cash': float(data.get('initial_cash', 10000000))
     }
