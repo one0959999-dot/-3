@@ -418,47 +418,59 @@ class KisOverseasApi:
 
     def get_balance(self) -> dict:
         """
-        해외주식 잔고 조회.
+        해외주식 체결기준현재잔고 조회 (CTRP6504R — v1_해외주식-008).
+        구버전 TTTS3012R 대비 실시간 반영 정확도 개선.
         Returns {
-          "cash_usd":        float,
-          "total_value_usd": float,
+          "cash_usd":        float,   # 외화예수금
+          "total_value_usd": float,   # 평가금액합계 (USD)
           "stocks": [{"ticker", "name", "shares", "avg_price", "current_price", "value"}]
         }
         """
         try:
             res = requests.get(
-                f"{_BASE_URL}/uapi/overseas-stock/v1/trading/inquire-balance",
-                headers=self._headers("TTTS3012R"),
+                f"{_BASE_URL}/uapi/overseas-stock/v1/trading/inquire-present-balance",
+                headers=self._headers("CTRP6504R"),
                 params={
-                    "CANO":           self.cano,
-                    "ACNT_PRDT_CD":   self.acnt_cd,
-                    "OVRS_EXCG_CD":   "",      # 빈 문자열 = 전체 해외 거래소 (NASD/NYSE/AMEX 모두)
-                    "TR_CRCY_CD":     "USD",
-                    "CTX_AREA_FK200": "",
-                    "CTX_AREA_NK200": "",
+                    "CANO":          self.cano,
+                    "ACNT_PRDT_CD":  self.acnt_cd,
+                    "WCRC_FRCR_DVSN_CD": "02",  # 02: 외화 기준
+                    "NATN_CD":       "000",      # 000: 전체 국가
+                    "TR_MKET_CD":    "00",       # 00: 전체 시장
+                    "INQR_DVSN_CD":  "00",       # 00: 전체
                 },
                 timeout=10,
             )
-            data    = res.json()
-            out1    = data.get("output1", []) or []
-            out2    = data.get("output2", {}) or {}
+            data = res.json()
+            if data.get("rt_cd") != "0":
+                logger.warning(f"[KIS해외] 잔고 조회 오류: {data.get('msg1','')}")
+                return {"cash_usd": 0.0, "total_value_usd": 0.0, "stocks": []}
 
-            # 예수금(USD)
-            cash_usd  = float(out2.get("frcr_dncl_amt_2", 0) or 0)
-            total_val = float(out2.get("tot_evlu_pfls_amt", 0) or 0)
+            out1 = data.get("output1", []) or []
+            out2 = data.get("output2", []) or []   # array: 통화별 요약
+            out3 = data.get("output3", {}) or {}   # object: 전체 합계
+
+            # 예수금(USD) — output2에서 USD 통화 행 찾기
+            cash_usd = 0.0
+            for row in out2:
+                if row.get("crcy_cd", "") == "USD":
+                    cash_usd = float(row.get("frcr_dncl_amt_2", 0) or 0)
+                    break
+
+            # 전체 평가금액합계 (USD 기준) — output3
+            total_val = float(out3.get("evlu_amt_smtl", 0) or 0)
 
             stocks = []
             for item in out1:
-                shares = float(item.get("cblc_qty", 0) or 0)
+                shares = float(item.get("ccld_qty_smtl1", 0) or 0)  # 체결기준 현재 보유수량
                 if shares <= 0:
                     continue
                 stocks.append({
                     "ticker":        item.get("pdno", ""),
                     "name":          item.get("prdt_name", ""),
                     "shares":        shares,
-                    "avg_price":     float(item.get("pchs_avg_pric", 0) or 0),
-                    "current_price": float(item.get("now_pric2", 0) or 0),
-                    "value":         float(item.get("evlu_amt", 0) or 0),
+                    "avg_price":     float(item.get("avg_unpr3", 0) or 0),       # 평균단가
+                    "current_price": float(item.get("ovrs_now_pric1", 0) or 0),  # 해외현재가격
+                    "value":         float(item.get("frcr_evlu_amt2", 0) or 0),  # 외화평가금액
                 })
 
             return {
