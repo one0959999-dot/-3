@@ -208,6 +208,28 @@
             color: #ef4444;
         }
 
+        /* 코어 설정 버튼 */
+        .core-settings-btn {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 4px;
+            width: 100%;
+            background: rgba(255, 255, 255, 0.05);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            color: #94a3b8;
+            font-size: 0.78rem;
+            padding: 5px 12px;
+            border-radius: 8px;
+            cursor: pointer;
+            margin-bottom: 6px;
+            transition: background 0.15s, color 0.15s;
+        }
+        .core-settings-btn:hover {
+            background: rgba(255, 255, 255, 0.12);
+            color: #e2e8f0;
+        }
+
         /* 위성 수 조절 (버튼 위) */
         .sat-controls {
             display: flex;
@@ -570,6 +592,7 @@
                     <div class="mini-log-entry muted">봇을 시작하면 로그가 표시됩니다...</div>
                 </div>
                 <div class="header-right">
+                    <button onclick="openCoreModal()" class="core-settings-btn">⚙️ 코어 설정</button>
                     <div class="sat-controls">
                         <span>📡 위성</span>
                         <button class="sat-adj-btn" onclick="adjustSat(-1)">−</button>

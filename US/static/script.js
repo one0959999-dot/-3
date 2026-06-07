@@ -413,20 +413,22 @@ document.addEventListener('DOMContentLoaded', () => {
             const div = document.createElement('div');
             div.className = 'info-card glass-card core-card';
             div.innerHTML = `
-                <div style="display:flex;justify-content:space-between;align-items:flex-start;">
-                    <h3 style="margin:0;display:flex;align-items:center;gap:8px;color:#111827;">
+                <div style="display:flex;justify-content:space-between;align-items:center;">
+                    <h3 style="margin:0;display:flex;align-items:center;gap:6px;flex-wrap:wrap;color:#111827;">
                         🏛️ ${core.name} (Core)
-                        <span class="badge core-status-badge" data-name="${core.name.replace(/"/g,'&quot;')}" style="cursor:pointer; ${_positionBadgeStyle(sText)}">${sText}</span>
+                        <span class="badge core-status-badge" data-name="${core.name.replace(/"/g,'&quot;')}" style="cursor:pointer;white-space:nowrap; ${_positionBadgeStyle(sText)}">${sText}</span>
                     </h3>
-                    <div style="display:flex;gap:6px;align-items:center;">
+                    <div style="display:flex;gap:6px;align-items:center;flex-shrink:0;">
                         <button onclick="toggleCoreDCA('${core.ticker}', '${core.name}', ${isDca})"
-                            style="font-size:0.7rem;padding:3px 8px;border-radius:6px;cursor:pointer;${dcaBtnStyle}" title="적립식 자동매수 ON/OFF">${isDca ? '💰 DCA ON' : '💰 DCA'}</button>
+                            style="font-size:0.7rem;padding:3px 0;border-radius:6px;cursor:pointer;min-width:72px;text-align:center;${dcaBtnStyle}" title="적립식 자동매수 ON/OFF">${isDca ? '💰 DCA ON' : '💰 DCA'}</button>
                     </div>
                 </div>
                 <div class="card-value highlight" style="color:#111827;">${(core.shares || 0).toLocaleString()} 주</div>
                 <div class="card-subvalue" style="color:#374151;">
                     평가금액 ${fmtMoney(core.value || 0)}<br>
-                    <span style="color:#6b7280;font-size:0.8rem;">(배정 예산: ${fmtMoney(core.budget || 0)})</span>
+                    ${core.budget > 0
+                        ? `<span style="color:#6b7280;font-size:0.8rem;">(배정 예산: ${fmtMoney(core.budget)})</span>`
+                        : `<span style="color:#dc2626;font-size:0.8rem;font-weight:600;">예산 소진</span>`}
                 </div>
                 ${corePnlHtml}
                 <div class="card-subvalue" style="color:#d97706;font-size:0.8rem;margin-top:4px">🔒 floor: ${core.floor || 0}주 보호</div>
