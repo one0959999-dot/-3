@@ -533,6 +533,14 @@
 
         <div class="nav-user">
 
+            <div class="mode-toggle">
+                <span id="label-real" class="{% if not user.data.is_mock %}mode-active{% endif %}">KR</span>
+                <label class="switch">
+                    <input type="checkbox" id="modeSwitch" onchange="toggleMode()" {% if user.data.is_mock %}checked{% endif %}>
+                    <span class="slider"></span>
+                </label>
+                <span id="label-us" class="{% if user.data.is_mock %}mode-active{% endif %}">US</span>
+            </div>
             <span style="font-size: 0.9rem; font-weight: 600; margin-right: 10px;">👤 {{ user.username }}</span>
             <button class="btn-settings" onclick="openReportModal()" style="margin-right: 8px;">📜 오늘의 리포트</button>
             <button class="btn-settings" onclick="openCoreModal()" style="margin-right: 8px;">⚙️ 코어 설정</button>
@@ -571,7 +579,6 @@
                     <div class="mini-log-entry muted">봇을 시작하면 로그가 표시됩니다...</div>
                 </div>
                 <div class="header-right">
-                    <button onclick="openCoreModal()" class="core-settings-btn">⚙️ 코어 설정</button>
                     <div class="header-right-controls">
                         <div class="sat-controls">
                             <span>📡 위성</span>
