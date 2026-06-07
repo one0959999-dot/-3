@@ -556,8 +556,7 @@ def home_summary():
         yearly_cum += yearly[yk]
         yearly_vals.append(round(yearly_cum))
 
-    # ── 기준일(2026-05-20) 대비 등락 ──────────────────────────────────
-    total_pnl_from_start = sum(combined.values())
+    # ── 총자산 vs 원금 수익률 (미실현+실현 통합) ──────────────────────
     combined_initial = 0.0
     try:
         from base.database import get_user_initial_cash
@@ -566,12 +565,14 @@ def home_summary():
         combined_initial = float(kr_init) + float(us_init) * usd_krw
     except Exception:
         pass
+    combined_total_krw = kr_card["total_krw"] + us_card["total_krw"]
+    total_pnl_from_start = combined_total_krw - combined_initial if combined_initial > 0 else sum(combined.values())
     pnl_from_start_pct = round(total_pnl_from_start / combined_initial * 100, 2) if combined_initial > 0 else 0.0
 
     return jsonify({
         "kr": kr_card,
         "us": us_card,
-        "combined_total_krw": kr_card["total_krw"] + us_card["total_krw"],
+        "combined_total_krw": combined_total_krw,
         "pnl_from_start": round(total_pnl_from_start),
         "pnl_from_start_pct": pnl_from_start_pct,
         "chart": {
