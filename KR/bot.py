@@ -184,6 +184,7 @@ class KRBotController:
         self.market_regime = "NEUTRAL"
         self.last_regime_check = 0.0
         self._regime_check_interval = 3600  # 1시간마다 재판단
+        self._ai_market_entry_bonus = 0    # AI 시장판단 진입 보너스 (-2~+2)
         self._last_defensive_check = 0.0     # 방어 자산 체크 캐시 (5분)
         self._defensive_sold_ts   = {}      # 방어 자산 종목별 청산 타임스탬프 {ticker: ts} (24h 쿨다운)
 
@@ -1334,8 +1335,53 @@ class KRBotController:
         try:
             prev   = self.market_regime
             detail = get_market_regime_detail(self.kis)
-            self.market_regime     = detail['regime']
             self.last_regime_check = time.time()
+
+            # ── 외부 선행 신호 수집 (EWY, NQ선물, USD/KRW) ──────────────────
+            ewy_change = nq_change = usd_krw_change = 0.0
+            try:
+                import yfinance as yf
+                for sym, attr in [("EWY","ewy_change"),("NQ=F","nq_change")]:
+                    df = yf.download(sym, period="3d", interval="1d", progress=False, auto_adjust=True)
+                    if not df.empty and len(df) >= 2:
+                        c0, c1 = float(df["Close"].iloc[-2]), float(df["Close"].iloc[-1])
+                        if attr == "ewy_change": ewy_change = (c1/c0-1)*100
+                        else: nq_change = (c1/c0-1)*100
+                # USD/KRW: 간단히 UUP ETF 사용 (달러인덱스 프록시)
+                df_uup = yf.download("UUP", period="3d", interval="1d", progress=False, auto_adjust=True)
+                if not df_uup.empty and len(df_uup) >= 2:
+                    c0, c1 = float(df_uup["Close"].iloc[-2]), float(df_uup["Close"].iloc[-1])
+                    usd_krw_change = (c1/c0-1)*100
+            except Exception as fx_err:
+                logger.debug(f"[{self.mode_name}] 외부 신호 수집 실패: {fx_err}")
+
+            # ── AI 하이브리드 판단 (Claude 있을 때만) ────────────────────────
+            ai_result = None
+            if self.claude:
+                try:
+                    ai_result = self.claude.ai_kr_market_context(
+                        rule_score      = detail['score'],
+                        kospi_regime    = detail['regime'],
+                        ewy_change      = ewy_change,
+                        nq_change       = nq_change,
+                        usd_krw_change  = usd_krw_change,
+                        kospi_rsi       = detail['rsi'],
+                    )
+                    # AI 판단으로 국면 결정
+                    self.market_regime = ai_result['regime']
+                    # 진입 보너스 저장 (entry score에서 활용)
+                    self._ai_market_entry_bonus = ai_result.get('entry_bonus', 0)
+                    self.add_log(
+                        f"🤖 [AI 시장판단] {detail['regime']}(규칙) → {ai_result['regime']}(AI) "
+                        f"| EWY{ewy_change:+.1f}% NQ{nq_change:+.1f}% USD{usd_krw_change:+.1f}% "
+                        f"| 진입보너스 {ai_result['entry_bonus']:+d}pt | {ai_result['reason']}"
+                    )
+                except Exception as ai_err:
+                    logger.debug(f"[{self.mode_name}] AI 시장판단 실패: {ai_err}")
+                    self.market_regime = detail['regime']
+            else:
+                self.market_regime = detail['regime']
+                self._ai_market_entry_bonus = 0
 
             # ── 매번 현재 국면 진단 로그 (ADX·연속일·점수 포함) ──────────────
             adx_str    = f"ADX={detail['adx']:.1f}"
@@ -2393,6 +2439,11 @@ class KRBotController:
                 except Exception:
                     pass
                 entry_score, entry_reasons = calculate_entry_score(ex_df, price, regime, frgn_net=_frgn_net)
+                # AI 시장판단 보너스 반영 (EWY·NQ·환율 종합 판단)
+                _ai_bonus = getattr(self, '_ai_market_entry_bonus', 0)
+                if _ai_bonus != 0:
+                    entry_score += _ai_bonus
+                    entry_reasons.append(f"AI시장판단 {_ai_bonus:+d}pt")
                 entry_threshold = self.entry_thresholds.get(f'sat_{regime}', self.entry_thresholds.get(regime, get_entry_threshold(regime, 'satellite')))
                 score_ratio = max(0.6, get_budget_ratio_from_score(entry_score, entry_threshold))
                 st_nm = f"진입점수({entry_score}/{entry_threshold}pt)"
@@ -3668,7 +3719,7 @@ class KRBotController:
         def _kst_weekend_scan():
             """토·일 10:00 — 주말 위성 사전 분석 (월요일 교체 계획 수립)."""
             now_kst = _now_kst()
-            if now_kst.weekday() >= 5 and now_kst.strftime('%H:%M') == "10:00":
+            if now_kst.weekday() >= 5 and now_kst.strftime('%H:%M') == "14:00":
                 self._run_threaded(self._weekend_satellite_scan)
 
         def _kst_monday_execute():

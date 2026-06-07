@@ -2523,7 +2523,7 @@ class USBotController:
                     except Exception as _scr_err:
                         logger.error(f"[US봇] 장외 스크리닝 오류: {_scr_err}", exc_info=True)
                     # 주말 10:00 ET — 사전 분석
-                    if now.weekday() >= 5 and cur_time_str == "10:00":
+                    if now.weekday() >= 5 and cur_time_str == "14:00":
                         threading.Thread(target=self._weekend_satellite_scan_us, daemon=True).start()
                     if time.time() - _last_save_ts >= _save_interval:
                         self._save_state()

@@ -1447,3 +1447,59 @@ REASON: (핵심 근거 한 줄)"""
     def reset_chat(self):
         """채팅 기록 초기화 — GeminiApi 호환"""
         self._conversation_history = []
+
+    def ai_kr_market_context(self,
+                              rule_score: int,
+                              kospi_regime: str,
+                              ewy_change: float,
+                              nq_change: float,
+                              usd_krw_change: float,
+                              kospi_rsi: float) -> dict:
+        """
+        KR 장 시작 전 하이브리드 시장 판단.
+        규칙 기반 점수(rule_score)를 참고하되, AI가 맥락을 종합해 최종 판단.
+
+        Returns:
+            {
+              "regime":       "BULL"|"BEAR"|"NEUTRAL",
+              "bias":         +1(강세) / 0(중립) / -1(약세),
+              "entry_bonus":  int (-2 ~ +2),   # 진입 점수에 가산
+              "reason":       str              # 판단 근거 한 줄
+            }
+        """
+        prompt = f"""당신은 KR(한국) 주식시장 장 시작 전 분석 전문가입니다.
+아래 신호들을 종합해 오늘 KR 장 방향을 판단하세요.
+
+[규칙 기반 1차 점수]
+- KOSPI200 기술적 점수: {rule_score:+d}점 → 1차 국면: {kospi_regime}
+- KOSPI200 RSI(14): {kospi_rsi:.1f}
+
+[외부 선행 신호 (원본 데이터)]
+- EWY(코스피 프록시 ETF) 전일 등락: {ewy_change:+.2f}%
+- NQ 선물(나스닥100) 등락: {nq_change:+.2f}%
+- USD/KRW 환율 변화: {usd_krw_change:+.2f}% (양수=달러 강세=외국인 매도 압력)
+
+[판단 기준 예시 — 참고만 할 것, 맥락 우선]
+- EWY 하락 + NQ 하락 + 달러 강세 → BEAR 가중
+- NQ 강세 + 달러 안정 → EWY 부진 상쇄 가능
+- 신호들이 혼재할 때는 NEUTRAL 유지
+
+반드시 아래 JSON만 출력 (설명 없이):
+{{"regime":"BULL"|"BEAR"|"NEUTRAL","bias":1|0|-1,"entry_bonus":-2|-1|0|1|2,"reason":"한 줄 근거"}}"""
+
+        try:
+            raw = self.generate_content(prompt, temperature=0.2)
+            import json, re
+            m = re.search(r'\{[^}]+\}', raw, re.DOTALL)
+            if m:
+                result = json.loads(m.group())
+                # 검증
+                result['regime']      = result.get('regime', kospi_regime)
+                result['bias']        = int(result.get('bias', 0))
+                result['entry_bonus'] = max(-2, min(2, int(result.get('entry_bonus', 0))))
+                result['reason']      = str(result.get('reason', ''))[:100]
+                return result
+        except Exception as e:
+            import logging
+            logging.getLogger('lassi_bot').debug(f"[AI KR 시장판단] 파싱 오류: {e}")
+        return {"regime": kospi_regime, "bias": 0, "entry_bonus": 0, "reason": "AI 판단 실패 — 기술적 국면 유지"}
