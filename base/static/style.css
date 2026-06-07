@@ -240,6 +240,11 @@ header {
     align-items: center;
     gap: 14px;
     width: 100%;
+    height: 72px;
+}
+
+.header-bottom .mini-log {
+    height: 100%;
 }
 
 /* 코어 설정 버튼 */
