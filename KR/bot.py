@@ -457,10 +457,19 @@ class KRBotController:
                 # (중간에 예외 발생 시 shares=0으로 남아 재매수 폭주하는 버그 방지)
                 new_shares: dict = {}   # ticker → (shares, avg_price, current_price)
                 for real_stock in real_balance['stocks']:
-                    t = real_stock['ticker']
-                    q = int(real_stock['shares'])
-                    p = float(real_stock['purchase_price'])
-                    c_p = float(real_stock.get('current_price', p))
+                    t = real_stock.get('ticker', '')
+                    if not t:
+                        continue
+                    try:
+                        q   = int(real_stock['shares'])
+                        p   = float(real_stock['purchase_price'])
+                        c_p = float(real_stock.get('current_price', p))
+                    except (KeyError, ValueError, TypeError) as _e:
+                        logger.warning(f"[{self.mode_name}] KIS 잔고 파싱 오류 ({t}): {_e} — 건너뜀")
+                        continue
+                    if q < 0 or p < 0 or c_p < 0:
+                        logger.warning(f"[{self.mode_name}] KIS 비정상 값 ({t}) q={q} p={p} cp={c_p} — 건너뜀")
+                        continue
                     stock_name = real_stock.get('name', t)
                     new_shares[t] = (q, p, c_p, stock_name)
 
@@ -1214,8 +1223,8 @@ class KRBotController:
     def _save_state(self):
         try:
             state = {
-                "cores": [{"ticker": c.ticker, "name": c.name, "shares": int(c.shares), "floor_shares": int(c.floor_shares), "cash": float(c.cash), "initial_cash": float(c.initial_cash), "avg_price": float(c.avg_price), "dca_mode": bool(getattr(c, 'dca_mode', False)), "dca_amount": float(getattr(c, 'dca_amount', 0)), "dca_interval_hours": int(getattr(c, 'dca_interval_hours', 72)), "dca_dip_pct": float(getattr(c, 'dca_dip_pct', 3.0)), "last_dca_time": float(getattr(c, 'last_dca_time', 0.0)), "second_buy_price": float(getattr(c, 'second_buy_price', 0.0)), "second_buy_cash": float(getattr(c, 'second_buy_cash', 0.0)), "second_buy_done": bool(getattr(c, 'second_buy_done', False))} for c in self.core_positions],
-                "satellites": {ticker: {"name": pos.name, "shares": int(pos.shares), "cash": float(pos.cash), "initial_cash": float(pos.initial_cash), "avg_price": float(pos.avg_price), "partial_sold": bool(getattr(pos, 'partial_sold', False)), "partial_sold_2": bool(getattr(pos, 'partial_sold_2', False)), "second_buy_done": bool(getattr(pos, 'second_buy_done', False)), "pyramid_done": bool(getattr(pos, 'pyramid_done', False)), "second_buy_price": float(getattr(pos, 'second_buy_price', 0)), "second_buy_cash": float(getattr(pos, 'second_buy_cash', 0)), "max_price": float(getattr(pos, 'max_price', 0)), "stop_news_checked": bool(getattr(pos, 'stop_news_checked', False)), "swing_acc_count": int(getattr(pos, 'swing_acc_count', 0)), "overext_sell_count": int(getattr(pos, 'overext_sell_count', 0))} for ticker, pos in self.satellite_positions.items()},
+                "cores": [{"ticker": c.ticker, "name": c.name, "shares": int(c.shares), "floor_shares": int(c.floor_shares), "cash": float(c.cash), "initial_cash": float(c.initial_cash), "avg_price": float(c.avg_price), "dca_mode": bool(getattr(c, 'dca_mode', False)), "dca_amount": float(getattr(c, 'dca_amount', 0)), "dca_interval_hours": int(getattr(c, 'dca_interval_hours', 72)), "dca_dip_pct": float(getattr(c, 'dca_dip_pct', 3.0)), "last_dca_time": float(getattr(c, 'last_dca_time', 0.0)), "last_order_time": float(getattr(c, 'last_order_time', 0.0)), "second_buy_price": float(getattr(c, 'second_buy_price', 0.0)), "second_buy_cash": float(getattr(c, 'second_buy_cash', 0.0)), "second_buy_done": bool(getattr(c, 'second_buy_done', False))} for c in self.core_positions],
+                "satellites": {ticker: {"name": pos.name, "shares": int(pos.shares), "cash": float(pos.cash), "initial_cash": float(pos.initial_cash), "avg_price": float(pos.avg_price), "partial_sold": bool(getattr(pos, 'partial_sold', False)), "partial_sold_2": bool(getattr(pos, 'partial_sold_2', False)), "second_buy_done": bool(getattr(pos, 'second_buy_done', False)), "pyramid_done": bool(getattr(pos, 'pyramid_done', False)), "second_buy_price": float(getattr(pos, 'second_buy_price', 0)), "second_buy_cash": float(getattr(pos, 'second_buy_cash', 0)), "max_price": float(getattr(pos, 'max_price', 0)), "last_order_time": float(getattr(pos, 'last_order_time', 0.0)), "stop_news_checked": bool(getattr(pos, 'stop_news_checked', False)), "swing_acc_count": int(getattr(pos, 'swing_acc_count', 0)), "overext_sell_count": int(getattr(pos, 'overext_sell_count', 0))} for ticker, pos in self.satellite_positions.items()},
                 "satellite_info": self.satellite_info, "hot_sectors": self.hot_sectors, "num_satellites": self.num_satellites,
                 "last_screen_month": getattr(self, 'last_screen_month', None), "last_screen_date": self.last_screen_date.strftime('%Y-%m-%d') if getattr(self, 'last_screen_date', None) else None,
                 "last_core_rebalance_date": self.last_core_rebalance_date.strftime('%Y-%m-%d') if getattr(self, 'last_core_rebalance_date', None) else None,
@@ -1256,6 +1265,7 @@ class KRBotController:
                 pos.dca_interval_hours = int(uc.get("dca_hours") or c.get("dca_interval_hours", 72))
                 pos.dca_dip_pct        = float(uc.get("dca_dip_pct") or c.get("dca_dip_pct", 3.0))
                 pos.last_dca_time      = float(c.get("last_dca_time", 0.0))
+                pos.last_order_time    = float(c.get("last_order_time", 0.0))
                 pos.second_buy_price   = float(c.get("second_buy_price", 0.0))
                 pos.second_buy_cash    = float(c.get("second_buy_cash", 0.0))
                 pos.second_buy_done    = bool(c.get("second_buy_done", False))
@@ -1278,6 +1288,7 @@ class KRBotController:
                 pos.dca_interval_hours = int(c.get("dca_interval_hours", 72))
                 pos.dca_dip_pct        = float(c.get("dca_dip_pct", 3.0))
                 pos.last_dca_time      = float(c.get("last_dca_time", 0.0))
+                pos.last_order_time    = float(c.get("last_order_time", 0.0))
                 pos.second_buy_price   = float(c.get("second_buy_price", 0.0))
                 pos.second_buy_cash    = float(c.get("second_buy_cash", 0.0))
                 pos.second_buy_done    = bool(c.get("second_buy_done", False))
@@ -1309,6 +1320,7 @@ class KRBotController:
                 pos.second_buy_price = float(s.get("second_buy_price", 0))
                 pos.second_buy_cash  = float(s.get("second_buy_cash",  0))
                 pos.max_price          = float(s.get("max_price",          0))  # W-04: 트레일링 스탑 기준가 복원
+                pos.last_order_time    = float(s.get("last_order_time",   0.0))
                 pos.stop_news_checked  = bool(s.get("stop_news_checked",  False))
                 pos.swing_acc_count    = int(s.get("swing_acc_count",     0))
                 pos.overext_sell_count = int(s.get("overext_sell_count",  0))

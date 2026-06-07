@@ -389,7 +389,22 @@ class USBotController:
                         f"[US봇] KIS stocks 빈 응답 (total_usd=${total_usd:,.2f}) — 포지션 동기화 건너뜀"
                     )
                     return
-                kis_map = {s["ticker"]: s for s in stocks}
+                _valid_stocks = []
+                for _s in stocks:
+                    _t = _s.get("ticker", "")
+                    if not _t:
+                        continue
+                    try:
+                        _q = float(_s.get("shares", 0))
+                        _p = float(_s.get("avg_price", 0))
+                    except (ValueError, TypeError) as _ve:
+                        logger.warning(f"[US봇] KIS 잔고 파싱 오류 ({_t}): {_ve} — 건너뜀")
+                        continue
+                    if _q < 0 or _p < 0:
+                        logger.warning(f"[US봇] KIS 비정상 값 ({_t}) q={_q} p={_p} — 건너뜀")
+                        continue
+                    _valid_stocks.append(_s)
+                kis_map = {s["ticker"]: s for s in _valid_stocks}
                 for ticker, pos in self.satellite_positions.items():
                     if ticker in kis_map:
                         kis_shares = float(kis_map[ticker].get("shares", 0))
@@ -1468,9 +1483,11 @@ class USBotController:
                 with self.lock:
                     pos.ai_exit_decision = decision
                     pos.ai_exit_pending  = False
-            except Exception:
+            except Exception as _e:
+                logger.warning(f"[US봇] AI 익절 판단 실패 → SELL_PARTIAL 기본값 적용 ({ticker}): {_e}")
                 with self.lock:
-                    pos.ai_exit_pending = False
+                    pos.ai_exit_decision = "SELL_PARTIAL"   # AI 불가 시 안전하게 익절
+                    pos.ai_exit_pending  = False
 
         threading.Thread(target=_worker, daemon=True).start()
 
@@ -3139,6 +3156,7 @@ class USBotController:
                         "bull_pyramid_done":       getattr(p, 'bull_pyramid_done', False),
                         "stop_news_checked":       getattr(p, 'stop_news_checked', False),
                         "initial_shares_for_exit": p.initial_shares_for_exit,
+                        "last_order_time":         getattr(p, 'last_order_time', 0.0),
                     }
                     for t, p in self.core_positions.items()
                 },
@@ -3163,6 +3181,7 @@ class USBotController:
                         "stop_news_checked":       getattr(p, 'stop_news_checked', False),
                         "overext_sell_count":      getattr(p, 'overext_sell_count', 0),
                         "initial_shares_for_exit": p.initial_shares_for_exit,
+                        "last_order_time":         getattr(p, 'last_order_time', 0.0),
                     }
                     for t, p in self.satellite_positions.items()
                 },
@@ -3224,6 +3243,7 @@ class USBotController:
                 pos.bull_pyramid_done       = bool(s.get("bull_pyramid_done", False))
                 pos.stop_news_checked       = bool(s.get("stop_news_checked", False))
                 pos.initial_shares_for_exit = float(s.get("initial_shares_for_exit", 0.0))
+                pos.last_order_time         = float(s.get("last_order_time", 0.0))
                 self.core_positions[t] = pos
             for t, s in state.get("satellites", {}).items():
                 _sat_pos = USPosition(
@@ -3248,6 +3268,7 @@ class USBotController:
                 _sat_pos.stop_news_checked       = bool(s.get("stop_news_checked", False))
                 _sat_pos.overext_sell_count      = int(s.get("overext_sell_count",  0))
                 _sat_pos.initial_shares_for_exit = float(s.get("initial_shares_for_exit", 0.0))
+                _sat_pos.last_order_time         = float(s.get("last_order_time", 0.0))
                 self.satellite_positions[t] = _sat_pos
             # satellite_info에 선정된 종목 중 positions에 없는 것 → 빈 포지션 생성 (대시보드 표시용)
             _existing_us = set(self.satellite_positions.keys())
