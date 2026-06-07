@@ -393,7 +393,9 @@ def get_exchange_rate():
         ticker = yf.Ticker('USDKRW=X')
         hist = ticker.history(period='5d')
         if hist is None or hist.empty:
-            return jsonify({'error': '데이터 없음'})
+            if _fx_cache['data']:
+                return jsonify(_fx_cache['data'])
+            return jsonify({'rate': 1350.0, 'change': 0.0, 'change_pct': 0.0})
         hist = hist.dropna(subset=['Close'])
         curr = float(hist['Close'].iloc[-1])
         if len(hist) >= 2:
@@ -406,7 +408,9 @@ def get_exchange_rate():
         _fx_cache = {'data': data, 'ts': now_ts}
         return jsonify(data)
     except Exception as e:
-        return jsonify({'error': str(e)})
+        if _fx_cache['data']:
+            return jsonify(_fx_cache['data'])
+        return jsonify({'rate': 1350.0, 'change': 0.0, 'change_pct': 0.0})
 
 @app.route('/api/home/toggle', methods=['POST'])
 @login_required
@@ -449,7 +453,9 @@ def home_summary():
     usd_krw = 1350.0
     try:
         if _fx_cache['data']:
-            usd_krw = float(_fx_cache['data']['rate'])
+            _rate = float(_fx_cache['data']['rate'])
+            if _rate > 0:
+                usd_krw = _rate
     except Exception:
         pass
 

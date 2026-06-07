@@ -465,6 +465,13 @@ class KRBotController:
                     new_shares[t] = (q, p, c_p, stock_name)
 
                 # API 조회 성공 후에만 shares 초기화 → 교체 (원자적)
+                # stocks=빈목록인데 total_value > 0 → KIS API 오류로 판단, 초기화 건너뜀
+                _reported_val = float(real_balance.get('total_value', 0))
+                if not new_shares and _reported_val > 100_000:
+                    logger.warning(
+                        f"[{self.mode_name}] KIS stocks 빈 응답 (total_value={_reported_val:,.0f}원) — 포지션 초기화 건너뜀"
+                    )
+                    return
                 for core in self.core_positions: core.shares = 0
                 for sat in self.satellite_positions.values(): sat.shares = 0
 
@@ -847,7 +854,7 @@ class KRBotController:
                                     if self._sell_order(ticker, sell_shares, pos, name):
                                         with self.lock:
                                             price_now = self.live_prices.get(ticker) or avg_price
-                                            pos.shares = 0; pos.status = "악재공시 손절 🚨"
+                                            self._sat_exit_reset(pos); pos.status = "악재공시 손절 🚨"
                                             self.pnl_this_turn += _net_profit(price_now, avg_price, sell_shares)
                                         profit = _net_profit(price_now, avg_price, sell_shares)
                                         self._log_trade(ticker, name, 'SELL', price_now, "공시감지", f"악재공시 AI 손절: {report_nm}", profit=profit)  # [BUG-C2]
@@ -919,6 +926,21 @@ class KRBotController:
                     logger.warning(f"[{self.mode_name}] 실적 발표 체크 오류 ({ticker}): {e}")
 
     _MAX_DAILY_LOSS_PER_TICKER = -5_000   # 종목당 하루 최대 허용 손실 (원)
+
+    @staticmethod
+    def _sat_exit_reset(pos) -> None:
+        """위성 포지션 전량 청산 후 모든 거래 상태 초기화 — 재진입 시 이전 플래그 오염 방지."""
+        pos.shares             = 0
+        pos.max_price          = 0
+        pos.stop_news_checked  = False
+        pos.swing_acc_count    = 0
+        pos.overext_sell_count = 0
+        pos.second_buy_done    = False
+        pos.second_buy_price   = 0.0
+        pos.second_buy_cash    = 0.0
+        pos.pyramid_done       = False
+        pos.partial_sold       = False
+        pos.partial_sold_2     = False
 
     def _refresh_blacklist(self):
         """날짜가 바뀌면 당일 블랙리스트를 초기화합니다. [BUG-M1] 락 내부에서 호출 전제."""
@@ -1187,7 +1209,7 @@ class KRBotController:
         try:
             state = {
                 "cores": [{"ticker": c.ticker, "name": c.name, "shares": int(c.shares), "floor_shares": int(c.floor_shares), "cash": float(c.cash), "initial_cash": float(c.initial_cash), "avg_price": float(c.avg_price), "dca_mode": bool(getattr(c, 'dca_mode', False)), "dca_amount": float(getattr(c, 'dca_amount', 0)), "dca_interval_hours": int(getattr(c, 'dca_interval_hours', 72)), "dca_dip_pct": float(getattr(c, 'dca_dip_pct', 3.0)), "last_dca_time": float(getattr(c, 'last_dca_time', 0.0)), "second_buy_price": float(getattr(c, 'second_buy_price', 0.0)), "second_buy_cash": float(getattr(c, 'second_buy_cash', 0.0)), "second_buy_done": bool(getattr(c, 'second_buy_done', False))} for c in self.core_positions],
-                "satellites": {ticker: {"name": pos.name, "shares": int(pos.shares), "cash": float(pos.cash), "initial_cash": float(pos.initial_cash), "avg_price": float(pos.avg_price), "partial_sold": bool(getattr(pos, 'partial_sold', False)), "partial_sold_2": bool(getattr(pos, 'partial_sold_2', False)), "second_buy_done": bool(getattr(pos, 'second_buy_done', False)), "pyramid_done": bool(getattr(pos, 'pyramid_done', False)), "second_buy_price": float(getattr(pos, 'second_buy_price', 0)), "second_buy_cash": float(getattr(pos, 'second_buy_cash', 0)), "max_price": float(getattr(pos, 'max_price', 0))} for ticker, pos in self.satellite_positions.items()},
+                "satellites": {ticker: {"name": pos.name, "shares": int(pos.shares), "cash": float(pos.cash), "initial_cash": float(pos.initial_cash), "avg_price": float(pos.avg_price), "partial_sold": bool(getattr(pos, 'partial_sold', False)), "partial_sold_2": bool(getattr(pos, 'partial_sold_2', False)), "second_buy_done": bool(getattr(pos, 'second_buy_done', False)), "pyramid_done": bool(getattr(pos, 'pyramid_done', False)), "second_buy_price": float(getattr(pos, 'second_buy_price', 0)), "second_buy_cash": float(getattr(pos, 'second_buy_cash', 0)), "max_price": float(getattr(pos, 'max_price', 0)), "stop_news_checked": bool(getattr(pos, 'stop_news_checked', False)), "swing_acc_count": int(getattr(pos, 'swing_acc_count', 0)), "overext_sell_count": int(getattr(pos, 'overext_sell_count', 0))} for ticker, pos in self.satellite_positions.items()},
                 "satellite_info": self.satellite_info, "hot_sectors": self.hot_sectors, "num_satellites": self.num_satellites,
                 "last_screen_month": getattr(self, 'last_screen_month', None), "last_screen_date": self.last_screen_date.strftime('%Y-%m-%d') if getattr(self, 'last_screen_date', None) else None,
                 "last_core_rebalance_date": self.last_core_rebalance_date.strftime('%Y-%m-%d') if getattr(self, 'last_core_rebalance_date', None) else None,
@@ -1280,7 +1302,10 @@ class KRBotController:
                 pos.pyramid_done     = bool(s.get("pyramid_done",     False))
                 pos.second_buy_price = float(s.get("second_buy_price", 0))
                 pos.second_buy_cash  = float(s.get("second_buy_cash",  0))
-                pos.max_price        = float(s.get("max_price",        0))  # W-04: 트레일링 스탑 기준가 복원
+                pos.max_price          = float(s.get("max_price",          0))  # W-04: 트레일링 스탑 기준가 복원
+                pos.stop_news_checked  = bool(s.get("stop_news_checked",  False))
+                pos.swing_acc_count    = int(s.get("swing_acc_count",     0))
+                pos.overext_sell_count = int(s.get("overext_sell_count",  0))
                 self.satellite_positions[ticker] = pos
 
             # [BUG-FIX] satellite_info 비KR 티커 제거
@@ -1953,7 +1978,7 @@ class KRBotController:
                             if pos.shares > 0:
                                 self.kis.sell_market_order(ticker, pos.shares)
                                 with self.lock:
-                                    pos.shares = 0  # [C-NEW-03] 서킷브레이커 청산 후 잔여주수 초기화
+                                    self._sat_exit_reset(pos)   # 서킷브레이커 전량 청산
                                 self.add_log(f"🔥 {self.mode_name} 위성 {pos.name} 청산")
                         return
             except Exception as e:
@@ -2508,8 +2533,8 @@ class KRBotController:
                     if price >= p_avg * 1.05:
                         if self._sell_order(ticker, p_sh, pos, p_nm):
                             with self.lock:
-                                pos.last_order_time = time.time(); pos.max_price = 0; pos.status = "체결 대기 ⏳"
-                                pos.shares = 0
+                                pos.last_order_time = time.time(); pos.status = "체결 대기 ⏳"
+                                self._sat_exit_reset(pos)
                             profit = _net_profit(price, p_avg, p_sh)
                             self._log_trade(ticker, p_nm, 'SELL', price, st_nm, "BEAR +5% 하드 익절", profit=profit)
                             self._send_trade_telegram(self._fmt_trade_msg("🐻", "BEAR 하드 익절 +5%", ticker, p_nm, price, p_sh, profit=profit, strategy=st_nm, note="하락장 반등 조기 수확"))
@@ -2545,8 +2570,8 @@ class KRBotController:
                             self.add_log(f"🔄 [스윙 KR위성] {p_nm}({ticker}) SELL_REBUY — 트레일링 매도 후 재진입 모니터링")
                         if self._sell_order(ticker, p_sh, pos, p_nm):
                             with self.lock:
-                                pos.last_order_time = time.time(); pos.max_price = 0; pos.status = "체결 대기 ⏳"
-                                pos.shares = 0; pos.swing_acc_count = 0
+                                pos.last_order_time = time.time(); pos.status = "체결 대기 ⏳"
+                                self._sat_exit_reset(pos)
                             profit = _net_profit(price, p_avg, p_sh)
                             self._log_trade(ticker, p_nm, 'SELL', price, st_nm, f"{_trail_reason} [{_swing}]", profit=profit)
                             self._send_trade_telegram(self._fmt_trade_msg("🎯", "트레일링 익절", ticker, p_nm, price, p_sh, profit=profit, strategy=st_nm, note=f"ATR 트레일링 [{_swing}]"))
@@ -2614,10 +2639,7 @@ class KRBotController:
                         if self._sell_order(ticker, p_sh, pos, p_nm):
                             with self.lock:
                                 pos.last_order_time = time.time(); pos.status = "체결 대기 ⏳"
-                                pos.second_buy_done = True; pos.pyramid_done = True
-                                pos.partial_sold = False; pos.partial_sold_2 = False; pos.overext_sell_count = 0
-                                pos.second_buy_price = 0; pos.second_buy_cash = 0; pos.swing_acc_count = 0
-                                pos.shares = 0
+                                self._sat_exit_reset(pos)
                             profit = _net_profit(price, p_avg, p_sh)
                             self._log_trade(ticker, p_nm, 'SELL', price, st_nm, f"{_atr_reason_kr} [{_swing_kr}]", profit=profit)
                             self._send_trade_telegram(self._fmt_trade_msg("💥", "손절 체결", ticker, p_nm, price, p_sh, profit=profit, strategy=st_nm, note=f"ATR 하드 손절 [{_swing_kr}]"))
@@ -2651,7 +2673,7 @@ class KRBotController:
                         if _full_qty > 0 and self._sell_order(ticker, _full_qty, pos, p_nm):
                             with self.lock:
                                 pos.last_order_time = time.time(); pos.status = "과열 전량청산 🚨"
-                                pos.shares = 0; pos.partial_sold = False; pos.partial_sold_2 = False; pos.overext_sell_count = 0
+                                self._sat_exit_reset(pos)
                                 p_sh = 0   # 이후 로직에서 0주로 인식
                             profit = _net_profit(price, p_avg, _full_qty)
                             self._log_trade(ticker, p_nm, 'SELL', price, st_nm, f"과열 전량청산 [{_fe_reason}]", profit=profit)
@@ -2708,9 +2730,8 @@ class KRBotController:
                             if _q_all > 0 and self._sell_order(ticker, _q_all, pos, p_nm):
                                 with self.lock:
                                     pos.last_order_time = time.time()
-                                    pos.overext_sell_count = 3
                                     pos.status = "과열 선익절 3차 전량 ✅"
-                                    pos.shares = 0; pos.partial_sold = False; pos.partial_sold_2 = False
+                                    self._sat_exit_reset(pos)
                                     p_sh = 0
                                 profit = _net_profit(price, p_avg, _q_all)
                                 self._log_trade(ticker, p_nm, 'SELL', price, st_nm, f"과열청산 3차 전량 [{_fe_reason}]", profit=profit)
@@ -3091,10 +3112,8 @@ class KRBotController:
                                 with self.lock:
                                     pos.last_order_time          = time.time(); pos.status = "체결 대기 ⏳"
                                     pos.status_msg               = f"AI 승인: {ai_reason}"
-                                    pos.shares                   = 0
+                                    self._sat_exit_reset(pos)
                                     pos.initial_shares_for_exit  = 0
-                                    pos.third_buy_done           = False
-                                    pos.third_buy_cash           = 0
                                 profit = _net_profit(price, p_avg, p_sh)
                                 self._log_trade(ticker, p_nm, 'SELL', price, st_nm, f"AI 승인 ({ai_reason})", profit=profit)
                                 self._send_trade_telegram(self._fmt_trade_msg("📉", "AI 매도 승인", ticker, p_nm, price, p_sh, profit=profit, strategy=st_nm, ai_reason=ai_reason))
@@ -3114,10 +3133,8 @@ class KRBotController:
                         if self._sell_order(ticker, p_sh, pos, p_nm):
                             with self.lock:
                                 pos.last_order_time          = time.time(); pos.status = "체결 대기 ⏳"
-                                pos.shares                   = 0
+                                self._sat_exit_reset(pos)
                                 pos.initial_shares_for_exit  = 0
-                                pos.third_buy_done           = False
-                                pos.third_buy_cash           = 0
                             profit = _net_profit(price, p_avg, p_sh)
                             self._log_trade(ticker, p_nm, 'SELL', price, st_nm, "알고리즘 직통", profit=profit)
                             self._send_trade_telegram(self._fmt_trade_msg("📉", "알고리즘 매도", ticker, p_nm, price, p_sh, profit=profit, strategy=st_nm))

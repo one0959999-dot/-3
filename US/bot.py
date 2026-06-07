@@ -383,6 +383,12 @@ class USBotController:
                 self.last_asset_cost = total_usd
 
                 # ── 포지션 KIS 동기화 (핵심 버그 수정) ──────────────
+                # stocks=빈목록인데 total_usd > 0 → KIS API 오류, 포지션 초기화 건너뜀
+                if not stocks and total_usd > 10:
+                    logger.warning(
+                        f"[US봇] KIS stocks 빈 응답 (total_usd=${total_usd:,.2f}) — 포지션 동기화 건너뜀"
+                    )
+                    return
                 kis_map = {s["ticker"]: s for s in stocks}
                 for ticker, pos in self.satellite_positions.items():
                     if ticker in kis_map:
@@ -400,8 +406,22 @@ class USBotController:
                     elif pos.shares > 0:
                         # 내부적으로는 보유 중인데 KIS에 없음 → 청산된 것
                         logger.warning(f"[US봇] {ticker} KIS 미보유 → 포지션 초기화")
-                        pos.shares = 0.0
-                        pos.status = "청산됨 (KIS 동기화)"
+                        pos.shares                  = 0.0
+                        pos.floor_shares            = 0.0
+                        pos.second_buy_price        = 0.0
+                        pos.second_buy_cash         = 0.0
+                        pos.second_buy_done         = False
+                        pos.third_buy_price         = 0.0
+                        pos.third_buy_cash          = 0.0
+                        pos.third_buy_done          = False
+                        pos.bull_pyramid_done       = False
+                        pos.partial_sold            = False
+                        pos.partial_sold_2          = False
+                        pos.max_price_usd           = 0.0
+                        pos.stop_news_checked       = False
+                        pos.overext_sell_count      = 0
+                        pos.initial_shares_for_exit = 0.0
+                        pos.status                  = "청산됨 (KIS 동기화)"
 
                 # ── KR봇 동일: 계좌에 있는데 대시보드에 없는 종목 강제 편입 ──
                 tracked = set(self.satellite_positions.keys()) | set(self.core_positions.keys())
@@ -1833,15 +1853,18 @@ class USBotController:
                                 if pos and pos.shares > 1:
                                     # 이미 보유 중 + D-7 이내 → 30% 축소 (1회만)
                                     _earn_key = f"{ticker}_{_earn_date_str}"
-                                    if not getattr(self, '_earnings_notified_us', {}).get(_earn_key):
+                                    with self.lock:
+                                        if not hasattr(self, '_earnings_notified_us'):
+                                            self._earnings_notified_us = {}
+                                        _earn_already = self._earnings_notified_us.get(_earn_key, False)
+                                    if not _earn_already:
                                         _reduce = max(1.0, pos.shares * 0.30)
-                                        self._sell(ticker, pos.name, _reduce, self._price(ticker))
-                                        _pnl_e = _net_profit_usd(self._price(ticker), pos.avg_price_usd, _reduce)
+                                        _ep = self._price(ticker)
+                                        self._sell(ticker, pos.name, _reduce, _ep)
+                                        _pnl_e = _net_profit_usd(_ep, pos.avg_price_usd, _reduce)
                                         with self.lock:
                                             pos.shares = max(0.0, pos.shares - _reduce)
                                             pos.status = f"실적전 축소 📊 (D-{_days_to_earn})"
-                                            if not hasattr(self, '_earnings_notified_us'):
-                                                self._earnings_notified_us = {}
                                             self._earnings_notified_us[_earn_key] = True
                                         self._record_pnl(_pnl_e)
                                         self.add_log(f"📊 [{ticker}] 실적발표 D-{_days_to_earn} → 30% 축소 ({_earn_date_str}) | PnL ${_pnl_e:+.0f}")
@@ -2386,7 +2409,6 @@ class USBotController:
                         new_sh = pos.shares + acc_qty
                         pos.avg_price_usd = (pos.avg_price_usd * pos.shares + price * acc_qty) / new_sh
                         pos.shares        = new_sh
-                        pos.floor_shares  = max(pos.floor_shares, pos.shares * 0.5)
                         pos.last_order_time = time.time()
                         pos.status        = f"스윙 누적 {acc_cnt+1}차 📥"
                         self._swing_accumulate_cnt[ticker] = acc_cnt + 1
@@ -2412,6 +2434,12 @@ class USBotController:
             pos.third_buy_price         = 0.0
             pos.third_buy_cash          = 0.0
             pos.third_buy_done          = False
+            pos.bull_pyramid_done       = False
+            pos.partial_sold            = False
+            pos.partial_sold_2          = False
+            pos.max_price_usd           = 0.0
+            pos.stop_news_checked       = False
+            pos.overext_sell_count      = 0
             pos.initial_shares_for_exit = 0.0
             pos.status                  = f"청산: {reason}"
         self._record_pnl(pnl)
@@ -3095,6 +3123,8 @@ class USBotController:
                         "third_buy_price":         p.third_buy_price,
                         "third_buy_cash":          p.third_buy_cash,
                         "third_buy_done":          p.third_buy_done,
+                        "bull_pyramid_done":       getattr(p, 'bull_pyramid_done', False),
+                        "stop_news_checked":       getattr(p, 'stop_news_checked', False),
                         "initial_shares_for_exit": p.initial_shares_for_exit,
                     }
                     for t, p in self.core_positions.items()
@@ -3116,6 +3146,9 @@ class USBotController:
                         "third_buy_price":         p.third_buy_price,
                         "third_buy_cash":          p.third_buy_cash,
                         "third_buy_done":          p.third_buy_done,
+                        "bull_pyramid_done":       getattr(p, 'bull_pyramid_done', False),
+                        "stop_news_checked":       getattr(p, 'stop_news_checked', False),
+                        "overext_sell_count":      getattr(p, 'overext_sell_count', 0),
                         "initial_shares_for_exit": p.initial_shares_for_exit,
                     }
                     for t, p in self.satellite_positions.items()
@@ -3175,6 +3208,8 @@ class USBotController:
                 pos.third_buy_price         = float(s.get("third_buy_price",  0.0))
                 pos.third_buy_cash          = float(s.get("third_buy_cash",   0.0))
                 pos.third_buy_done          = bool(s.get("third_buy_done",    False))
+                pos.bull_pyramid_done       = bool(s.get("bull_pyramid_done", False))
+                pos.stop_news_checked       = bool(s.get("stop_news_checked", False))
                 pos.initial_shares_for_exit = float(s.get("initial_shares_for_exit", 0.0))
                 self.core_positions[t] = pos
             for t, s in state.get("satellites", {}).items():
@@ -3196,6 +3231,9 @@ class USBotController:
                 _sat_pos.third_buy_price         = float(s.get("third_buy_price",  0.0))
                 _sat_pos.third_buy_cash          = float(s.get("third_buy_cash",   0.0))
                 _sat_pos.third_buy_done          = bool(s.get("third_buy_done",    False))
+                _sat_pos.bull_pyramid_done       = bool(s.get("bull_pyramid_done", False))
+                _sat_pos.stop_news_checked       = bool(s.get("stop_news_checked", False))
+                _sat_pos.overext_sell_count      = int(s.get("overext_sell_count",  0))
                 _sat_pos.initial_shares_for_exit = float(s.get("initial_shares_for_exit", 0.0))
                 self.satellite_positions[t] = _sat_pos
             # satellite_info에 선정된 종목 중 positions에 없는 것 → 빈 포지션 생성 (대시보드 표시용)
