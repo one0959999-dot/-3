@@ -237,9 +237,10 @@ header {
 /* 2행: 로그 + 컨트롤 */
 .header-bottom {
     display: flex;
-    align-items: center;
+    align-items: stretch;
     gap: 14px;
     width: 100%;
+    height: 80px;
 }
 
 /* 코어 설정 버튼 */
@@ -263,11 +264,12 @@ header {
     color: #e2e8f0;
 }
 
-/* 코어설정(위) + sat-controls+toggle(아래) */
+/* sat-controls + toggle */
 .header-right {
     display: flex;
     flex-direction: column;
     align-items: stretch;
+    justify-content: center;
     gap: 6px;
     flex-shrink: 0;
 }
@@ -282,7 +284,7 @@ header {
 .mini-log {
     flex: 1;
     min-width: 180px;
-    height: 72px;
+    height: auto;
     overflow-y: auto;
     padding: 0 14px;
     font-size: 0.78rem;
