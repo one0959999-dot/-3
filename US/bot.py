@@ -205,6 +205,7 @@ class USBotController:
         # ── 주말 사전 분석 플랜 ────────────────────────────────────────
         self._monday_swap_plan: dict = {}   # {ticker_to_sell: {new_ticker, new_name, reason}}
         self._weekend_scan_done: str = ""   # 마지막 주말 스캔 날짜 (중복 방지)
+        self._ai_market_entry_bonus = 0     # AI 시장판단 진입 보너스 (-2~+2)
 
         # ── 현금 / 원금 추적 ──────────────────────────────────────────
         self.cash_usd        = 0.0
@@ -1777,6 +1778,12 @@ class USBotController:
             else:
                 entry_score, entry_reasons = 0, []
 
+            # AI 시장판단 보너스 반영 (NQ/ES·VIX·섹터 종합 판단)
+            _ai_bonus = getattr(self, '_ai_market_entry_bonus', 0)
+            if _ai_bonus != 0:
+                entry_score += _ai_bonus
+                entry_reasons.append(f"AI시장판단 {_ai_bonus:+d}pt")
+
             entry_threshold = self.entry_thresholds.get(f'sat_{regime}', self.entry_thresholds.get(regime, get_entry_threshold(regime, 'satellite')))
 
             # ── 진입 점수 게이트 (RSI 필수 아님 — 10개 지표 합산으로 판단) ──────────
@@ -2823,6 +2830,58 @@ class USBotController:
                         + f"━━━━━━━━━━━━━━━━━━━━\n"
                         f"📈 {diag}"
                     )
+                # ── AI 하이브리드 판단 ────────────────────────────────
+                if self.claude:
+                    try:
+                        # VIX 수집
+                        vix_val = 20.0
+                        try:
+                            df_vix = yf.download("^VIX", period="3d", interval="1d",
+                                                  progress=False, auto_adjust=True)
+                            if isinstance(df_vix.columns, pd.MultiIndex):
+                                df_vix.columns = df_vix.columns.get_level_values(0)
+                            if not df_vix.empty:
+                                vix_val = float(df_vix["Close"].iloc[-1])
+                        except Exception:
+                            pass
+                        # NQ/ES 변화율
+                        nq_chg = es_chg = 0.0
+                        for sym, ref in [("NQ=F", "nq_chg"), ("ES=F", "es_chg")]:
+                            try:
+                                df_f = yf.download(sym, period="3d", interval="1d",
+                                                   progress=False, auto_adjust=True)
+                                if isinstance(df_f.columns, pd.MultiIndex):
+                                    df_f.columns = df_f.columns.get_level_values(0)
+                                if not df_f.empty and len(df_f) >= 2:
+                                    c0 = float(df_f["Close"].iloc[-2])
+                                    c1 = float(df_f["Close"].iloc[-1])
+                                    val = (c1/c0 - 1) * 100
+                                    if ref == "nq_chg": nq_chg = val
+                                    else: es_chg = val
+                            except Exception:
+                                pass
+
+                        ai_result = self.claude.ai_us_market_context(
+                            rule_score  = score,
+                            spy_regime  = regime,
+                            nq_change   = nq_chg,
+                            es_change   = es_chg,
+                            vix         = vix_val,
+                            spy_rsi     = rsi,
+                            hot_sectors = self.hot_sectors[:5],
+                        )
+                        regime = ai_result['regime']
+                        self._ai_market_entry_bonus = ai_result.get('entry_bonus', 0)
+                        self.add_log(
+                            f"🤖 [AI US시장] {base}(규칙) → {regime}(AI) "
+                            f"| NQ{nq_chg:+.1f}% ES{es_chg:+.1f}% VIX{vix_val:.1f} "
+                            f"| 진입보너스 {ai_result['entry_bonus']:+d}pt | {ai_result['reason']}"
+                        )
+                    except Exception as ai_err:
+                        logger.debug(f"[US봇] AI 시장판단 실패: {ai_err}")
+                else:
+                    self._ai_market_entry_bonus = 0
+
                 self.market_regime = regime
         except Exception as e:
             logger.debug(f"[US봇] 시장 국면 판단 실패: {e}")

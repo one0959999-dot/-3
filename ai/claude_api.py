@@ -1503,3 +1503,58 @@ REASON: (핵심 근거 한 줄)"""
             import logging
             logging.getLogger('lassi_bot').debug(f"[AI KR 시장판단] 파싱 오류: {e}")
         return {"regime": kospi_regime, "bias": 0, "entry_bonus": 0, "reason": "AI 판단 실패 — 기술적 국면 유지"}
+
+    def ai_us_market_context(self,
+                              rule_score: int,
+                              spy_regime: str,
+                              nq_change: float,
+                              es_change: float,
+                              vix: float,
+                              spy_rsi: float,
+                              hot_sectors: list) -> dict:
+        """
+        US 장 시작 전 하이브리드 시장 판단.
+        SPY 규칙 점수 + NQ/ES선물 + VIX + 섹터 흐름 → AI 최종 판단.
+
+        Returns:
+            {"regime": str, "bias": int, "entry_bonus": int, "reason": str}
+        """
+        sectors_str = ", ".join(hot_sectors[:5]) if hot_sectors else "없음"
+        prompt = f"""당신은 미국 주식시장 장 시작 전 분석 전문가입니다.
+아래 신호들을 종합해 오늘 US 장 방향을 판단하세요.
+
+[SPY 규칙 기반 1차 점수]
+- 기술적 점수: {rule_score:+d}점 → 1차 국면: {spy_regime}
+- SPY RSI(14): {spy_rsi:.1f}
+
+[선행 신호 (원본 데이터)]
+- NQ선물(나스닥100) 등락: {nq_change:+.2f}%
+- ES선물(S&P500) 등락: {es_change:+.2f}%
+- VIX(공포지수): {vix:.1f} (20↑=불안, 30↑=공포, 15↓=안정)
+
+[섹터 동향]
+- 강세 섹터: {sectors_str}
+
+[판단 기준 — 참고만, 맥락 우선]
+- NQ/ES 동반 하락 + VIX 급등 → BEAR 강화
+- NQ 강세 + VIX 안정 + 기술섹터 강세 → BULL 가능
+- 신호 혼재 시 NEUTRAL 유지
+
+반드시 아래 JSON만 출력 (설명 없이):
+{{"regime":"BULL"|"BEAR"|"NEUTRAL","bias":1|0|-1,"entry_bonus":-2|-1|0|1|2,"reason":"한 줄 근거"}}"""
+
+        try:
+            raw = self.generate_content(prompt, temperature=0.2)
+            import json, re
+            m = re.search(r'\{[^}]+\}', raw, re.DOTALL)
+            if m:
+                result = json.loads(m.group())
+                result['regime']      = result.get('regime', spy_regime)
+                result['bias']        = int(result.get('bias', 0))
+                result['entry_bonus'] = max(-2, min(2, int(result.get('entry_bonus', 0))))
+                result['reason']      = str(result.get('reason', ''))[:100]
+                return result
+        except Exception as e:
+            import logging
+            logging.getLogger('lassi_bot').debug(f"[AI US 시장판단] 파싱 오류: {e}")
+        return {"regime": spy_regime, "bias": 0, "entry_bonus": 0, "reason": "AI 판단 실패 — SPY 기술적 국면 유지"}
