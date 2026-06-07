@@ -498,13 +498,12 @@ document.addEventListener('DOMContentLoaded', () => {
 
 
         if (data.logs && data.logs.length > 0) {
-            const recent = data.logs.slice(-6);
+            const recent = data.logs.slice(-3);
             let logHtmlBuffer = '';
             recent.forEach(log => {
                 logHtmlBuffer += `<div class="mini-log-entry"><span class="log-time">[${log.time}]</span>${log.message}</div>`;
             });
             miniLog.innerHTML = logHtmlBuffer;
-            miniLog.scrollTop = miniLog.scrollHeight;
         }
     }
 
