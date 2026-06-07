@@ -237,10 +237,9 @@ header {
 /* 2행: 로그 + 컨트롤 */
 .header-bottom {
     display: flex;
-    align-items: stretch;
+    align-items: center;
     gap: 14px;
     width: 100%;
-    height: 80px;
 }
 
 /* 코어 설정 버튼 */
@@ -267,24 +266,20 @@ header {
 /* sat-controls + toggle */
 .header-right {
     display: flex;
-    flex-direction: column;
-    align-items: stretch;
-    justify-content: center;
-    gap: 6px;
+    align-items: center;
+    gap: 14px;
     flex-shrink: 0;
 }
 
 .header-right-controls {
-    display: flex;
-    align-items: center;
-    gap: 14px;
+    display: contents;
 }
 
 /* ─── Mini Log Panel ─── */
 .mini-log {
     flex: 1;
     min-width: 180px;
-    height: auto;
+    height: 72px;
     overflow-y: auto;
     padding: 0 14px;
     font-size: 0.78rem;
