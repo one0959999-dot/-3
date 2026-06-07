@@ -202,6 +202,9 @@ class USBotController:
         self.hot_sectors:         list = []
         self.daily_pnl:           dict = {}
         self.daily_report              = None
+        # ── 주말 사전 분석 플랜 ────────────────────────────────────────
+        self._monday_swap_plan: dict = {}   # {ticker_to_sell: {new_ticker, new_name, reason}}
+        self._weekend_scan_done: str = ""   # 마지막 주말 스캔 날짜 (중복 방지)
 
         # ── 현금 / 원금 추적 ──────────────────────────────────────────
         self.cash_usd        = 0.0
@@ -1439,6 +1442,114 @@ class USBotController:
 
     _GROWTH_KEEP_PCT = 3.0   # +3% 이상 = 성장세 양호 → 교체 없이 강제 유지
 
+    # ── 주말 사전 분석 ────────────────────────────────────────────────────
+    def _weekend_satellite_scan_us(self):
+        """주말(토·일) 10:00 ET — 위성 후보 분석 후 월요일 교체 계획 수립."""
+        now = _now_et()
+        today_str = now.strftime('%Y-%m-%d')
+        if self._weekend_scan_done == today_str:
+            return
+        if now.weekday() < 5:
+            return  # 평일 실행 안 함
+
+        self.add_log("📅 [US 주말 사전분석] 위성 후보 스캔 시작...")
+        try:
+            from US.screener import scan_us_satellites
+            with self.lock:
+                current_sat = {t: p for t, p in self.satellite_positions.items() if p.shares_decimal > 0}
+            current_tickers = set(current_sat.keys())
+
+            # 교체 후보 파악: 수익률 낮은 보유 종목
+            swap_plan = {}
+            for ticker, pos in current_sat.items():
+                price = self._price(ticker)
+                if price > 0 and pos.avg_price_usd > 0:
+                    pnl_pct = (price / pos.avg_price_usd - 1) * 100
+                    if pnl_pct < -2.0:  # -2% 이하면 교체 후보
+                        swap_plan[ticker] = {"pnl_pct": pnl_pct, "name": pos.name}
+
+            if not swap_plan:
+                self.add_log("📅 [US 주말분석] 교체 대상 없음 — 현 포지션 유지")
+                self._weekend_scan_done = today_str
+                self._save_state()
+                return
+
+            # 신규 후보 스캔
+            candidates = scan_us_satellites(
+                kis=self.kis_overseas, n=len(swap_plan) * 3,
+                exclude=current_tickers
+            )
+
+            new_plan = {}
+            cand_iter = iter(candidates)
+            for old_ticker, old_info in swap_plan.items():
+                try:
+                    cand = next(cand_iter)
+                    new_plan[old_ticker] = {
+                        "new_ticker": cand["ticker"],
+                        "new_name":   cand.get("name", cand["ticker"]),
+                        "reason":     f"수익률 {old_info['pnl_pct']:+.1f}% 부진"
+                    }
+                    self.add_log(
+                        f"📋 [US 주말분석] {old_info['name']}({old_ticker}) → "
+                        f"{cand.get('name',cand['ticker'])}({cand['ticker']}) 교체 예정"
+                    )
+                except StopIteration:
+                    break
+
+            self._monday_swap_plan  = new_plan
+            self._weekend_scan_done = today_str
+            self._save_state()
+
+            if new_plan:
+                self._tg(
+                    f"📅 <b>US 주말 사전분석 완료</b>  {self.alert_icon}\n"
+                    f"━━━━━━━━━━━━━━━━━━━━\n"
+                    + "\n".join([f"· {swap_plan[o]['name']}({o}) → {v['new_name']}({v['new_ticker']})" for o, v in new_plan.items()])
+                    + f"\n⏰ 월요일 9:30 ET 장 시작 시 자동 실행"
+                )
+        except Exception as e:
+            logger.error(f"[US봇] 주말 사전분석 오류: {e}", exc_info=True)
+
+    def _execute_monday_swap_us(self):
+        """월요일 9:30 ET 장 시작 — 주말 교체 계획 실행."""
+        if not self._monday_swap_plan:
+            return
+        now = _now_et()
+        if now.weekday() != 0:
+            return
+
+        self.add_log(f"🚀 [US 월요일 교체] {len(self._monday_swap_plan)}건 실행")
+        executed = []
+        for old_ticker, plan in list(self._monday_swap_plan.items()):
+            try:
+                with self.lock:
+                    pos = self.satellite_positions.get(old_ticker)
+                if not pos or pos.shares_decimal <= 0:
+                    executed.append(old_ticker)
+                    continue
+                price = self._price(old_ticker)
+                if not price:
+                    continue
+                qty = pos.shares_decimal
+                if self._sell_order(old_ticker, qty, reason="주말계획교체"):
+                    self.add_log(f"📤 [US] {pos.name}({old_ticker}) 매도 완료")
+                    with self.lock:
+                        self.satellite_info = [s for s in self.satellite_info if s.get('ticker') != old_ticker]
+                        self.satellite_info.insert(0, {
+                            "ticker": plan['new_ticker'], "name": plan['new_name'],
+                            "sector": "-", "return_pct": 0
+                        })
+                    executed.append(old_ticker)
+            except Exception as e:
+                logger.error(f"[US봇] 월요일 교체 실행 오류({old_ticker}): {e}")
+
+        for t in executed:
+            self._monday_swap_plan.pop(t, None)
+        if executed:
+            self._save_state()
+            self.add_log(f"✅ [US 월요일 교체] {len(executed)}건 완료")
+
     def _screen_satellites(self):
         today = _now_et().strftime("%Y-%m-%d")
         if self.last_screen_date == today:
@@ -2411,6 +2522,9 @@ class USBotController:
                         self._screen_satellites()
                     except Exception as _scr_err:
                         logger.error(f"[US봇] 장외 스크리닝 오류: {_scr_err}", exc_info=True)
+                    # 주말 10:00 ET — 사전 분석
+                    if now.weekday() >= 5 and cur_time_str == "10:00":
+                        threading.Thread(target=self._weekend_satellite_scan_us, daemon=True).start()
                     if time.time() - _last_save_ts >= _save_interval:
                         self._save_state()
                         _last_save_ts = time.time()
@@ -2439,6 +2553,10 @@ class USBotController:
                         self._manage_satellites(buy_allowed=_buy_allowed_ext)
                     time.sleep(60)
                     continue
+
+                # ── 월요일 9:30 ET — 주말 교체 계획 실행 ────────────────
+                if now.weekday() == 0 and cur_time_str == "09:30" and self._monday_swap_plan:
+                    threading.Thread(target=self._execute_monday_swap_us, daemon=True).start()
 
                 # ── 가격 갱신 ─────────────────────────────────────────
                 self._refresh_prices()
@@ -2889,6 +3007,8 @@ class USBotController:
                 # 당일 AI 거절 블랙리스트 — 재시작 후에도 유지
                 "bl_date":               self._bl_date,
                 "satellite_rejects":     dict(self._satellite_rejects),
+                "monday_swap_plan":      self._monday_swap_plan,
+                "weekend_scan_done":     self._weekend_scan_done,
                 "cores": {
                     t: {
                         "name":             p.name,
@@ -2959,6 +3079,11 @@ class USBotController:
             if saved_bl_date == today_str_us:
                 self._bl_date           = saved_bl_date
                 self._satellite_rejects = state.get("satellite_rejects", {})
+            # 주말 교체 계획 복원
+            self._monday_swap_plan  = state.get("monday_swap_plan", {})
+            self._weekend_scan_done = state.get("weekend_scan_done", "")
+            if self._monday_swap_plan:
+                self.add_log(f"📅 [US] 주말 교체 계획 복원: {len(self._monday_swap_plan)}건 대기")
                 n_rej = len(self._satellite_rejects)
                 if n_rej:
                     self.add_log(f"🚫 [US] 당일 AI 거절 블랙리스트 복원: {n_rej}개 종목 재심사 제외")
