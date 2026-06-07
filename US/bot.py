@@ -3396,6 +3396,14 @@ class USBotController:
             # ── 방어 자산 상태 ─────────────────────────────────────────
             is_bear = (self.market_regime == "BEAR")
             defensive_list = []
+            # 방어자산 가격 캐시 미스 시 KIS API fallback
+            _def_miss = [a["ticker"] for a in US_DEFENSIVE_ASSETS if not self._price_cache.get(a["ticker"])]
+            if _def_miss and self.kis_overseas:
+                try:
+                    fetched = self.kis_overseas.get_prices_batch(_def_miss)
+                    self._price_cache.update(fetched)
+                except Exception:
+                    pass
             for asset in US_DEFENSIVE_ASSETS:
                 t        = asset["ticker"]
                 sp_usd   = self._price_cache.get(t, 0.0)

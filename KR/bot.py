@@ -3928,6 +3928,15 @@ class KRBotController:
             for asset in DEFENSIVE_ASSETS:
                 d_ticker = asset['ticker']
                 d_price  = self.live_prices.get(d_ticker, 0)
+                # WebSocket 미연결 시 KIS API fallback
+                if not d_price and self.kis:
+                    try:
+                        d_price = self.kis.get_current_price(d_ticker) or 0
+                        if d_price:
+                            with self.lock:
+                                self.live_prices[d_ticker] = d_price
+                    except Exception:
+                        pass
                 d_shares = bal_stocks.get(d_ticker, 0)
                 # 전일 종가 대비 등락률 — ohlcv_cache에서 조회 (API 추가 호출 없음)
                 d_change_pct = 0.0
