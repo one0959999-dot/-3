@@ -245,6 +245,13 @@ header {
 
 .header-bottom .mini-log {
     height: 100%;
+    align-self: stretch;
+}
+
+.header-bottom .sat-controls,
+.header-bottom .btn-toggle {
+    align-self: center;
+    flex-shrink: 0;
 }
 
 /* 코어 설정 버튼 */
