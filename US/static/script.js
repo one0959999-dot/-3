@@ -922,34 +922,25 @@ window.saveCoreStocks = async function () {
 }
 
 window.saveAccountSettings = async function () {
-    const isMock = 1;
     const coreJsonStr = JSON.stringify(_coreStockList);
-
     const data = {
-        real_app_key: document.getElementById('realAppKey').value,
-        real_app_secret: document.getElementById('realAppSecret').value,
-        real_account_no: document.getElementById('realAccountNo').value,
-        us_app_key: document.getElementById('usAppKey').value,
-        us_app_secret: document.getElementById('usAppSecret').value,
-        us_account_no: document.getElementById('usAccountNo').value,
-
-        telegram_token: document.getElementById('teleToken').value,
-        telegram_chat_id: document.getElementById('teleChatId').value,
-        claude_api_key: document.getElementById('claudeApiKey').value,
+        us_app_key:      (document.getElementById('usAppKey')      || {}).value || '',
+        us_app_secret:   (document.getElementById('usAppSecret')   || {}).value || '',
+        us_account_no:   (document.getElementById('usAccountNo')   || {}).value || '',
+        telegram_token:  (document.getElementById('teleToken')     || {}).value || '',
+        telegram_chat_id:(document.getElementById('teleChatId')    || {}).value || '',
+        claude_api_key:  (document.getElementById('claudeApiKey')  || {}).value || '',
         us_core_stocks: coreJsonStr,
-        is_mock: isMock,
-        // initial_cash 제거: KR/US 모두 실계좌 잔고 자동 감지 (수동 입력값으로 덮어쓰기 금지)
     };
     try {
-        const res = await fetch('/api/settings/keys', {
+        const res = await fetch('/api/settings/us_keys', {
             method: 'POST', headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(data)
         });
         const result = await res.json();
         if (result.status === 'success') {
             closeSettingsModal();
-            showToast('계좌 설정이 저장되었습니다. 페이지를 새로고침합니다...', 'success');
-            // 저장 후 페이지 새로고침: Claude API 키 등 서버 렌더링 요소 반영
+            showToast('계좌 설정이 저장되었습니다.', 'success');
             setTimeout(() => window.location.reload(), 1200);
         } else { showToast('저장 실패', 'error'); }
     } catch (e) { showToast('서버 통신 오류', 'error'); }
