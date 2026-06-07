@@ -329,6 +329,10 @@ class KRBotController:
                                 self.ws_client.unsubscribe(t2)
             except Exception as e:
                 logger.error(f"[{self.mode_name}] _perpetual_sync_loop 오류: {e}", exc_info=True)
+            # 5분마다 상태 자동 저장 (systemctl restart 시 최근 상태 보존)
+            if int(time.time()) % 300 < 30:
+                try: self._save_state()
+                except Exception: pass
             time.sleep(30)
 
     def _sync_internal_balances(self, real_balance):
@@ -3593,6 +3597,7 @@ class KRBotController:
     def stop(self):
         if self.is_running:
             self.is_running = False
+            self._save_state()  # 정지 시 상태 저장 — 재시작 후 복구 보장
             update_bot_status(self.user_id, False, is_mock=self._is_mock)
             if self.thread: self.thread.join(timeout=3)
 
