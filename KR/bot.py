@@ -674,6 +674,9 @@ class KRBotController:
         limit_price = -1 → 강제 시장가"""
         if not self.kis:
             return False
+        if self.internal_cash is None:
+            self.add_log(f"⏳ [{name}] 매수 보류 — KIS 잔고 초기화 대기 중")
+            return False
         if limit_price == 0:
             # 코어·위성: 현재가 +0.3% 지정가 → 빠른 체결 + 슬리피지 제한
             cp = self.live_prices.get(ticker, 0)
@@ -1379,6 +1382,7 @@ class KRBotController:
                 except Exception as ai_err:
                     logger.debug(f"[{self.mode_name}] AI 시장판단 실패: {ai_err}")
                     self.market_regime = detail['regime']
+                    self._ai_market_entry_bonus = 0
             else:
                 self.market_regime = detail['regime']
                 self._ai_market_entry_bonus = 0
@@ -1394,9 +1398,29 @@ class KRBotController:
                 self.add_log(f"⚠️ [{self.mode_name}] {detail['downgrade_reason']} | {diag_line}")
 
             if self.market_regime != prev:
+                # BEAR 전환 시 보유 위성 30% 즉시 손절 (방치 방지)
+                if self.market_regime == "BEAR" and self.kis:
+                    with self.lock:
+                        bear_sat_items = [(t, p) for t, p in self.satellite_positions.items() if p.shares > 0]
+                    for _bt, _bp in bear_sat_items:
+                        try:
+                            _bprice = self.live_prices.get(_bt) or self.kis.get_current_price(_bt) or 0
+                            _bqty   = max(1, int(_bp.shares * 0.30))
+                            if _bprice > 0 and _bqty > 0 and self._sell_order(_bt, _bqty, _bp, _bp.name):
+                                with self.lock:
+                                    _bp.shares = max(0, _bp.shares - _bqty)
+                                    _bp.status = "BEAR전환 30%손절 🐻"
+                                _profit = _net_profit(_bprice, _bp.avg_price, _bqty)
+                                with self.lock:
+                                    self.pnl_this_turn += _profit
+                                self._record_daily_pnl(_profit)
+                                self.add_log(f"🐻 [BEAR전환] {_bp.name}({_bt}) 30% 손절 {_bqty}주 @ {_bprice:,.0f}원")
+                        except Exception as _be:
+                            logger.warning(f"[BEAR전환 손절] {_bt} 오류: {_be}")
+
                 icons = {"BULL": "🐂", "BEAR": "🐻", "NEUTRAL": "😐"}
                 log_regime_desc = {
-                    'BEAR':    '📉 위성 신규 매수 중단, 인버스 ETF 진입',
+                    'BEAR':    '📉 위성 30% 즉시 손절, 신규 매수 중단, 인버스 ETF 진입',
                     'BULL':    '📈 BULL 매매 모드 — 불타기·눌림목 전략 활성화',
                     'NEUTRAL': '📊 혼조 — 기존 전략 유지',
                 }

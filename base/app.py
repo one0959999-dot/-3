@@ -490,8 +490,10 @@ def home_summary():
             total_krw = float(st.get('us_total_asset', 0))
             init_cash = float(st.get('initial_cash', 1))
             pnl_pct   = float(st.get('us_pnl_rt', 0))
-            # US daily_pnl은 USD 단위 → KRW 환산
-            pnl_today = float(us_bot.daily_pnl.get(today_str, 0.0)) * usd_krw
+            # US daily_pnl은 ET 날짜 기준 USD 단위 → KRW 환산
+            from zoneinfo import ZoneInfo as _ZI
+            _et_today = datetime.now(_ZI("America/New_York")).strftime('%Y-%m-%d')
+            pnl_today = float(us_bot.daily_pnl.get(_et_today, 0.0)) * usd_krw
             positions = sum(1 for p in st.get('satellites', []) if int(p.get('shares', 0)) > 0)
             return {"market": "US", "running": bool(us_bot.is_running),
                     "total_krw": round(total_krw), "pnl_today": round(pnl_today),

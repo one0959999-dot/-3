@@ -647,6 +647,9 @@ class USBotController:
         if not self.kis_overseas:
             self.add_log(f"⚠️ BUY 실패: KIS API 미설정 ({ticker})")
             return 0
+        if self.cash_usd is None:
+            self.add_log(f"⏳ [{name}] 매수 보류 — KIS 잔고 초기화 대기 중")
+            return 0
         price = price or self._price(ticker)
         if price <= 0 or budget_usd <= 0:
             return 0
@@ -1458,7 +1461,7 @@ class USBotController:
         try:
             from US.screener import scan_us_satellites
             with self.lock:
-                current_sat = {t: p for t, p in self.satellite_positions.items() if p.shares_decimal > 0}
+                current_sat = {t: p for t, p in self.satellite_positions.items() if p.shares > 0}
             current_tickers = set(current_sat.keys())
 
             # 교체 후보 파악: 수익률 낮은 보유 종목
@@ -1527,13 +1530,13 @@ class USBotController:
             try:
                 with self.lock:
                     pos = self.satellite_positions.get(old_ticker)
-                if not pos or pos.shares_decimal <= 0:
+                if not pos or pos.shares <= 0:
                     executed.append(old_ticker)
                     continue
                 price = self._price(old_ticker)
                 if not price:
                     continue
-                qty = pos.shares_decimal
+                qty = pos.shares
                 if self._sell_order(old_ticker, qty, reason="주말계획교체"):
                     self.add_log(f"📤 [US] {pos.name}({old_ticker}) 매도 완료")
                     with self.lock:
@@ -3202,6 +3205,21 @@ class USBotController:
 
             # 중앙 재구성: 복원된 info↔positions 완전 동기화
             self._rebuild_positions()
+            # 재시작 후 KIS 실계좌 잔고로 shares 검증 (state.json과 불일치 방지)
+            if self.kis:
+                try:
+                    _bal = self.kis.get_account_balance()
+                    if _bal and _bal.get('stocks'):
+                        _ks = {s['ticker']: float(s.get('shares', 0)) for s in _bal['stocks'] if s.get('ticker')}
+                        with self.lock:
+                            for _pos in list(self.core_positions.values()) + list(self.satellite_positions.values()):
+                                if _pos.ticker in _ks:
+                                    _pos.shares = _ks[_pos.ticker]
+                                elif _pos.shares > 0:
+                                    _pos.shares = 0.0  # KIS에 없는 포지션 초기화
+                        self.add_log("✅ [US복원] KIS 실계좌 잔고로 shares 검증 완료")
+                except Exception as _ve:
+                    logger.warning(f"[US복원] KIS 잔고 검증 실패: {_ve}")
             self.add_log("📂 이전 상태 복원 완료")
         except Exception as e:
             logger.warning(f"[US봇] 상태 복원 실패: {e}")
