@@ -254,6 +254,10 @@ header {
     flex-shrink: 0;
 }
 
+.header-bottom .sat-controls {
+    margin-bottom: 0;
+}
+
 /* 코어 설정 버튼 */
 .core-settings-btn {
     display: flex;
