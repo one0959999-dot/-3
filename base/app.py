@@ -211,12 +211,12 @@ def _dashboard_response(template, is_mock):
     resp.headers['Pragma'] = 'no-cache'
     return resp
 
-@app.route('/kr/dashboard')
+@kr_bp.route('/kr/dashboard')
 @login_required
 def kr_dashboard():
     return _dashboard_response('KR/index.html', is_mock=False)
 
-@app.route('/us/dashboard')
+@us_bp.route('/us/dashboard')
 @login_required
 def us_dashboard():
     return _dashboard_response('US/index.html', is_mock=True)
@@ -226,7 +226,7 @@ def us_dashboard():
 def index():
     from flask import redirect, url_for
     is_us = bool(current_user.data.get('is_mock', 0))
-    return redirect(url_for('us_dashboard' if is_us else 'kr_dashboard'))
+    return redirect(url_for('us.us_dashboard' if is_us else 'kr.kr_dashboard'))
 
 @app.route('/login', methods=['GET', 'POST'])
 def login():
