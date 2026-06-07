@@ -167,21 +167,30 @@ def update_user_keys(user_id, keys_dict):
         try:
             is_mock = keys_dict.get('is_mock', 1)
 
-            # ── 원금 컬럼 업데이트 정책 ──────────────────────────────────────
-            # KR/US 모두 real_initial_cash / us_initial_cash는 실계좌 잔고 자동 감지
-            # → 설정 저장 시 절대 덮어쓰기 금지 (set_user_initial_cash만 허용)
+            # 기존 값 조회 — None으로 넘어온 필드는 덮어쓰지 않음
+            existing = conn.execute('SELECT * FROM users WHERE id = ?', (user_id,)).fetchone()
+            if not existing:
+                return
+
+            def _pick(key):
+                """keys_dict에 값이 있으면 사용, 없거나 None이면 기존 DB 값 유지"""
+                v = keys_dict.get(key)
+                if v is None or (isinstance(v, str) and v.strip() == ''):
+                    return existing[key]
+                return v
+
             conn.execute('''
                 UPDATE users SET real_app_key = ?, real_app_secret = ?, real_account_no = ?,
                     us_app_key = ?, us_app_secret = ?, us_account_no = ?,
                     telegram_token = ?, telegram_chat_id = ?,
                     claude_api_key = ?,
-                    core_stocks = ?, is_mock = ? WHERE id = ?
+                    core_stocks = ?, us_core_stocks = ?, is_mock = ? WHERE id = ?
             ''', (
-                keys_dict.get('real_app_key'), keys_dict.get('real_app_secret'), keys_dict.get('real_account_no'),
-                keys_dict.get('us_app_key'), keys_dict.get('us_app_secret'), keys_dict.get('us_account_no'),
-                keys_dict.get('telegram_token'), keys_dict.get('telegram_chat_id'),
-                keys_dict.get('claude_api_key'),
-                keys_dict.get('core_stocks'), is_mock,
+                _pick('real_app_key'), _pick('real_app_secret'), _pick('real_account_no'),
+                _pick('us_app_key'), _pick('us_app_secret'), _pick('us_account_no'),
+                _pick('telegram_token'), _pick('telegram_chat_id'),
+                _pick('claude_api_key'),
+                _pick('core_stocks'), _pick('us_core_stocks'), is_mock,
                 user_id
             ))
             conn.commit()
