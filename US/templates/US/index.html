@@ -179,32 +179,46 @@
         .nav-user {
             display: flex;
             align-items: center;
-            gap: clamp(0.6rem, 1.2vw, 1.5rem);
-            flex-shrink: 0;        /* 오른쪽 메뉴는 고정 */
+            gap: 8px;
+            flex-shrink: 0;
+        }
+
+        /* ── nav 버튼 공통 ── */
+        .btn-settings,
+        .btn-logout {
+            display: inline-flex;
+            align-items: center;
+            height: 32px;
+            padding: 0 12px;
+            border-radius: 8px;
+            font-size: 0.82rem;
+            font-weight: 500;
+            white-space: nowrap;
+            cursor: pointer;
+            transition: background 0.15s, color 0.15s, border-color 0.15s;
+            text-decoration: none;
         }
 
         .btn-settings {
-            background: rgba(255, 255, 255, 0.05);
-            border: 1px solid rgba(255, 255, 255, 0.1);
-            color: white;
-            padding: 0.5rem 1rem;
-            border-radius: 8px;
-            cursor: pointer;
-            font-size: 0.9rem;
-            transition: all 0.2s;
+            background: rgba(255, 255, 255, 0.06);
+            border: 1px solid rgba(255, 255, 255, 0.12);
+            color: #e2e8f0;
         }
 
         .btn-settings:hover {
-            background: rgba(255, 255, 255, 0.1);
+            background: rgba(255, 255, 255, 0.13);
+            border-color: rgba(255, 255, 255, 0.25);
         }
 
         .btn-logout {
+            background: transparent;
+            border: 1px solid rgba(255, 255, 255, 0.08);
             color: #94a3b8;
-            text-decoration: none;
-            font-size: 0.85rem;
         }
 
         .btn-logout:hover {
+            background: rgba(239, 68, 68, 0.1);
+            border-color: rgba(239, 68, 68, 0.4);
             color: #ef4444;
         }
 
@@ -541,9 +555,9 @@
                 </label>
                 <span id="label-us" class="{% if user.data.is_mock %}mode-active{% endif %}">US</span>
             </div>
-            <span style="font-size: 0.9rem; font-weight: 600; margin-right: 10px;">👤 {{ user.username }}</span>
-            <button class="btn-settings" onclick="openReportModal()" style="margin-right: 8px;">📜 오늘의 리포트</button>
-            <button class="btn-settings" onclick="openCoreModal()" style="margin-right: 8px;">⚙️ 코어 설정</button>
+            <span style="font-size: 0.82rem; font-weight: 600;">👤 {{ user.username }}</span>
+            <button class="btn-settings" onclick="openReportModal()">📜 오늘의 리포트</button>
+            <button class="btn-settings" onclick="openCoreModal()">⚙️ 코어 설정</button>
             <button class="btn-settings" onclick="openSettingsModal()">계좌 설정</button>
             <a href="/logout" class="btn-logout">로그아웃</a>
         </div>
