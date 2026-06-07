@@ -535,6 +535,7 @@
 
             <span style="font-size: 0.9rem; font-weight: 600; margin-right: 10px;">👤 {{ user.username }}</span>
             <button class="btn-settings" onclick="openReportModal()" style="margin-right: 8px;">📜 오늘의 리포트</button>
+            <button class="btn-settings" onclick="openCoreModal()" style="margin-right: 8px;">⚙️ 코어 설정</button>
             <button class="btn-settings" onclick="openSettingsModal()">계좌 설정</button>
             <a href="/logout" class="btn-logout">로그아웃</a>
         </div>
@@ -570,7 +571,6 @@
                     <div class="mini-log-entry muted">봇을 시작하면 로그가 표시됩니다...</div>
                 </div>
                 <div class="header-right">
-                    <button onclick="openCoreModal()" class="core-settings-btn">⚙️ 코어 설정</button>
                     <div class="header-right-controls">
                         <div class="sat-controls">
                             <span>📡 위성</span>
