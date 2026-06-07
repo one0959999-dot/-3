@@ -16,6 +16,7 @@ import collections
 import json
 from dataclasses import dataclass
 from datetime import datetime, timezone, timedelta
+from zoneinfo import ZoneInfo
 from collections import defaultdict
 
 import yfinance as yf
@@ -70,8 +71,8 @@ US_DEFENSIVE_ASSETS = [
     },
 ]
 
-# ── 미국 동부 시간 (EDT = UTC-4, 서머타임 기준) ─────────────────────
-_ET = timezone(timedelta(hours=-4))
+# ── 미국 동부 시간 (America/New_York — EST/EDT 자동 전환) ────────────
+_ET = ZoneInfo("America/New_York")
 
 def _now_et() -> datetime:
     return datetime.now(_ET)

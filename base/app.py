@@ -642,8 +642,9 @@ def clear_blacklist():
         return jsonify({"status": "error", "message": "봇이 실행 중이지 않습니다."})
     cleared = 0
     if hasattr(bot, '_satellite_rejects'):
-        cleared += len(bot._satellite_rejects)
-        bot._satellite_rejects = {}
+        with bot.lock:
+            cleared += len(bot._satellite_rejects)
+            bot._satellite_rejects = {}
     if hasattr(bot, '_save_state'):
         bot._save_state()
     logger.info(f"[블랙리스트초기화] user={current_user.id} {cleared}개 항목 제거")
@@ -1153,7 +1154,8 @@ def ai_chat():
                 if _b and hasattr(_b, '_rescreen_satellites'):
                     # 블랙리스트 강제 초기화 — 오늘 AI 거절 내역 리셋 후 재스캔
                     if hasattr(_b, '_satellite_rejects'):
-                        _b._satellite_rejects = {}
+                        with _b.lock:
+                            _b._satellite_rejects = {}
                         logging.getLogger('lassi_bot').info(f"[AI봇명령] {target} satellite_rejects 초기화")
                     if hasattr(_b, '_last_rescreen_actual_ts'):
                         _b._last_rescreen_actual_ts = 0.0  # 쿨다운 리셋
