@@ -208,28 +208,6 @@
             color: #ef4444;
         }
 
-        /* 코어 설정 버튼 */
-        .core-settings-btn {
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            gap: 4px;
-            width: 100%;
-            background: rgba(255, 255, 255, 0.05);
-            border: 1px solid rgba(255, 255, 255, 0.1);
-            color: #94a3b8;
-            font-size: 0.78rem;
-            padding: 5px 12px;
-            border-radius: 8px;
-            cursor: pointer;
-            margin-bottom: 6px;
-            transition: background 0.15s, color 0.15s;
-        }
-        .core-settings-btn:hover {
-            background: rgba(255, 255, 255, 0.12);
-            color: #e2e8f0;
-        }
-
         /* 위성 수 조절 (버튼 위) */
         .sat-controls {
             display: flex;
@@ -592,17 +570,20 @@
                     <div class="mini-log-entry muted">봇을 시작하면 로그가 표시됩니다...</div>
                 </div>
                 <div class="header-right">
-                    <div class="sat-controls">
-                        <span>📡 위성</span>
-                        <button class="sat-adj-btn" onclick="adjustSat(-1)">−</button>
-                        <span class="sat-count-val" id="sat-num-display">5</span>
-                        <button class="sat-adj-btn" onclick="adjustSat(1)">+</button>
-                        <span>종목</span>
+                    <button onclick="openCoreModal()" class="core-settings-btn">⚙️ 코어 설정</button>
+                    <div class="header-right-controls">
+                        <div class="sat-controls">
+                            <span>📡 위성</span>
+                            <button class="sat-adj-btn" onclick="adjustSat(-1)">−</button>
+                            <span class="sat-count-val" id="sat-num-display">5</span>
+                            <button class="sat-adj-btn" onclick="adjustSat(1)">+</button>
+                            <span>종목</span>
+                        </div>
+                        <button id="btn-toggle" class="btn-toggle btn-stopped" title="클릭하여 봇 시작/정지">
+                            <span class="toggle-dot"></span>
+                            <span id="toggle-label">Stopped</span>
+                        </button>
                     </div>
-                    <button id="btn-toggle" class="btn-toggle btn-stopped" title="클릭하여 봇 시작/정지">
-                        <span class="toggle-dot"></span>
-                        <span id="toggle-label">Stopped</span>
-                    </button>
                 </div>
             </div>
         </header>
@@ -613,13 +594,7 @@
         </div>
 
         <div class="satellite-card glass-card">
-            <h2 style="display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:6px;">
-                <span>📡 Satellite Positions</span>
-                <button onclick="clearBlacklist()" id="clearBlBtn"
-                    style="font-size:0.72rem; padding:4px 10px; background:rgba(239,68,68,0.15); color:#f87171; border:1px solid rgba(239,68,68,0.35); border-radius:6px; cursor:pointer; flex-shrink:0;">
-                    🚫 블랙리스트 초기화
-                </button>
-            </h2>
+            <h2>📡 Satellite Positions</h2>
             <table class="sat-table">
                 <thead>
                     <tr>

@@ -242,12 +242,40 @@ header {
     width: 100%;
 }
 
-/* sat-controls + toggle btn */
+/* 코어 설정 버튼 */
+.core-settings-btn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 4px;
+    width: 100%;
+    background: rgba(255, 255, 255, 0.05);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    color: #94a3b8;
+    font-size: 0.78rem;
+    padding: 5px 12px;
+    border-radius: 8px;
+    cursor: pointer;
+    transition: background 0.15s, color 0.15s;
+}
+.core-settings-btn:hover {
+    background: rgba(255, 255, 255, 0.12);
+    color: #e2e8f0;
+}
+
+/* 코어설정(위) + sat-controls+toggle(아래) */
 .header-right {
+    display: flex;
+    flex-direction: column;
+    align-items: stretch;
+    gap: 6px;
+    flex-shrink: 0;
+}
+
+.header-right-controls {
     display: flex;
     align-items: center;
     gap: 14px;
-    flex-shrink: 0;
 }
 
 /* ─── Mini Log Panel ─── */
@@ -1034,9 +1062,12 @@ header {
     }
 
     .header-right {
-        flex-direction: column;
         width: 100%;
-        gap: 8px;
+    }
+
+    .header-right-controls {
+        width: 100%;
+        justify-content: space-between;
     }
 
     .mini-log {

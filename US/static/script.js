@@ -184,21 +184,6 @@ document.addEventListener('DOMContentLoaded', () => {
         showStatusModal(name, decodeURIComponent(encodedMsg));
     }
 
-    // 🚫 블랙리스트 즉시 초기화
-    window.clearBlacklist = function () {
-        const btn = document.getElementById('clearBlBtn');
-        if (btn) { btn.disabled = true; btn.textContent = '초기화 중...'; }
-        fetch('/api/clear_blacklist', { method: 'POST', headers: {'Content-Type': 'application/json'} })
-            .then(r => r.json())
-            .then(d => {
-                alert(d.message || '완료');
-                if (btn) { btn.disabled = false; btn.textContent = '🚫 블랙리스트 초기화'; }
-            })
-            .catch(() => {
-                alert('초기화 실패');
-                if (btn) { btn.disabled = false; btn.textContent = '🚫 블랙리스트 초기화'; }
-            });
-    }
 
     // ── Main UI Update ──
     function updateUI(data) {
