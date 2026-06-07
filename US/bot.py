@@ -658,7 +658,7 @@ class USBotController:
             # 정규장(09:30~16:00 ET): 소수점 주 허용 / 시간외: 정수 주만
             if _is_us_market_open():
                 qty_f = round(avail / price, 3)   # 소수점 3자리
-                qty   = int(qty_f) if qty_f == int(qty_f) else qty_f
+                qty   = int(qty_f) if abs(qty_f - round(qty_f)) < 1e-6 else qty_f
             else:
                 qty_f = None
                 qty   = int(avail / price)         # 정수 주만
@@ -666,7 +666,7 @@ class USBotController:
                 return 0
 
         # 소수점 주문 (정규장 + 0.001 이상 분수)
-        _use_fractional = (qty_f is not None and qty_f != int(qty_f) and qty_f >= 0.001
+        _use_fractional = (qty_f is not None and abs(qty_f - round(qty_f)) >= 1e-6 and qty_f >= 0.001
                            and hasattr(self.kis_overseas, 'buy_fractional_order'))
         if _use_fractional:
             ok   = self.kis_overseas.buy_fractional_order(ticker, qty_f)
@@ -702,18 +702,26 @@ class USBotController:
             self.add_log(f"⚠️ SELL 실패: KIS API 미설정 ({ticker})")
             return 0.0
         price = price or self._price(ticker)
-        qty   = int(shares)
+        qty_frac = round(shares, 3)
+        qty_int  = int(qty_frac)
+        _use_frac_sell = (abs(qty_frac - qty_int) >= 1e-6
+                          and hasattr(self.kis_overseas, 'sell_fractional_order'))
+        qty = qty_frac if _use_frac_sell else qty_int
         if price <= 0 or qty <= 0:
             return 0.0
 
-        ok = self.kis_overseas.sell_market_order(ticker, qty)
+        ok = (self.kis_overseas.sell_fractional_order(ticker, qty) if _use_frac_sell
+              else self.kis_overseas.sell_market_order(ticker, qty_int))
         if ok:
             proceeds = qty * price * (1 - _US_FEE)
             with self.lock:
+                if self.cash_usd is None:
+                    self.cash_usd = 0.0
                 self.cash_usd       += proceeds
                 self._last_trade_ts  = time.time()
                 self.pnl_this_turn  += proceeds   # 원금 추적용
-            self.add_log(f"📤 SELL {name}({ticker}) {qty}주 @ ${price:.2f} 추정 (${proceeds:,.0f})")
+            _qty_str = f"{qty:.3f}" if isinstance(qty, float) and abs(qty - round(qty)) >= 1e-6 else str(int(qty))
+            self.add_log(f"📤 SELL {name}({ticker}) {_qty_str}주 @ ${price:.2f} 추정 (${proceeds:,.0f})")
             try:
                 log_trade_journal(self.user_id, ticker, name, 'SELL', price,
                                   strategy=strategy, ai_reason=ai_reason[:120],
@@ -2004,7 +2012,6 @@ class USBotController:
                             new_sh2 = pos.shares + sq2
                             pos.avg_price_usd  = (pos.avg_price_usd * pos.shares + price * sq2) / new_sh2
                             pos.shares         = new_sh2
-                            pos.floor_shares   = max(pos.floor_shares, pos.shares * 0.5)
                             pos.second_buy_done= True
                             pos.second_buy_cash= 0.0
                             pos.last_order_time= time.time()
@@ -2034,7 +2041,6 @@ class USBotController:
                         new_sh3 = pos.shares + sq3
                         pos.avg_price_usd  = (pos.avg_price_usd * pos.shares + price * sq3) / new_sh3
                         pos.shares         = new_sh3
-                        pos.floor_shares   = max(pos.floor_shares, pos.shares * 0.5)
                         pos.third_buy_done = True
                         pos.third_buy_cash = 0.0
                         pos.last_order_time= time.time()

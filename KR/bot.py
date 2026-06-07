@@ -344,7 +344,10 @@ class KRBotController:
     def _sync_internal_balances(self, real_balance):
         with self.lock:
             try:
-                if not real_balance or 'stocks' not in real_balance: return
+                if not real_balance or 'stocks' not in real_balance:
+                    if self.internal_cash is None:
+                        self.internal_cash = 0.0   # KIS API 실패 지속 시 완전 봉쇄 방지
+                    return
                 real_cash = float(real_balance.get('total_cash', 0))
                 real_stock_value = float(real_balance.get('total_value', 0))
                 real_purchase = float(real_balance.get('total_purchase', 0))
@@ -925,6 +928,7 @@ class KRBotController:
             self._satellite_rejects    = {}
             self._satellite_reject_rsn = {}
             self._daily_loss_by_ticker = {}
+            self._notified_disclosures = set()   # 날짜 바뀌면 공시 알림 캐시 초기화
 
     def _add_satellite_reject(self, ticker: str, reason: str):
         """AI 거절 위성 종목에 15분 쿨다운 적용 (영구 블랙리스트 아님)."""
@@ -953,7 +957,7 @@ class KRBotController:
         if ticker in user_tickers:
             return False
         with self.lock:
-            self._refresh_blacklist()
+            # _refresh_blacklist 는 trading_job 시작 시 호출 — 스캔 중 자정 리셋 방지
             ts = self._satellite_rejects.get(ticker)
             if ts is None:
                 return False
@@ -2052,6 +2056,7 @@ class KRBotController:
                             if new_shares > 0:
                                 core.avg_price = round((core.avg_price * core.shares + cp * sq) / new_shares, 2)
                             core.shares = new_shares
+                            core.floor_shares = max(core.floor_shares, int(core.shares * self.core_min_floor_ratio))
                         self.add_log(f"💎 {c_nm} 코어 2차 매수 | {sq}주 @ {cp:,}원 | 눌림목 -2%")
                         self._log_trade(c_tk, c_nm, 'BUY', cp, "RSI코어", f"코어 2차 분할 매수 눌림목 -2% ({sq}주)")
                         self._send_trade_telegram(self._fmt_trade_msg("💎", "코어 2차 매수", c_tk, c_nm, cp, sq, strategy="RSI코어", note="-2% 눌림목 포착 | 3차 -4% 대기"))
@@ -2075,6 +2080,7 @@ class KRBotController:
                             if new_shares > 0:
                                 core.avg_price = round((core.avg_price * core.shares + cp * sq3) / new_shares, 2)
                             core.shares = new_shares
+                            core.floor_shares = max(core.floor_shares, int(core.shares * self.core_min_floor_ratio))
                         self.add_log(f"💎 {c_nm} 코어 3차 매수 | {sq3}주 @ {cp:,}원 | 눌림목 -4% | 예산 전액 투입 완료")
                         self._log_trade(c_tk, c_nm, 'BUY', cp, "RSI코어", f"코어 3차 분할 매수 눌림목 -4% ({sq3}주)")
                         self._send_trade_telegram(self._fmt_trade_msg("💎", "코어 3차 매수", c_tk, c_nm, cp, sq3, strategy="RSI코어", note="-4% 눌림목 포착 | 예산 전액 투입 완료"))
@@ -2147,12 +2153,15 @@ class KRBotController:
                 # ── ATR(14) 코어 하드 손절 (전량 청산 — floor_shares 없음) ──
                 c_atr = c_avg * 0.02
                 if not ex_df.empty and all(col in ex_df.columns for col in ['high','low','close']):
-                    _tr = pd.concat([
-                        ex_df['high'] - ex_df['low'],
-                        (ex_df['high'] - ex_df['close'].shift(1)).abs(),
-                        (ex_df['low']  - ex_df['close'].shift(1)).abs(),
-                    ], axis=1).max(axis=1)
-                    c_atr = float(_tr.rolling(14, min_periods=1).mean().iloc[-1])
+                    try:
+                        _tr = pd.concat([
+                            ex_df['high'] - ex_df['low'],
+                            (ex_df['high'] - ex_df['close'].shift(1)).abs(),
+                            (ex_df['low']  - ex_df['close'].shift(1)).abs(),
+                        ], axis=1).max(axis=1)
+                        c_atr = float(_tr.rolling(14, min_periods=1).mean().iloc[-1])
+                    except Exception:
+                        pass
 
                 core_hard_mult = 2.5 if regime == "NEUTRAL" else (3.0 if regime == "BULL" else 1.8)
                 is_core_cd = time.time() - getattr(core, 'last_order_time', 0) > 300
@@ -2318,6 +2327,7 @@ class KRBotController:
                                 if _new_shares > 0:
                                     core.avg_price = round((core.avg_price * core.shares + cp * _dca_qty) / _new_shares, 2)
                                 core.shares         = _new_shares
+                                core.floor_shares   = max(core.floor_shares, int(core.shares * self.core_min_floor_ratio))
                                 core._bought_val    = getattr(core, '_bought_val', 0.0) + int(cp * _dca_qty)
                                 core.cash           = max(0.0, core.cash - int(cp * _dca_qty))
                                 core.status         = "DCA 적립 💰"
