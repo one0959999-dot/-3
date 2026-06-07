@@ -140,6 +140,11 @@ class KRBotController:
         self.last_screen_date = None
         self.last_core_rebalance_date = None   # AI 코어 마지막 재선정 날짜 (매주 월요일 갱신)
         self.hot_sectors = []
+        # ── 주말 사전 분석 플랜 ────────────────────────────────────────
+        # 주말 스캔에서 판단한 월요일 교체 계획
+        # {ticker_to_sell: {"new_ticker": str, "new_name": str, "score": float, "reason": str}}
+        self._monday_swap_plan: dict = {}
+        self._weekend_scan_done: str = ""  # 마지막 주말 스캔 날짜 (중복 방지)
         self.daily_report = None
         self.volume_surge_details = []   # 거래량 급증 종목 실제 리스트 [{ticker, name, ratio}]
         self._last_total_equity = 0.0    # 최근 총자산 스냅샷 (방어자산 예산 계산용)
@@ -1182,6 +1187,8 @@ class KRBotController:
                 # 당일 블랙리스트 — 재시작 후에도 AI 거절 종목이 재심사 요청되지 않도록 저장
                 "bl_date":              self._bl_date,
                 "satellite_rejects":    dict(self._satellite_rejects),
+                "monday_swap_plan":     self._monday_swap_plan,
+                "weekend_scan_done":    self._weekend_scan_done,
             }
             save_portfolio_state(self.user_id, state, self._is_mock)
         except Exception as e: logger.error(f"[{self.mode_name}] 상태 저장 실패: {e}", exc_info=True)
@@ -1293,6 +1300,11 @@ class KRBotController:
                 n_rej = len(self._satellite_rejects)
                 if n_rej:
                     self.add_log(f"🚫 당일 AI 거절 블랙리스트 복원: 위성 {n_rej}개 재심사 제외")
+            # 주말 스캔 계획 복원
+            self._monday_swap_plan  = state.get("monday_swap_plan", {})
+            self._weekend_scan_done = state.get("weekend_scan_done", "")
+            if self._monday_swap_plan:
+                self.add_log(f"📅 주말 교체 계획 복원: {len(self._monday_swap_plan)}건 대기 중")
 
             # satellite_info에 선정된 종목 중 positions에 없는 것 → 빈 포지션 생성
             # BUG-FIX: 사용자지정 종목만 추가 (스크리너 선정 ghost 방지)
@@ -3121,6 +3133,132 @@ class KRBotController:
 
         threading.Thread(target=_worker, daemon=True).start()
 
+    # ── 주말 사전 분석 ────────────────────────────────────────────────────
+    def _weekend_satellite_scan(self):
+        """
+        주말(토·일)에 실행 — 위성 후보 스캔 후 월요일 교체 계획 수립.
+        실제 매매 없이 분석만 수행, _monday_swap_plan에 저장.
+        """
+        now = _now_kst()
+        today_str = now.strftime('%Y-%m-%d')
+        if self._weekend_scan_done == today_str:
+            return  # 오늘 이미 완료
+        if now.weekday() < 5:
+            return  # 평일엔 실행 안 함
+
+        self.add_log("📅 [주말 사전분석] 위성 후보 스캔 시작...")
+        try:
+            # 현재 보유 종목 점수 측정
+            with self.lock:
+                current_sat = {t: p for t, p in self.satellite_positions.items() if p.shares > 0}
+            current_tickers = set(current_sat.keys())
+
+            # 새 후보 스캔 (현재 보유 제외)
+            from KR.strategy import calculate_entry_score, get_entry_threshold, get_market_regime
+            raw_candidates, new_hot = select_satellites(
+                kis=self.kis, n=self.num_satellites * 4,
+                verbose=False, claude_client=self.claude,
+                sector_guide=self.sector_guide, real_kis=self.real_kis,
+                exclude=current_tickers
+            )
+            if new_hot:
+                self.hot_sectors = new_hot
+
+            swap_plan = {}
+            # 보유 종목 중 교체 대상 파악 (손실 or 약세)
+            for ticker, pos in current_sat.items():
+                try:
+                    ohlcv = self._get_cached_base_ohlcv(ticker)
+                    if ohlcv.empty: continue
+                    score, reasons, _ = calculate_entry_score(
+                        ohlcv, ticker, self.market_regime,
+                        sector_score=0, kis_score=0, dl_score=0, roe_bonus=0
+                    )
+                    threshold = get_entry_threshold(self.market_regime)
+                    # 점수가 기준 미달이면 교체 후보
+                    if score < threshold - 1:
+                        swap_plan[ticker] = {"reason": f"진입점수 {score}/{threshold}pt 미달", "score": score}
+                except Exception:
+                    pass
+
+            # 새 후보 중 점수 높은 순으로 교체 매핑
+            new_plan = {}
+            cand_iter = iter(raw_candidates)
+            for old_ticker, old_info in swap_plan.items():
+                try:
+                    cand = next(cand_iter)
+                    new_plan[old_ticker] = {
+                        "new_ticker": cand["ticker"],
+                        "new_name":   cand["name"],
+                        "score":      cand.get("score", 0),
+                        "reason":     old_info["reason"]
+                    }
+                    self.add_log(
+                        f"📋 [주말분석] {self.satellite_positions[old_ticker].name}({old_ticker}) → "
+                        f"{cand['name']}({cand['ticker']}) 교체 예정 | 사유: {old_info['reason']}"
+                    )
+                except StopIteration:
+                    break
+
+            self._monday_swap_plan = new_plan
+            self._weekend_scan_done = today_str
+            self._save_state()
+
+            if new_plan:
+                self._send_telegram(
+                    f"📅 <b>주말 사전분석 완료</b>  ·  {self.alert_icon} {self.mode_name}\n"
+                    f"━━━━━━━━━━━━━━━━━━━━\n"
+                    + "\n".join([f"· {self.satellite_positions.get(o, type('', (), {'name': o})()).name}({o}) → {v['new_name']}({v['new_ticker']})" for o, v in new_plan.items()])
+                    + (f"\n📌 교체 예정 없음 — 현 포지션 유지" if not new_plan else "")
+                    + f"\n⏰ 월요일 장 시작 시 자동 실행"
+                )
+            else:
+                self.add_log("📅 [주말분석] 교체 대상 없음 — 현 포지션 유지")
+
+        except Exception as e:
+            logger.error(f"[{self.mode_name}] 주말 사전분석 오류: {e}", exc_info=True)
+
+    def _execute_monday_swap(self):
+        """
+        월요일 09:00~09:10 — 주말에 수립한 교체 계획 실행.
+        """
+        if not self._monday_swap_plan:
+            return
+        now = _now_kst()
+        if now.weekday() != 0:  # 월요일 아님
+            return
+
+        self.add_log(f"🚀 [월요일 교체] 주말 계획 실행 — {len(self._monday_swap_plan)}건")
+        executed = []
+        for old_ticker, plan in list(self._monday_swap_plan.items()):
+            try:
+                with self.lock:
+                    pos = self.satellite_positions.get(old_ticker)
+                if not pos or pos.shares == 0:
+                    continue  # 이미 청산됨
+                price = self.live_prices.get(old_ticker) or (self.kis.get_current_price(old_ticker) if self.kis else 0)
+                if not price:
+                    continue
+                # 기존 종목 매도
+                if self._sell_order(old_ticker, pos.shares, pos, pos.name):
+                    profit = (price - pos.avg_price) * pos.shares if pos.avg_price else 0
+                    self._log_trade(old_ticker, pos.name, 'SELL', price, "주말계획교체", plan['reason'], profit=profit)
+                    self.add_log(f"📤 [{old_ticker}] {pos.name} 매도 완료 (주말 계획)")
+                    # 새 종목 편입 예약 (satellite_info 갱신)
+                    with self.lock:
+                        self.satellite_info = [s for s in self.satellite_info if s.get('ticker') != old_ticker]
+                        self.satellite_info.insert(0, {"ticker": plan['new_ticker'], "name": plan['new_name'], "return_pct": plan['score'], "sector": "-"})
+                    executed.append(old_ticker)
+            except Exception as e:
+                logger.error(f"[{self.mode_name}] 월요일 교체 실행 오류({old_ticker}): {e}")
+
+        # 실행된 항목 제거
+        for t in executed:
+            self._monday_swap_plan.pop(t, None)
+        if executed:
+            self._save_state()
+            self.add_log(f"✅ [월요일 교체] {len(executed)}건 완료 → 새 종목 매수 진행")
+
     def _rescreen_satellites(self):
         try:
             now = _now_kst()
@@ -3527,11 +3665,26 @@ class KRBotController:
             if now_kst.weekday() == 4 and now_kst.strftime('%H:%M') == "02:00":
                 self._run_threaded(self.run_lstm_training)
 
+        def _kst_weekend_scan():
+            """토·일 10:00 — 주말 위성 사전 분석 (월요일 교체 계획 수립)."""
+            now_kst = _now_kst()
+            if now_kst.weekday() >= 5 and now_kst.strftime('%H:%M') == "10:00":
+                self._run_threaded(self._weekend_satellite_scan)
+
+        def _kst_monday_execute():
+            """월요일 09:00 — 주말 계획 즉시 실행."""
+            now_kst = _now_kst()
+            if now_kst.weekday() == 0 and now_kst.strftime('%H:%M') == "09:00":
+                if self._monday_swap_plan:
+                    self._run_threaded(self._execute_monday_swap)
+
         self.scheduler.every(1).minutes.do(_kst_midnight_rescreen)
         self.scheduler.every(1).minutes.do(_kst_friday_reflection)
         self.scheduler.every(1).minutes.do(_kst_morning_websocket)
         self.scheduler.every(1).minutes.do(_kst_friday_lstm)
         self.scheduler.every(1).minutes.do(_kst_morning_prescreen)
+        self.scheduler.every(1).minutes.do(_kst_weekend_scan)
+        self.scheduler.every(1).minutes.do(_kst_monday_execute)
 
         try:
             self.trading_job()
