@@ -68,9 +68,9 @@ document.addEventListener('DOMContentLoaded', () => {
     const satTbody = document.getElementById('sat-tbody');
 
     // ── Toggle Button ──
-    btnToggle.addEventListener('click', () => {
-        btnToggle.disabled = true;
-        const prevLabel = toggleLabel.textContent;
+    if (btnToggle) btnToggle.addEventListener('click', () => {
+        if (btnToggle) btnToggle.disabled = true;
+        const prevLabel = toggleLabel ? toggleLabel.textContent : '';
         toggleLabel.textContent = '처리 중...';
         fetch('/api/toggle', { method: 'POST' })
             .then(async r => {
@@ -82,7 +82,7 @@ document.addEventListener('DOMContentLoaded', () => {
             })
             .then(() => fetchStatus())
             .catch(e => { console.error('Toggle error', e); toggleLabel.textContent = prevLabel; })
-            .finally(() => { btnToggle.disabled = false; });
+            .finally(() => { if (btnToggle) btnToggle.disabled = false; });
     });
 
     // ── Status Fetch ──
@@ -531,8 +531,8 @@ document.addEventListener('DOMContentLoaded', () => {
 
 window.toggleMode = async function () {
     const cb = document.getElementById('modeSwitch');
-    const isMock = cb.checked ? 1 : 0;
-    cb.disabled = true;
+    const isMock = cb ? (cb.checked ? 1 : 0) : 0;
+    if (cb) cb.disabled = true;
 
     const lblReal = document.getElementById('label-real');
     const lblUs = document.getElementById('label-us');
@@ -889,27 +889,11 @@ window.addCoreStock = function (ticker, name) {
 }
 
 window.saveCoreStocks = async function () {
-    const isMock = 1;
     const coreJsonStr = JSON.stringify(_coreStockList);
-
-    const data = {
-        real_app_key: document.getElementById('realAppKey').value,
-        real_app_secret: document.getElementById('realAppSecret').value,
-        real_account_no: document.getElementById('realAccountNo').value,
-        us_app_key: document.getElementById('usAppKey').value,
-        us_app_secret: document.getElementById('usAppSecret').value,
-        us_account_no: document.getElementById('usAccountNo').value,
-
-        telegram_token: document.getElementById('teleToken').value,
-        telegram_chat_id: document.getElementById('teleChatId').value,
-        claude_api_key: document.getElementById('claudeApiKey').value,
-        us_core_stocks: coreJsonStr,
-        is_mock: isMock,
-    };
+    const data = { us_core_stocks: coreJsonStr };
     try {
         const res = await fetch('/api/settings/us_keys', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(data)
         });
         const result = await res.json();
