@@ -761,7 +761,8 @@ class USBotController:
 
     def _record_pnl(self, usd_pnl: float):
         today = _now_et().strftime("%Y-%m-%d")
-        self.daily_pnl[today] = self.daily_pnl.get(today, 0.0) + usd_pnl
+        with self.lock:
+            self.daily_pnl[today] = self.daily_pnl.get(today, 0.0) + usd_pnl
 
     def _get_total_assets_usd(self) -> float:
         """
@@ -1298,7 +1299,9 @@ class USBotController:
                         if not _core_sell_skip:
                             pos.sell_news_checked = False
                             q   = pos.shares
-                            self._sell(ticker, pos.name, q, price)
+                            _proc = self._sell(ticker, pos.name, q, price)
+                            if _proc <= 0:
+                                continue
                             pnl = _net_profit_usd(price, avg, q)
                             with self.lock:
                                 pos.shares                  = 0.0
@@ -1336,7 +1339,9 @@ class USBotController:
                 pnl_pct_bear = (price / avg - 1) * 100
                 if pnl_pct_bear >= 5.0:
                     q   = pos.shares
-                    self._sell(ticker, pos.name, q, price)
+                    _proc = self._sell(ticker, pos.name, q, price)
+                    if _proc <= 0:
+                        continue
                     pnl = _net_profit_usd(price, avg, q)
                     with self.lock:
                         pos.shares            = 0.0
@@ -1551,6 +1556,8 @@ class USBotController:
         now = _now_et()
         if now.weekday() != 0:
             return
+        if not _is_us_market_open():
+            return   # 미국 공휴일(월요일 휴장) 시 실행 보류 — 다음 거래일 재시도
 
         self.add_log(f"🚀 [US 월요일 교체] {len(self._monday_swap_plan)}건 실행")
         executed = []
@@ -1860,7 +1867,9 @@ class USBotController:
                                     if not _earn_already:
                                         _reduce = max(1.0, pos.shares * 0.30)
                                         _ep = self._price(ticker)
-                                        self._sell(ticker, pos.name, _reduce, _ep)
+                                        _proc_e = self._sell(ticker, pos.name, _reduce, _ep)
+                                        if _proc_e <= 0:
+                                            continue
                                         _pnl_e = _net_profit_usd(_ep, pos.avg_price_usd, _reduce)
                                         with self.lock:
                                             pos.shares = max(0.0, pos.shares - _reduce)
@@ -2165,7 +2174,8 @@ class USBotController:
                             continue
                         elif _fe_sig == 'PARTIAL_EXIT_60' and pos.shares > 1:
                             _q60 = max(1.0, pos.shares * 0.60)
-                            self._sell(ticker, pos.name, _q60, price)
+                            if self._sell(ticker, pos.name, _q60, price) <= 0:
+                                continue
                             _pnl60 = _net_profit_usd(price, avg, _q60)
                             with self.lock:
                                 pos.shares -= _q60
@@ -2180,7 +2190,8 @@ class USBotController:
                                     with self.lock: pos.initial_shares_for_exit = pos.shares
                                 _init_sh_oe = getattr(pos, 'initial_shares_for_exit', 0) or pos.shares
                                 _q30 = max(1.0, min(_init_sh_oe * 0.30, pos.shares))
-                                self._sell(ticker, pos.name, _q30, price)
+                                if self._sell(ticker, pos.name, _q30, price) <= 0:
+                                    continue
                                 _pnl30 = _net_profit_usd(price, avg, _q30)
                                 with self.lock:
                                     pos.shares = max(0.0, pos.shares - _q30)
@@ -2424,6 +2435,8 @@ class USBotController:
         # ── 공통 청산 로직 ────────────────────────────────────────────
         shares   = pos.shares
         proceeds = self._sell(ticker, pos.name, shares, price)
+        if proceeds <= 0:
+            return
         pnl      = _net_profit_usd(price, pos.avg_price_usd, shares)
         with self.lock:
             pos.shares                  = 0.0

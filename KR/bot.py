@@ -727,6 +727,9 @@ class KRBotController:
         """매도 주문 실행 + KIS 응답 체크. 성공 True, 실패 False (봇 로그에 에러 기록)."""
         if not self.kis:
             return False
+        if qty <= 0:
+            self.add_log(f"⚠️ SELL 건너뜀: {name}({ticker}) qty={qty} ≤ 0")
+            return False
         result = self.kis.sell_market_order(ticker, qty, price=price)
         if result:
             # 내부 현금 즉시 증가 — KIS 모의 API 반영 지연 보정

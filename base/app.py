@@ -518,11 +518,15 @@ def home_summary():
 
     combined: dict = defaultdict(float)   # {YYYY-MM-DD: KRW}
     if kr_bot:
-        for d, v in kr_bot.daily_pnl.items():
+        with kr_bot.lock:
+            _kr_pnl_snap = dict(kr_bot.daily_pnl)
+        for d, v in _kr_pnl_snap.items():
             if d >= START_DATE:
                 combined[d] += float(v)
     if us_bot:
-        for d, v in us_bot.daily_pnl.items():
+        with us_bot.lock:
+            _us_pnl_snap = dict(us_bot.daily_pnl)
+        for d, v in _us_pnl_snap.items():
             if d >= START_DATE:
                 combined[d] += float(v) * usd_krw
 
