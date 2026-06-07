@@ -592,21 +592,17 @@
                 <div class="mini-log glass-card" id="mini-log">
                     <div class="mini-log-entry muted">봇을 시작하면 로그가 표시됩니다...</div>
                 </div>
-                <div class="header-right">
-                    <div class="header-right-controls">
-                        <div class="sat-controls">
-                            <span>📡 위성</span>
-                            <button class="sat-adj-btn" onclick="adjustSat(-1)">−</button>
-                            <span class="sat-count-val" id="sat-num-display">5</span>
-                            <button class="sat-adj-btn" onclick="adjustSat(1)">+</button>
-                            <span>종목</span>
-                        </div>
-                        <button id="btn-toggle" class="btn-toggle btn-stopped" title="클릭하여 봇 시작/정지">
-                            <span class="toggle-dot"></span>
-                            <span id="toggle-label">Stopped</span>
-                        </button>
-                    </div>
+                <div class="sat-controls">
+                    <span>📡 위성</span>
+                    <button class="sat-adj-btn" onclick="adjustSat(-1)">−</button>
+                    <span class="sat-count-val" id="sat-num-display">5</span>
+                    <button class="sat-adj-btn" onclick="adjustSat(1)">+</button>
+                    <span>종목</span>
                 </div>
+                <button id="btn-toggle" class="btn-toggle btn-stopped" title="클릭하여 봇 시작/정지">
+                    <span class="toggle-dot"></span>
+                    <span id="toggle-label">Stopped</span>
+                </button>
             </div>
         </header>
 
