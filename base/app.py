@@ -191,20 +191,42 @@ def home():
     """홈 화면 — 총자산 추이 + KR/US 진입 버튼."""
     return render_template('home.html', user=current_user)
 
-@app.route('/dashboard')
-@login_required
-def index():
-    from flask import make_response
+def _dashboard_response(template, is_mock):
+    from flask import make_response, redirect, url_for
     user_data = current_user.data
     ai_enabled = bool(user_data.get('claude_api_key'))
-    manager.get_bot(current_user.id, user_data)
-    is_us = bool(user_data.get('is_mock', 0))
-    template = 'US/index.html' if is_us else 'KR/index.html'
+    # is_mock 동기화
+    if bool(user_data.get('is_mock', 0)) != is_mock:
+        conn = get_db_connection()
+        try:
+            conn.execute('UPDATE users SET is_mock=? WHERE id=?', (1 if is_mock else 0, current_user.id))
+            conn.commit()
+            user_data['is_mock'] = 1 if is_mock else 0
+            current_user.data['is_mock'] = 1 if is_mock else 0
+        finally:
+            conn.close()
+    manager.get_bot(current_user.id, current_user.data)
     resp = make_response(render_template(template, user=current_user, claude_enabled=ai_enabled, sv=_STATIC_VER))
-    # KR/US 전환 시 브라우저 캐시로 이전 템플릿이 보이는 문제 방지
     resp.headers['Cache-Control'] = 'no-store, no-cache, must-revalidate'
     resp.headers['Pragma'] = 'no-cache'
     return resp
+
+@app.route('/kr/dashboard')
+@login_required
+def kr_dashboard():
+    return _dashboard_response('KR/index.html', is_mock=False)
+
+@app.route('/us/dashboard')
+@login_required
+def us_dashboard():
+    return _dashboard_response('US/index.html', is_mock=True)
+
+@app.route('/dashboard')
+@login_required
+def index():
+    from flask import redirect, url_for
+    is_us = bool(current_user.data.get('is_mock', 0))
+    return redirect(url_for('us_dashboard' if is_us else 'kr_dashboard'))
 
 @app.route('/login', methods=['GET', 'POST'])
 def login():
@@ -1331,80 +1353,77 @@ def set_sector_guide_route():
             bot.sector_guide = guide
     return jsonify({"status": "success"})
 
+def _save_keys_common(data, is_mock):
+    """KR(is_mock=False) 또는 US(is_mock=True) 계좌 설정 저장 공통 로직."""
+    existing = current_user.data
+
+    def _v(key):
+        v = data.get(key)
+        return v.strip() if isinstance(v, str) and v.strip() else None
+
+    if is_mock:
+        # US 전용 필드만 업데이트
+        update_data = {
+            'us_app_key':      _v('us_app_key')      or existing.get('us_app_key'),
+            'us_app_secret':   _v('us_app_secret')   or existing.get('us_app_secret'),
+            'us_account_no':   _v('us_account_no')   or existing.get('us_account_no'),
+            'us_core_stocks':  data.get('us_core_stocks') or existing.get('us_core_stocks'),
+            'telegram_token':  _v('telegram_token')  or existing.get('telegram_token'),
+            'telegram_chat_id':_v('telegram_chat_id')or existing.get('telegram_chat_id'),
+            'claude_api_key':  _v('claude_api_key')  or existing.get('claude_api_key'),
+            'is_mock': 1,
+        }
+        kis_cfg = {"app_key": update_data['us_app_key'],
+                   "app_secret": update_data['us_app_secret'],
+                   "account_no": update_data['us_account_no']}
+        core = update_data['us_core_stocks']
+    else:
+        # KR 전용 필드만 업데이트
+        update_data = {
+            'real_app_key':    _v('real_app_key')    or existing.get('real_app_key'),
+            'real_app_secret': _v('real_app_secret') or existing.get('real_app_secret'),
+            'real_account_no': _v('real_account_no') or existing.get('real_account_no'),
+            'core_stocks':     data.get('core_stocks') or existing.get('core_stocks'),
+            'telegram_token':  _v('telegram_token')  or existing.get('telegram_token'),
+            'telegram_chat_id':_v('telegram_chat_id')or existing.get('telegram_chat_id'),
+            'claude_api_key':  _v('claude_api_key')  or existing.get('claude_api_key'),
+            'is_mock': 0,
+        }
+        kis_cfg = {"app_key": update_data['real_app_key'],
+                   "app_secret": update_data['real_app_secret'],
+                   "account_no": update_data['real_account_no']}
+        core = update_data['core_stocks']
+
+    update_user_keys(current_user.id, update_data)
+    for k, v in update_data.items():
+        current_user.data[k] = v
+
+    tele = {"token": update_data.get('telegram_token'), "chat_id": update_data.get('telegram_chat_id')}
+    bot = manager.bots.get((current_user.id, is_mock))
+    if bot:
+        bot.reload_api_keys(kis_config=kis_cfg, telegram_config=tele, gemini_config={}, core_stocks=core)
+
+    return jsonify({"status": "success"})
+
+
 @app.route('/api/settings/keys', methods=['POST'])
 @login_required
 def set_keys():
     data = request.json or {}
-    is_mock = int(data.get('is_mock', 1))
-    # KR/US 코어 종목은 별도 컬럼으로 분리 저장
-    kr_core = data.get('core_stocks')    # KR 코어 (is_mock=0)
-    us_core = data.get('us_core_stocks') # US 코어 (is_mock=1)
+    is_mock = bool(int(data.get('is_mock', 1)))
+    return _save_keys_common(data, is_mock)
 
-    def _val(key, fallback=None):
-        """빈 문자열/None이면 기존 DB 값 유지 (키 덮어쓰기 방지)"""
-        v = data.get(key)
-        if v is None or (isinstance(v, str) and v.strip() == ''):
-            return fallback  # None이면 update_user_keys에서 해당 컬럼 스킵
-        return v.strip() if isinstance(v, str) else v
 
-    existing = current_user.data  # 현재 저장된 값
-    update_data = {
-        'real_app_key':    _val('real_app_key',    existing.get('real_app_key')),
-        'real_app_secret': _val('real_app_secret', existing.get('real_app_secret')),
-        'real_account_no': _val('real_account_no', existing.get('real_account_no')),
-        'us_app_key':      _val('us_app_key',      existing.get('us_app_key')),
-        'us_app_secret':   _val('us_app_secret',   existing.get('us_app_secret')),
-        'us_account_no':   _val('us_account_no',   existing.get('us_account_no')),
-        'telegram_token':  _val('telegram_token',  existing.get('telegram_token')),
-        'telegram_chat_id':_val('telegram_chat_id',existing.get('telegram_chat_id')),
-        'claude_api_key':  _val('claude_api_key',  existing.get('claude_api_key')),
-        'core_stocks':    kr_core if kr_core is not None else existing.get('core_stocks'),
-        'us_core_stocks': us_core if us_core is not None else existing.get('us_core_stocks'),
-        'is_mock': is_mock,
-        'initial_cash': float(data.get('initial_cash', 10000000))
-    }
+@app.route('/api/settings/kr_keys', methods=['POST'])
+@login_required
+def set_kr_keys():
+    return _save_keys_common(request.json or {}, is_mock=False)
 
-    update_user_keys(current_user.id, update_data)
 
-    for k, v in update_data.items():
-        current_user.data[k] = v
-
-    prefix = 'us_' if is_mock else 'real_'
-    bot = get_current_bot()
-    if bot:
-        bot.reload_api_keys(
-            kis_config={
-                "app_key": data.get(f'{prefix}app_key'),
-                "app_secret": data.get(f'{prefix}app_secret'),
-                "account_no": data.get(f'{prefix}account_no')
-            },
-            telegram_config={
-                "token": data.get('telegram_token'),
-                "chat_id": data.get('telegram_chat_id')
-            },
-            gemini_config={},
-            core_stocks=us_core if is_mock else kr_core   # 현재 모드 코어만 전달
-        )
-
-    other_mock = not bool(is_mock)
-    other_prefix = 'us_' if other_mock else 'real_'
-    other_bot = manager.bots.get((current_user.id, other_mock))
-    if other_bot:
-        other_bot.reload_api_keys(
-            kis_config={
-                "app_key": data.get(f'{other_prefix}app_key'),
-                "app_secret": data.get(f'{other_prefix}app_secret'),
-                "account_no": data.get(f'{other_prefix}account_no')
-            },
-            telegram_config={
-                "token": data.get('telegram_token'),
-                "chat_id": data.get('telegram_chat_id')
-            },
-            gemini_config={},
-            core_stocks=kr_core if other_mock else us_core  # 반대 모드 코어 전달
-        )
-
-    return jsonify({"status": "success"})
+@app.route('/api/settings/us_keys', methods=['POST'])
+@login_required
+def set_us_keys():
+    return _save_keys_common(request.json or {}, is_mock=True)
 
 @app.route('/api/search/stock')
 @login_required

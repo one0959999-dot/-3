@@ -572,7 +572,7 @@ window.toggleMode = async function () {
         const result = await res.json();
         if (result.status === 'success') {
             showToast(isMock ? 'US 모드로 전환됩니다...' : 'KR 모드로 전환됩니다...', 'info');
-            setTimeout(() => window.location.href = '/dashboard?' + Date.now(), 800);
+            setTimeout(() => window.location.href = isMock ? '/us/dashboard' : '/kr/dashboard', 800);
         } else {
             showToast('모드 변경 실패', 'error');
             cb.checked = !cb.checked;
@@ -926,7 +926,7 @@ window.saveCoreStocks = async function () {
         is_mock: isMock,
     };
     try {
-        const res = await fetch('/api/settings/keys', {
+        const res = await fetch('/api/settings/kr_keys', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(data)
