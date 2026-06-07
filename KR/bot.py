@@ -472,7 +472,9 @@ class KRBotController:
                         f"[{self.mode_name}] KIS stocks 빈 응답 (total_value={_reported_val:,.0f}원) — 포지션 초기화 건너뜀"
                     )
                     return
-                for core in self.core_positions: core.shares = 0
+                for core in self.core_positions:
+                    core.shares = 0
+                    core.floor_shares = 0   # 외부 청산 시 stale floor 초기화 — sync 후 재설정됨
                 for sat in self.satellite_positions.values(): sat.shares = 0
 
                 for t, (q, p, c_p, stock_name) in new_shares.items():
@@ -944,6 +946,7 @@ class KRBotController:
         pos.pyramid_done       = False
         pos.partial_sold       = False
         pos.partial_sold_2     = False
+        pos.cash               = 0.0   # 다음 sync 때 fresh 재할당 — stale 예산 재진입 방지
 
     def _refresh_blacklist(self):
         """날짜가 바뀌면 당일 블랙리스트를 초기화합니다. [BUG-M1] 락 내부에서 호출 전제."""
