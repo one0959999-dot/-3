@@ -53,8 +53,7 @@ us_bp = Blueprint(
     static_url_path='/static/US',
 )
 
-app.register_blueprint(kr_bp)
-app.register_blueprint(us_bp)
+# register_blueprint는 라우트 정의 후 파일 하단에서 호출
 
 # favicon 404 에러 방지
 from flask import send_from_directory
@@ -220,6 +219,9 @@ def kr_dashboard():
 @login_required
 def us_dashboard():
     return _dashboard_response('US/index.html', is_mock=True)
+
+app.register_blueprint(kr_bp)
+app.register_blueprint(us_bp)
 
 @app.route('/dashboard')
 @login_required
