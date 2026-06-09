@@ -398,6 +398,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 </div>
                 <div class="card-value highlight" style="color:#111827;">${(core.shares || 0).toLocaleString()} 주</div>
                 <div class="card-subvalue" style="color:#374151;">
+                    ${core.price > 0 ? `<span style="color:#374151;font-size:0.82rem;">현재가 ${fmtMoney(core.price)}</span><br>` : ''}
                     평가금액 ${fmtMoney(core.value || 0)}<br>
                     ${core.avg_price > 0 && core.shares > 0
                         ? `<span style="color:#6b7280;font-size:0.78rem;">평단 ${fmtMoney(core.avg_price)}</span><br>`
@@ -425,19 +426,18 @@ document.addEventListener('DOMContentLoaded', () => {
         const regime = data.market_regime || 'NEUTRAL';
         const regimeColor = regime === 'BULL' ? '#dc2626' : regime === 'BEAR' ? '#2563eb' : '#475569';
         const regimeEmoji = regime === 'BULL' ? '🐂' : regime === 'BEAR' ? '🐻' : '〰️';
-        const pnl = data.us_pnl ?? 0;
-        const pnlRt = data.us_pnl_rt ?? 0;
-        const pnlColor = pnl > 0 ? '#dc2626' : pnl < 0 ? '#2563eb' : '#475569';
-        const pnlSign  = pnl >= 0 ? '+' : '';
+        const pnlToday = data.pnl_today ?? 0;
+        const pnlTodayColor = pnlToday > 0 ? '#dc2626' : pnlToday < 0 ? '#2563eb' : '#475569';
+        const pnlTodaySign  = pnlToday >= 0 ? '+' : '';
         const avail = data.available_cash ?? 0;
-        const satInfo = (data.satellite_info || []).slice(0, 3);
+        const satInfo = (data.satellite_info || []).slice(0, 5);
+        window._usSatCandidates = satInfo;
         const candidateRows = satInfo.length > 0
-            ? satInfo.map(c => {
-                const ret = (c.return_pct ?? 0);
-                const retColor = ret >= 0 ? '#dc2626' : '#2563eb';
+            ? satInfo.map((c, idx) => {
+                const sector = c.sector && c.sector !== '-' ? `<span style="color:#6b7280;font-size:0.7rem;"> · ${c.sector}</span>` : '';
                 return `<div style="display:flex;justify-content:space-between;align-items:center;padding:4px 0;border-bottom:1px solid rgba(0,0,0,0.07);">
-                    <span style="font-size:0.82rem;font-weight:600;color:#111827;">${c.name}<span style="color:#6b7280;font-size:0.72rem;margin-left:4px">${c.ticker}</span></span>
-                    <span style="font-size:0.8rem;font-weight:700;color:${retColor};">${ret >= 0 ? '+' : ''}${ret.toFixed(1)}%</span>
+                    <span style="font-size:0.82rem;font-weight:600;color:#111827;">${c.name}<span style="color:#6b7280;font-size:0.72rem;margin-left:4px">${c.ticker}</span>${sector}</span>
+                    <button onclick="showUsSatCandidatePopup(${idx})" style="font-size:0.7rem;padding:2px 8px;border-radius:6px;background:rgba(37,99,235,0.1);color:#2563eb;border:1px solid rgba(37,99,235,0.3);cursor:pointer;">확인하기</button>
                 </div>`;
             }).join('')
             : `<div style="color:#6b7280;font-size:0.82rem;padding:6px 0;">후보 선정 중...</div>`;
@@ -448,16 +448,15 @@ document.addEventListener('DOMContentLoaded', () => {
             </div>
             <div style="display:flex;gap:16px;margin-bottom:12px;padding-bottom:10px;border-bottom:1px solid rgba(0,0,0,0.08);">
                 <div>
-                    <div style="font-size:0.7rem;color:#6b7280;margin-bottom:2px;font-weight:600;">오늘 수익</div>
-                    <div style="font-size:1rem;font-weight:700;color:${pnlColor};">${pnlSign}${fmtMoney(pnl)}</div>
-                    <div style="font-size:0.75rem;color:${pnlColor};">${pnlSign}${pnlRt.toFixed(2)}%</div>
+                    <div style="font-size:0.7rem;color:#6b7280;margin-bottom:2px;font-weight:600;">오늘 실현 수익</div>
+                    <div style="font-size:1rem;font-weight:700;color:${pnlTodayColor};">${pnlTodaySign}${fmtMoney(pnlToday)}</div>
                 </div>
                 <div>
                     <div style="font-size:0.7rem;color:#6b7280;margin-bottom:2px;font-weight:600;">가용 현금</div>
                     <div style="font-size:1rem;font-weight:700;color:#111827;">${fmtMoney(avail)}</div>
                 </div>
             </div>
-            <div style="font-size:0.72rem;color:#374151;margin-bottom:6px;font-weight:700;">🚀 Growth 감시 상위</div>
+            <div style="font-size:0.72rem;color:#374151;margin-bottom:6px;font-weight:700;">🔍 Growth 편입 후보군</div>
             ${candidateRows}
         `;
         fragment.appendChild(insightCard);
@@ -1183,6 +1182,81 @@ window.resetInitialCash = async function () {
         alert('❌ 서버 통신 오류: ' + e.message);
     }
 }
+
+// ─── Growth 편입 후보군 팝업 ─────────────────────────────────────────
+window.showUsSatCandidatePopup = function (idx) {
+    const candidates = window._usSatCandidates || [];
+    const c = candidates[idx];
+    if (!c) return;
+
+    const checks = [
+        { label: '20일 모멘텀 양호 (+3%~+20%)', pass: c.momentum_20d != null && c.momentum_20d >= 3 && c.momentum_20d <= 20 },
+        { label: 'RSI 과매도 영역 접근 (≤ 50)', pass: c.rsi != null && c.rsi <= 50 },
+        { label: '거래량 급등 (1.5배 이상)', pass: c.vol_ratio != null && c.vol_ratio >= 1.5 },
+        { label: '외인/기관 순매수', pass: !!c.frgn_inst || !!c.frgn_only },
+        { label: '52주 위치 스윗스팟 (40~80%)', pass: c.pos_52w != null && c.pos_52w >= 40 && c.pos_52w <= 80 },
+        { label: 'AI 상승확률 50% 이상', pass: c.dl_prob != null && c.dl_prob >= 50 },
+    ];
+    const checkRows = checks.map(ch =>
+        `<div style="display:flex;align-items:center;gap:8px;padding:5px 0;border-bottom:1px solid rgba(0,0,0,0.06);">
+            <span style="font-size:1rem;">${ch.pass ? '✅' : '❌'}</span>
+            <span style="font-size:0.82rem;color:${ch.pass ? '#111827' : '#9ca3af'};">${ch.label}</span>
+        </div>`
+    ).join('');
+
+    const frgnTag = c.frgn_only ? '🌍 외국계 전용 순매수' : c.frgn_inst ? '💼 외인/기관 순매수' : '—';
+    const retColor = c.momentum_20d >= 0 ? '#dc2626' : '#2563eb';
+    const curPrice = c.current_price > 0 ? fmtMoney(c.current_price) : '—';
+
+    let modal = document.getElementById('usSatCandidateModal');
+    if (!modal) {
+        modal = document.createElement('div');
+        modal.id = 'usSatCandidateModal';
+        modal.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.5);z-index:9999;display:flex;align-items:center;justify-content:center;padding:16px;';
+        modal.onclick = function(e) { if (e.target === modal) modal.style.display = 'none'; };
+        document.body.appendChild(modal);
+    }
+    modal.innerHTML = `
+        <div style="background:#fff;border:1px solid #e5e7eb;border-radius:16px;padding:20px;max-width:420px;width:100%;max-height:90vh;overflow-y:auto;box-shadow:0 20px 60px rgba(0,0,0,0.15);">
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;">
+                <h3 style="margin:0;font-size:1rem;color:#111827;">🔍 Growth 편입 후보군 상세</h3>
+                <button onclick="document.getElementById('usSatCandidateModal').style.display='none'"
+                    style="background:none;border:none;color:#9ca3af;font-size:1.2rem;cursor:pointer;">✕</button>
+            </div>
+            <div style="background:#f9fafb;border-radius:10px;padding:12px;margin-bottom:14px;">
+                <div style="font-size:1rem;font-weight:700;color:#111827;margin-bottom:4px;">${c.name} <span style="color:#6b7280;font-size:0.82rem;">${c.ticker}</span></div>
+                <div style="font-size:0.8rem;color:#6b7280;">${c.sector && c.sector !== '-' ? c.sector : '섹터 정보 없음'}</div>
+            </div>
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:14px;">
+                <div style="background:#f3f4f6;border-radius:8px;padding:10px;text-align:center;">
+                    <div style="font-size:0.7rem;color:#6b7280;margin-bottom:4px;">현재가</div>
+                    <div style="font-size:1rem;font-weight:700;color:#111827;">${curPrice}</div>
+                </div>
+                <div style="background:#f3f4f6;border-radius:8px;padding:10px;text-align:center;">
+                    <div style="font-size:0.7rem;color:#6b7280;margin-bottom:4px;">20일 수익률</div>
+                    <div style="font-size:1rem;font-weight:700;color:${retColor};">${c.momentum_20d >= 0 ? '+' : ''}${c.momentum_20d.toFixed(2)}%</div>
+                </div>
+            </div>
+            <div style="margin-bottom:14px;">
+                <div style="font-size:0.75rem;color:#6b7280;font-weight:600;margin-bottom:6px;">편입 기준 체크리스트</div>
+                ${checkRows}
+            </div>
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-bottom:14px;font-size:0.8rem;">
+                <div style="color:#6b7280;">RSI(14): <span style="color:#111827;">${c.rsi != null ? c.rsi.toFixed(1) : '—'}</span></div>
+                <div style="color:#6b7280;">거래량 배수: <span style="color:#111827;">${c.vol_ratio != null ? c.vol_ratio.toFixed(2) + 'x' : '—'}</span></div>
+                <div style="color:#6b7280;">52주 위치: <span style="color:#111827;">${c.pos_52w != null ? c.pos_52w.toFixed(1) + '%' : '—'}</span></div>
+                <div style="color:#6b7280;">AI 상승확률: <span style="color:#111827;">${c.dl_prob != null ? c.dl_prob.toFixed(1) + '%' : '—'}</span></div>
+                <div style="color:#6b7280;grid-column:span 2;">${frgnTag}</div>
+            </div>
+            <div style="background:#eff6ff;border:1px solid #bfdbfe;border-radius:8px;padding:10px;margin-bottom:12px;">
+                <div style="font-size:0.72rem;color:#2563eb;margin-bottom:4px;font-weight:600;">🤖 AI 선정 이유</div>
+                <div style="font-size:0.82rem;color:#1e40af;line-height:1.5;">${c.ai_reason || '—'}</div>
+            </div>
+            <div style="text-align:right;font-size:0.72rem;color:#9ca3af;">🕐 스크리닝: ${c.screened_at || '—'}</div>
+        </div>
+    `;
+    modal.style.display = 'flex';
+};
 
 // ── 위성 종목 수 조절 (+/- 버튼) ──────────────────────────────────────
 window.adjustSat = function (delta) {

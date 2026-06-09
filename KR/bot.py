@@ -1154,6 +1154,9 @@ class KRBotController:
             self.add_log("⚠️ 전 섹터 스캔 완료 — 강세 섹터 없음 (상대 강세 기준 후보 선정)")
         # AI 검토: 부적합 종목 제거 후 num_satellites 개수만 사용
         filtered_info = self._ai_filter_satellites(raw_info)
+        _now_str = _now_kst().strftime('%Y-%m-%d %H:%M')
+        for _c in filtered_info:
+            _c.setdefault('screened_at', _now_str)
         self.satellite_info = filtered_info[:self.num_satellites]
         self._inject_user_satellites()  # 사용자 지정 종목 우선 고정
         log_lines = [f"  {i+1}. {c['name']} ({c['ticker']}) {c.get('momentum_20d', 0):+.1f}%" for i, c in enumerate(self.satellite_info)]
@@ -3599,6 +3602,9 @@ class KRBotController:
                             self.satellite_positions[t].cash = alloc
                     for c in new_info:
                         self.satellite_positions[c['ticker']] = Position(c['ticker'], c['name'], alloc)
+                _rescreen_now = _now_kst().strftime('%Y-%m-%d %H:%M')
+                for _c in new_info:
+                    _c.setdefault('screened_at', _rescreen_now)
                 self.satellite_info = [c for c in self.satellite_info if c['ticker'] in keep_tickers] + new_info
                 self._inject_user_satellites()  # 사용자 지정 종목 우선 고정
 
@@ -4085,7 +4091,35 @@ class KRBotController:
 
             # BUG-FIX: deque는 슬라이싱 불가 → list()로 변환 후 슬라이스 (TypeError 방지)
             recent_logs = list(self.logs)[-30:]
-            sat_info_snapshot = [{"ticker": c.get("ticker",""), "name": c.get("name",""), "return_pct": float(c.get("return_pct", c.get("momentum_20d", 0))), "sector": c.get("sector", "-")} for c in self.satellite_info[:5]]
-            return {"is_running": self.is_running, "is_mock": self._is_mock, "has_keys": self.kis is not None, "logs": recent_logs, "hot_sectors": self.hot_sectors, "num_satellites": self.num_satellites, "cores": cores_data, "satellites": satellites, "satellite_info": sat_info_snapshot, "momentum_list": momentum_list, "defensive_list": defensive_list, "market_regime": self.market_regime, "mock_total_asset": mock_total_asset, "mock_pnl": mock_pnl, "mock_pnl_rt": mock_pnl_rt, "initial_cash": current_initial_cash, "available_cash": available_cash}
+
+            # 위성 편입 후보군: 이미 포지션에 있는 종목은 제외
+            _held_sat_tickers = {t for t, p in self.satellite_positions.items() if p.shares > 0}
+            sat_info_snapshot = []
+            for c in self.satellite_info:
+                if c.get('ticker') in _held_sat_tickers:
+                    continue
+                sat_info_snapshot.append({
+                    "ticker":      c.get("ticker", ""),
+                    "name":        c.get("name", ""),
+                    "sector":      c.get("sector", "-"),
+                    "momentum_20d": float(c.get("momentum_20d", c.get("return_pct", 0))),
+                    "rsi":         c.get("rsi"),
+                    "vol_ratio":   float(c.get("vol_ratio", c.get("volume_surge", 1.0))),
+                    "frgn_inst":   bool(c.get("frgn_inst", False)),
+                    "frgn_only":   bool(c.get("frgn_only", False)),
+                    "pos_52w":     c.get("pos_52w"),
+                    "dl_prob":     float(c.get("dl_prob", 0)),
+                    "ai_reason":   c.get("ai_reason", ""),
+                    "current_price": int(c.get("current_price", 0)),
+                    "screened_at": c.get("screened_at", ""),
+                })
+                if len(sat_info_snapshot) >= 5:
+                    break
+
+            # 오늘 실현 손익 (daily_pnl)
+            _today_str = _now_kst().strftime('%Y-%m-%d')
+            pnl_today = float(self.daily_pnl.get(_today_str, 0.0)) if hasattr(self, 'daily_pnl') else 0.0
+
+            return {"is_running": self.is_running, "is_mock": self._is_mock, "has_keys": self.kis is not None, "logs": recent_logs, "hot_sectors": self.hot_sectors, "num_satellites": self.num_satellites, "cores": cores_data, "satellites": satellites, "satellite_info": sat_info_snapshot, "momentum_list": momentum_list, "defensive_list": defensive_list, "market_regime": self.market_regime, "mock_total_asset": mock_total_asset, "mock_pnl": mock_pnl, "mock_pnl_rt": mock_pnl_rt, "initial_cash": current_initial_cash, "available_cash": available_cash, "pnl_today": pnl_today}
         except Exception as critical_e:
             return {"is_running": False, "is_mock": self._is_mock, "has_keys": False, "logs": [{"time": "Error", "message": f"오류: {str(critical_e)}"}], "hot_sectors": [], "num_satellites": self.num_satellites, "cores": [], "satellites": [], "momentum_list": [], "mock_total_asset": 0, "mock_pnl": 0, "mock_pnl_rt": 0, "initial_cash": 10000000}

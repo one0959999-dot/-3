@@ -1131,6 +1131,7 @@ def select_satellites(kis=None, n=NUM_SATELLITES, verbose=True, claude_client=No
                 'frgn_inst':    ticker in frgn_inst_tickers,
                 'frgn_only':    ticker in frgn_only_tickers,
                 'score':        float(round(score, 2)),
+                'current_price': int(current_price),
             })
             processed += 1
 

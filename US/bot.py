@@ -1750,6 +1750,9 @@ class USBotController:
             names = [f"{c['ticker']}(점수:{c['score']:.0f})" for c in new_info]
             self.add_log(f"✅ 위성 종목 선정 (신규): {', '.join(names)}")
 
+        _screen_ts = _now_et().strftime('%Y-%m-%d %H:%M')
+        for _c in new_info:
+            _c.setdefault('screened_at', _screen_ts)
         self.satellite_info   = strong_keep_info + new_info
         # US봇은 100% AI 자율 운영 — 사용자 지정 위성 무시
         # self._inject_user_satellites()
@@ -3638,6 +3641,33 @@ class USBotController:
             pnl_krw = total_krw - initial_krw
             pnl_rt  = (pnl_krw / initial_krw * 100) if initial_krw > 0 else 0.0
 
+            # 위성 편입 후보군: 이미 포지션에 있는 종목 제외
+            _held_us_tickers = {t for t, p in self.satellite_positions.items() if p.shares > 0}
+            _sat_info_out = []
+            for c in self.satellite_info:
+                if c.get('ticker') in _held_us_tickers:
+                    continue
+                _sat_info_out.append({
+                    "ticker":       c.get("ticker", ""),
+                    "name":         c.get("name", ""),
+                    "sector":       c.get("sector", "-"),
+                    "momentum_20d": float(c.get("momentum_20d", c.get("return_pct", 0))),
+                    "rsi":          c.get("rsi"),
+                    "vol_ratio":    float(c.get("vol_ratio", c.get("volume_surge", 1.0))),
+                    "frgn_inst":    bool(c.get("frgn_inst", False)),
+                    "frgn_only":    bool(c.get("frgn_only", False)),
+                    "pos_52w":      c.get("pos_52w"),
+                    "dl_prob":      float(c.get("dl_prob", 0)),
+                    "ai_reason":    c.get("ai_reason", ""),
+                    "current_price": int(c.get("current_price", 0)),
+                    "screened_at":  c.get("screened_at", ""),
+                })
+                if len(_sat_info_out) >= 5:
+                    break
+
+            _today_us = datetime.now().strftime('%Y-%m-%d')
+            _pnl_today_us = float(self.daily_pnl.get(_today_us, 0.0)) if hasattr(self, 'daily_pnl') else 0.0
+
             return {
                 "is_running":       self.is_running,
                 "is_mock":          True,
@@ -3647,6 +3677,7 @@ class USBotController:
                 "num_satellites":   self.num_satellites,
                 "cores":            cores_data,
                 "satellites":       satellites,
+                "satellite_info":   _sat_info_out,
                 "momentum_list":    [],
                 "defensive_list":   defensive_list,
                 "market_regime":    self.market_regime,
@@ -3655,6 +3686,7 @@ class USBotController:
                 "us_pnl_rt":      round(pnl_rt, 2),
                 "initial_cash":     initial_krw,
                 "available_cash":   round(self.cash_usd * fx),
+                "pnl_today":        _pnl_today_us,
             }
 
         except Exception as e:
