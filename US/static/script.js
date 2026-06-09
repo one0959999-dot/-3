@@ -432,14 +432,9 @@ document.addEventListener('DOMContentLoaded', () => {
         const avail = data.available_cash ?? 0;
         const satInfo = (data.satellite_info || []).slice(0, 5);
         window._usSatCandidates = satInfo;
-        const candidateRows = satInfo.length > 0
-            ? satInfo.map(c => {
-                const sector = c.sector && c.sector !== '-' ? `<span style="color:#6b7280;font-size:0.7rem;"> · ${c.sector}</span>` : '';
-                return `<div style="padding:4px 0;border-bottom:1px solid rgba(0,0,0,0.07);">
-                    <span style="font-size:0.82rem;font-weight:600;color:#111827;">${c.name}<span style="color:#6b7280;font-size:0.72rem;margin-left:4px">${c.ticker}</span>${sector}</span>
-                </div>`;
-            }).join('')
-            : `<div style="color:#6b7280;font-size:0.82rem;padding:6px 0;">후보 선정 중...</div>`;
+        const candidateCount = satInfo.length > 0
+            ? `<span style="font-size:0.78rem;color:#6b7280;">${satInfo.length}개 종목</span>`
+            : `<span style="font-size:0.78rem;color:#6b7280;">선정 중...</span>`;
         insightCard.innerHTML = `
             <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">
                 <h3 style="margin:0;font-size:0.95rem;color:#111827;font-weight:700;">📊 시장 & 다음 후보</h3>
@@ -455,11 +450,13 @@ document.addEventListener('DOMContentLoaded', () => {
                     <div style="font-size:1rem;font-weight:700;color:#111827;">${fmtMoney(avail)}</div>
                 </div>
             </div>
-            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">
-                <div style="font-size:0.72rem;color:#374151;font-weight:700;">🔍 Growth 편입 후보군</div>
+            <div style="display:flex;justify-content:space-between;align-items:center;">
+                <div style="display:flex;align-items:center;gap:8px;">
+                    <div style="font-size:0.72rem;color:#374151;font-weight:700;">🔍 Growth 편입 후보군</div>
+                    ${candidateCount}
+                </div>
                 ${satInfo.length > 0 ? `<button onclick="showUsSatCandidateListModal()" style="font-size:0.7rem;padding:2px 8px;border-radius:6px;background:rgba(37,99,235,0.1);color:#2563eb;border:1px solid rgba(37,99,235,0.3);cursor:pointer;">확인하기</button>` : ''}
             </div>
-            ${candidateRows}
         `;
         fragment.appendChild(insightCard);
         topCardsContainer.insertBefore(fragment, satCard);

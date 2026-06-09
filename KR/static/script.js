@@ -438,14 +438,9 @@ document.addEventListener('DOMContentLoaded', () => {
         const satInfo = (data.satellite_info || []).slice(0, 5);
         // 후보군 데이터를 전역에 저장
         window._krSatCandidates = satInfo;
-        const candidateRows = satInfo.length > 0
-            ? satInfo.map(c => {
-                const sector = c.sector && c.sector !== '-' ? `<span style="color:#64748b;font-size:0.7rem;"> · ${c.sector}</span>` : '';
-                return `<div style="padding:4px 0;border-bottom:1px solid rgba(255,255,255,0.05);">
-                    <span style="font-size:0.82rem;font-weight:600;">${c.name}<span style="color:#64748b;font-size:0.72rem;margin-left:4px">${c.ticker}</span>${sector}</span>
-                </div>`;
-            }).join('')
-            : `<div style="color:#64748b;font-size:0.82rem;padding:6px 0;">위성 후보 선정 중...</div>`;
+        const candidateCount = satInfo.length > 0
+            ? `<span style="font-size:0.78rem;color:#64748b;">${satInfo.length}개 종목</span>`
+            : `<span style="font-size:0.78rem;color:#64748b;">선정 중...</span>`;
 
         insightCard.innerHTML = `
             <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">
@@ -462,11 +457,13 @@ document.addEventListener('DOMContentLoaded', () => {
                     <div style="font-size:1rem;font-weight:700;color:#e2e8f0;">${fmtMoney(avail)}</div>
                 </div>
             </div>
-            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">
-                <div style="font-size:0.72rem;color:#94a3b8;font-weight:600;letter-spacing:0.03em;">🔍 위성 편입 후보군</div>
+            <div style="display:flex;justify-content:space-between;align-items:center;">
+                <div style="display:flex;align-items:center;gap:8px;">
+                    <div style="font-size:0.72rem;color:#94a3b8;font-weight:600;letter-spacing:0.03em;">🔍 위성 편입 후보군</div>
+                    ${candidateCount}
+                </div>
                 ${satInfo.length > 0 ? `<button onclick="showSatCandidateListModal()" style="font-size:0.7rem;padding:2px 8px;border-radius:6px;background:rgba(99,102,241,0.2);color:#a5b4fc;border:1px solid rgba(99,102,241,0.4);cursor:pointer;">확인하기</button>` : ''}
             </div>
-            ${candidateRows}
         `;
         fragment.appendChild(insightCard);
         topCardsContainer.insertBefore(fragment, satCard);
