@@ -49,6 +49,7 @@ def init_db():
                 ('is_running', 'INTEGER DEFAULT 0'),
                 ('core_stocks', 'TEXT'), ('is_mock', 'INTEGER DEFAULT 1'),
                 ('real_initial_cash', 'REAL DEFAULT 10000000'), ('us_initial_cash', 'REAL DEFAULT 10000000'),
+                ('initial_cash_captured_at', 'TEXT'),   # 원금 최초 감지 날짜 (YYYY-MM-DD)
                 # 뉴스 모니터 API 키
                 ('dart_api_key', 'TEXT'), ('naver_client_id', 'TEXT'), ('naver_client_secret', 'TEXT'),
                 # 섹터 가이드 (사용자가 직접 입력하는 MD 형식 전략 메모)
@@ -396,11 +397,16 @@ def get_user_initial_cash(user_id, is_mock):
 
 def set_user_initial_cash(user_id, pure_principal, is_mock):
     """최초 투자 원금을 세팅하여 장부를 잠급니다."""
+    from datetime import date as _date
+    today_str = _date.today().strftime('%Y-%m-%d')
     with db_lock:
         conn = get_db_connection()
         cash_col = "us_initial_cash" if is_mock else "real_initial_cash"
         try:
-            conn.execute(f'UPDATE users SET {cash_col} = ? WHERE id = ?', (pure_principal, user_id))
+            conn.execute(
+                f'UPDATE users SET {cash_col} = ?, initial_cash_captured_at = ? WHERE id = ?',
+                (pure_principal, today_str, user_id)
+            )
             conn.commit()
         finally:
             conn.close()  # [BUG-C6]

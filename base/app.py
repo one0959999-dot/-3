@@ -590,12 +590,24 @@ def home_summary():
     total_pnl_from_start = combined_total_krw - combined_initial if combined_initial > 0 else sum(combined.values())
     pnl_from_start_pct = round(total_pnl_from_start / combined_initial * 100, 2) if combined_initial > 0 else 0.0
 
+    # 원금 감지 날짜
+    since_date = ""
+    try:
+        from base.database import get_db_connection as _gdb
+        _conn = _gdb()
+        _row = _conn.execute('SELECT initial_cash_captured_at FROM users WHERE id = ?', (current_user.id,)).fetchone()
+        _conn.close()
+        since_date = (_row[0] or "") if _row else ""
+    except Exception:
+        pass
+
     return jsonify({
         "kr": kr_card,
         "us": us_card,
         "combined_total_krw": combined_total_krw,
         "pnl_from_start": round(total_pnl_from_start),
         "pnl_from_start_pct": pnl_from_start_pct,
+        "since_date": since_date,
         "chart": {
             "daily":   {"labels": daily_days,   "values": daily_vals},
             "monthly": {"labels": monthly_keys, "values": monthly_vals},

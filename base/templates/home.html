@@ -348,7 +348,7 @@
     </div>
     <div class="total-asset-change" id="total-asset-change" style="display:none;">
       <span id="total-change-val"></span>
-      <span class="since-label">2026-05-20 기준</span>
+      <span class="since-label" id="since-label"></span>
     </div>
   </div>
 
@@ -616,6 +616,8 @@ async function loadSummary() {
     const pnlAmt  = d.pnl_from_start ?? 0;
     const changeEl = document.getElementById('total-asset-change');
     const changeValEl = document.getElementById('total-change-val');
+    const sinceLabel = document.getElementById('since-label');
+    if (sinceLabel) sinceLabel.textContent = d.since_date ? `${d.since_date} 기준` : '';
     if (pct !== 0 || pnlAmt !== 0) {
       const s = pct >= 0 ? '+' : '';
       const color = pct > 0 ? '#f85149' : (pct < 0 ? '#58a6ff' : '#94a3b8');
