@@ -3625,7 +3625,9 @@ class USBotController:
             )
             total_usd   = self.cash_usd + total_core_usd + total_sat_usd + total_def_usd
             total_krw   = round(total_usd * fx)
-            initial_krw = get_user_initial_cash(self.user_id, self._is_mock)
+            # [BUG-FIX] US봇은 원금을 USD 단위로 DB 저장 → KRW 환산 후 손익 계산
+            initial_usd = get_user_initial_cash(self.user_id, self._is_mock)
+            initial_krw = round(initial_usd * fx)
             pnl_krw     = total_krw - initial_krw
             pnl_rt      = (pnl_krw / initial_krw * 100) if initial_krw > 0 else 0.0
 
