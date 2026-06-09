@@ -357,13 +357,15 @@ class USBotController:
 
                 # ── 원금 자동 감지 (KR 봇 동일 패턴) ─────────────────
                 if not self.initial_capital_captured and total_usd > 0:
-                    fx        = _get_fx_rate()
-                    total_krw = round(total_usd * fx)
-                    db_cash   = get_user_initial_cash(self.user_id, self._is_mock)
-                    if db_cash == 10_000_000:
-                        set_user_initial_cash(self.user_id, total_krw, self._is_mock)
+                    db_cash = get_user_initial_cash(self.user_id, self._is_mock)
+                    # us_initial_cash 컬럼은 USD 단위로 저장 (app.py에서 * usd_krw 환산)
+                    # 기본값 센티넬: 10_000_000 (KRW 기본값) → USD 기본값은 약 7,400 이하
+                    # 기본값 또는 구버전 KRW 저장값(> 500_000) 감지 시 USD로 재저장
+                    if db_cash == 10_000_000 or db_cash > 500_000:
+                        set_user_initial_cash(self.user_id, total_usd, self._is_mock)
+                        fx = _get_fx_rate()
                         self.add_log(
-                            f"💰 [US 원금 셋업] ${total_usd:,.2f} (≈₩{total_krw:,.0f}) 확정 (첫 실행 감지)"
+                            f"💰 [US 원금 셋업] ${total_usd:,.2f} (≈₩{round(total_usd*fx):,.0f}) 확정 (USD 단위 저장)"
                         )
                     self.initial_capital_captured = True
 
@@ -374,8 +376,8 @@ class USBotController:
                     delta_usd = total_usd - expected
                     fx        = _get_fx_rate()
                     if abs(delta_usd * fx) > 10_000:   # 1만원 이상 변동
-                        delta_krw = round(delta_usd * fx)
-                        add_user_initial_cash(self.user_id, delta_krw, self._is_mock)
+                        # us_initial_cash는 USD 단위로 저장 — delta_usd 그대로 누적
+                        add_user_initial_cash(self.user_id, delta_usd, self._is_mock)
                         if delta_usd > 0:
                             self.add_log(f"💰 US 계좌 외부 입금 감지: +${delta_usd:,.2f}")
                         else:
