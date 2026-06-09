@@ -422,6 +422,9 @@ class USBotController:
                         # 평균단가 불일치 → KIS 값으로 교정
                         if kis_avg > 0 and abs(pos.avg_price_usd - kis_avg) > 0.01:
                             pos.avg_price_usd = kis_avg
+                        # [BUG-FIX] "청산됨" 상태인데 KIS에 실제 보유 중 → 상태 초기화
+                        if kis_shares > 0 and pos.status == "청산됨 (KIS 동기화)":
+                            pos.status = "보유 중 ✅"
                     elif pos.shares > 0:
                         # 내부적으로는 보유 중인데 KIS에 없음 → 청산된 것
                         logger.warning(f"[US봇] {ticker} KIS 미보유 → 포지션 초기화")
