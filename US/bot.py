@@ -746,6 +746,10 @@ class USBotController:
         if not self.kis_overseas:
             self.add_log(f"⚠️ SELL 실패: KIS API 미설정 ({ticker})")
             return 0.0
+        # 미국 장이 닫혀 있으면 주문 차단 (KIS가 거절 → 쓸데없는 에러 방지)
+        if not _is_us_market_open():
+            self.add_log(f"⏸ SELL 보류: 미국 장 외 시간 — {name}({ticker}) {shares:.3g}주 (장 열리면 신호 재평가)")
+            return 0.0
         price = price or self._price(ticker)
         qty_frac = round(shares, 3)
         qty_int  = int(qty_frac)
