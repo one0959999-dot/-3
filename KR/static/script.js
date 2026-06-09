@@ -436,16 +436,13 @@ document.addEventListener('DOMContentLoaded', () => {
         const avail = data.available_cash ?? 0;
 
         const satInfo = (data.satellite_info || []).slice(0, 5);
-        // 후보군 팝업 데이터를 전역에 저장 (확인하기 버튼에서 접근)
+        // 후보군 데이터를 전역에 저장
         window._krSatCandidates = satInfo;
         const candidateRows = satInfo.length > 0
-            ? satInfo.map((c, idx) => {
-                const ret = (c.momentum_20d ?? 0);
-                const retColor = ret >= 0 ? '#f85149' : '#58a6ff';
+            ? satInfo.map(c => {
                 const sector = c.sector && c.sector !== '-' ? `<span style="color:#64748b;font-size:0.7rem;"> · ${c.sector}</span>` : '';
-                return `<div style="display:flex;justify-content:space-between;align-items:center;padding:4px 0;border-bottom:1px solid rgba(255,255,255,0.05);">
+                return `<div style="padding:4px 0;border-bottom:1px solid rgba(255,255,255,0.05);">
                     <span style="font-size:0.82rem;font-weight:600;">${c.name}<span style="color:#64748b;font-size:0.72rem;margin-left:4px">${c.ticker}</span>${sector}</span>
-                    <button onclick="showSatCandidatePopup(${idx})" style="font-size:0.7rem;padding:2px 8px;border-radius:6px;background:rgba(99,102,241,0.2);color:#a5b4fc;border:1px solid rgba(99,102,241,0.4);cursor:pointer;">확인하기</button>
                 </div>`;
             }).join('')
             : `<div style="color:#64748b;font-size:0.82rem;padding:6px 0;">위성 후보 선정 중...</div>`;
@@ -467,6 +464,7 @@ document.addEventListener('DOMContentLoaded', () => {
             </div>
             <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">
                 <div style="font-size:0.72rem;color:#94a3b8;font-weight:600;letter-spacing:0.03em;">🔍 위성 편입 후보군</div>
+                ${satInfo.length > 0 ? `<button onclick="showSatCandidateListModal()" style="font-size:0.7rem;padding:2px 8px;border-radius:6px;background:rgba(99,102,241,0.2);color:#a5b4fc;border:1px solid rgba(99,102,241,0.4);cursor:pointer;">확인하기</button>` : ''}
             </div>
             ${candidateRows}
         `;
@@ -1213,7 +1211,47 @@ window.resetInitialCash = async function () {
 }
 
 // ── 위성 종목 수 조절 (+/- 버튼) ──────────────────────────────────────
-// ─── 위성 편입 후보군 팝업 ────────────────────────────────────────────
+// ─── 위성 편입 후보군 목록 모달 (1단계) ─────────────────────────────
+window.showSatCandidateListModal = function () {
+    const candidates = window._krSatCandidates || [];
+    let modal = document.getElementById('satCandidateListModal');
+    if (!modal) {
+        modal = document.createElement('div');
+        modal.id = 'satCandidateListModal';
+        modal.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.7);z-index:9998;display:flex;align-items:center;justify-content:center;padding:16px;';
+        modal.onclick = function(e) { if (e.target === modal) modal.style.display = 'none'; };
+        document.body.appendChild(modal);
+    }
+    const rows = candidates.map((c, idx) => {
+        const ret = c.momentum_20d ?? 0;
+        const retColor = ret >= 0 ? '#f85149' : '#58a6ff';
+        const sector = c.sector && c.sector !== '-' ? `<div style="font-size:0.72rem;color:#64748b;margin-top:1px;">${c.sector}</div>` : '';
+        return `<div style="display:flex;justify-content:space-between;align-items:center;padding:10px 0;border-bottom:1px solid rgba(255,255,255,0.06);">
+            <div>
+                <span style="font-size:0.9rem;font-weight:600;color:#e2e8f0;">${c.name}</span>
+                <span style="color:#64748b;font-size:0.75rem;margin-left:6px;">${c.ticker}</span>
+                ${sector}
+            </div>
+            <div style="display:flex;align-items:center;gap:8px;flex-shrink:0;">
+                <span style="font-size:0.82rem;font-weight:700;color:${retColor};">${ret >= 0 ? '+' : ''}${ret.toFixed(1)}%</span>
+                <button onclick="showSatCandidatePopup(${idx})" style="font-size:0.7rem;padding:3px 10px;border-radius:6px;background:rgba(99,102,241,0.2);color:#a5b4fc;border:1px solid rgba(99,102,241,0.4);cursor:pointer;">확인하기</button>
+            </div>
+        </div>`;
+    }).join('');
+    modal.innerHTML = `
+        <div style="background:#1e2433;border:1px solid rgba(255,255,255,0.12);border-radius:16px;padding:20px;max-width:400px;width:100%;max-height:80vh;overflow-y:auto;">
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;">
+                <h3 style="margin:0;font-size:1rem;color:#e2e8f0;">🔍 위성 편입 후보군</h3>
+                <button onclick="document.getElementById('satCandidateListModal').style.display='none'"
+                    style="background:none;border:none;color:#64748b;font-size:1.2rem;cursor:pointer;padding:0 4px;">✕</button>
+            </div>
+            ${candidates.length > 0 ? rows : '<div style="color:#64748b;padding:10px 0;">후보 없음</div>'}
+        </div>
+    `;
+    modal.style.display = 'flex';
+};
+
+// ─── 위성 편입 후보군 상세 팝업 (2단계) ──────────────────────────────
 window.showSatCandidatePopup = function (idx) {
     const candidates = window._krSatCandidates || [];
     const c = candidates[idx];

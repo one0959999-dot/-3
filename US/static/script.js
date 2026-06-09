@@ -433,11 +433,10 @@ document.addEventListener('DOMContentLoaded', () => {
         const satInfo = (data.satellite_info || []).slice(0, 5);
         window._usSatCandidates = satInfo;
         const candidateRows = satInfo.length > 0
-            ? satInfo.map((c, idx) => {
+            ? satInfo.map(c => {
                 const sector = c.sector && c.sector !== '-' ? `<span style="color:#6b7280;font-size:0.7rem;"> · ${c.sector}</span>` : '';
-                return `<div style="display:flex;justify-content:space-between;align-items:center;padding:4px 0;border-bottom:1px solid rgba(0,0,0,0.07);">
+                return `<div style="padding:4px 0;border-bottom:1px solid rgba(0,0,0,0.07);">
                     <span style="font-size:0.82rem;font-weight:600;color:#111827;">${c.name}<span style="color:#6b7280;font-size:0.72rem;margin-left:4px">${c.ticker}</span>${sector}</span>
-                    <button onclick="showUsSatCandidatePopup(${idx})" style="font-size:0.7rem;padding:2px 8px;border-radius:6px;background:rgba(37,99,235,0.1);color:#2563eb;border:1px solid rgba(37,99,235,0.3);cursor:pointer;">확인하기</button>
                 </div>`;
             }).join('')
             : `<div style="color:#6b7280;font-size:0.82rem;padding:6px 0;">후보 선정 중...</div>`;
@@ -456,7 +455,10 @@ document.addEventListener('DOMContentLoaded', () => {
                     <div style="font-size:1rem;font-weight:700;color:#111827;">${fmtMoney(avail)}</div>
                 </div>
             </div>
-            <div style="font-size:0.72rem;color:#374151;margin-bottom:6px;font-weight:700;">🔍 Growth 편입 후보군</div>
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">
+                <div style="font-size:0.72rem;color:#374151;font-weight:700;">🔍 Growth 편입 후보군</div>
+                ${satInfo.length > 0 ? `<button onclick="showUsSatCandidateListModal()" style="font-size:0.7rem;padding:2px 8px;border-radius:6px;background:rgba(37,99,235,0.1);color:#2563eb;border:1px solid rgba(37,99,235,0.3);cursor:pointer;">확인하기</button>` : ''}
+            </div>
             ${candidateRows}
         `;
         fragment.appendChild(insightCard);
@@ -1183,7 +1185,47 @@ window.resetInitialCash = async function () {
     }
 }
 
-// ─── Growth 편입 후보군 팝업 ─────────────────────────────────────────
+// ─── Growth 편입 후보군 목록 모달 (1단계) ────────────────────────────
+window.showUsSatCandidateListModal = function () {
+    const candidates = window._usSatCandidates || [];
+    let modal = document.getElementById('usSatCandidateListModal');
+    if (!modal) {
+        modal = document.createElement('div');
+        modal.id = 'usSatCandidateListModal';
+        modal.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.5);z-index:9998;display:flex;align-items:center;justify-content:center;padding:16px;';
+        modal.onclick = function(e) { if (e.target === modal) modal.style.display = 'none'; };
+        document.body.appendChild(modal);
+    }
+    const rows = candidates.map((c, idx) => {
+        const ret = c.momentum_20d ?? 0;
+        const retColor = ret >= 0 ? '#dc2626' : '#2563eb';
+        const sector = c.sector && c.sector !== '-' ? `<div style="font-size:0.72rem;color:#6b7280;margin-top:1px;">${c.sector}</div>` : '';
+        return `<div style="display:flex;justify-content:space-between;align-items:center;padding:10px 0;border-bottom:1px solid #f3f4f6;">
+            <div>
+                <span style="font-size:0.9rem;font-weight:600;color:#111827;">${c.name}</span>
+                <span style="color:#6b7280;font-size:0.75rem;margin-left:6px;">${c.ticker}</span>
+                ${sector}
+            </div>
+            <div style="display:flex;align-items:center;gap:8px;flex-shrink:0;">
+                <span style="font-size:0.82rem;font-weight:700;color:${retColor};">${ret >= 0 ? '+' : ''}${ret.toFixed(1)}%</span>
+                <button onclick="showUsSatCandidatePopup(${idx})" style="font-size:0.7rem;padding:3px 10px;border-radius:6px;background:rgba(37,99,235,0.1);color:#2563eb;border:1px solid rgba(37,99,235,0.3);cursor:pointer;">확인하기</button>
+            </div>
+        </div>`;
+    }).join('');
+    modal.innerHTML = `
+        <div style="background:#fff;border:1px solid #e5e7eb;border-radius:16px;padding:20px;max-width:400px;width:100%;max-height:80vh;overflow-y:auto;box-shadow:0 20px 60px rgba(0,0,0,0.15);">
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;">
+                <h3 style="margin:0;font-size:1rem;color:#111827;">🔍 Growth 편입 후보군</h3>
+                <button onclick="document.getElementById('usSatCandidateListModal').style.display='none'"
+                    style="background:none;border:none;color:#9ca3af;font-size:1.2rem;cursor:pointer;">✕</button>
+            </div>
+            ${candidates.length > 0 ? rows : '<div style="color:#6b7280;padding:10px 0;">후보 없음</div>'}
+        </div>
+    `;
+    modal.style.display = 'flex';
+};
+
+// ─── Growth 편입 후보군 상세 팝업 (2단계) ────────────────────────────
 window.showUsSatCandidatePopup = function (idx) {
     const candidates = window._usSatCandidates || [];
     const c = candidates[idx];
