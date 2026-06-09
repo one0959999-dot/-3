@@ -363,7 +363,9 @@ class USBotController:
                     db_cash = get_user_initial_cash(self.user_id, self._is_mock)
                     # us_initial_cash 컬럼은 USD 단위로 저장
                     # 기본값(10_000_000) 또는 구버전 KRW 저장값(> 500_000) → USD로 재저장
-                    if not self.initial_capital_captured or db_cash == 0 or db_cash == 10_000_000 or db_cash > 500_000:
+                    # 재시작 후에도 DB에 유효한 USD 원금이 있으면 덮어쓰지 않음
+                    # 덮어쓰는 경우: DB가 0이거나 KRW 기본값(10M) 또는 > 500K(구버전 KRW)일 때만
+                    if db_cash == 0 or db_cash == 10_000_000 or db_cash > 500_000:
                         set_user_initial_cash(self.user_id, total_usd, self._is_mock)
                         fx = _get_fx_rate()
                         self.add_log(
