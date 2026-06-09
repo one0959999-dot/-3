@@ -399,6 +399,9 @@ document.addEventListener('DOMContentLoaded', () => {
                 <div class="card-value highlight" style="color:#111827;">${(core.shares || 0).toLocaleString()} 주</div>
                 <div class="card-subvalue" style="color:#374151;">
                     평가금액 ${fmtMoney(core.value || 0)}<br>
+                    ${core.avg_price > 0 && core.shares > 0
+                        ? `<span style="color:#6b7280;font-size:0.78rem;">평단 ${fmtMoney(core.avg_price)}</span><br>`
+                        : ''}
                     ${core.budget > 0
                         ? `<span style="color:#6b7280;font-size:0.8rem;">(배정 예산: ${fmtMoney(core.budget)})</span>`
                         : `<span style="color:#dc2626;font-size:0.8rem;font-weight:600;">예산 소진</span>`}
@@ -475,7 +478,7 @@ document.addEventListener('DOMContentLoaded', () => {
                     <td><b>${s.name}</b><span style="color:#64748b;font-size:0.78rem;margin-left:5px">${s.ticker}</span></td>
                     <td>${priceCell}</td>
                     <td>${sharesCell}</td>
-                    <td><div>${valueCell}</div>${_pnlCell(s.shares, s.avg_price, s.price)}${budgetLine}</td>
+                    <td><div>${valueCell}</div>${_pnlCell(s.shares, s.avg_price, s.price)}${s.shares > 0 && s.avg_price > 0 ? `<div style="font-size:0.72rem;color:#6b7280;margin-top:2px;">평단 ${fmtMoney(s.avg_price)}</div>` : ''}${budgetLine}</td>
                     <td><span class="badge" onclick="showStatusModalEncoded('${s.name}', '${encodeURIComponent(sMsg)}')" style="cursor:pointer; ${_positionBadgeStyle(sText)}">${sText}</span></td>
                 </tr>`;
             });
