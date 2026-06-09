@@ -504,9 +504,10 @@ class KRBotController:
                                 self.add_log(f"🌟 {self.mode_name} 계좌 미등록 종목 '{stock_name}'을 위성으로 강제 편입합니다!")
                                 new_sat = Position(t, stock_name, 0.0)
                                 new_sat.shares = q; new_sat.avg_price = p; new_sat.kis_current_price = c_p
+                                new_sat.user_managed = True   # 수동 매수 종목 — 스크리너 교체/강제 청산 금지
                                 self.satellite_positions[t] = new_sat
                                 if not any(x['ticker'] == t for x in self.satellite_info):
-                                    self.satellite_info.append({'ticker': t, 'name': stock_name, 'return_pct': 0.0, 'sector': '-'})
+                                    self.satellite_info.append({'ticker': t, 'name': stock_name, 'return_pct': 0.0, 'sector': '계좌편입'})
                             else:
                                 logger.warning(f"[{self.mode_name}] 위성 한도({self.num_satellites}) 초과 — '{stock_name}'({t}) 자동 편입 생략")
 
@@ -3404,6 +3405,15 @@ class KRBotController:
                     with self.lock:
                         if ticker in self.satellite_positions: del self.satellite_positions[ticker]
                     continue
+                # 수동 매수(계좌편입) 종목 — 스크리너 교체/손절 완전 면제
+                _is_user_mgd = getattr(pos, 'user_managed', False)
+                _info_e = next((i for i in self.satellite_info if i.get('ticker') == ticker), None)
+                _is_acct = _info_e and _info_e.get('sector') == '계좌편입'
+                if _is_user_mgd or _is_acct:
+                    keep_tickers.add(ticker)
+                    strong_keeps.add(ticker)
+                    self.add_log(f"🔒 {pos.name}({ticker}) 수동편입 보호 — 재스크리닝 제외")
+                    continue
                 time.sleep(0.2)
                 price = self.kis.get_current_price(ticker) if self.kis else 0
                 if price and pos.avg_price > 0:
@@ -3451,7 +3461,11 @@ class KRBotController:
                     else:
                         profit_map[t] = 0.0
                 sorted_keep = sorted(keep_tickers, key=lambda t: profit_map.get(t, 0))
-                excess = sorted_keep[:len(keep_tickers) - self.num_satellites]
+                # 수동 편입 종목은 초과 정리 대상에서 제외
+                sorted_keep = [t for t in sorted_keep
+                               if not getattr(self.satellite_positions.get(t), 'user_managed', False)
+                               and not (next((i for i in self.satellite_info if i.get('ticker') == t), {}).get('sector') == '계좌편입')]
+                excess = sorted_keep[:max(0, len(keep_tickers) - self.num_satellites)]
                 for t in excess:
                     pos = self.satellite_positions.get(t)
                     if pos:
