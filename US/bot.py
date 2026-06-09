@@ -358,18 +358,18 @@ class USBotController:
                     self.cash_usd = buyable_usd
 
                 # ── 원금 자동 감지 (KR 봇 동일 패턴) ─────────────────
-                if not self.initial_capital_captured and total_usd > 0:
+                # total_usd > 0 보장: KIS 조회 성공 + 포지션/현금 있을 때만 갱신
+                if total_usd > 0:
                     db_cash = get_user_initial_cash(self.user_id, self._is_mock)
-                    # us_initial_cash 컬럼은 USD 단위로 저장 (app.py에서 * usd_krw 환산)
-                    # 기본값 센티넬: 10_000_000 (KRW 기본값) → USD 기본값은 약 7,400 이하
-                    # 기본값 또는 구버전 KRW 저장값(> 500_000) 감지 시 USD로 재저장
-                    if db_cash == 10_000_000 or db_cash > 500_000:
+                    # us_initial_cash 컬럼은 USD 단위로 저장
+                    # 기본값(10_000_000) 또는 구버전 KRW 저장값(> 500_000) → USD로 재저장
+                    if not self.initial_capital_captured or db_cash == 10_000_000 or db_cash > 500_000:
                         set_user_initial_cash(self.user_id, total_usd, self._is_mock)
                         fx = _get_fx_rate()
                         self.add_log(
                             f"💰 [US 원금 셋업] ${total_usd:,.2f} (≈₩{round(total_usd*fx):,.0f}) 확정 (USD 단위 저장)"
                         )
-                    self.initial_capital_captured = True
+                        self.initial_capital_captured = True
 
                 # ── 입출금 감지 ────────────────────────────────────────
                 if self.last_asset_cost is not None:
@@ -3625,11 +3625,19 @@ class USBotController:
             )
             total_usd   = self.cash_usd + total_core_usd + total_sat_usd + total_def_usd
             total_krw   = round(total_usd * fx)
-            # [BUG-FIX] US봇은 원금을 USD 단위로 DB 저장 → KRW 환산 후 손익 계산
-            initial_usd = get_user_initial_cash(self.user_id, self._is_mock)
-            initial_krw = round(initial_usd * fx)
-            pnl_krw     = total_krw - initial_krw
-            pnl_rt      = (pnl_krw / initial_krw * 100) if initial_krw > 0 else 0.0
+            # [BUG-FIX] US봇 원금 KRW 환산
+            # us_initial_cash 저장 규칙:
+            #   - 정상 업데이트: USD 단위 (< 500,000) → × fx로 KRW 환산
+            #   - 기본값/구형 KRW: 500,000 이상 → 그대로 KRW로 사용
+            # (동기화 조건: db_cash == 10_000_000 or db_cash > 500_000 → USD로 재저장 예약)
+            _raw_init = get_user_initial_cash(self.user_id, self._is_mock)
+            if _raw_init > 500_000:
+                # 아직 USD로 업데이트 안 됨 → 현재 총자산을 원금으로 임시 사용 (0% 손익)
+                initial_krw = total_krw if total_krw > 0 else 1
+            else:
+                initial_krw = round(_raw_init * fx)
+            pnl_krw = total_krw - initial_krw
+            pnl_rt  = (pnl_krw / initial_krw * 100) if initial_krw > 0 else 0.0
 
             return {
                 "is_running":       self.is_running,

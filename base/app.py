@@ -582,8 +582,11 @@ def home_summary():
     try:
         from base.database import get_user_initial_cash
         kr_init = get_user_initial_cash(current_user.id, False) if kr_bot else 0
-        us_init = get_user_initial_cash(current_user.id, True)  if us_bot else 0
-        combined_initial = float(kr_init) + float(us_init) * usd_krw
+        _us_raw = get_user_initial_cash(current_user.id, True)  if us_bot else 0
+        # us_initial_cash < 500,000 → USD 단위 저장 → KRW 환산
+        # us_initial_cash >= 500,000 → 기본값(10M) 또는 구형 KRW → 그대로 사용
+        us_init_krw = float(_us_raw) if float(_us_raw) >= 500_000 else float(_us_raw) * usd_krw
+        combined_initial = float(kr_init) + us_init_krw
     except Exception:
         pass
     combined_total_krw = kr_card["total_krw"] + us_card["total_krw"]
