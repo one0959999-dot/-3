@@ -776,6 +776,10 @@ class USBotController:
             return proceeds
         else:
             self.add_log(f"❌ SELL 주문 실패: {name}({ticker}) — KIS 응답 확인 필요")
+            # 매도 실패 시 해당 포지션에 쿨다운 타임스탬프 기록 (5분 재시도 차단)
+            _pos = self.satellite_positions.get(ticker) or self.core_positions.get(ticker) if hasattr(self, 'satellite_positions') else None
+            if _pos is not None:
+                _pos._sell_fail_ts = time.time()
             return 0.0
 
     # ─────────────────────────────────────────────────────────────────
@@ -2385,8 +2389,12 @@ class USBotController:
             _is_user_mgd = getattr(pos, 'user_managed', False)
             _info_e = next((i for i in self.satellite_info if i["ticker"] == ticker), None)
             _is_acct = _info_e and _info_e.get("sector") == "계좌편입"
+            # 매도 실패 쿨다운: 5분 내 재시도 차단
+            _sell_fail_ts = getattr(pos, '_sell_fail_ts', 0)
+            _sell_cooldown = (time.time() - _sell_fail_ts) < 300
             if ticker not in in_info and not _is_user_mgd and not _is_acct \
-                    and pnl_pct > 0 and pnl_pct < self._GROWTH_KEEP_PCT:
+                    and pnl_pct > 0 and pnl_pct < self._GROWTH_KEEP_PCT \
+                    and _is_us_market_open() and not _sell_cooldown:
                 self._close_sat(ticker, pos, price, f"스크리너 제외 (수익 {pnl_pct:.1f}%)")
                 continue
 
