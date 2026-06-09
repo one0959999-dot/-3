@@ -363,7 +363,7 @@ class USBotController:
                     db_cash = get_user_initial_cash(self.user_id, self._is_mock)
                     # us_initial_cash 컬럼은 USD 단위로 저장
                     # 기본값(10_000_000) 또는 구버전 KRW 저장값(> 500_000) → USD로 재저장
-                    if not self.initial_capital_captured or db_cash == 10_000_000 or db_cash > 500_000:
+                    if not self.initial_capital_captured or db_cash == 0 or db_cash == 10_000_000 or db_cash > 500_000:
                         set_user_initial_cash(self.user_id, total_usd, self._is_mock)
                         fx = _get_fx_rate()
                         self.add_log(
@@ -3625,17 +3625,16 @@ class USBotController:
             )
             total_usd   = self.cash_usd + total_core_usd + total_sat_usd + total_def_usd
             total_krw   = round(total_usd * fx)
-            # [BUG-FIX] US봇 원금 KRW 환산
-            # us_initial_cash 저장 규칙:
-            #   - 정상 업데이트: USD 단위 (< 500,000) → × fx로 KRW 환산
-            #   - 기본값/구형 KRW: 500,000 이상 → 그대로 KRW로 사용
-            # (동기화 조건: db_cash == 10_000_000 or db_cash > 500_000 → USD로 재저장 예약)
+            # US봇 원금: us_initial_cash는 USD 단위 소수로 저장
+            # 0 또는 미설정(10,000,000 기본값 등) → 봇이 아직 원금 감지 전
+            # 이 경우 total_krw를 원금으로 임시 사용하여 0% 표시 (왜곡 방지)
             _raw_init = get_user_initial_cash(self.user_id, self._is_mock)
-            if _raw_init > 500_000:
-                # 아직 USD로 업데이트 안 됨 → 현재 총자산을 원금으로 임시 사용 (0% 손익)
-                initial_krw = total_krw if total_krw > 0 else 1
-            else:
+            _is_valid_usd = (0 < _raw_init < 500_000)  # 정상 USD 범위: $0 초과 ~ $500K 미만
+            if _is_valid_usd:
                 initial_krw = round(_raw_init * fx)
+            else:
+                # 미감지 상태 → 0% 표시
+                initial_krw = total_krw if total_krw > 0 else 1
             pnl_krw = total_krw - initial_krw
             pnl_rt  = (pnl_krw / initial_krw * 100) if initial_krw > 0 else 0.0
 
