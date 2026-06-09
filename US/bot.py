@@ -459,6 +459,7 @@ class USBotController:
                         avg_price_usd = kis_avg,
                         status        = "계좌편입 ✅",
                     )
+                    new_pos.user_managed = True   # 수동 매수 종목 — 스크리너 교체/강제 청산 금지
                     self.satellite_positions[t] = new_pos
                     if not any(x.get("ticker") == t for x in self.satellite_info):
                         self.satellite_info.append({
@@ -1623,12 +1624,16 @@ class USBotController:
                 price = self._price(t)
                 if price > 0:
                     pnl_pct = (price / p.avg_price_usd - 1) * 100
-                    if pnl_pct >= self._GROWTH_KEEP_PCT:
-                        existing = next((i for i in self.satellite_info if i["ticker"] == t), None)
+                    _is_user = getattr(p, 'user_managed', False)
+                    existing = next((i for i in self.satellite_info if i["ticker"] == t), None)
+                    _is_account_import = existing and existing.get("sector") == "계좌편입"
+                    if pnl_pct >= self._GROWTH_KEEP_PCT or _is_user or _is_account_import:
                         strong_keep_info.append(existing or {"ticker": t, "name": p.name,
-                                                             "sector": "", "score": 0, "ai_reason": ""})
+                                                             "sector": "계좌편입" if (_is_user or _is_account_import) else "",
+                                                             "score": 0, "ai_reason": ""})
                         strong_keep_tickers.add(t)
-                        self.add_log(f"🌱 {p.name}({t}) 성장세 양호 ({pnl_pct:+.1f}%) — 교체 없이 유지")
+                        reason = "수동편입 보호" if (_is_user or _is_account_import) else f"성장세 양호 ({pnl_pct:+.1f}%)"
+                        self.add_log(f"🌱 {p.name}({t}) {reason} — 교체 없이 유지")
 
         slots_needed = self.num_satellites - len(strong_keep_tickers)
         if slots_needed <= 0:
@@ -2324,9 +2329,13 @@ class USBotController:
                     logger.debug(f"[US봇] BULL 불타기(위성) 오류: {_pye}")
 
             # ⑥ 스크리너 제외 + 수익권 → 청산
-            # 성장세 양호(+3% 이상)면 스크리너 제외여도 유지 — 자연 익절/손절 대기
+            # 성장세 양호(+3% 이상) 또는 수동편입 종목은 유지 — 자연 익절/손절 대기
             in_info = {i["ticker"] for i in self.satellite_info}
-            if ticker not in in_info and pnl_pct > 0 and pnl_pct < self._GROWTH_KEEP_PCT:
+            _is_user_mgd = getattr(pos, 'user_managed', False)
+            _info_e = next((i for i in self.satellite_info if i["ticker"] == ticker), None)
+            _is_acct = _info_e and _info_e.get("sector") == "계좌편입"
+            if ticker not in in_info and not _is_user_mgd and not _is_acct \
+                    and pnl_pct > 0 and pnl_pct < self._GROWTH_KEEP_PCT:
                 self._close_sat(ticker, pos, price, f"스크리너 제외 (수익 {pnl_pct:.1f}%)")
                 continue
 
@@ -2512,14 +2521,26 @@ class USBotController:
         for t, p in list(self.satellite_positions.items()):
             if p.shares > 0 and p.avg_price_usd > 0:
                 price = self._price(t)
-                if price > 0 and (price / p.avg_price_usd - 1) * 100 >= self._GROWTH_KEEP_PCT:
+                _is_user = getattr(p, 'user_managed', False)
+                _info_entry = next((i for i in self.satellite_info if i["ticker"] == t), None)
+                _is_account = _info_entry and _info_entry.get("sector") == "계좌편입"
+                if _is_user or _is_account:
+                    strong_keep.add(t)
+                    self.add_log(f"🔒 {p.name}({t}) 수동편입 보호 — 재스크리닝 제외")
+                elif price > 0 and (price / p.avg_price_usd - 1) * 100 >= self._GROWTH_KEEP_PCT:
                     strong_keep.add(t)
                     self.add_log(f"🌱 {p.name}({t}) 성장세 양호 — 교체 없이 유지")
-        # 전 슬롯이 성장세 양호하면 재스크리닝 불필요
+        # 전 슬롯이 성장세 양호 / 수동편입이면 재스크리닝 불필요
         if len(strong_keep) >= self.num_satellites:
-            self.add_log(f"✅ 위성 {len(strong_keep)}개 성장세 양호 — 재스크리닝 스킵")
+            self.add_log(f"✅ 위성 {len(strong_keep)}개 보호 중 — 재스크리닝 스킵")
             return
-        # last_screen_date 초기화 → _screen_satellites() 강제 재실행
+        # 실제로 주수=0인 빈 슬롯이 있을 때만 강제 재스크리닝
+        # (보유 중이지만 -3% 미달 종목은 일 1회 정기 스크리닝이 처리)
+        occupied = sum(1 for p in self.satellite_positions.values() if p.shares > 0)
+        if occupied >= self.num_satellites:
+            self.add_log(f"✅ 위성 슬롯 {occupied}/{self.num_satellites} 보유 중 — 빈 슬롯 없음, 일 1회 정기 스크리닝만 실행")
+            return
+        # 빈 슬롯 있음 → last_screen_date 초기화 → _screen_satellites() 강제 재실행
         self.last_screen_date = None
         self._screen_satellites()
 
