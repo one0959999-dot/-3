@@ -647,10 +647,14 @@ def reset_initial_cash():
     is_mock = bool(current_user.data.get('is_mock', 0))
 
     amount = float(data.get('amount', 0))
+    currency = data.get('currency', 'krw')  # 'usd' or 'krw'
     if amount > 0:
         # 명시적 금액 → 직접 설정
         set_user_initial_cash(current_user.id, amount, is_mock)
-        msg = f"투자 원금 기준값이 {amount:,.0f}원으로 재설정되었습니다."
+        if currency == 'usd':
+            msg = f"투자 원금 기준값이 ${amount:,.2f} (USD)로 재설정되었습니다."
+        else:
+            msg = f"투자 원금 기준값이 {amount:,.0f}원으로 재설정되었습니다."
     else:
         # amount 없음 → initial_capital_captured 리셋
         # 다음 _sync_internal_balances에서 KIS 잔고 기준으로 자동 재측정

@@ -1154,22 +1154,22 @@ window.resetAiChat = async function () {
 }
 
 window.resetInitialCash = async function () {
-    const totalValEl = document.getElementById('total-value');
-    const currentTotal = totalValEl ? parseInt(totalValEl.textContent.replace(/[^0-9]/g, '')) : 0;
+    // US봇: 달러 기준 원금 입력
     const input = prompt(
-        '수익률 기준 원금을 재설정합니다.\n' +
-        '현재 총평가금액: ' + (currentTotal ? currentTotal.toLocaleString() + '원' : '알 수 없음') + '\n\n' +
-        '재설정할 원금을 입력하세요 (원 단위, 기본 10,000,000):',
-        '10000000'
+        '수익률 기준 원금(투자 원금)을 달러($)로 재설정합니다.\n\n' +
+        '재설정할 금액을 입력하세요 (USD, 예: 10000):',
+        '10000'
     );
     if (input === null) return;
-    const amount = parseInt(input.replace(/[^0-9]/g, '') || '0');
-    if (isNaN(amount) || amount < 0) { alert('올바른 금액을 입력해주세요. (0원 입력 가능)'); return; }
+    // 소수점 허용 (e.g. 9876.54)
+    const amount = parseFloat(input.replace(/[^0-9.]/g, '') || '0');
+    if (isNaN(amount) || amount <= 0) { alert('올바른 달러 금액을 입력해주세요. (예: 10000)'); return; }
+    if (amount >= 500000) { alert('500,000 미만의 USD 금액을 입력하세요.'); return; }
     try {
         const res = await fetch('/api/reset_initial_cash', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ amount })
+            body: JSON.stringify({ amount, currency: 'usd' })
         });
         const data = await res.json();
         if (data.status === 'ok') {
