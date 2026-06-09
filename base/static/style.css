@@ -1018,16 +1018,40 @@ header {
     /* 2. 상단 네비게이션 바 모바일 정렬 */
     .navbar {
         flex-direction: column;
-        gap: 10px;
-        padding: 12px 16px !important;
+        gap: 8px;
+        padding: 10px 14px !important;
         margin-bottom: 10px;
+    }
+
+    /* nav-center(환율·선물 위젯) 모바일: 2개 나란히 → 가로폭 맞춤 */
+    .nav-center {
+        width: 100%;
+        justify-content: center;
+        gap: 8px;
+    }
+
+    /* nav-fx 고정 min-width(200px) 해제 → 화면에 맞게 축소 */
+    .nav-fx {
+        width: auto !important;
+        min-width: 0 !important;
+        flex: 1;
+        max-width: 48%;
+        height: auto !important;
+        padding: 5px 8px !important;
+        font-size: 0.7rem;
     }
 
     .nav-user {
         flex-wrap: wrap;
         justify-content: center;
-        gap: 10px;
+        gap: 6px;
         width: 100%;
+    }
+
+    /* 유저명 전체 너비로 중앙 정렬 */
+    .nav-user > span {
+        width: 100%;
+        text-align: center;
     }
 
     .mode-toggle {
@@ -1036,8 +1060,15 @@ header {
     }
 
     .btn-settings {
-        font-size: 0.8rem !important;
-        padding: 4px 8px !important;
+        font-size: 0.78rem !important;
+        padding: 4px 10px !important;
+        height: 30px !important;
+    }
+
+    .btn-logout {
+        font-size: 0.78rem !important;
+        padding: 4px 10px !important;
+        height: 30px !important;
     }
 
     /* 3. 헤더 및 제어 컴포넌트 세로 배치 */
@@ -1072,6 +1103,7 @@ header {
     .header-bottom {
         flex-direction: column;
         gap: 8px;
+        height: auto;      /* PC 고정 72px 해제 → 세로 쌓임 시 잘림 방지 */
     }
 
     .header-right {
@@ -1169,9 +1201,9 @@ header {
     }
 
     /* 6. 가짜 가로 헤더 대신 각 항목 왼쪽에 라벨을 자동으로 부착 (Pure CSS) */
-    /* 6-A. 📡 위성 포지션 테이블 전용 라벨 */
+    /* 6-A. 📡 위성 포지션 테이블 전용 라벨 (컬럼 순서: 종목, 현재가, 보유주식, 평가금액, 상태) */
     .sat-table:not(#real-account-section .sat-table) tbody td:nth-child(2)::before {
-        content: "적용 전략";
+        content: "현재가";    /* 기존 "적용 전략" 오류 수정 — 실제 컬럼은 현재가 */
         color: var(--text-secondary);
         font-weight: 600;
     }
@@ -1223,6 +1255,12 @@ header {
         content: "실시간 수익률";
         color: var(--text-secondary);
         font-weight: 600;
+    }
+
+    /* 7-a. 방어자산 그리드 → 1열로 (인라인 스타일 repeat(3,1fr) 강제 오버라이드) */
+    #defensive-slots {
+        grid-template-columns: 1fr !important;
+        gap: 8px !important;
     }
 
     /* 배지 크기 다운사이징 */
