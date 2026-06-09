@@ -2392,10 +2392,11 @@ class USBotController:
             # 매도 실패 쿨다운: 5분 내 재시도 차단
             _sell_fail_ts = getattr(pos, '_sell_fail_ts', 0)
             _sell_cooldown = (time.time() - _sell_fail_ts) < 300
+            # 스크리너 제외 + 손실 중 → 청산 (수익 중인 포지션은 매매 신호에 맡김)
             if ticker not in in_info and not _is_user_mgd and not _is_acct \
-                    and pnl_pct > 0 and pnl_pct < self._GROWTH_KEEP_PCT \
+                    and pnl_pct <= 0 \
                     and _is_us_market_open() and not _sell_cooldown:
-                self._close_sat(ticker, pos, price, f"스크리너 제외 (수익 {pnl_pct:.1f}%)")
+                self._close_sat(ticker, pos, price, f"스크리너 제외 (손실 {pnl_pct:.1f}%)")
                 continue
 
             with self.lock:
