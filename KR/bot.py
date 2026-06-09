@@ -3988,7 +3988,8 @@ class KRBotController:
             tracked_tickers = set()   # 봇이 알고 있는 종목 — 나중에 미추적 종목 합산 시 제외용
             cores_data = []
             for core in safe_core_positions:
-                cp = float(self.live_prices.get(core.ticker, 0) or _kis_price.get(core.ticker, 0) or getattr(core, '_last_price', 0) or getattr(core, 'kis_current_price', 0) or core.avg_price or 0)
+                # 대시보드 표시: KIS 잔고 스냅샷(30초 단위) 우선 → WebSocket 보완
+                cp = float(_kis_price.get(core.ticker, 0) or self.live_prices.get(core.ticker, 0) or getattr(core, '_last_price', 0) or getattr(core, 'kis_current_price', 0) or core.avg_price or 0)
                 core_val = float(core.shares) * cp
                 total_realtime_stock_val += core_val
                 tracked_tickers.add(core.ticker)
@@ -4009,13 +4010,13 @@ class KRBotController:
             for ticker, pos in safe_satellite_items:
                 tracked_tickers.add(ticker)   # 이중 계산 방지 (캡 무관하게 전체 등록)
                 if pos.shares > 0:
-                    sp = float(self.live_prices.get(ticker, 0) or _kis_price.get(ticker, 0) or getattr(pos, '_last_price', 0) or getattr(pos, 'kis_current_price', 0) or pos.avg_price or 0)
+                    sp = float(_kis_price.get(ticker, 0) or self.live_prices.get(ticker, 0) or getattr(pos, '_last_price', 0) or getattr(pos, 'kis_current_price', 0) or pos.avg_price or 0)
                     _sat_price_cache[ticker] = sp
                     total_realtime_stock_val += float(pos.shares) * sp
 
             # UI 표시는 capped_items으로만
             for ticker, pos in capped_items:
-                sp = _sat_price_cache.get(ticker) or float(self.live_prices.get(ticker, 0) or _kis_price.get(ticker, 0) or getattr(pos, '_last_price', 0) or getattr(pos, 'kis_current_price', 0) or pos.avg_price or 0)
+                sp = _sat_price_cache.get(ticker) or float(_kis_price.get(ticker, 0) or self.live_prices.get(ticker, 0) or getattr(pos, '_last_price', 0) or getattr(pos, 'kis_current_price', 0) or pos.avg_price or 0)
                 sat_val = float(pos.shares) * sp
                 # KIS 실제 평단가 우선 사용 (봇 내부 추정값 대신)
                 _avg_p = _kis_avg.get(ticker) or float(getattr(pos, 'avg_price', 0) or 0)
