@@ -3507,6 +3507,16 @@ class USBotController:
         try:
             fx = _get_fx_rate()
 
+            # [BUG-FIX] KIS cached_balance에서 실제 pchs_avg_pric(USD 평단가) 추출
+            # pos.avg_price_usd는 봇 내부 추정값으로 실제 체결가와 다를 수 있음.
+            _kis_avg_usd: dict = {}  # ticker → purchase_price (USD)
+            if self.cached_balance:
+                for _s in self.cached_balance.get('stocks', []):
+                    _t = _s.get('ticker', '')
+                    _p = float(_s.get('purchase_price', 0))
+                    if _t and _p > 0:
+                        _kis_avg_usd[_t] = _p
+
             # ── 코어 포지션 ───────────────────────────────────────────
             total_core_usd = 0.0
             cores_data = []
@@ -3516,7 +3526,8 @@ class USBotController:
                 sp_usd  = self._price_cache.get(t, pos.avg_price_usd)
                 val_usd = pos.shares * sp_usd
                 total_core_usd += val_usd
-                avg_p   = pos.avg_price_usd
+                # KIS 실제 평단가(USD) 우선 사용
+                avg_p   = _kis_avg_usd.get(t) or pos.avg_price_usd
                 pnl_pct = ((sp_usd / avg_p) - 1) * 100 if avg_p > 0 else 0.0
                 cores_data.append({
                     "name":       pos.name,
@@ -3550,7 +3561,8 @@ class USBotController:
                 sp_usd  = self._price_cache.get(t, pos.avg_price_usd)
                 val_usd = pos.shares * sp_usd
                 total_sat_usd += val_usd
-                avg_p   = pos.avg_price_usd
+                # KIS 실제 평단가(USD) 우선 사용
+                avg_p   = _kis_avg_usd.get(t) or pos.avg_price_usd
                 pnl_pct = ((sp_usd / avg_p) - 1) * 100 if avg_p > 0 else 0.0
                 satellites.append({
                     "name":       pos.name,

@@ -314,13 +314,20 @@ def kis_balance():
                 purchase_p = float(new_stock.get('purchase_price', 0))
                 
                 # 웹소켓 실시간 가격이 있으면 최우선 덮어쓰고, 없으면 증권사가 보낸 진짜 현재가 사용
-                current_p = rt_prices.get(ticker, float(new_stock.get('current_price', 0)))
-                
+                ws_price = rt_prices.get(ticker)
+                kis_price = float(new_stock.get('current_price', 0))
+                current_p = ws_price if ws_price else kis_price
+
                 new_stock['current_price'] = current_p
-                new_stock['value'] = shares * current_p  
-                
+                new_stock['value'] = shares * current_p
+
                 if purchase_p > 0:
-                    new_stock['profit_rt'] = ((current_p / purchase_p) - 1) * 100
+                    if ws_price:
+                        # 웹소켓 실시간가 → 직접 재계산 (가장 최신 수익률)
+                        new_stock['profit_rt'] = ((ws_price / purchase_p) - 1) * 100
+                    else:
+                        # 웹소켓 미연결 → KIS 원본 evlu_pfls_rt 그대로 사용 (KIS 앱과 일치)
+                        new_stock['profit_rt'] = float(new_stock.get('profit_rt', 0.0))
                 else:
                     new_stock['profit_rt'] = 0.0
                 

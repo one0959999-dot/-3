@@ -3963,6 +3963,17 @@ class KRBotController:
                 safe_core_positions = list(self.core_positions)
                 safe_satellite_items = list(self.satellite_positions.items())
 
+            # [BUG-FIX] KIS cached_balance에서 실제 pchs_avg_pric(평단가) 추출
+            # pos.avg_price는 봇 내부 추정값으로 실제 체결가와 다를 수 있음.
+            # KIS API 값을 우선 사용하여 KIS 앱과 수익률 일치.
+            _kis_avg: dict = {}  # ticker → pchs_avg_pric
+            if self.cached_balance:
+                for _s in self.cached_balance.get('stocks', []):
+                    _t = _s.get('ticker', '')
+                    _p = float(_s.get('purchase_price', 0))
+                    if _t and _p > 0:
+                        _kis_avg[_t] = _p
+
             total_realtime_stock_val = 0.0
             tracked_tickers = set()   # 봇이 알고 있는 종목 — 나중에 미추적 종목 합산 시 제외용
             cores_data = []
@@ -3971,7 +3982,9 @@ class KRBotController:
                 core_val = float(core.shares) * cp
                 total_realtime_stock_val += core_val
                 tracked_tickers.add(core.ticker)
-                cores_data.append({"name": core.name, "ticker": core.ticker, "shares": core.shares, "floor": core.floor_shares, "price": cp, "value": core_val, "avg_price": float(getattr(core, 'avg_price', 0) or 0), "budget": float(getattr(core, 'cash', 0) or 0), "strategy": "장기 우상향" if core.ticker != self.core_ticker else "RSI + floor 보호", "status": getattr(core, 'status', '감시 중 👀'), "status_msg": getattr(core, 'status_msg', '지표 점검 중...'), "dca_mode": bool(getattr(core, 'dca_mode', False))})
+                # KIS 실제 평단가 우선 사용 (봇 내부 추정값 대신)
+                _avg_p = _kis_avg.get(core.ticker) or float(getattr(core, 'avg_price', 0) or 0)
+                cores_data.append({"name": core.name, "ticker": core.ticker, "shares": core.shares, "floor": core.floor_shares, "price": cp, "value": core_val, "avg_price": _avg_p, "budget": float(getattr(core, 'cash', 0) or 0), "strategy": "장기 우상향" if core.ticker != self.core_ticker else "RSI + floor 보호", "status": getattr(core, 'status', '감시 중 👀'), "status_msg": getattr(core, 'status_msg', '지표 점검 중...'), "dca_mode": bool(getattr(core, 'dca_mode', False))})
 
             satellites = []
             # num_satellites 한도만큼만 UI에 표시 (보유 중인 종목 우선)
@@ -3994,7 +4007,9 @@ class KRBotController:
             for ticker, pos in capped_items:
                 sp = _sat_price_cache.get(ticker) or float(getattr(pos, '_last_price', 0) or self.live_prices.get(ticker, 0) or getattr(pos, 'kis_current_price', 0) or pos.avg_price or 0)
                 sat_val = float(pos.shares) * sp
-                satellites.append({"name": pos.name, "ticker": ticker, "shares": pos.shares, "price": sp, "value": sat_val, "avg_price": float(getattr(pos, 'avg_price', 0) or 0), "budget": float(getattr(pos, 'cash', 0) or 0), "status": getattr(pos, 'status', '감시 중 👀'), "status_msg": getattr(pos, 'status_msg', '지표 점검 중...')})
+                # KIS 실제 평단가 우선 사용 (봇 내부 추정값 대신)
+                _avg_p = _kis_avg.get(ticker) or float(getattr(pos, 'avg_price', 0) or 0)
+                satellites.append({"name": pos.name, "ticker": ticker, "shares": pos.shares, "price": sp, "value": sat_val, "avg_price": _avg_p, "budget": float(getattr(pos, 'cash', 0) or 0), "status": getattr(pos, 'status', '감시 중 👀'), "status_msg": getattr(pos, 'status_msg', '지표 점검 중...')})
 
             try:
                 current_initial_cash = get_user_initial_cash(self.user_id, self._is_mock)
