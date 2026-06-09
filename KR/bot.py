@@ -3969,22 +3969,26 @@ class KRBotController:
                 safe_core_positions = list(self.core_positions)
                 safe_satellite_items = list(self.satellite_positions.items())
 
-            # [BUG-FIX] KIS cached_balance에서 실제 pchs_avg_pric(평단가) 추출
+            # [BUG-FIX] KIS cached_balance에서 실제 pchs_avg_pric(평단가) + prpr(현재가) 추출
             # pos.avg_price는 봇 내부 추정값으로 실제 체결가와 다를 수 있음.
             # KIS API 값을 우선 사용하여 KIS 앱과 수익률 일치.
-            _kis_avg: dict = {}  # ticker → pchs_avg_pric
+            _kis_avg: dict = {}   # ticker → pchs_avg_pric (평단가)
+            _kis_price: dict = {} # ticker → prpr (현재가, KIS 잔고 스냅샷 기준)
             if self.cached_balance:
                 for _s in self.cached_balance.get('stocks', []):
                     _t = _s.get('ticker', '')
                     _p = float(_s.get('purchase_price', 0))
+                    _c = float(_s.get('current_price', 0))
                     if _t and _p > 0:
                         _kis_avg[_t] = _p
+                    if _t and _c > 0:
+                        _kis_price[_t] = _c
 
             total_realtime_stock_val = 0.0
             tracked_tickers = set()   # 봇이 알고 있는 종목 — 나중에 미추적 종목 합산 시 제외용
             cores_data = []
             for core in safe_core_positions:
-                cp = float(getattr(core, '_last_price', 0) or self.live_prices.get(core.ticker, 0) or getattr(core, 'kis_current_price', 0) or core.avg_price or 0)
+                cp = float(self.live_prices.get(core.ticker, 0) or _kis_price.get(core.ticker, 0) or getattr(core, '_last_price', 0) or getattr(core, 'kis_current_price', 0) or core.avg_price or 0)
                 core_val = float(core.shares) * cp
                 total_realtime_stock_val += core_val
                 tracked_tickers.add(core.ticker)
@@ -4005,13 +4009,13 @@ class KRBotController:
             for ticker, pos in safe_satellite_items:
                 tracked_tickers.add(ticker)   # 이중 계산 방지 (캡 무관하게 전체 등록)
                 if pos.shares > 0:
-                    sp = float(getattr(pos, '_last_price', 0) or self.live_prices.get(ticker, 0) or getattr(pos, 'kis_current_price', 0) or pos.avg_price or 0)
+                    sp = float(self.live_prices.get(ticker, 0) or _kis_price.get(ticker, 0) or getattr(pos, '_last_price', 0) or getattr(pos, 'kis_current_price', 0) or pos.avg_price or 0)
                     _sat_price_cache[ticker] = sp
                     total_realtime_stock_val += float(pos.shares) * sp
 
             # UI 표시는 capped_items으로만
             for ticker, pos in capped_items:
-                sp = _sat_price_cache.get(ticker) or float(getattr(pos, '_last_price', 0) or self.live_prices.get(ticker, 0) or getattr(pos, 'kis_current_price', 0) or pos.avg_price or 0)
+                sp = _sat_price_cache.get(ticker) or float(self.live_prices.get(ticker, 0) or _kis_price.get(ticker, 0) or getattr(pos, '_last_price', 0) or getattr(pos, 'kis_current_price', 0) or pos.avg_price or 0)
                 sat_val = float(pos.shares) * sp
                 # KIS 실제 평단가 우선 사용 (봇 내부 추정값 대신)
                 _avg_p = _kis_avg.get(ticker) or float(getattr(pos, 'avg_price', 0) or 0)
