@@ -603,41 +603,69 @@ def _bear_macd_pullback(df) -> tuple:
 
 def get_bear_bottom_score(df) -> tuple:
     """
-    하락장 저점 포착 종합 스코어링.
-    11개 전략을 독립 실행 후 감지된 신호 수(score)와 사유 목록을 반환.
-    (10개 저점 패턴 + MACD 눌림목 반등)
+    하락장 저점 포착 가중 스코어링.
+    11개 신호를 중요도별 가중치로 채점 → 총점으로 진입 등급 결정.
+
+    가중치 설계 기준:
+      3점 — 복수 조건 동시 충족 또는 선행지표 성격 (노이즈 거의 없음)
+      2점 — 복수 봉 패턴 확인 또는 극단적 이탈 후 회귀
+      1점 — 단일 지표 / 단일 봉 / 보조 확인 역할
+
+    최대 점수: 21점
 
     Returns:
         (score: int, reasons: list[str])
-        score 0 = 신호 없음 (매수 차단)
-        score 1 = 약한 신호 (20% 소액)
-        score 2 = 중간 신호 (30% 진입)
-        score 3+= 강한 신호 (40% 진입)
+        score  0– 4 = 신호 없음  → 진입 차단
+        score  5– 7 = 약한 저점  → 예산 15% (소량 탐색)
+        score  8–11 = 중간 저점  → 예산 30%
+        score 12+   = 강한 저점  → 예산 50% (최대 허용)
     """
-    checkers = [
-        _signal_panic_climax,
-        _signal_hammer_candle,
-        _signal_bullish_engulfing,
-        _signal_morning_star,
-        _signal_rsi_divergence,
-        _signal_ma_oversold_gap,
-        _signal_support_rebound,
-        _signal_consecutive_drop_reversal,
-        _signal_volume_accumulation,
-        _signal_stochastic_golden,
-        _bear_macd_pullback,         # [추가] 하락장 MACD 눌림목 반등
+    # (함수, 가중치)
+    # 3점: 패닉클라이막스 · RSI다이버전스 · 이전저점지지  (복수조건 동시 or 선행지표)
+    # 2점: 모닝스타 · 엔걸핑 · 20일선과이격 · MACD눌림목  (복수봉 or 극단이탈)
+    # 1점: 연속하락반전 · 망치형 · 거래량축적 · 스토캐스틱 (단일지표/단일봉)
+    weighted_checkers = [
+        (_signal_panic_climax,                  3),
+        (_signal_rsi_divergence,                3),
+        (_signal_support_rebound,               3),
+        (_signal_morning_star,                  2),
+        (_signal_bullish_engulfing,             2),
+        (_signal_ma_oversold_gap,               2),
+        (_bear_macd_pullback,                   2),
+        (_signal_consecutive_drop_reversal,     1),
+        (_signal_hammer_candle,                 1),
+        (_signal_volume_accumulation,           1),
+        (_signal_stochastic_golden,             1),
     ]
     score = 0
     reasons = []
-    for fn in checkers:
+    for fn, weight in weighted_checkers:
         try:
             hit, reason = fn(df)
             if hit:
-                score += 1
-                reasons.append(reason)
+                score += weight
+                reasons.append(f"{reason}(+{weight})")
         except Exception:
             pass
     return score, reasons
+
+
+# 가중 점수 → 포지션 예산 비율 변환 (BEAR 모드 전용)
+def get_bear_budget_ratio(score: int) -> float:
+    """
+    bear_bottom_score(가중치 합산) → BEAR 진입 예산 비율 반환.
+      0–4  → 0.00  (진입 차단)
+      5–7  → 0.15  (약한 저점 탐색)
+      8–11 → 0.30  (중간 저점)
+      12+  → 0.50  (강한 저점, 최대 허용)
+    """
+    if score < 5:
+        return 0.0
+    if score < 8:
+        return 0.15
+    if score < 12:
+        return 0.30
+    return 0.50
 
 
 # ─────────────────────────────────────────────────────────────────────────────

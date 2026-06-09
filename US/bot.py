@@ -41,7 +41,8 @@ from base.database import (
 from KR.strategy import (calculate_entry_score, get_entry_threshold, get_budget_ratio_from_score,
                       get_bull_momentum_score, calc_rsi, _calc_adx, _get_up_streak,
                       check_theme_overextension_exit, check_rsi_progressive_exit,
-                      get_composite_signal, calculate_core_entry_score, get_core_entry_threshold)
+                      get_composite_signal, calculate_core_entry_score, get_core_entry_threshold,
+                      get_bear_bottom_score, get_bear_budget_ratio)
 # bot_manager는 순환 임포트 방지를 위해 런타임에 참조
 import importlib
 
@@ -220,6 +221,7 @@ class USBotController:
         # ── 스크리닝 ──────────────────────────────────────────────────
         self.last_screen_date  = None
         self.market_regime     = "NEUTRAL"
+        self._bull_pending_days = 0           # BULL 2회 연속 확인 카운터 (비대칭 필터)
         self.futures_snapshot: dict = {}     # 야간선물 스냅샷 (NQ=F / ES=F / EWY)
         self.sector_trends:    list = []     # NASDAQ 섹터 추세 리스트
 
@@ -1865,9 +1867,52 @@ class USBotController:
                         pos.status = _timing_status
                 continue
             # ────────────────────────────────────────────────────────────────
-            # ── BEAR 국면: 포지션 크기 50% 제한 (리스크 관리) ──
+            # ── BEAR 국면: 11신호 가중 스코어링 게이트 (KR봇 동일 전략) ──────
+            # 가중 총점 기준 (최대21pt):
+            #   0–4pt  → 차단
+            #   5–7pt  → budget_ratio 15% (약한 저점 탐색)
+            #   8–11pt → budget_ratio 30%
+            #   12pt↑  → budget_ratio 50% (최대)
             if regime == "BEAR":
-                budget_ratio = min(budget_ratio * 0.50, 0.50)
+                _bear_df = df_raw if (df_raw is not None and not df_raw.empty) else None
+                if _bear_df is None:
+                    # OHLCV 없으면 BEAR에서 안전하게 차단
+                    _bs_msg = "BEAR 데이터 부족 — 진입 보류"
+                    if pos:
+                        with self.lock: pos.status = _bs_msg
+                    else:
+                        self.satellite_positions[ticker] = USPosition(
+                            ticker=ticker, name=info["name"],
+                            budget_usd=sat_budget_per, status=_bs_msg
+                        )
+                    continue
+                _bear_score, _bear_reasons = get_bear_bottom_score(_bear_df)
+                _bear_ratio = get_bear_budget_ratio(_bear_score)
+                if _bear_ratio <= 0:
+                    _bs_msg = f"BEAR 저점신호 부족 (가중{_bear_score}pt/5pt↑ 필요) ⏳"
+                    if pos:
+                        with self.lock: pos.status = _bs_msg
+                    else:
+                        self.satellite_positions[ticker] = USPosition(
+                            ticker=ticker, name=info["name"],
+                            budget_usd=sat_budget_per, status=_bs_msg
+                        )
+                    continue
+                # 가중 점수 → 포지션 비율 결정 (entry_score 기반 budget_ratio를 상한으로 활용)
+                _grade_label = (
+                    "약한저점(15%)" if _bear_score < 8 else
+                    "중간저점(30%)" if _bear_score < 12 else
+                    "강한저점(50%)"
+                )
+                budget_ratio = min(budget_ratio, _bear_ratio)
+                entry_reasons.append(
+                    f"BEAR가중저점[{_grade_label}·{_bear_score}pt | "
+                    f"{','.join(r.split('(')[0] for r in _bear_reasons[:3])}]"
+                )
+                self.add_log(
+                    f"🐻 [BEAR저점] {info['name']}({ticker}) 가중{_bear_score}pt {_grade_label} "
+                    f"→ 예산비율 {budget_ratio*100:.0f}% | {_bear_reasons}"
+                )
 
             # ── 실적 발표 D-7 이내 → 보유 중이면 30% 축소, 미보유면 진입 차단 (KR봇 동일) ─
             try:
@@ -2840,6 +2885,7 @@ class USBotController:
         ③ NASDAQ 섹터 추세 분석 → hot_sectors 업데이트
         """
         # ── ① SPY 시장 국면 (KR과 동일한 7신호 + ADX 과열 필터) ─────
+        _prev_regime = self.market_regime   # 비대칭 확인용 이전 국면 스냅샷
         try:
             import pandas as pd
             df = yf.download("SPY", period="120d", interval="1d",
@@ -2974,6 +3020,23 @@ class USBotController:
                     self._ai_market_entry_bonus = 0
 
                 self.market_regime = regime
+
+                # ── 비대칭 국면 확인 (BEAR=즉시, BULL=2회 연속 확인) ────────────
+                # SPY 하루 급락→BEAR, 다음날 반등→BULL 즉시 전환을 방지.
+                _proposed_us = self.market_regime
+                if _proposed_us == "BULL" and _prev_regime != "BULL":
+                    self._bull_pending_days += 1
+                    if self._bull_pending_days < 2:
+                        self.market_regime = _prev_regime   # 기존 국면 유지
+                        self.add_log(
+                            f"⏳ [US] BULL 확인 대기 {self._bull_pending_days}/2회 — "
+                            f"{_prev_regime} 유지 (단기 급등 필터)"
+                        )
+                    else:
+                        self._bull_pending_days = 0   # 2회 연속 → BULL 확정
+                elif _proposed_us != "BULL":
+                    self._bull_pending_days = 0       # BEAR / NEUTRAL → 카운터 리셋
+
         except Exception as e:
             logger.debug(f"[US봇] 시장 국면 판단 실패: {e}")
 

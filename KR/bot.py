@@ -21,7 +21,7 @@ def _now_kst():
     return datetime.now(_KST).replace(tzinfo=None)
 
 from base.telegram_bot import TelegramNotifier
-from KR.strategy import CorePosition, Position, get_rsi_signal, get_composite_signal, REINVEST_RATIO, get_market_regime, get_market_regime_detail, get_bear_bounce_signal, get_bear_bottom_score, get_bull_momentum_score, get_neutral_range_score, INVERSE_ETF_TICKER, INVERSE_ETF_NAME, INVERSE_BUDGET_RATIO, DEFENSIVE_ASSETS, check_giveback_stop, check_early_drop_stop, check_theme_overextension_exit, check_rsi_progressive_exit, calculate_entry_score, get_entry_threshold, get_budget_ratio_from_score, calc_rsi, calculate_core_entry_score, get_core_entry_threshold
+from KR.strategy import CorePosition, Position, get_rsi_signal, get_composite_signal, REINVEST_RATIO, get_market_regime, get_market_regime_detail, get_bear_bounce_signal, get_bear_bottom_score, get_bear_budget_ratio, get_bull_momentum_score, get_neutral_range_score, INVERSE_ETF_TICKER, INVERSE_ETF_NAME, INVERSE_BUDGET_RATIO, DEFENSIVE_ASSETS, check_giveback_stop, check_early_drop_stop, check_theme_overextension_exit, check_rsi_progressive_exit, calculate_entry_score, get_entry_threshold, get_budget_ratio_from_score, calc_rsi, calculate_core_entry_score, get_core_entry_threshold
 from KR.screener import select_satellites, generate_daily_market_report
 from base.database import update_bot_status, save_portfolio_state, load_portfolio_state, log_trade_journal, get_recent_trades, save_ai_rules, load_ai_rules, get_ai_rules_history, get_user_initial_cash, set_user_initial_cash, add_user_initial_cash, get_news_api_keys, get_sector_guide
 from ai.news_monitor import NewsMonitor
@@ -184,6 +184,7 @@ class KRBotController:
         self.market_regime = "NEUTRAL"
         self.last_regime_check = 0.0
         self._regime_check_interval = 3600  # 1시간마다 재판단
+        self._bull_pending_days = 0          # BULL 2회 연속 확인 카운터 (비대칭 필터)
         self._ai_market_entry_bonus = 0    # AI 시장판단 진입 보너스 (-2~+2)
         self._last_defensive_check = 0.0     # 방어 자산 체크 캐시 (5분)
         self._defensive_sold_ts   = {}      # 방어 자산 종목별 청산 타임스탬프 {ticker: ts} (24h 쿨다운)
@@ -1434,6 +1435,23 @@ class KRBotController:
             else:
                 self.market_regime = detail['regime']
                 self._ai_market_entry_bonus = 0
+
+            # ── 비대칭 국면 확인 (BEAR=즉시, BULL=2회 연속 확인) ──────────────
+            # 코스피 8% 하락→BEAR, 다음날 5% 반등→BULL 즉시 전환을 방지.
+            # BULL 전환은 2회 연속 BULL 신호가 나와야 확정. BEAR는 즉시 반영.
+            _proposed = self.market_regime
+            if _proposed == "BULL" and prev != "BULL":
+                self._bull_pending_days += 1
+                if self._bull_pending_days < 2:
+                    self.market_regime = prev   # 아직 확인 중 — 기존 국면 유지
+                    self.add_log(
+                        f"⏳ [{self.mode_name}] BULL 확인 대기 {self._bull_pending_days}/2회 — "
+                        f"{prev} 유지 (단기 급등 필터)"
+                    )
+                else:
+                    self._bull_pending_days = 0   # 2회 연속 신호 → BULL 확정
+            elif _proposed != "BULL":
+                self._bull_pending_days = 0       # BEAR / NEUTRAL → 카운터 리셋
 
             # ── 매번 현재 국면 진단 로그 (ADX·연속일·점수 포함) ──────────────
             adx_str    = f"ADX={detail['adx']:.1f}"
@@ -2945,21 +2963,27 @@ class KRBotController:
 
                 if p_sh == 0 and is_cd_passed and is_golden_hours and entry_score >= entry_threshold:
 
-                    # ── BEAR 국면: 10개 저점 전략 스코어 기반 차등 진입 + AI 최종 심사 ──
-                    # bear_score ≥ 3 이상만 진입 (반등 확신도 높을 때만 → 오진입 방지)
+                    # ── BEAR 국면: 11신호 가중 스코어 기반 차등 진입 + AI 최종 심사 ──
+                    # 가중 총점 5점 미만 → 진입 차단
+                    #  5–7점  → 예산 15%  8–11점 → 30%  12점↑ → 50%
                     if regime == "BEAR":
                         bear_score, bear_reasons = get_bear_bottom_score(ex_df)
-                        if bear_score < 3:
-                            pos.status = f"하락장 매수 보류 🐻 (저점신호 {bear_score}/3)"
-                            pos.status_msg = f"BEAR 국면 — 저점 신호 부족 ({bear_score}개), 최소 3개 필요"
+                        bear_ratio = get_bear_budget_ratio(bear_score)
+                        if bear_ratio <= 0:
+                            _grade = "0–4pt" if bear_score < 5 else "계산오류"
+                            pos.status = f"하락장 매수 보류 🐻 (가중점수 {bear_score}/{_grade})"
+                            pos.status_msg = (
+                                f"BEAR 국면 — 저점 가중점수 {bear_score}pt | "
+                                f"5pt 미만 차단 (최대21pt) | 활성신호: {len(bear_reasons)}개"
+                            )
                             continue
-                        # 신호 강도에 따른 차등 포지션 사이징
-                        # BEAR 시 위성 저점매수 = bear_score ≥ 3 확인 후 진입
-                        # 하락장 특성상 포지션은 통상 50%로 제한 (리스크 관리)
-                        # score 5개 → 보너스 20%, 3~4개 → 보너스 15%
-                        bear_timing_bonus = 0.20 if bear_score >= 5 else 0.15
-                        bear_ratio  = min(0.50, score_ratio * 0.5 + bear_timing_bonus)  # BEAR: 최대 50% 포지션
-                        bear_label  = f"BEAR·점수{entry_score}pt+저점{bear_score}개"
+                        # 진입 등급 레이블 (로그/텔레그램용)
+                        _grade_label = (
+                            "약한저점(15%)" if bear_score < 8 else
+                            "중간저점(30%)" if bear_score < 12 else
+                            "강한저점(50%)"
+                        )
+                        bear_label  = f"BEAR·가중{bear_score}pt·{_grade_label}+진입{entry_score}pt"
                         bear_reason_str = " | ".join(bear_reasons)
                         bounce_cash = p_cash * bear_ratio
                         qty = int((bounce_cash * 0.98) // price)
