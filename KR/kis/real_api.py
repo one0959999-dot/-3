@@ -28,16 +28,22 @@ class KisRealApi:
             "appkey": self.app_key,
             "appsecret": self.app_secret
         }
-        res = requests.post(url, headers=headers, data=json.dumps(body), timeout=5)
-        
-        if res.status_code == 200:
-            self.access_token = res.json().get('access_token')
-            self.token_expiry = datetime.now() + timedelta(hours=23)
-            logger.info("[KIS실전] 토큰 발급 완료")
-            return self.access_token
-        else:
-            logger.error(f"[KIS실전] 토큰 발급 실패: {res.text}")
-            return None
+        for attempt in range(2):
+            res = requests.post(url, headers=headers, data=json.dumps(body), timeout=5)
+            if res.status_code == 200:
+                self.access_token = res.json().get('access_token')
+                self.token_expiry = datetime.now() + timedelta(hours=23)
+                logger.info("[KIS실전] 토큰 발급 완료")
+                return self.access_token
+            else:
+                # EGW00133: 1분당 1회 제한 → 65초 대기 후 재시도
+                if 'EGW00133' in res.text and attempt == 0:
+                    logger.warning("[KIS실전] 토큰 속도 제한(EGW00133) → 65초 후 재시도")
+                    time.sleep(65)
+                    continue
+                logger.error(f"[KIS실전] 토큰 발급 실패: {res.text}")
+                return None
+        return None
 
     def get_approval_key(self):
         url = f"{self.base_url}/oauth2/Approval"

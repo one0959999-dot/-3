@@ -46,29 +46,40 @@ class KisOverseasApi:
 
     def _get_token(self) -> str:
         with self._lock:
+            # ── 캐시 유효 시 즉시 반환 ──
             if self._token and time.time() < self._token_exp - 60:
                 return self._token
-        try:
-            res = requests.post(
-                f"{_BASE_URL}/oauth2/tokenP",
-                headers={"content-type": "application/json"},
-                data=json.dumps({
-                    "grant_type": "client_credentials",
-                    "appkey":     self.app_key,
-                    "appsecret":  self.app_secret,
-                }),
-                timeout=10,
-            )
-            data  = res.json()
-            token = data.get("access_token", "")
-            exp   = time.time() + int(data.get("expires_in", 86400)) - 300
-            with self._lock:
-                self._token     = token
-                self._token_exp = exp
-            logger.info("[KIS해외] 토큰 발급 완료")
-            return token
-        except Exception as e:
-            logger.error(f"[KIS해외] 토큰 발급 실패: {e}")
+            # ── lock 안에서 발급 (race condition 방지 + EGW00133 재시도) ──
+            for attempt in range(2):
+                try:
+                    res = requests.post(
+                        f"{_BASE_URL}/oauth2/tokenP",
+                        headers={"content-type": "application/json"},
+                        data=json.dumps({
+                            "grant_type": "client_credentials",
+                            "appkey":     self.app_key,
+                            "appsecret":  self.app_secret,
+                        }),
+                        timeout=10,
+                    )
+                    data = res.json()
+                    # EGW00133: 1분당 1회 제한 → 65초 대기 후 재시도
+                    if data.get("error_code") == "EGW00133" and attempt == 0:
+                        logger.warning("[KIS해외] 토큰 속도 제한(EGW00133) → 65초 후 재시도")
+                        time.sleep(65)
+                        continue
+                    token = data.get("access_token", "")
+                    if not token:
+                        logger.error(f"[KIS해외] 토큰 발급 실패: {data}")
+                        return ""
+                    exp = time.time() + int(data.get("expires_in", 86400)) - 300
+                    self._token     = token
+                    self._token_exp = exp
+                    logger.info("[KIS해외] 토큰 발급 완료")
+                    return token
+                except Exception as e:
+                    logger.error(f"[KIS해외] 토큰 발급 실패: {e}")
+                    return ""
             return ""
 
     def _headers(self, tr_id: str) -> dict:
