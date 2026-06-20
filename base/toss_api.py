@@ -376,7 +376,14 @@ class TossInvestApi:
         params: dict = {}
         if symbol:
             params["symbol"] = symbol
-        return self._get("/api/v1/holdings", params, with_account=True) or {}
+        raw = self._get("/api/v1/holdings", params, with_account=True) or {}
+        # 응답 구조 진단 로그 (첫 호출 시 또는 items 없을 때)
+        if not getattr(self, '_holdings_logged', False) or not raw.get("items"):
+            import json as _json
+            _sample = {k: (v[:2] if isinstance(v, list) else v) for k, v in raw.items()}
+            logger.info(f"[Toss] holdings 응답 구조: {_json.dumps(_sample, ensure_ascii=False, default=str)[:500]}")
+            self._holdings_logged = True
+        return raw
 
     def _build_name_map(self, symbols: list[str]) -> dict[str, str]:
         info_list = self.get_stock_info(symbols)

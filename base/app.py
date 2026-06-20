@@ -370,6 +370,27 @@ def toss_balance():
         traceback.print_exc()
         return jsonify({"status": "error", "message": f"잔고 조회 중 오류: {str(e)}"})
 
+@app.route('/api/holdings_raw')
+@login_required
+def holdings_raw():
+    """토스 API /api/v1/holdings 응답을 그대로 반환 — 잔고 파싱 문제 진단용."""
+    try:
+        bot = get_current_bot_if_exists()
+        _api = getattr(bot, 'toss', None) if bot else None
+        if not _api:
+            from base.bot_manager import manager as _mgr
+            for key, b in _mgr.bots.items():
+                _api = getattr(b, 'toss', None)
+                if _api:
+                    break
+        if not _api:
+            return jsonify({"error": "토스 API 인스턴스 없음 — 봇을 먼저 시작하세요."})
+        raw = _api.get_holdings_raw()
+        return jsonify({"raw": raw})
+    except Exception as e:
+        return jsonify({"error": str(e)})
+
+
 @app.route('/api/toggle', methods=['POST'])
 @login_required
 def toggle_bot():
