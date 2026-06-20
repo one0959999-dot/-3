@@ -3416,15 +3416,15 @@ class USBotController:
             # 재시작 후 토스 실계좌 잔고로 shares 검증 (state.json과 불일치 방지)
             if self.toss:
                 try:
-                    _bal = self.toss.get_account_balance()
+                    _bal = self.toss.get_balance()  # US 종목 잔고 (알파벳 티커)
                     if _bal and _bal.get('stocks'):
                         _ks = {s['ticker']: float(s.get('shares', 0)) for s in _bal['stocks'] if s.get('ticker')}
                         with self.lock:
                             for _pos in list(self.core_positions.values()) + list(self.satellite_positions.values()):
-                                if _pos.ticker in _ks:
-                                    _pos.shares = _ks[_pos.ticker]
-                                elif _pos.shares > 0:
-                                    _pos.shares = 0.0  # 토스에 없는 포지션 초기화
+                                real_qty = _ks.get(_pos.ticker, 0.0)
+                                if _pos.shares != real_qty:
+                                    logger.info(f"[US복원] 보유주수 보정 {_pos.ticker}: DB={_pos.shares} → 토스={real_qty}")
+                                    _pos.shares = real_qty
                         self.add_log("✅ [US복원] 토스 실계좌 잔고로 shares 검증 완료")
                 except Exception as _ve:
                     logger.warning(f"[US복원] 토스 잔고 검증 실패: {_ve}")
