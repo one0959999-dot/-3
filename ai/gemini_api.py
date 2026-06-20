@@ -47,6 +47,8 @@ class GeminiApi:
              stock_analysis_context: str = '') -> str:
         if not self.client:
             return '⚠️ Gemini API 키가 설정되지 않았습니다. 설정에서 Gemini API 키를 입력해주세요.'
+        if not self.api_key:
+            return '⚠️ Gemini API 키가 없습니다.'
 
         port_str = ''
         if portfolio_context and isinstance(portfolio_context, dict):
@@ -72,11 +74,30 @@ class GeminiApi:
         if not hasattr(self, '_conversation_history'):
             self._conversation_history = []
 
-        reply = self.generate_content(full_prompt, temperature=0.5)
+        reply = self._chat_generate(full_prompt)
         if reply:
             self._conversation_history.append({'role': 'user', 'content': user_message})
             self._conversation_history.append({'role': 'assistant', 'content': reply})
         return reply or '⚠️ 응답을 받지 못했습니다.'
+
+    def _chat_generate(self, prompt: str) -> str:
+        """채팅 전용 — 429시 재시도 없이 바로 안내 메시지 반환."""
+        if not self.client:
+            return ''
+        from google.genai import types
+        try:
+            resp = self.client.models.generate_content(
+                model=_FREE_MODEL,
+                contents=prompt,
+                config=types.GenerateContentConfig(temperature=0.5),
+            )
+            return resp.text or ''
+        except Exception as e:
+            msg = str(e)
+            if '429' in msg or 'quota' in msg.lower():
+                return '⏳ Gemini 무료 한도 초과 — 잠시 후 다시 시도해주세요. (분당 15회 제한)'
+            logger.warning(f"[Gemini] chat 오류: {e}")
+            return f'⚠️ 오류가 발생했습니다: {e}'
 
     def ai_approve_trade(self, signal, stock_name, ticker, price, strategy,
                          indicator_val, hot_sectors=None, recent_trades=None,
