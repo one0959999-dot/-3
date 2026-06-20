@@ -188,12 +188,15 @@ def update_user_keys(user_id, keys_dict):
                 return v
 
             conn.execute('''
-                UPDATE users SET real_app_key = ?, real_app_secret = ?, real_account_no = ?,
+                UPDATE users SET
+                    toss_client_id = ?, toss_client_secret = ?, toss_account_seq = ?,
+                    real_app_key = ?, real_app_secret = ?, real_account_no = ?,
                     us_app_key = ?, us_app_secret = ?, us_account_no = ?,
                     telegram_token = ?, telegram_chat_id = ?,
                     claude_api_key = ?,
                     core_stocks = ?, us_core_stocks = ?, is_mock = ? WHERE id = ?
             ''', (
+                _pick('toss_client_id'), _pick('toss_client_secret'), _pick('toss_account_seq'),
                 _pick('real_app_key'), _pick('real_app_secret'), _pick('real_account_no'),
                 _pick('us_app_key'), _pick('us_app_secret'), _pick('us_account_no'),
                 _pick('telegram_token'), _pick('telegram_chat_id'),

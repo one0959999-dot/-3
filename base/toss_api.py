@@ -277,34 +277,45 @@ class TossInvestApi:
     def get_market_calendar_us(self) -> dict:
         return self._get("/api/v1/market-calendar/US") or {}
 
+    @staticmethod
+    def _parse_iso(s: str):
+        """ISO 8601 문자열 → timezone-aware datetime. 파싱 실패 시 None."""
+        if not s:
+            return None
+        try:
+            # Python 3.11+ fromisoformat 지원, 하위 버전 대응
+            return datetime.fromisoformat(s)
+        except Exception:
+            return None
+
     def is_kr_market_open(self) -> bool:
         """KRX 정규장 여부 (API 기반). 실패 시 시간 기반 fallback."""
         try:
             cal     = self.get_market_calendar_kr()
             regular = (cal.get("today") or {}).get("regularMarket") or {}
-            start   = regular.get("startTime", "")  # KST "HH:MM:SS"
-            end     = regular.get("endTime",   "")
+            start   = self._parse_iso(regular.get("startTime", ""))
+            end     = self._parse_iso(regular.get("endTime",   ""))
             if start and end:
-                now_str = datetime.now(_KST).strftime("%H:%M:%S")
-                return start <= now_str < end
+                now = datetime.now(start.tzinfo)
+                return start <= now < end
         except Exception:
             pass
         # Fallback: KST 09:00~15:30 평일
         now = datetime.now(_KST)
         if now.weekday() >= 5:
             return False
-        return now.replace(hour=9, minute=0, second=0) <= now < now.replace(hour=15, minute=30, second=0)
+        return now.replace(hour=9, minute=0, second=0, microsecond=0) <= now < now.replace(hour=15, minute=30, second=0, microsecond=0)
 
     def is_us_market_open(self) -> bool:
         """US 정규장 여부 (API 기반). 실패 시 시간 기반 fallback."""
         try:
             cal     = self.get_market_calendar_us()
             regular = (cal.get("today") or {}).get("regularMarket") or {}
-            start   = regular.get("startTime", "")  # KST 기준 문자열
-            end     = regular.get("endTime",   "")
+            start   = self._parse_iso(regular.get("startTime", ""))
+            end     = self._parse_iso(regular.get("endTime",   ""))
             if start and end:
-                now_str = datetime.now(_KST).strftime("%H:%M:%S")
-                return start <= now_str < end
+                now = datetime.now(start.tzinfo)
+                return start <= now < end
         except Exception:
             pass
         # Fallback: ET 09:30~16:00 평일
@@ -426,15 +437,18 @@ class TossInvestApi:
                 "profit_rt":      profit_rt,
             })
 
-        cash_krw = self.get_buyable_cash()
         # marketValue.amount = {"krw": "...", "usd": "..."}
         mv_obj   = raw.get("marketValue") or {}
         total_mv = self._krw((mv_obj.get("amount") if isinstance(mv_obj, dict) else mv_obj))
+
+        # 매수가능금액 — API 실패 시 0으로 표시 (잔고는 보임)
+        cash_krw = self.get_buyable_cash()
 
         return {
             "cash":        cash_krw,
             "stocks":      stocks,
             "total_value": total_mv + cash_krw,
+            "total_cash":  cash_krw,
         }
 
     def get_balance(self) -> dict:
@@ -476,18 +490,38 @@ class TossInvestApi:
     # ────────────────────────────────────────────────────────────────────
     # 매수가능금액 / 매도가능수량
     # ────────────────────────────────────────────────────────────────────
+    def _extract_cash(self, data: dict | None, currency: str) -> float:
+        """buying-power 응답에서 금액 추출. 응답 구조 불확실하여 가능한 모든 필드 시도."""
+        if not data:
+            return 0.0
+        # 가능한 필드명들 시도
+        for key in ("amount", "buyingPower", "buyableAmount", "availableAmount", "cash"):
+            val = data.get(key)
+            if val is not None:
+                if isinstance(val, dict):
+                    return float(val.get(currency) or 0)
+                try:
+                    return float(val)
+                except (TypeError, ValueError):
+                    pass
+        # 최상위가 직접 {"krw": ..., "usd": ...} 구조인 경우
+        if currency in data:
+            try:
+                return float(data[currency] or 0)
+            except (TypeError, ValueError):
+                pass
+        logger.warning(f"[Toss] buying-power 알 수 없는 응답 구조: {data}")
+        return 0.0
+
     def get_buyable_cash(self, stock_code: str = "005930", price: int = 0) -> float:
         """KRW 매수가능금액"""
         params: dict = {"symbol": stock_code}
         if price:
             params["price"] = str(price)
         data = self._get("/api/v1/buying-power", params, with_account=True)
-        logger.debug(f"[Toss] buying-power 응답: {data}")
         if data:
-            # amount가 {"krw":"...", "usd":"..."} 형태일 수도 있음
-            raw_amount = data.get("amount") or data.get("buyableAmount") or data.get("krw") or 0
-            return self._krw(raw_amount) if isinstance(raw_amount, dict) else float(raw_amount or 0)
-        return 0.0
+            logger.info(f"[Toss] buying-power 응답 구조: {list(data.keys()) if isinstance(data, dict) else type(data)}")
+        return self._extract_cash(data, "krw")
 
     def get_buyable_cash_usd(self, ticker: str = "AAPL", price: float = 0) -> float:
         """USD 매수가능금액"""
@@ -495,18 +529,20 @@ class TossInvestApi:
         if price:
             params["price"] = str(price)
         data = self._get("/api/v1/buying-power", params, with_account=True)
-        logger.debug(f"[Toss] buying-power(USD) 응답: {data}")
-        if data:
-            raw_amount = data.get("amount") or data.get("buyableAmount") or data.get("usd") or 0
-            return self._usd(raw_amount) if isinstance(raw_amount, dict) else float(raw_amount or 0)
-        return 0.0
+        return self._extract_cash(data, "usd")
 
     def get_sellable_qty(self, symbol: str) -> int:
         """매도가능수량"""
         data = self._get("/api/v1/sellable-quantity", {"symbol": symbol}, with_account=True)
-        logger.debug(f"[Toss] sellable-quantity 응답: {data}")
         if data:
-            return int(float(data.get("quantity") or data.get("sellableQuantity") or 0))
+            logger.info(f"[Toss] sellable-quantity 응답 구조: {list(data.keys()) if isinstance(data, dict) else type(data)}")
+            for key in ("quantity", "sellableQuantity", "sellable", "availableQuantity"):
+                val = data.get(key)
+                if val is not None:
+                    try:
+                        return int(float(val))
+                    except (TypeError, ValueError):
+                        pass
         return 0
 
     # ────────────────────────────────────────────────────────────────────
