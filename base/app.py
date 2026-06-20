@@ -1742,17 +1742,16 @@ def backtest_run():
 
     data = request.json or {}
     mode = (data.get('mode') or 'ALL').upper()
+    user_id = current_user.id
 
     def _build_ai():
-        conn = get_db_connection()
-        conn.close()
         from ai.client import get_ai_client_from_db
-        return get_ai_client_from_db(current_user.id, role='backtest')
+        return get_ai_client_from_db(user_id, role='backtest')
 
     def _build_toss():
         conn = get_db_connection()
         u = dict(conn.execute('SELECT toss_client_id, toss_client_secret, toss_account_seq, fred_api_key FROM users WHERE id=?',
-                              (current_user.id,)).fetchone() or {})
+                              (user_id,)).fetchone() or {})
         conn.close()
         try:
             from base.toss_api import TossApi
@@ -1770,11 +1769,11 @@ def backtest_run():
             if mode in ('KR', 'ALL'):
                 toss, fred = _build_toss()
                 from KR.backtest_runner import BacktestRunner, BATCH_SIZE_WEEKEND
-                runner = BacktestRunner(current_user.id, ai, toss_api=toss, fred_key=fred)
+                runner = BacktestRunner(user_id, ai, toss_api=toss, fred_key=fred)
                 runner.run_batch(BATCH_SIZE_WEEKEND)
             if mode in ('US', 'ALL'):
                 from US.backtest_runner import USBacktestRunner, BATCH_SIZE_WEEKEND
-                runner = USBacktestRunner(current_user.id, ai)
+                runner = USBacktestRunner(user_id, ai)
                 runner.run_batch(BATCH_SIZE_WEEKEND)
         except Exception as e:
             logger.warning(f"[백테스트 실행] 오류: {e}", exc_info=True)
