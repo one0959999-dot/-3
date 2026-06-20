@@ -57,8 +57,10 @@ class BotManager:
 
         bot = self.bots[bot_key]
 
-        provider = (user_data.get('trade_ai_provider') or 'claude').strip()
-        ai_key   = (user_data.get('trade_ai_key') or user_data.get('claude_api_key') or '').strip()
+        provider = (user_data.get('trade_ai_provider') or 'gemini').strip()
+        ai_key   = (user_data.get('trade_ai_key')
+                    or user_data.get('gemini_api_key')
+                    or user_data.get('claude_api_key') or '').strip()
         if ai_key:
             cur_key = getattr(getattr(bot, 'claude', None), 'api_key', '')
             if bot.claude is None or cur_key != ai_key:

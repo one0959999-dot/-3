@@ -59,7 +59,7 @@ def get_ai_client_from_db(user_id: int, role: str = 'trade'):
     conn = get_db_connection()
     try:
         row = conn.execute(
-            'SELECT trade_ai_provider, trade_ai_key, backtest_ai_provider, backtest_ai_key FROM users WHERE id=?',
+            'SELECT trade_ai_provider, trade_ai_key, backtest_ai_provider, backtest_ai_key, gemini_api_key, claude_api_key FROM users WHERE id=?',
             (user_id,)
         ).fetchone()
     finally:
@@ -69,12 +69,13 @@ def get_ai_client_from_db(user_id: int, role: str = 'trade'):
         return NullAIClient('unknown')
 
     row = dict(row)
+    fallback_key = row.get('gemini_api_key') or row.get('claude_api_key') or ''
     if role == 'trade':
         return get_ai_client(row.get('trade_ai_provider') or 'gemini',
-                             row.get('trade_ai_key') or '')
+                             row.get('trade_ai_key') or fallback_key)
     else:
         return get_ai_client(row.get('backtest_ai_provider') or 'gemini',
-                             row.get('backtest_ai_key') or '')
+                             row.get('backtest_ai_key') or fallback_key)
 
 
 # ── OpenAI ────────────────────────────────────────────────────────────────
