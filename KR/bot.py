@@ -23,7 +23,7 @@ def _now_kst():
 from base.telegram_bot import TelegramNotifier
 from KR.strategy import CorePosition, Position, get_rsi_signal, get_composite_signal, REINVEST_RATIO, get_market_regime, get_market_regime_detail, get_bear_bounce_signal, get_bear_bottom_score, get_bear_budget_ratio, get_bull_momentum_score, get_neutral_range_score, INVERSE_ETF_TICKER, INVERSE_ETF_NAME, INVERSE_BUDGET_RATIO, DEFENSIVE_ASSETS, check_giveback_stop, check_early_drop_stop, check_theme_overextension_exit, check_rsi_progressive_exit, calculate_entry_score, get_entry_threshold, get_budget_ratio_from_score, calc_rsi, calculate_core_entry_score, get_core_entry_threshold
 from KR.screener import select_satellites, generate_daily_market_report
-from base.database import update_bot_status, save_portfolio_state, load_portfolio_state, log_trade_journal, get_recent_trades, save_ai_rules, load_ai_rules, get_ai_rules_history, get_user_initial_cash, set_user_initial_cash, add_user_initial_cash, get_news_api_keys, get_sector_guide
+from base.database import update_bot_status, save_portfolio_state, load_portfolio_state, log_trade_journal, get_recent_trades, save_ai_rules, load_ai_rules, get_ai_rules_history, get_user_initial_cash, set_user_initial_cash, add_user_initial_cash, get_news_api_keys, get_sector_guide, log_ai_decision, update_ai_decision_outcome
 from ai.news_monitor import NewsMonitor
 from base.toss_api import TossInvestApi
 
@@ -740,6 +740,29 @@ class KRBotController:
         except Exception as e:
             logger.warning(f"[{self.mode_name}] AI 게이트 오류 ({ticker}): {e}")
             return True, f"AI 오류 — 자동 승인: {e}", 75
+
+        # ── AI 판단 전체 로그 기록 (fine-tuning 재료) ──────────────────────
+        try:
+            import json as _json
+            log_ai_decision(
+                user_id=self.user_id,
+                mode='KR',
+                ticker=ticker,
+                stock_name=name,
+                signal=signal,
+                ai_decision='CONFIRM' if decision else 'REJECT',
+                confidence=confidence,
+                ai_reason=reason[:500],
+                input_context=context,
+                portfolio_snapshot=portfolio_context[:2000],
+                market_regime=getattr(self, 'market_regime', ''),
+                strategy=strategy or '',
+                price=price,
+                session_type='live'
+            )
+        except Exception as le:
+            logger.warning(f"[{self.mode_name}] AI 로그 기록 실패 ({ticker}): {le}")
+
         conf_tag = f" (확신도 {confidence}%)"
         if decision:
             self._send_telegram(
@@ -3998,6 +4021,34 @@ class KRBotController:
         self.scheduler.every(1).minutes.do(_kst_morning_prescreen)
         self.scheduler.every(1).minutes.do(_kst_weekend_scan)
         self.scheduler.every(1).minutes.do(_kst_monday_execute)
+
+        # ── 야간 백테스트 (16:30 KST, 평일만) ──────────────────────────────
+        _backtest_done_today = {'date': None}
+        def _kst_nightly_backtest():
+            now = _now_kst()
+            today_str = now.strftime('%Y-%m-%d')
+            if now.weekday() >= 5:  # 주말 제외
+                return
+            if now.strftime('%H:%M') != '16:30':
+                return
+            if _backtest_done_today['date'] == today_str:
+                return
+            _backtest_done_today['date'] = today_str
+            def _run_bt():
+                try:
+                    from KR.backtest_runner import BacktestRunner
+                    runner = BacktestRunner(self.user_id, self.claude, self.toss)
+                    n = runner.run_nightly_batch()
+                    self.add_log(f"📊 야간 백테스트 완료: {n}개 시나리오 기록")
+                    self._send_telegram(
+                        f"📊 <b>야간 백테스트 완료</b>  {self.alert_icon}\n"
+                        f"오늘 {n}개 시나리오 AI 학습 데이터 누적",
+                        'info'
+                    )
+                except Exception as e:
+                    logger.warning(f"[{self.mode_name}] 야간 백테스트 오류: {e}")
+            self._run_threaded(_run_bt)
+        self.scheduler.every(1).minutes.do(_kst_nightly_backtest)
 
         try:
             self.trading_job()

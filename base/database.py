@@ -140,6 +140,48 @@ def init_db():
         )
         ''')
 
+            # AI 판단 전체 로그 — fine-tuning 재료
+            cursor.execute('''
+        CREATE TABLE IF NOT EXISTS ai_decision_log (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER,
+            mode TEXT DEFAULT 'KR',
+            session_type TEXT DEFAULT 'live',  -- live / backtest
+            ticker TEXT,
+            stock_name TEXT,
+            signal TEXT,           -- BUY / SELL / HOLD
+            ai_decision TEXT,      -- CONFIRM / REJECT
+            confidence INTEGER DEFAULT 75,
+            ai_reason TEXT,
+            input_context TEXT,    -- AI에게 넘긴 전체 데이터 (JSON)
+            portfolio_snapshot TEXT, -- 판단 시점 포트폴리오 (JSON)
+            market_regime TEXT,
+            strategy TEXT,
+            price REAL,
+            -- 사후 결과 (포지션 종료 시 업데이트)
+            outcome_price REAL,    -- 종료 시점 가격
+            outcome_pnl REAL,      -- 실현 손익
+            outcome_pnl_pct REAL,  -- 수익률 %
+            outcome_days INTEGER,  -- 보유일수
+            outcome_updated_at TIMESTAMP,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+        ''')
+
+            # 백테스트 진행 상태 — 어디까지 돌렸는지 추적
+            cursor.execute('''
+        CREATE TABLE IF NOT EXISTS backtest_progress (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            mode TEXT DEFAULT 'KR',
+            ticker TEXT,
+            stock_name TEXT,
+            last_date TEXT,        -- 마지막으로 테스트한 날짜
+            total_scenarios INTEGER DEFAULT 0,
+            completed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE(mode, ticker)
+        )
+        ''')
+
             cursor.execute('UPDATE users SET is_running = 0')
             conn.commit()
         finally:
@@ -580,6 +622,106 @@ def clear_chat_history(user_id: int, is_mock: int):
             conn.commit()
         finally:
             conn.close()
+
+
+def log_ai_decision(user_id: int, mode: str, ticker: str, stock_name: str,
+                     signal: str, ai_decision: str, confidence: int, ai_reason: str,
+                     input_context: str = "", portfolio_snapshot: str = "",
+                     market_regime: str = "", strategy: str = "", price: float = 0,
+                     session_type: str = "live") -> int:
+    """AI 판단을 전체 로그에 기록. 반환값: row id (사후 결과 업데이트에 사용)."""
+    with db_lock:
+        conn = get_db_connection()
+        try:
+            cur = conn.execute('''
+                INSERT INTO ai_decision_log
+                (user_id, mode, session_type, ticker, stock_name, signal,
+                 ai_decision, confidence, ai_reason, input_context,
+                 portfolio_snapshot, market_regime, strategy, price)
+                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+            ''', (user_id, mode, session_type, ticker, stock_name, signal,
+                  ai_decision, confidence, ai_reason, input_context,
+                  portfolio_snapshot, market_regime, strategy, price))
+            conn.commit()
+            return cur.lastrowid
+        finally:
+            conn.close()
+
+
+def update_ai_decision_outcome(log_id: int, outcome_price: float,
+                                outcome_pnl: float, outcome_pnl_pct: float,
+                                outcome_days: int):
+    """포지션 종료 시 AI 판단 로그에 실제 결과 업데이트."""
+    with db_lock:
+        conn = get_db_connection()
+        try:
+            conn.execute('''
+                UPDATE ai_decision_log
+                SET outcome_price=?, outcome_pnl=?, outcome_pnl_pct=?,
+                    outcome_days=?, outcome_updated_at=CURRENT_TIMESTAMP
+                WHERE id=?
+            ''', (outcome_price, outcome_pnl, outcome_pnl_pct, outcome_days, log_id))
+            conn.commit()
+        finally:
+            conn.close()
+
+
+def get_ai_decision_stats(user_id: int, mode: str = 'KR',
+                           session_type: str = 'live') -> dict:
+    """AI 판단 정확도 통계 반환 (대시보드/모닝 브리핑용)."""
+    conn = get_db_connection()
+    try:
+        rows = conn.execute('''
+            SELECT ai_decision, signal, outcome_pnl, confidence
+            FROM ai_decision_log
+            WHERE user_id=? AND mode=? AND session_type=?
+              AND outcome_pnl IS NOT NULL
+        ''', (user_id, mode, session_type)).fetchall()
+    finally:
+        conn.close()
+    if not rows:
+        return {"total": 0, "correct": 0, "accuracy": 0}
+    total = len(rows)
+    correct = sum(1 for r in rows if
+                  (r['ai_decision'] == 'CONFIRM' and r['outcome_pnl'] > 0) or
+                  (r['ai_decision'] == 'REJECT' and r['outcome_pnl'] <= 0))
+    return {
+        "total": total,
+        "correct": correct,
+        "accuracy": round(correct / total * 100, 1),
+        "avg_confidence": round(sum(r['confidence'] for r in rows) / total, 1)
+    }
+
+
+def update_backtest_progress(mode: str, ticker: str, stock_name: str,
+                              last_date: str, total_scenarios: int):
+    """백테스트 진행 상태 업데이트."""
+    with db_lock:
+        conn = get_db_connection()
+        try:
+            conn.execute('''
+                INSERT INTO backtest_progress (mode, ticker, stock_name, last_date, total_scenarios)
+                VALUES (?,?,?,?,?)
+                ON CONFLICT(mode, ticker) DO UPDATE SET
+                    last_date=excluded.last_date,
+                    total_scenarios=total_scenarios + excluded.total_scenarios,
+                    completed_at=CURRENT_TIMESTAMP
+            ''', (mode, ticker, stock_name, last_date, total_scenarios))
+            conn.commit()
+        finally:
+            conn.close()
+
+
+def get_backtest_pending_tickers(mode: str, limit: int = 100) -> list:
+    """아직 백테스트 안 했거나 오래된 종목 우선 반환."""
+    conn = get_db_connection()
+    try:
+        done = {r[0] for r in conn.execute(
+            'SELECT ticker FROM backtest_progress WHERE mode=?', (mode,)
+        ).fetchall()}
+    finally:
+        conn.close()
+    return done
 
 
 if __name__ == '__main__':
