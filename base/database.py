@@ -218,6 +218,32 @@ def init_db():
         )
         ''')
 
+            cursor.execute('''
+        CREATE TABLE IF NOT EXISTS backtest_optimal_points (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER,
+            mode TEXT DEFAULT 'KR',
+            ticker TEXT, stock_name TEXT,
+            date TEXT,
+            point_type TEXT,
+            price REAL,
+            magnitude_pct REAL,
+            rsi REAL, macd REAL, macd_signal REAL,
+            bb_upper REAL, bb_mid REAL, bb_lower REAL,
+            sma5 REAL, sma20 REAL, sma60 REAL, sma120 REAL,
+            vol_ratio REAL,
+            support REAL, resistance REAL,
+            fib_382 REAL, fib_500 REAL, fib_618 REAL,
+            signals_active TEXT,
+            signal_count INTEGER DEFAULT 0,
+            macro_date TEXT,
+            ai_analysis TEXT,
+            pnl_5d REAL, pnl_20d REAL, pnl_60d REAL,
+            max_gain_60d REAL, max_loss_60d REAL,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+        ''')
+
             cursor.execute('UPDATE users SET is_running = 0')
             conn.commit()
         finally:
@@ -811,6 +837,80 @@ def update_backtest_full_progress(mode: str, ticker: str, last_date: str, total_
             conn.commit()
         finally:
             conn.close()
+
+
+def log_optimal_point(data: dict) -> int:
+    with db_lock:
+        conn = get_db_connection()
+        try:
+            cur = conn.execute('''
+                INSERT INTO backtest_optimal_points
+                (user_id, mode, ticker, stock_name, date, point_type, price, magnitude_pct,
+                 rsi, macd, macd_signal, bb_upper, bb_mid, bb_lower,
+                 sma5, sma20, sma60, sma120, vol_ratio,
+                 support, resistance, fib_382, fib_500, fib_618,
+                 signals_active, signal_count, macro_date, ai_analysis,
+                 pnl_5d, pnl_20d, pnl_60d, max_gain_60d, max_loss_60d)
+                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+            ''', (
+                data.get('user_id'), data.get('mode', 'KR'),
+                data.get('ticker'), data.get('stock_name'),
+                data.get('date'), data.get('point_type'), data.get('price'),
+                data.get('magnitude_pct'),
+                data.get('rsi'), data.get('macd'), data.get('macd_signal'),
+                data.get('bb_upper'), data.get('bb_mid'), data.get('bb_lower'),
+                data.get('sma5'), data.get('sma20'), data.get('sma60'), data.get('sma120'),
+                data.get('vol_ratio'),
+                data.get('support'), data.get('resistance'),
+                data.get('fib_382'), data.get('fib_500'), data.get('fib_618'),
+                data.get('signals_active'), data.get('signal_count', 0),
+                data.get('macro_date'), data.get('ai_analysis'),
+                data.get('pnl_5d'), data.get('pnl_20d'), data.get('pnl_60d'),
+                data.get('max_gain_60d'), data.get('max_loss_60d'),
+            ))
+            conn.commit()
+            return cur.lastrowid
+        finally:
+            conn.close()
+
+
+def get_optimal_points_summary(user_id: int):
+    conn = get_db_connection()
+    try:
+        return conn.execute('''
+            SELECT p.mode, p.ticker, p.stock_name,
+                   prog.last_processed_date, prog.completed_at,
+                   COUNT(p.id) AS total_points,
+                   SUM(CASE WHEN p.point_type='BOTTOM' THEN 1 ELSE 0 END) AS bottoms,
+                   SUM(CASE WHEN p.point_type='TOP'    THEN 1 ELSE 0 END) AS tops,
+                   ROUND(AVG(p.pnl_20d), 2) AS avg_pnl_20d,
+                   ROUND(AVG(p.max_gain_60d), 2) AS avg_max_gain_60d
+            FROM backtest_optimal_points p
+            LEFT JOIN backtest_full_progress prog ON prog.ticker=p.ticker AND prog.mode=p.mode
+            WHERE p.user_id=?
+            GROUP BY p.mode, p.ticker
+            ORDER BY prog.completed_at DESC
+        ''', (user_id,)).fetchall()
+    finally:
+        conn.close()
+
+
+def get_optimal_points_detail(user_id: int, mode: str, ticker: str):
+    conn = get_db_connection()
+    try:
+        return conn.execute('''
+            SELECT date, point_type, price, magnitude_pct,
+                   rsi, macd, bb_lower, bb_upper, vol_ratio,
+                   signals_active, signal_count,
+                   ai_analysis,
+                   pnl_5d, pnl_20d, pnl_60d, max_gain_60d, max_loss_60d,
+                   support, resistance, sma5, sma20, sma60, sma120
+            FROM backtest_optimal_points
+            WHERE user_id=? AND mode=? AND ticker=?
+            ORDER BY date ASC
+        ''', (user_id, mode, ticker)).fetchall()
+    finally:
+        conn.close()
 
 
 def export_to_jsonl(mode: str = 'KR', output_path: str = 'finetune_data.jsonl'):

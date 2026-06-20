@@ -1721,58 +1721,94 @@ def backtest_page():
     return render_template('backtest.html', user=current_user)
 
 
+_backtest_status = {'running': False, 'mode': '', 'started_at': '', 'current_ticker': '', 'done': 0}
+
+
+@app.route('/api/backtest/run', methods=['POST'])
+@login_required
+def backtest_run():
+    import threading
+    global _backtest_status
+    if _backtest_status['running']:
+        return jsonify({'error': '이미 실행 중입니다.'}), 400
+
+    data = request.json or {}
+    mode = (data.get('mode') or 'ALL').upper()
+
+    def _build_ai():
+        conn = get_db_connection()
+        u = dict(conn.execute('SELECT gemini_api_key, claude_api_key FROM users WHERE id=?',
+                              (current_user.id,)).fetchone() or {})
+        conn.close()
+        if u.get('gemini_api_key'):
+            from ai.gemini_api import GeminiApi
+            return GeminiApi(u['gemini_api_key'])
+        from ai.claude_api import ClaudeApi
+        return ClaudeApi(u.get('claude_api_key') or '')
+
+    def _build_toss():
+        conn = get_db_connection()
+        u = dict(conn.execute('SELECT toss_client_id, toss_client_secret, toss_account_seq, fred_api_key FROM users WHERE id=?',
+                              (current_user.id,)).fetchone() or {})
+        conn.close()
+        try:
+            from base.toss_api import TossApi
+            return TossApi(u.get('toss_client_id',''), u.get('toss_client_secret',''), u.get('toss_account_seq','')), u.get('fred_api_key','')
+        except Exception:
+            return None, u.get('fred_api_key','')
+
+    def _worker():
+        global _backtest_status
+        _backtest_status.update({'running': True, 'mode': mode,
+                                  'started_at': datetime.now().strftime('%Y-%m-%d %H:%M'),
+                                  'current_ticker': '', 'done': 0})
+        try:
+            ai = _build_ai()
+            if mode in ('KR', 'ALL'):
+                toss, fred = _build_toss()
+                from KR.backtest_runner import BacktestRunner, BATCH_SIZE_WEEKEND
+                runner = BacktestRunner(current_user.id, ai, toss_api=toss, fred_key=fred)
+                runner.run_batch(BATCH_SIZE_WEEKEND)
+            if mode in ('US', 'ALL'):
+                from US.backtest_runner import USBacktestRunner, BATCH_SIZE_WEEKEND
+                runner = USBacktestRunner(current_user.id, ai)
+                runner.run_batch(BATCH_SIZE_WEEKEND)
+        except Exception as e:
+            logger.warning(f"[백테스트 실행] 오류: {e}", exc_info=True)
+        finally:
+            _backtest_status['running'] = False
+
+    threading.Thread(target=_worker, daemon=True, name='backtest-web').start()
+    return jsonify({'ok': True, 'mode': mode})
+
+
+@app.route('/api/backtest/stop', methods=['POST'])
+@login_required
+def backtest_stop():
+    global _backtest_status
+    _backtest_status['running'] = False
+    return jsonify({'ok': True})
+
+
+@app.route('/api/backtest/status')
+@login_required
+def backtest_status():
+    return jsonify(_backtest_status)
+
+
 @app.route('/api/backtest/history')
 @login_required
 def backtest_history():
-    conn = get_db_connection()
-    try:
-        rows = conn.execute('''
-            SELECT p.mode, p.ticker, p.stock_name,
-                   p.last_processed_date, p.total_signals, p.completed_at,
-                   COUNT(s.id)                                        AS signal_count,
-                   SUM(CASE WHEN s.ai_decision='CONFIRM' THEN 1 ELSE 0 END) AS confirms,
-                   ROUND(AVG(s.pnl_5d),  2)                          AS avg_pnl_5d,
-                   ROUND(AVG(s.pnl_20d), 2)                          AS avg_pnl_20d,
-                   ROUND(AVG(s.confidence), 1)                       AS avg_confidence
-            FROM backtest_full_progress p
-            LEFT JOIN backtest_signals s
-                   ON s.ticker = p.ticker AND s.mode = p.mode AND s.user_id = ?
-            WHERE p.mode IN ('KR','US')
-            GROUP BY p.mode, p.ticker
-            ORDER BY p.completed_at DESC
-        ''', (current_user.id,)).fetchall()
-    finally:
-        conn.close()
-
-    result = []
-    for r in rows:
-        r = dict(r)
-        sc = r.get('signal_count') or 0
-        cf = r.get('confirms') or 0
-        r['confirm_rate'] = round(cf / sc * 100, 1) if sc else 0
-        result.append(r)
-    return jsonify(result)
+    from base.database import get_optimal_points_summary
+    rows = get_optimal_points_summary(current_user.id)
+    return jsonify([dict(r) for r in rows])
 
 
 @app.route('/api/backtest/ticker/<mode>/<ticker>')
 @login_required
 def backtest_ticker_detail(mode, ticker):
-    conn = get_db_connection()
-    try:
-        rows = conn.execute('''
-            SELECT trade_date, signal, signal_type, price,
-                   ai_decision, confidence, ai_reason,
-                   rsi, macd, bb_lower, bb_upper, vol_ratio,
-                   support, resistance, fib_382, fib_500, fib_618,
-                   min_price_5d, max_price_5d, pnl_5d,
-                   min_price_20d, max_price_20d, pnl_20d,
-                   optimal_buy_zone, optimal_sell_zone
-            FROM backtest_signals
-            WHERE user_id=? AND mode=? AND ticker=?
-            ORDER BY trade_date ASC
-        ''', (current_user.id, mode.upper(), ticker)).fetchall()
-    finally:
-        conn.close()
+    from base.database import get_optimal_points_detail
+    rows = get_optimal_points_detail(current_user.id, mode.upper(), ticker)
     return jsonify([dict(r) for r in rows])
 
 
@@ -1788,27 +1824,22 @@ def backtest_stats():
             'SELECT COUNT(DISTINCT ticker) FROM backtest_full_progress WHERE mode="US"'
         ).fetchone()[0]
         total = conn.execute(
-            'SELECT COUNT(*) FROM backtest_signals WHERE user_id=?', (current_user.id,)
+            'SELECT COUNT(*) FROM backtest_optimal_points WHERE user_id=?', (current_user.id,)
         ).fetchone()[0]
         today = conn.execute(
-            'SELECT COUNT(*) FROM backtest_signals WHERE user_id=? AND date(created_at)=date("now")',
+            'SELECT COUNT(*) FROM backtest_optimal_points WHERE user_id=? AND date(created_at)=date("now")',
             (current_user.id,)
         ).fetchone()[0]
-        acc = conn.execute('''
-            SELECT ROUND(
-                100.0 * SUM(CASE
-                    WHEN (ai_decision='CONFIRM' AND pnl_5d > 0) OR
-                         (ai_decision='REJECT'  AND pnl_5d <= 0) THEN 1 ELSE 0 END
-                ) / COUNT(*), 1)
-            FROM backtest_signals
-            WHERE user_id=? AND pnl_5d IS NOT NULL
-        ''', (current_user.id,)).fetchone()[0]
+        avg_gain = conn.execute(
+            'SELECT ROUND(AVG(max_gain_60d), 1) FROM backtest_optimal_points WHERE user_id=? AND point_type="BOTTOM" AND max_gain_60d IS NOT NULL',
+            (current_user.id,)
+        ).fetchone()[0]
     finally:
         conn.close()
     return jsonify({
         'kr_tickers': kr, 'us_tickers': us,
-        'total_signals': total, 'today_signals': today,
-        'accuracy_5d': acc or 0,
+        'total_points': total, 'today_points': today,
+        'avg_max_gain_bottom': avg_gain or 0,
     })
 
 
