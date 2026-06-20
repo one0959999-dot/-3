@@ -1,7 +1,7 @@
 import logging
 from KR.bot import KRBotController
 from US.bot import USBotController
-from ai.claude_api import ClaudeApi
+from ai.client import get_ai_client
 
 _log = logging.getLogger('lassi_bot')
 
@@ -53,13 +53,15 @@ class BotManager:
 
         bot = self.bots[bot_key]
 
-        api_key = (user_data.get('claude_api_key') or '').strip()
-        if api_key:
-            if bot.claude is None or getattr(bot.claude, '_api_key', '') != api_key:
+        provider = (user_data.get('trade_ai_provider') or 'claude').strip()
+        ai_key   = (user_data.get('trade_ai_key') or user_data.get('claude_api_key') or '').strip()
+        if ai_key:
+            cur_key = getattr(getattr(bot, 'claude', None), 'api_key', '')
+            if bot.claude is None or cur_key != ai_key:
                 try:
-                    bot.claude = ClaudeApi(api_key=api_key)
+                    bot.claude = get_ai_client(provider, ai_key)
                 except Exception as e:
-                    _log.warning(f"ClaudeApi 초기화 실패 (AI 비활성화): {e}")
+                    _log.warning(f"AI 클라이언트 초기화 실패: {e}")
                     bot.claude = None
 
         return bot

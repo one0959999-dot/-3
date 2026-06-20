@@ -912,8 +912,13 @@ window.saveAccountSettings = async function () {
         account_seq:     (document.getElementById('tossAccountSeq')   || {}).value || '',
         telegram_token:  (document.getElementById('teleToken')        || {}).value || '',
         telegram_chat_id:(document.getElementById('teleChatId')       || {}).value || '',
-        claude_api_key: (document.getElementById('claudeApiKey') || {}).value || '',
-        fred_api_key:   (document.getElementById('fredApiKey')   || {}).value || '',
+        claude_api_key:       (document.getElementById('claudeApiKey')       || {}).value || '',
+        gemini_api_key:       (document.getElementById('geminiApiKey')       || {}).value || '',
+        openai_api_key:       (document.getElementById('openaiApiKey')       || {}).value || '',
+        grok_api_key:         (document.getElementById('grokApiKey')         || {}).value || '',
+        trade_ai_provider:    (document.getElementById('tradeAiProvider')    || {}).value || 'claude',
+        backtest_ai_provider: (document.getElementById('backtestAiProvider') || {}).value || 'gemini',
+        fred_api_key:         (document.getElementById('fredApiKey')         || {}).value || '',
         core_stocks: coreJsonStr,
     };
     try {

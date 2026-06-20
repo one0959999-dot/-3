@@ -210,11 +210,50 @@
                         <label>텔레그램 Chat ID</label>
                         <input type="text" id="teleChatId" value="{{ user.data.telegram_chat_id or '' }}">
                     </div>
-                    <div class="settings-group">
-                        <label>Claude API Key <span style="font-size:0.75rem; color:#94a3b8;">(console.anthropic.com)</span></label>
-                        <input type="password" id="claudeApiKey" value="{{ user.data.claude_api_key or '' }}" placeholder="sk-ant-... 입력 시 AI 비서 활성화">
+                    <div class="settings-group" style="border:1px solid rgba(99,102,241,0.3);padding:14px;border-radius:8px;">
+                        <h3 style="color:#818cf8;font-size:0.9rem;margin-bottom:12px;">🤖 AI 설정</h3>
+                        <label style="font-size:0.78rem;color:#94a3b8;">API 키 입력 (사용할 AI 키만 입력)</label>
+                        <div style="display:grid;gap:8px;margin:8px 0 14px;">
+                            <div style="display:flex;align-items:center;gap:8px;">
+                                <span style="width:80px;font-size:0.78rem;color:#94a3b8;">Claude</span>
+                                <input type="password" id="claudeApiKey" value="{{ user.data.claude_api_key or '' }}" placeholder="sk-ant-..." style="flex:1;">
+                            </div>
+                            <div style="display:flex;align-items:center;gap:8px;">
+                                <span style="width:80px;font-size:0.78rem;color:#94a3b8;">Gemini</span>
+                                <input type="password" id="geminiApiKey" value="{{ user.data.gemini_api_key or '' }}" placeholder="AIza..." style="flex:1;">
+                            </div>
+                            <div style="display:flex;align-items:center;gap:8px;">
+                                <span style="width:80px;font-size:0.78rem;color:#94a3b8;">OpenAI</span>
+                                <input type="password" id="openaiApiKey" value="{{ user.data.openai_api_key or '' }}" placeholder="sk-..." style="flex:1;">
+                            </div>
+                            <div style="display:flex;align-items:center;gap:8px;">
+                                <span style="width:80px;font-size:0.78rem;color:#94a3b8;">Grok</span>
+                                <input type="password" id="grokApiKey" value="{{ user.data.grok_api_key or '' }}" placeholder="xai-..." style="flex:1;">
+                            </div>
+                        </div>
+                        <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:10px;">
+                            <div>
+                                <label style="font-size:0.78rem;color:#94a3b8;display:block;margin-bottom:4px;">실거래 AI</label>
+                                <select id="tradeAiProvider" style="width:100%;background:#1e293b;border:1px solid #334155;border-radius:6px;padding:7px;color:#e2e8f0;font-size:0.82rem;">
+                                    <option value="claude"  {% if (user.data.trade_ai_provider or 'claude')=='claude'  %}selected{% endif %}>Claude (Anthropic)</option>
+                                    <option value="gemini"  {% if user.data.trade_ai_provider=='gemini'  %}selected{% endif %}>Gemini (Google)</option>
+                                    <option value="openai"  {% if user.data.trade_ai_provider=='openai'  %}selected{% endif %}>OpenAI GPT</option>
+                                    <option value="grok"    {% if user.data.trade_ai_provider=='grok'    %}selected{% endif %}>Grok (xAI)</option>
+                                </select>
+                            </div>
+                            <div>
+                                <label style="font-size:0.78rem;color:#94a3b8;display:block;margin-bottom:4px;">백테스트 AI</label>
+                                <select id="backtestAiProvider" style="width:100%;background:#1e293b;border:1px solid #334155;border-radius:6px;padding:7px;color:#e2e8f0;font-size:0.82rem;">
+                                    <option value="gemini"  {% if (user.data.backtest_ai_provider or 'gemini')=='gemini'  %}selected{% endif %}>Gemini Flash (무료)</option>
+                                    <option value="claude"  {% if user.data.backtest_ai_provider=='claude'  %}selected{% endif %}>Claude</option>
+                                    <option value="openai"  {% if user.data.backtest_ai_provider=='openai'  %}selected{% endif %}>OpenAI GPT</option>
+                                    <option value="grok"    {% if user.data.backtest_ai_provider=='grok'    %}selected{% endif %}>Grok (xAI)</option>
+                                </select>
+                            </div>
+                        </div>
+                        <p style="font-size:0.72rem;color:#64748b;">실거래 AI 키는 선택한 제공자의 키를 위에서 입력하세요.</p>
                     </div>
-                                        <div class="settings-group">
+                    <div class="settings-group">
                         <label>FRED API Key <span style="font-size:0.75rem; color:#94a3b8;">(fred.stlouisfed.org) — 미국 기준금리/FOMC 정확도 향상</span></label>
                         <input type="password" id="fredApiKey" value="{{ user.data.fred_api_key or '' }}" placeholder="FRED API 키 입력 시 금리/FOMC 데이터 정밀화">
                     </div>

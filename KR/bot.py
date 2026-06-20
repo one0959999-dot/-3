@@ -4122,14 +4122,11 @@ class KRBotController:
 
         def _build_backtest_ai():
             from base.database import get_db_connection
+            from ai.client import get_ai_client_from_db
             _conn = get_db_connection()
-            _ud = dict(_conn.execute('SELECT gemini_api_key, fred_api_key FROM users WHERE id=?', (self.user_id,)).fetchone() or {})
+            _ud = dict(_conn.execute('SELECT fred_api_key FROM users WHERE id=?', (self.user_id,)).fetchone() or {})
             _conn.close()
-            gemini_key = _ud.get('gemini_api_key') or ''
-            if gemini_key:
-                from ai.gemini_api import GeminiApi
-                return GeminiApi(gemini_key), _ud.get('fred_api_key') or ''
-            return self.claude, _ud.get('fred_api_key') or ''
+            return get_ai_client_from_db(self.user_id, role='backtest'), _ud.get('fred_api_key') or ''
 
         def _run_kr_backtest(batch_size: int, label: str):
             def _worker():

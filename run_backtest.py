@@ -38,15 +38,11 @@ def _load_user(conn):
 
 
 def _build_ai(user: dict):
-    gemini_key = user.get('gemini_api_key') or ''
-    if gemini_key:
-        from ai.gemini_api import GeminiApi
-        logger.info("[AI] Gemini Flash 사용 (무료 티어)")
-        return GeminiApi(gemini_key)
-    claude_key = user.get('claude_api_key') or ''
-    from ai.claude_api import ClaudeApi
-    logger.info("[AI] Claude 사용 (Gemini API 키 없음)")
-    return ClaudeApi(claude_key)
+    from ai.client import get_ai_client
+    provider = user.get('backtest_ai_provider') or 'gemini'
+    key      = user.get('backtest_ai_key') or user.get('gemini_api_key') or user.get('claude_api_key') or ''
+    logger.info(f"[AI] 백테스트 AI: {provider}")
+    return get_ai_client(provider, key)
 
 
 def _build_toss(user: dict):
@@ -120,8 +116,9 @@ def main():
     user = _load_user(conn)
     conn.close()
 
-    if not user.get('claude_api_key'):
-        logger.error("Claude API 키가 없습니다. 웹 설정 → API 키를 먼저 입력하세요.")
+    if not (user.get('trade_ai_key') or user.get('backtest_ai_key') or
+            user.get('claude_api_key') or user.get('gemini_api_key')):
+        logger.error("AI API 키가 없습니다. 웹 설정 → AI 설정에서 키를 먼저 입력하세요.")
         sys.exit(1)
 
     logger.info(f"=== 백테스트 단독 모드 시작 (mode={args.mode}, once={args.once}) ===")

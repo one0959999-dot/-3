@@ -198,7 +198,7 @@ def home():
 def _dashboard_response(template, is_mock):
     from flask import make_response, redirect, url_for
     user_data = current_user.data
-    ai_enabled = bool(user_data.get('claude_api_key'))
+    ai_enabled = bool(user_data.get('trade_ai_key') or user_data.get('claude_api_key'))
     # is_mock 동기화
     if bool(user_data.get('is_mock', 0)) != is_mock:
         conn = get_db_connection()
@@ -1487,8 +1487,15 @@ def _save_keys_common(data, is_mock):
         'us_account_no':   _account_seq,
         'telegram_token':  _v('telegram_token')   or existing.get('telegram_token'),
         'telegram_chat_id':_v('telegram_chat_id') or existing.get('telegram_chat_id'),
-        'claude_api_key': _v('claude_api_key') or existing.get('claude_api_key'),
-        'fred_api_key':   _v('fred_api_key')   or existing.get('fred_api_key'),
+        'claude_api_key':        _v('claude_api_key')        or existing.get('claude_api_key'),
+        'gemini_api_key':        _v('gemini_api_key')        or existing.get('gemini_api_key'),
+        'openai_api_key':        _v('openai_api_key')        or existing.get('openai_api_key'),
+        'grok_api_key':          _v('grok_api_key')          or existing.get('grok_api_key'),
+        'trade_ai_provider':     _v('trade_ai_provider')     or existing.get('trade_ai_provider') or 'claude',
+        'trade_ai_key':          _v('trade_ai_key')          or existing.get('trade_ai_key'),
+        'backtest_ai_provider':  _v('backtest_ai_provider')  or existing.get('backtest_ai_provider') or 'gemini',
+        'backtest_ai_key':       _v('backtest_ai_key')       or existing.get('backtest_ai_key'),
+        'fred_api_key':          _v('fred_api_key')          or existing.get('fred_api_key'),
         'is_mock': 1 if is_mock else 0,
     }
 
@@ -1737,14 +1744,9 @@ def backtest_run():
 
     def _build_ai():
         conn = get_db_connection()
-        u = dict(conn.execute('SELECT gemini_api_key, claude_api_key FROM users WHERE id=?',
-                              (current_user.id,)).fetchone() or {})
         conn.close()
-        if u.get('gemini_api_key'):
-            from ai.gemini_api import GeminiApi
-            return GeminiApi(u['gemini_api_key'])
-        from ai.claude_api import ClaudeApi
-        return ClaudeApi(u.get('claude_api_key') or '')
+        from ai.client import get_ai_client_from_db
+        return get_ai_client_from_db(current_user.id, role='backtest')
 
     def _build_toss():
         conn = get_db_connection()
