@@ -4070,22 +4070,39 @@ class KRBotController:
 
                                                                     
         _backtest_done_slots = {}
-        _WEEKEND_HOURS = {'00:00', '03:00', '06:00', '09:00', '12:00', '15:00', '18:00', '21:00'}
+        _KR_WEEKEND_HOURS = {'00:00', '06:00', '12:00', '18:00'}
+        _US_WEEKEND_HOURS = {'03:00', '09:00', '15:00', '21:00'}
 
-        def _run_backtest(batch_size: int, label: str):
+        def _run_kr_backtest(batch_size: int, label: str):
             def _worker():
                 try:
                     from KR.backtest_runner import BacktestRunner
                     runner = BacktestRunner(self.user_id, self.claude, self.toss)
                     n = runner.run_batch(batch_size)
-                    self.add_log(f"📊 [{label}] 백테스트 완료: {n}개 시나리오 기록")
+                    self.add_log(f"📊 [KR/{label}] 백테스트 완료: {n}개 신호 기록")
                     self._send_telegram(
-                        f"📊 <b>[{label}] 백테스트 완료</b>  {self.alert_icon}\n"
-                        f"{n}개 시나리오 AI 학습 데이터 누적",
+                        f"📊 <b>[KR/{label}] 백테스트 완료</b>  {self.alert_icon}\n"
+                        f"{n}개 신호 AI 학습 데이터 누적",
                         'info'
                     )
                 except Exception as e:
-                    logger.warning(f"[{self.mode_name}] 백테스트 오류: {e}")
+                    logger.warning(f"[{self.mode_name}] KR 백테스트 오류: {e}")
+            self._run_threaded(_worker)
+
+        def _run_us_backtest(batch_size: int, label: str):
+            def _worker():
+                try:
+                    from US.backtest_runner import USBacktestRunner
+                    runner = USBacktestRunner(self.user_id, self.claude)
+                    n = runner.run_batch(batch_size)
+                    self.add_log(f"📊 [US/{label}] 백테스트 완료: {n}개 신호 기록")
+                    self._send_telegram(
+                        f"📊 <b>[US/{label}] 백테스트 완료</b>  {self.alert_icon}\n"
+                        f"{n}개 신호 AI 학습 데이터 누적",
+                        'info'
+                    )
+                except Exception as e:
+                    logger.warning(f"[{self.mode_name}] US 백테스트 오류: {e}")
             self._run_threaded(_worker)
 
         def _kst_nightly_backtest():
@@ -4093,16 +4110,21 @@ class KRBotController:
             slot = f"{now.strftime('%Y-%m-%d')}_{now.strftime('%H:%M')}"
             if slot in _backtest_done_slots:
                 return
+            t = now.strftime('%H:%M')
             if now.weekday() < 5:
-                if now.strftime('%H:%M') != '16:30':
-                    return
-                _backtest_done_slots[slot] = True
-                _run_backtest(100, '평일마감')
+                if t == '16:30':
+                    _backtest_done_slots[slot] = True
+                    _run_kr_backtest(100, '평일마감')
+                elif t == '17:30':
+                    _backtest_done_slots[slot] = True
+                    _run_us_backtest(50, '평일마감')
             else:
-                if now.strftime('%H:%M') not in _WEEKEND_HOURS:
-                    return
-                _backtest_done_slots[slot] = True
-                _run_backtest(200, '주말')
+                if t in _KR_WEEKEND_HOURS:
+                    _backtest_done_slots[slot] = True
+                    _run_kr_backtest(200, '주말')
+                elif t in _US_WEEKEND_HOURS:
+                    _backtest_done_slots[slot] = True
+                    _run_us_backtest(150, '주말')
 
         self.scheduler.every(1).minutes.do(_kst_nightly_backtest)
 

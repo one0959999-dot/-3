@@ -221,8 +221,52 @@ class TossInvestApi:
                 df[c] = pd.to_numeric(df[c], errors="coerce")
         return df
 
+    def get_full_history(self, symbol: str) -> pd.DataFrame:
+        all_candles: list = []
+        before: str | None = None
+        while True:
+            params: dict = {
+                "symbol":   symbol,
+                "interval": "1d",
+                "count":    200,
+                "adjusted": "true",
+            }
+            if before:
+                params["before"] = before
+            data = self._get("/api/v1/candles", params)
+            if not data:
+                break
+            candles = data.get("candles", [])
+            if not candles:
+                break
+            all_candles.extend(candles)
+            before = data.get("nextBefore")
+            if not before:
+                break
+            time.sleep(0.1)
+
+        if not all_candles:
+            return pd.DataFrame()
+
+        df = pd.DataFrame(all_candles)
+        if "timestamp" in df.columns:
+            df["datetime"] = pd.to_datetime(df["timestamp"], unit="ms")
+            df = df.set_index("datetime").sort_index()
+
+        col_map = {
+            "openPrice":  "open",
+            "highPrice":  "high",
+            "lowPrice":   "low",
+            "closePrice": "close",
+            "volume":     "volume",
+        }
+        df = df.rename(columns=col_map)
+        for c in ("open", "high", "low", "close", "volume"):
+            if c in df.columns:
+                df[c] = pd.to_numeric(df[c], errors="coerce")
+        return df[["open", "high", "low", "close", "volume"]].dropna(subset=["close"])
+
     def get_ohlcv(self, symbol: str, period: str = "D") -> pd.DataFrame:
-        """토스증권 compat: period 'D'=일봉, 'M'=분봉"""
         interval = "1m" if period == "M" else "1d"
         return self.get_candles(symbol, interval=interval, count=200)
 

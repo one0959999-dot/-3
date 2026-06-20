@@ -167,6 +167,56 @@ def init_db():
         )
         ''')
 
+            cursor.execute('''
+        CREATE TABLE IF NOT EXISTS macro_daily_snapshot (
+            date TEXT PRIMARY KEY,
+            kospi_close REAL, kospi_vs_ma200 REAL, kospi_52w_pct REAL,
+            sp500_chg REAL, nasdaq_chg REAL, nikkei_chg REAL, shanghai_chg REAL,
+            vix REAL, dxy REAL, usd_krw REAL,
+            wti REAL, gold REAL, copper REAL, sox_chg REAL,
+            us_rate REAL, kr_rate REAL, us_10y REAL, us_2y REAL, yield_spread REAL,
+            foreign_net_buy REAL, institution_net_buy REAL,
+            is_fomc_week INTEGER DEFAULT 0, is_cpi_week INTEGER DEFAULT 0,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+        ''')
+
+            cursor.execute('''
+        CREATE TABLE IF NOT EXISTS backtest_signals (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER,
+            mode TEXT DEFAULT 'KR',
+            ticker TEXT, stock_name TEXT,
+            trade_date TEXT,
+            signal TEXT,
+            signal_type TEXT,
+            price REAL,
+            ai_decision TEXT, confidence INTEGER, ai_reason TEXT,
+            macro_date TEXT,
+            rsi REAL, macd REAL, macd_signal REAL,
+            bb_upper REAL, bb_mid REAL, bb_lower REAL,
+            sma5 REAL, sma20 REAL, sma60 REAL, sma120 REAL,
+            vol_ratio REAL,
+            support REAL, resistance REAL,
+            fib_382 REAL, fib_500 REAL, fib_618 REAL,
+            min_price_5d REAL, max_price_5d REAL, days_to_min_5d INTEGER, days_to_max_5d INTEGER,
+            min_price_20d REAL, max_price_20d REAL, days_to_min_20d INTEGER, days_to_max_20d INTEGER,
+            pnl_5d REAL, pnl_20d REAL,
+            optimal_buy_zone TEXT, optimal_sell_zone TEXT,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+        ''')
+
+            cursor.execute('''
+        CREATE TABLE IF NOT EXISTS backtest_full_progress (
+            mode TEXT, ticker TEXT,
+            last_processed_date TEXT,
+            total_signals INTEGER DEFAULT 0,
+            completed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            PRIMARY KEY (mode, ticker)
+        )
+        ''')
+
             cursor.execute('UPDATE users SET is_running = 0')
             conn.commit()
         finally:
@@ -656,3 +706,145 @@ def get_backtest_pending_tickers(mode: str, limit: int = 100) -> list:
     finally:
         conn.close()
     return done
+
+
+def save_macro_snapshot(date: str, data: dict):
+    with db_lock:
+        conn = get_db_connection()
+        try:
+            conn.execute('''
+                INSERT OR REPLACE INTO macro_daily_snapshot
+                (date, kospi_close, kospi_vs_ma200, kospi_52w_pct,
+                 sp500_chg, nasdaq_chg, nikkei_chg, shanghai_chg,
+                 vix, dxy, usd_krw, wti, gold, copper, sox_chg,
+                 us_rate, kr_rate, us_10y, us_2y, yield_spread,
+                 foreign_net_buy, institution_net_buy,
+                 is_fomc_week, is_cpi_week)
+                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+            ''', (
+                date,
+                data.get('kospi_close'), data.get('kospi_vs_ma200'), data.get('kospi_52w_pct'),
+                data.get('sp500_chg'), data.get('nasdaq_chg'), data.get('nikkei_chg'), data.get('shanghai_chg'),
+                data.get('vix'), data.get('dxy'), data.get('usd_krw'),
+                data.get('wti'), data.get('gold'), data.get('copper'), data.get('sox_chg'),
+                data.get('us_rate'), data.get('kr_rate'), data.get('us_10y'), data.get('us_2y'), data.get('yield_spread'),
+                data.get('foreign_net_buy'), data.get('institution_net_buy'),
+                data.get('is_fomc_week', 0), data.get('is_cpi_week', 0),
+            ))
+            conn.commit()
+        finally:
+            conn.close()
+
+
+def get_macro_snapshot(date: str) -> dict:
+    conn = get_db_connection()
+    try:
+        row = conn.execute('SELECT * FROM macro_daily_snapshot WHERE date=?', (date,)).fetchone()
+        return dict(row) if row else {}
+    finally:
+        conn.close()
+
+
+def log_backtest_signal(data: dict) -> int:
+    with db_lock:
+        conn = get_db_connection()
+        try:
+            cur = conn.execute('''
+                INSERT INTO backtest_signals
+                (user_id, mode, ticker, stock_name, trade_date, signal, signal_type, price,
+                 ai_decision, confidence, ai_reason, macro_date,
+                 rsi, macd, macd_signal, bb_upper, bb_mid, bb_lower,
+                 sma5, sma20, sma60, sma120, vol_ratio,
+                 support, resistance, fib_382, fib_500, fib_618,
+                 min_price_5d, max_price_5d, days_to_min_5d, days_to_max_5d,
+                 min_price_20d, max_price_20d, days_to_min_20d, days_to_max_20d,
+                 pnl_5d, pnl_20d, optimal_buy_zone, optimal_sell_zone)
+                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+            ''', (
+                data.get('user_id'), data.get('mode', 'KR'),
+                data.get('ticker'), data.get('stock_name'), data.get('trade_date'),
+                data.get('signal'), data.get('signal_type'), data.get('price'),
+                data.get('ai_decision'), data.get('confidence'), data.get('ai_reason'),
+                data.get('macro_date'),
+                data.get('rsi'), data.get('macd'), data.get('macd_signal'),
+                data.get('bb_upper'), data.get('bb_mid'), data.get('bb_lower'),
+                data.get('sma5'), data.get('sma20'), data.get('sma60'), data.get('sma120'),
+                data.get('vol_ratio'),
+                data.get('support'), data.get('resistance'),
+                data.get('fib_382'), data.get('fib_500'), data.get('fib_618'),
+                data.get('min_price_5d'), data.get('max_price_5d'),
+                data.get('days_to_min_5d'), data.get('days_to_max_5d'),
+                data.get('min_price_20d'), data.get('max_price_20d'),
+                data.get('days_to_min_20d'), data.get('days_to_max_20d'),
+                data.get('pnl_5d'), data.get('pnl_20d'),
+                data.get('optimal_buy_zone'), data.get('optimal_sell_zone'),
+            ))
+            conn.commit()
+            return cur.lastrowid
+        finally:
+            conn.close()
+
+
+def get_backtest_full_done(mode: str) -> set:
+    conn = get_db_connection()
+    try:
+        return {r[0] for r in conn.execute(
+            'SELECT ticker FROM backtest_full_progress WHERE mode=?', (mode,)
+        ).fetchall()}
+    finally:
+        conn.close()
+
+
+def update_backtest_full_progress(mode: str, ticker: str, last_date: str, total_signals: int):
+    with db_lock:
+        conn = get_db_connection()
+        try:
+            conn.execute('''
+                INSERT INTO backtest_full_progress (mode, ticker, last_processed_date, total_signals)
+                VALUES (?,?,?,?)
+                ON CONFLICT(mode, ticker) DO UPDATE SET
+                    last_processed_date=excluded.last_processed_date,
+                    total_signals=total_signals + excluded.total_signals,
+                    completed_at=CURRENT_TIMESTAMP
+            ''', (mode, ticker, last_date, total_signals))
+            conn.commit()
+        finally:
+            conn.close()
+
+
+def export_to_jsonl(mode: str = 'KR', output_path: str = 'finetune_data.jsonl'):
+    import json as _json
+    conn = get_db_connection()
+    try:
+        rows = conn.execute('''
+            SELECT s.*, m.vix, m.sp500_chg, m.nasdaq_chg, m.usd_krw,
+                   m.us_10y, m.yield_spread, m.foreign_net_buy, m.kospi_vs_ma200
+            FROM backtest_signals s
+            LEFT JOIN macro_daily_snapshot m ON s.macro_date = m.date
+            WHERE s.mode=? AND s.ai_decision IS NOT NULL
+        ''', (mode,)).fetchall()
+    finally:
+        conn.close()
+
+    with open(output_path, 'w', encoding='utf-8') as f:
+        for r in rows:
+            r = dict(r)
+            prompt = (
+                f"종목: {r['stock_name']}({r['ticker']}) | 날짜: {r['trade_date']} | 신호: {r['signal']}({r['signal_type']})\n"
+                f"현재가: {r['price']:,.0f} | RSI: {r['rsi']} | MACD: {r['macd']} | 볼린저: {r['bb_lower']}~{r['bb_upper']}\n"
+                f"거래량: 평소대비 {r['vol_ratio']:.0f}% | 지지: {r['support']} | 저항: {r['resistance']}\n"
+                f"[매크로] VIX:{r['vix']} | S&P500:{r['sp500_chg']:+.1f}% | 나스닥:{r['nasdaq_chg']:+.1f}% | 달러:{r['usd_krw']} | 미10년:{r['us_10y']}% | 장단기스프레드:{r['yield_spread']} | 외국인:{r['foreign_net_buy']} | KOSPI MA200대비:{r['kospi_vs_ma200']:+.1f}%\n"
+                f"5일후 수익률: {r['pnl_5d']:+.1f}% | 20일후 수익률: {r['pnl_20d']:+.1f}%\n"
+                f"매수구간: {r['optimal_buy_zone']} | 매도구간: {r['optimal_sell_zone']}"
+            )
+            completion = f"판단: {r['ai_decision']} (신뢰도 {r['confidence']}%) | 근거: {r['ai_reason']}"
+            entry = {
+                "messages": [
+                    {"role": "system", "content": "당신은 한국 주식 트레이딩 AI입니다. 주어진 기술적/매크로 데이터를 분석해 매수/매도 판단을 내립니다."},
+                    {"role": "user", "content": prompt},
+                    {"role": "assistant", "content": completion}
+                ]
+            }
+            f.write(_json.dumps(entry, ensure_ascii=False) + '\n')
+
+    return len(rows)
