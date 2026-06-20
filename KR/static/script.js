@@ -913,6 +913,7 @@ window.saveAccountSettings = async function () {
         telegram_token:  (document.getElementById('teleToken')        || {}).value || '',
         telegram_chat_id:(document.getElementById('teleChatId')       || {}).value || '',
         claude_api_key: (document.getElementById('claudeApiKey') || {}).value || '',
+        fred_api_key:   (document.getElementById('fredApiKey')   || {}).value || '',
         core_stocks: coreJsonStr,
     };
     try {

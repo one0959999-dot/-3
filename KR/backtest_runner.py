@@ -98,8 +98,8 @@ def _detect_signals(row: pd.Series, prev_row: pd.Series) -> list[str]:
         elif rsi >= 70:
             signals.append('RSI_SELL')
 
-    macd = row.get('macd')
-    macd_sig = row.get('macd_signal')
+    macd      = row.get('macd')
+    macd_sig  = row.get('macd_signal')
     prev_macd = prev_row.get('macd')
     prev_sig  = prev_row.get('macd_signal')
     if all(pd.notna(x) for x in [macd, macd_sig, prev_macd, prev_sig]):
@@ -108,26 +108,23 @@ def _detect_signals(row: pd.Series, prev_row: pd.Series) -> list[str]:
         elif prev_macd >= prev_sig and macd < macd_sig:
             signals.append('MACD_SELL')
 
-    close  = row.get('close')
-    bb_l   = row.get('bb_lower')
-    bb_u   = row.get('bb_upper')
+    close     = row.get('close')
+    bb_l      = row.get('bb_lower')
+    bb_u      = row.get('bb_upper')
     if all(pd.notna(x) for x in [close, bb_l, bb_u]):
         if close <= bb_l:
             signals.append('BB_BUY')
         elif close >= bb_u:
             signals.append('BB_SELL')
 
-    vol_ratio = row.get('vol_ratio')
-    sma20     = row.get('sma20')
+    vol_ratio  = row.get('vol_ratio')
+    sma20      = row.get('sma20')
     prev_close = prev_row.get('close')
     if all(pd.notna(x) for x in [vol_ratio, close, sma20, prev_close]):
         if vol_ratio >= 200 and close > sma20:
-            if close > prev_close:
-                signals.append('VOL_BUY')
-            else:
-                signals.append('VOL_SELL')
+            signals.append('VOL_BUY' if close > prev_close else 'VOL_SELL')
 
-    sma5  = row.get('sma5')
+    sma5       = row.get('sma5')
     prev_sma5  = prev_row.get('sma5')
     prev_sma20 = prev_row.get('sma20')
     if all(pd.notna(x) for x in [sma5, sma20, prev_sma5, prev_sma20]):
@@ -135,6 +132,16 @@ def _detect_signals(row: pd.Series, prev_row: pd.Series) -> list[str]:
             signals.append('MA_BUY')
         elif prev_sma5 >= prev_sma20 and sma5 < sma20:
             signals.append('MA_SELL')
+
+    high_20   = row.get('high_20')
+    low_20    = row.get('low_20')
+    prev_high = prev_row.get('high_20')
+    prev_low  = prev_row.get('low_20')
+    if all(pd.notna(x) for x in [close, high_20, low_20, prev_high, prev_low, prev_close]):
+        if prev_close < prev_high and close >= high_20:
+            signals.append('BREAK_BUY')
+        elif prev_close > prev_low and close <= low_20:
+            signals.append('BREAK_SELL')
 
     return signals
 
@@ -193,7 +200,7 @@ def _optimal_zones(price: float, support: float, resistance: float,
 
 
 def run_full_backtest_ticker(ticker: str, stock_name: str, user_id: int,
-                              claude_client, toss_api=None) -> int:
+                              claude_client, toss_api=None, fred_key: str = '') -> int:
     from base.database import load_ai_rules, log_backtest_signal
     from base.macro_collector import get_macro_for_date, build_macro_context_str
 
@@ -216,7 +223,7 @@ def run_full_backtest_ticker(ticker: str, stock_name: str, user_id: int,
         if not signal_types:
             continue
 
-        macro = get_macro_for_date(date_str)
+        macro = get_macro_for_date(date_str, fred_key=fred_key)
         macro_str = build_macro_context_str(macro)
 
         hist = df.iloc[:i+1]
@@ -296,10 +303,11 @@ def run_full_backtest_ticker(ticker: str, stock_name: str, user_id: int,
 
 class BacktestRunner:
 
-    def __init__(self, user_id: int, claude_client, toss_api=None):
-        self.user_id = user_id
-        self.claude  = claude_client
-        self.toss    = toss_api
+    def __init__(self, user_id: int, claude_client, toss_api=None, fred_key: str = ''):
+        self.user_id  = user_id
+        self.claude   = claude_client
+        self.toss     = toss_api
+        self.fred_key = fred_key
 
     def run_batch(self, batch_size: int = BATCH_SIZE_WEEKDAY) -> int:
         from base.database import get_backtest_full_done, update_backtest_full_progress
@@ -323,7 +331,7 @@ class BacktestRunner:
             ticker = item['ticker']
             name   = item['name']
             try:
-                n = run_full_backtest_ticker(ticker, name, self.user_id, self.claude, self.toss)
+                n = run_full_backtest_ticker(ticker, name, self.user_id, self.claude, self.toss, self.fred_key)
                 if n > 0:
                     update_backtest_full_progress(
                         'KR', ticker, datetime.now().strftime('%Y-%m-%d'), n

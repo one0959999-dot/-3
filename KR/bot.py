@@ -4077,7 +4077,11 @@ class KRBotController:
             def _worker():
                 try:
                     from KR.backtest_runner import BacktestRunner
-                    runner = BacktestRunner(self.user_id, self.claude, self.toss)
+                    from base.database import get_db_connection
+                    _conn = get_db_connection()
+                    _ud = dict(_conn.execute('SELECT fred_api_key FROM users WHERE id=?', (self.user_id,)).fetchone() or {})
+                    _conn.close()
+                    runner = BacktestRunner(self.user_id, self.claude, self.toss, _ud.get('fred_api_key') or '')
                     n = runner.run_batch(batch_size)
                     self.add_log(f"📊 [KR/{label}] 백테스트 완료: {n}개 신호 기록")
                     self._send_telegram(

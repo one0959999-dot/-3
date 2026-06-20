@@ -51,6 +51,7 @@ def init_db():
                 ('toss_client_secret', 'TEXT'),
                 ('toss_account_seq', 'TEXT'),
                 ('perplexity_api_key', 'TEXT'),
+                ('fred_api_key', 'TEXT'),
             ]
             for col_name, col_type in new_columns:
                 try:

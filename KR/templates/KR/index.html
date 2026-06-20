@@ -191,6 +191,10 @@
                         <input type="text" id="tossAccountSeq" value="{{ user.data.real_account_no or '' }}" placeholder="토스증권 계좌 Seq 번호">
                     </div>
 
+                                        <div class="settings-group">
+                        <label>FRED API Key <span style="font-size:0.75rem; color:#94a3b8;">(fred.stlouisfed.org) — 미국 기준금리/FOMC 정확도 향상</span></label>
+                        <input type="password" id="fredApiKey" value="{{ user.data.fred_api_key or '' }}" placeholder="FRED API 키 입력 시 금리/FOMC 데이터 정밀화">
+                    </div>
                     <button class="btn-save-keys" onclick="saveAccountSettings()" style="background:#10b981;">설정 저장</button>
 
                     <!-- 테스트 주문 UI 제거됨 (실전 운영) -->
@@ -209,6 +213,10 @@
                     <div class="settings-group">
                         <label>Claude API Key <span style="font-size:0.75rem; color:#94a3b8;">(console.anthropic.com)</span></label>
                         <input type="password" id="claudeApiKey" value="{{ user.data.claude_api_key or '' }}" placeholder="sk-ant-... 입력 시 AI 비서 활성화">
+                    </div>
+                                        <div class="settings-group">
+                        <label>FRED API Key <span style="font-size:0.75rem; color:#94a3b8;">(fred.stlouisfed.org) — 미국 기준금리/FOMC 정확도 향상</span></label>
+                        <input type="password" id="fredApiKey" value="{{ user.data.fred_api_key or '' }}" placeholder="FRED API 키 입력 시 금리/FOMC 데이터 정밀화">
                     </div>
                     <button class="btn-save-keys" onclick="saveAccountSettings()" style="background:#10b981; margin-bottom:1.2rem;">알림 설정 저장</button>
 

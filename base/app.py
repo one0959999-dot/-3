@@ -1488,6 +1488,7 @@ def _save_keys_common(data, is_mock):
         'telegram_token':  _v('telegram_token')   or existing.get('telegram_token'),
         'telegram_chat_id':_v('telegram_chat_id') or existing.get('telegram_chat_id'),
         'claude_api_key': _v('claude_api_key') or existing.get('claude_api_key'),
+        'fred_api_key':   _v('fred_api_key')   or existing.get('fred_api_key'),
         'is_mock': 1 if is_mock else 0,
     }
 
