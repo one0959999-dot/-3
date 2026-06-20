@@ -184,6 +184,11 @@ def load_user(user_id):
 def get_current_bot():
     return manager.get_bot(current_user.id, current_user.data)
 
+def get_current_bot_if_exists():
+    """봇을 새로 생성하지 않고 기존 인스턴스만 반환. 상태 조회 전용."""
+    is_mock = bool(current_user.data.get('is_mock', 1))
+    return manager.bots.get((current_user.id, is_mock))
+
 @app.route('/')
 @login_required
 def home():
@@ -278,7 +283,11 @@ def logout():
 @app.route('/api/status')
 @login_required
 def status():
-    bot = get_current_bot()
+    bot = get_current_bot_if_exists()
+    if bot is None:
+        return jsonify({"running": False, "is_running": False, "cores": [], "satellites": [],
+                        "mock_total_asset": 0, "mock_pnl_rt": 0, "logs": [],
+                        "other_mode_running": False, "other_mode_label": ""})
     result = bot.get_status()
 
     # 반대 모드 봇의 실행 상태를 같이 전달 — UI 상태 배지용

@@ -1353,27 +1353,6 @@ class KRBotController:
                     self.satellite_positions[_t] = Position(_t, _sat.get('name', _t), 0.0)
                     _existing_tickers.add(_t)
 
-            # ── 토스 실제 잔고로 보유 주수 보정 ──────────────────────────────
-            # DB 캐시(KIS 시대 데이터 포함)와 실제 토스 계좌 불일치 방지
-            try:
-                toss_bal = self.toss.get_account_balance()
-                toss_shares = {s["ticker"]: s["shares"] for s in toss_bal.get("stocks", [])}
-                for pos in self.core_positions:
-                    if pos.ticker == "TBD":
-                        continue
-                    real_qty = toss_shares.get(pos.ticker, 0)
-                    if pos.shares != real_qty:
-                        logger.info(f"[{self.mode_name}] 보유주수 보정 {pos.ticker}: DB={pos.shares} → 토스={real_qty}")
-                        pos.shares = real_qty
-                for ticker, pos in list(self.satellite_positions.items()):
-                    real_qty = toss_shares.get(ticker, 0)
-                    if pos.shares != real_qty:
-                        logger.info(f"[{self.mode_name}] 보유주수 보정 {ticker}: DB={pos.shares} → 토스={real_qty}")
-                        pos.shares = real_qty
-                self.add_log(f"✅ 토스 실제 잔고로 보유 주수 검증 완료")
-            except Exception as e:
-                logger.warning(f"[{self.mode_name}] 토스 잔고 검증 실패 (DB 값 유지): {e}")
-
             return True
         except Exception as e:
             logger.error(f"[{self.mode_name}] 상태 복구 실패: {e}", exc_info=True)
@@ -3781,6 +3760,29 @@ class KRBotController:
                     self.initialize_portfolio(total_cash)
         except Exception as e:
             logger.error(f"[{self.mode_name}] 포트폴리오 초기화 실패 (기본 코어로 계속 진행): {e}", exc_info=True)
+
+        # ── 봇 시작 시 토스 실잔고로 보유 주수 보정 (KIS 시대 DB 잔재 제거) ──
+        # __init__이 아닌 실제 봇 시작 시점에 API 호출 — /api/status 응답속도 보호
+        try:
+            if self.toss:
+                toss_bal = self.toss.get_account_balance()
+                if toss_bal:
+                    toss_shares = {s["ticker"]: s["shares"] for s in toss_bal.get("stocks", [])}
+                    for pos in self.core_positions:
+                        if pos.ticker == "TBD":
+                            continue
+                        real_qty = toss_shares.get(pos.ticker, 0)
+                        if pos.shares != real_qty:
+                            logger.info(f"[{self.mode_name}] 보유주수 보정 {pos.ticker}: DB={pos.shares} → 토스={real_qty}")
+                            pos.shares = real_qty
+                    for ticker, pos in list(self.satellite_positions.items()):
+                        real_qty = toss_shares.get(ticker, 0)
+                        if pos.shares != real_qty:
+                            logger.info(f"[{self.mode_name}] 보유주수 보정 {ticker}: DB={pos.shares} → 토스={real_qty}")
+                            pos.shares = real_qty
+                    self.add_log(f"✅ 토스 실잔고로 보유 주수 검증 완료")
+        except Exception as e:
+            logger.warning(f"[{self.mode_name}] 시작 시 토스 잔고 검증 실패: {e}")
 
         # schedule 라이브러리는 항상 KST 기준으로 설정 (_now_kst() 기반 체크 사용)
         # 리포트는 trading_job 안에서 _now_kst() 시간을 직접 체크해 발행 → 시스템 타임존 무관
