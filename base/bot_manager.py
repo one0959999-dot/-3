@@ -26,30 +26,34 @@ class BotManager:
             def _toss_val(key_toss, key_legacy):
                 return (user_data.get(key_toss) or user_data.get(key_legacy) or '')
 
-            if is_mock:
-                toss_config = {
-                    "client_id":     _toss_val('toss_client_id',     'us_app_key'),
-                    "client_secret": _toss_val('toss_client_secret', 'us_app_secret'),
-                    "account_seq":   _toss_val('toss_account_seq',   'us_account_no'),
-                }
-                self.bots[bot_key] = USBotController(
-                    user_id,
-                    toss_config=toss_config,
-                    telegram_config=tele_config,
-                    core_stocks=user_data.get('us_core_stocks'),
-                    satellite_stocks=user_data.get('us_satellite_stocks'),
-                )
-            else:
-                toss_config = {
-                    "client_id":     _toss_val('toss_client_id',     'real_app_key'),
-                    "client_secret": _toss_val('toss_client_secret', 'real_app_secret'),
-                    "account_seq":   _toss_val('toss_account_seq',   'real_account_no'),
-                }
-                self.bots[bot_key] = KRBotController(
-                    user_id, toss_config, tele_config,
-                    core_stocks=user_data.get('core_stocks'),
-                    satellite_stocks=user_data.get('satellite_stocks'),
-                )
+            try:
+                if is_mock:
+                    toss_config = {
+                        "client_id":     _toss_val('toss_client_id',     'us_app_key'),
+                        "client_secret": _toss_val('toss_client_secret', 'us_app_secret'),
+                        "account_seq":   _toss_val('toss_account_seq',   'us_account_no'),
+                    }
+                    self.bots[bot_key] = USBotController(
+                        user_id,
+                        toss_config=toss_config,
+                        telegram_config=tele_config,
+                        core_stocks=user_data.get('us_core_stocks'),
+                        satellite_stocks=user_data.get('us_satellite_stocks'),
+                    )
+                else:
+                    toss_config = {
+                        "client_id":     _toss_val('toss_client_id',     'real_app_key'),
+                        "client_secret": _toss_val('toss_client_secret', 'real_app_secret'),
+                        "account_seq":   _toss_val('toss_account_seq',   'real_account_no'),
+                    }
+                    self.bots[bot_key] = KRBotController(
+                        user_id, toss_config, tele_config,
+                        core_stocks=user_data.get('core_stocks'),
+                        satellite_stocks=user_data.get('satellite_stocks'),
+                    )
+            except Exception as e:
+                _log.error(f"[BotManager] 봇 초기화 실패 (user={user_id}, mock={is_mock}): {e}", exc_info=True)
+                return None
 
         bot = self.bots[bot_key]
 

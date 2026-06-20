@@ -867,8 +867,9 @@ def ai_chat():
     bot = get_current_bot()
     data = request.json or {}
     user_message = data.get('message', '').strip()
-    if not bot or not bot.claude:
-        return jsonify({"status": "error", "reply": "AI API 키를 등록해주세요."})
+    from ai.client import NullAIClient
+    if not bot or not bot.claude or isinstance(bot.claude, NullAIClient):
+        return jsonify({"status": "error", "reply": "⚠️ AI API 키가 설정되지 않았습니다. 설정에서 Gemini API 키를 입력해주세요."})
 
     stock_analysis_context = ""
     is_us_mode = bool(current_user.data.get('is_mock', 1))
