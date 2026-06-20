@@ -4073,15 +4073,23 @@ class KRBotController:
         _KR_WEEKEND_HOURS = {'00:00', '06:00', '12:00', '18:00'}
         _US_WEEKEND_HOURS = {'03:00', '09:00', '15:00', '21:00'}
 
+        def _build_backtest_ai():
+            from base.database import get_db_connection
+            _conn = get_db_connection()
+            _ud = dict(_conn.execute('SELECT gemini_api_key, fred_api_key FROM users WHERE id=?', (self.user_id,)).fetchone() or {})
+            _conn.close()
+            gemini_key = _ud.get('gemini_api_key') or ''
+            if gemini_key:
+                from ai.gemini_api import GeminiApi
+                return GeminiApi(gemini_key), _ud.get('fred_api_key') or ''
+            return self.claude, _ud.get('fred_api_key') or ''
+
         def _run_kr_backtest(batch_size: int, label: str):
             def _worker():
                 try:
                     from KR.backtest_runner import BacktestRunner
-                    from base.database import get_db_connection
-                    _conn = get_db_connection()
-                    _ud = dict(_conn.execute('SELECT fred_api_key FROM users WHERE id=?', (self.user_id,)).fetchone() or {})
-                    _conn.close()
-                    runner = BacktestRunner(self.user_id, self.claude, self.toss, _ud.get('fred_api_key') or '')
+                    _ai, _fred = _build_backtest_ai()
+                    runner = BacktestRunner(self.user_id, _ai, self.toss, _fred)
                     n = runner.run_batch(batch_size)
                     self.add_log(f"📊 [KR/{label}] 백테스트 완료: {n}개 신호 기록")
                     self._send_telegram(
@@ -4097,7 +4105,8 @@ class KRBotController:
             def _worker():
                 try:
                     from US.backtest_runner import USBacktestRunner
-                    runner = USBacktestRunner(self.user_id, self.claude)
+                    _ai, _ = _build_backtest_ai()
+                    runner = USBacktestRunner(self.user_id, _ai)
                     n = runner.run_batch(batch_size)
                     self.add_log(f"📊 [US/{label}] 백테스트 완료: {n}개 신호 기록")
                     self._send_telegram(

@@ -37,9 +37,16 @@ def _load_user(conn):
     return dict(row)
 
 
-def _build_claude(api_key: str):
+def _build_ai(user: dict):
+    gemini_key = user.get('gemini_api_key') or ''
+    if gemini_key:
+        from ai.gemini_api import GeminiApi
+        logger.info("[AI] Gemini Flash 사용 (무료 티어)")
+        return GeminiApi(gemini_key)
+    claude_key = user.get('claude_api_key') or ''
     from ai.claude_api import ClaudeApi
-    return ClaudeApi(api_key)
+    logger.info("[AI] Claude 사용 (Gemini API 키 없음)")
+    return ClaudeApi(claude_key)
 
 
 def _build_toss(user: dict):
@@ -58,10 +65,10 @@ def _build_toss(user: dict):
 
 def run_kr(user: dict, once: bool = False):
     from KR.backtest_runner import BacktestRunner, BATCH_SIZE_WEEKEND
-    claude = _build_claude(user['claude_api_key'])
-    toss   = _build_toss(user)
-    fred   = user.get('fred_api_key') or ''
-    runner = BacktestRunner(user['id'], claude, toss_api=toss, fred_key=fred)
+    ai   = _build_ai(user)
+    toss = _build_toss(user)
+    fred = user.get('fred_api_key') or ''
+    runner = BacktestRunner(user['id'], ai, toss_api=toss, fred_key=fred)
 
     batch = BATCH_SIZE_WEEKEND
     logger.info(f"[KR 백테스트] 배치 크기: {batch}종목")
@@ -80,8 +87,8 @@ def run_kr(user: dict, once: bool = False):
 
 def run_us(user: dict, once: bool = False):
     from US.backtest_runner import USBacktestRunner, BATCH_SIZE_WEEKEND
-    claude = _build_claude(user['claude_api_key'])
-    runner = USBacktestRunner(user['id'], claude)
+    ai     = _build_ai(user)
+    runner = USBacktestRunner(user['id'], ai)
 
     batch = BATCH_SIZE_WEEKEND
     logger.info(f"[US 백테스트] 배치 크기: {batch}종목")
