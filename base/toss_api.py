@@ -115,7 +115,9 @@ class TossInvestApi:
                 timeout=10,
             )
             if r.status_code == 200:
-                return r.json()
+                data = r.json()
+                # 토스 API는 모든 응답을 {"result": ...} 로 래핑
+                return data.get("result", data) if isinstance(data, dict) and "result" in data else data
             logger.warning(f"[Toss] GET {path} → {r.status_code}: {r.text[:300]}")
         except Exception as e:
             logger.error(f"[Toss] GET {path} 오류: {e}")
@@ -130,23 +132,12 @@ class TossInvestApi:
                 timeout=10,
             )
             if r.status_code in (200, 201):
-                return r.json()
+                data = r.json()
+                return data.get("result", data) if isinstance(data, dict) and "result" in data else data
             logger.warning(f"[Toss] POST {path} → {r.status_code}: {r.text[:300]}")
         except Exception as e:
             logger.error(f"[Toss] POST {path} 오류: {e}")
         return None
-
-    def _delete(self, path: str, with_account: bool = False) -> bool:
-        try:
-            r = requests.delete(
-                f"{_BASE}{path}",
-                headers=self._h(with_account),
-                timeout=10,
-            )
-            return r.status_code in (200, 204)
-        except Exception as e:
-            logger.error(f"[Toss] DELETE {path} 오류: {e}")
-            return False
 
     # ────────────────────────────────────────────────────────────────────
     # 현재가
@@ -462,7 +453,7 @@ class TossInvestApi:
         params: dict = {"symbol": stock_code}
         if price:
             params["price"] = str(price)
-        data = self._get("/api/v1/orders/buyable", params, with_account=True)
+        data = self._get("/api/v1/buying-power", params, with_account=True)
         if data:
             return float(data.get("amount") or data.get("buyableAmount") or 0)
         return 0.0
@@ -472,14 +463,14 @@ class TossInvestApi:
         params: dict = {"symbol": ticker}
         if price:
             params["price"] = str(price)
-        data = self._get("/api/v1/orders/buyable", params, with_account=True)
+        data = self._get("/api/v1/buying-power", params, with_account=True)
         if data:
             return float(data.get("amount") or data.get("buyableAmount") or 0)
         return 0.0
 
     def get_sellable_qty(self, symbol: str) -> int:
         """매도가능수량"""
-        data = self._get("/api/v1/orders/sellable", {"symbol": symbol}, with_account=True)
+        data = self._get("/api/v1/sellable-quantity", {"symbol": symbol}, with_account=True)
         if data:
             return int(float(data.get("quantity") or data.get("sellableQuantity") or 0))
         return 0
@@ -619,7 +610,8 @@ class TossInvestApi:
         return self.get_filled_orders(from_date=date_str or today, to_date=today)
 
     def cancel_order(self, order_id: str, **_kwargs) -> bool:
-        return self._delete(f"/api/v1/orders/{order_id}", with_account=True)
+        data = self._post(f"/api/v1/orders/{order_id}/cancel", {}, with_account=True)
+        return data is not None
 
     def cancel_all_unfilled(self) -> int:
         """미체결 주문 전량 취소. 취소 건수 반환."""
