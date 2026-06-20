@@ -223,7 +223,7 @@ class TossInvestApi:
 
         df = pd.DataFrame(all_candles)
         if "timestamp" in df.columns:
-            df["datetime"] = pd.to_datetime(df["timestamp"], unit="ms")
+            df["datetime"] = pd.to_datetime(df["timestamp"], utc=True).dt.tz_convert("Asia/Seoul")
             df = df.sort_values("datetime").reset_index(drop=True)
 
         col_map = {
@@ -268,7 +268,7 @@ class TossInvestApi:
 
         df = pd.DataFrame(all_candles)
         if "timestamp" in df.columns:
-            df["datetime"] = pd.to_datetime(df["timestamp"], unit="ms")
+            df["datetime"] = pd.to_datetime(df["timestamp"], utc=True).dt.tz_convert("Asia/Seoul")
             df = df.set_index("datetime").sort_index()
 
         col_map = {
@@ -306,9 +306,11 @@ class TossInvestApi:
         """{'upper': int, 'lower': int}"""
         data = self._get("/api/v1/price-limits", {"symbol": symbol})
         if data:
+            upper = data.get("upperLimitPrice")
+            lower = data.get("lowerLimitPrice")
             return {
-                "upper": int(float(data.get("upperLimitPrice", 0))),
-                "lower": int(float(data.get("lowerLimitPrice", 0))),
+                "upper": int(float(upper)) if upper is not None else 0,
+                "lower": int(float(lower)) if lower is not None else 0,
             }
         return {"upper": 0, "lower": 0}
 
