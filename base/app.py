@@ -1399,66 +1399,48 @@ def set_sector_guide_route():
     return jsonify({"status": "success"})
 
 def _save_keys_common(data, is_mock):
-    """KR(is_mock=False) 또는 US(is_mock=True) 계좌 설정 저장 공통 로직."""
+    """토스증권 API 설정 저장 — KR/US 동일 계좌 사용."""
     existing = current_user.data
 
     def _v(key):
         v = data.get(key)
         return v.strip() if isinstance(v, str) and v.strip() else None
 
-    # 토스증권 API — client_id/client_secret/account_seq 공통 사용
-    # 하위 호환: 기존 app_key/app_secret/account_no 필드명도 수용
-    _client_id     = (_v('client_id')     or _v('toss_client_id')
-                      or _v('real_app_key') or _v('us_app_key'))
-    _client_secret = (_v('client_secret') or _v('toss_client_secret')
-                      or _v('real_app_secret') or _v('us_app_secret'))
-    _account_seq   = (_v('account_seq')   or _v('toss_account_seq')
-                      or _v('real_account_no') or _v('us_account_no'))
+    # 토스증권은 KR/US 공통 단일 계좌
+    _client_id     = _v('client_id')     or existing.get('real_app_key')
+    _client_secret = _v('client_secret') or existing.get('real_app_secret')
+    _account_seq   = _v('account_seq')   or existing.get('real_account_no')
+
+    toss_cfg = {
+        "client_id":     _client_id     or "",
+        "client_secret": _client_secret or "",
+        "account_seq":   _account_seq   or "",
+    }
+
+    # DB에는 KR/US 구분 없이 real_* 필드에 통합 저장
+    update_data = {
+        'real_app_key':    _client_id,
+        'real_app_secret': _client_secret,
+        'real_account_no': _account_seq,
+        # US 필드도 동일값으로 동기화 (레거시 코드 호환)
+        'us_app_key':      _client_id,
+        'us_app_secret':   _client_secret,
+        'us_account_no':   _account_seq,
+        'telegram_token':  _v('telegram_token')   or existing.get('telegram_token'),
+        'telegram_chat_id':_v('telegram_chat_id') or existing.get('telegram_chat_id'),
+        'claude_api_key':  _v('claude_api_key')   or existing.get('claude_api_key'),
+        'is_mock': 1 if is_mock else 0,
+    }
 
     if is_mock:
-        # US 전용 필드만 업데이트
-        update_data = {
-            'us_app_key':      _client_id     or existing.get('us_app_key'),
-            'us_app_secret':   _client_secret or existing.get('us_app_secret'),
-            'us_account_no':   _account_seq   or existing.get('us_account_no'),
-            'us_core_stocks':  data.get('us_core_stocks') or existing.get('us_core_stocks'),
-            'telegram_token':  _v('telegram_token')  or existing.get('telegram_token'),
-            'telegram_chat_id':_v('telegram_chat_id')or existing.get('telegram_chat_id'),
-            'claude_api_key':  _v('claude_api_key')  or existing.get('claude_api_key'),
-            'is_mock': 1,
-        }
-        kis_cfg = {
-            "client_id":     update_data['us_app_key'],
-            "client_secret": update_data['us_app_secret'],
-            "account_seq":   update_data['us_account_no'],
-            # 하위 호환 alias
-            "app_key":       update_data['us_app_key'],
-            "app_secret":    update_data['us_app_secret'],
-            "account_no":    update_data['us_account_no'],
-        }
+        update_data['us_core_stocks'] = data.get('us_core_stocks') or existing.get('us_core_stocks')
         core = update_data['us_core_stocks']
     else:
-        # KR 전용 필드만 업데이트
-        update_data = {
-            'real_app_key':    _client_id     or existing.get('real_app_key'),
-            'real_app_secret': _client_secret or existing.get('real_app_secret'),
-            'real_account_no': _account_seq   or existing.get('real_account_no'),
-            'core_stocks':     data.get('core_stocks') or existing.get('core_stocks'),
-            'telegram_token':  _v('telegram_token')  or existing.get('telegram_token'),
-            'telegram_chat_id':_v('telegram_chat_id')or existing.get('telegram_chat_id'),
-            'claude_api_key':  _v('claude_api_key')  or existing.get('claude_api_key'),
-            'is_mock': 0,
-        }
-        kis_cfg = {
-            "client_id":     update_data['real_app_key'],
-            "client_secret": update_data['real_app_secret'],
-            "account_seq":   update_data['real_account_no'],
-            # 하위 호환 alias
-            "app_key":       update_data['real_app_key'],
-            "app_secret":    update_data['real_app_secret'],
-            "account_no":    update_data['real_account_no'],
-        }
+        update_data['core_stocks'] = data.get('core_stocks') or existing.get('core_stocks')
         core = update_data['core_stocks']
+
+    # None 값은 기존값 유지
+    update_data = {k: v for k, v in update_data.items() if v is not None}
 
     update_user_keys(current_user.id, update_data)
     for k, v in update_data.items():
@@ -1467,7 +1449,7 @@ def _save_keys_common(data, is_mock):
     tele = {"token": update_data.get('telegram_token'), "chat_id": update_data.get('telegram_chat_id')}
     bot = manager.bots.get((current_user.id, is_mock))
     if bot:
-        bot.reload_api_keys(kis_config=kis_cfg, telegram_config=tele, gemini_config={}, core_stocks=core)
+        bot.reload_api_keys(kis_config=toss_cfg, telegram_config=tele, gemini_config={}, core_stocks=core)
 
     return jsonify({"status": "success"})
 

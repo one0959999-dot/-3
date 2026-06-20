@@ -174,32 +174,20 @@
                 <!-- ════ TAB 1: 계좌 & 원금 ════ -->
                 <div id="stab-panel-1">
 
-                    <!-- KR API 설정 (항상 표시) -->
+                    <!-- 토스증권 API 설정 (KR/US 통합) -->
                     <div class="settings-group"
-                        style="border:1px solid rgba(239,68,68,0.3); padding:10px; border-radius:8px; margin-bottom:14px;">
-                        <h3 style="color:#ef4444; font-size:0.9rem; margin-bottom:10px;">🇰🇷 KR API 설정 (한국투자증권)</h3>
-                        <label>App Key</label>
-                        <input type="text" id="realAppKey" value="{{ user.data.real_app_key or '' }}">
-                        <label>App Secret</label>
-                        <input type="password" id="realAppSecret" value="{{ user.data.real_app_secret or '' }}">
-                        <label>계좌번호</label>
-                        <input type="text" id="realAccountNo" value="{{ user.data.real_account_no or '' }}">
-                    </div>
-
-                    <!-- US API 설정 (항상 표시) -->
-                    <div class="settings-group"
-                        style="border:1px solid rgba(16,185,129,0.3); padding:10px; border-radius:8px; margin-bottom:14px; background:rgba(16,185,129,0.04);">
-                        <h3 style="color:#10b981; font-size:0.9rem; margin-bottom:10px;">🇺🇸 US API 설정 (KIS 해외주식)</h3>
+                        style="border:1px solid rgba(16,185,129,0.3); padding:10px; border-radius:8px; margin-bottom:14px;">
+                        <h3 style="color:#10b981; font-size:0.9rem; margin-bottom:10px;">🟢 토스증권 API 설정</h3>
                         <p style="font-size:0.78rem; color:#6b7280; line-height:1.4; margin-bottom:10px;">
-                            한국투자증권 해외주식 전용 App Key / Secret / 계좌번호를 입력하세요.<br>
-                            KR 봇과 동일한 키를 사용하거나, 해외주식 전용 키를 별도 발급할 수 있습니다.
+                            국내·해외 주식을 하나의 계좌로 관리합니다.<br>
+                            토스증권 Open API 콘솔에서 Client ID / Secret을 발급받으세요.
                         </p>
-                        <label>App Key</label>
-                        <input type="text" id="usAppKey" value="{{ user.data.us_app_key or '' }}">
-                        <label>App Secret</label>
-                        <input type="password" id="usAppSecret" value="{{ user.data.us_app_secret or '' }}">
-                        <label>해외주식 계좌번호</label>
-                        <input type="text" id="usAccountNo" value="{{ user.data.us_account_no or '' }}" placeholder="예: 50123456-01">
+                        <label>Client ID</label>
+                        <input type="text" id="tossClientId" value="{{ user.data.real_app_key or '' }}">
+                        <label>Client Secret</label>
+                        <input type="password" id="tossClientSecret" value="{{ user.data.real_app_secret or '' }}">
+                        <label>계좌 Seq (숫자)</label>
+                        <input type="text" id="tossAccountSeq" value="{{ user.data.real_account_no or '' }}" placeholder="토스증권 계좌 Seq 번호">
                     </div>
 
                     <button class="btn-save-keys" onclick="saveAccountSettings()" style="background:#10b981;">설정 저장</button>

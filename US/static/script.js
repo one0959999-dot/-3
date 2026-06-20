@@ -883,12 +883,12 @@ window.saveCoreStocks = async function () {
 window.saveAccountSettings = async function () {
     const coreJsonStr = JSON.stringify(_coreStockList);
     const data = {
-        us_app_key:      (document.getElementById('usAppKey')      || {}).value || '',
-        us_app_secret:   (document.getElementById('usAppSecret')   || {}).value || '',
-        us_account_no:   (document.getElementById('usAccountNo')   || {}).value || '',
-        telegram_token:  (document.getElementById('teleToken')     || {}).value || '',
-        telegram_chat_id:(document.getElementById('teleChatId')    || {}).value || '',
-        claude_api_key:  (document.getElementById('claudeApiKey')  || {}).value || '',
+        client_id:       (document.getElementById('tossClientId')     || {}).value || '',
+        client_secret:   (document.getElementById('tossClientSecret') || {}).value || '',
+        account_seq:     (document.getElementById('tossAccountSeq')   || {}).value || '',
+        telegram_token:  (document.getElementById('teleToken')        || {}).value || '',
+        telegram_chat_id:(document.getElementById('teleChatId')       || {}).value || '',
+        claude_api_key:  (document.getElementById('claudeApiKey')     || {}).value || '',
         us_core_stocks: coreJsonStr,
     };
     try {
