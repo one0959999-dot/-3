@@ -3388,13 +3388,13 @@ class KRBotController:
             self._save_state()
             self.add_log(f"✅ [월요일 교체] {len(executed)}건 완료 → 새 종목 매수 진행")
 
-    def _rescreen_satellites(self):
+    def _rescreen_satellites(self, force: bool = False):
         try:
             now = _now_kst()
-            # 위성은 1-3개월 보유 스윙 포지션 — 시간 제한 없이 빈 슬롯 발생 시 즉시 보충.
-            # (매시간 자동 재스크리닝은 스케줄러에서 제거 → 불필요한 AI 호출 방지)
-            if not ("09:01" <= now.strftime('%H:%M') <= "15:20") or now.weekday() >= 5:
-                return
+            # force=True: 봇 재시작·주간 강제 재스크린 시 시간 게이트 우회
+            if not force:
+                if not ("09:01" <= now.strftime('%H:%M') <= "15:20") or now.weekday() >= 5:
+                    return
             self.add_log(f"🦅 {self.mode_name} 위성 실시간 교체 탐색 중...")
             keep_tickers = set()      # 유지 티커 (교체 슬롯으로 계산하지 않음)
             strong_keeps = set()      # 성장세 양호 — 절대 교체 대상 제외
@@ -3432,9 +3432,30 @@ class KRBotController:
                         strong_keeps.add(ticker)
                         self.add_log(f"🌱 {pos.name}({ticker}) 성장세 양호 ({profit_rt:+.1f}%) — 교체 없이 유지")
                     elif profit_rt > _LOSS_CUT:
-                        # 관망 구간 → 유지하되 빈 슬롯 생기면 교체 가능
-                        keep_tickers.add(ticker)
-                        self.add_log(f"⏸️ {pos.name}({ticker}) 관망 유지 ({profit_rt:+.1f}%)")
+                        # 관망 구간: 진입 점수로 2차 평가 — 점수 미달이면 교체 후보
+                        try:
+                            from KR.strategy import calculate_entry_score, get_entry_threshold
+                            _ohlcv = self._get_cached_base_ohlcv(ticker)
+                            if not _ohlcv.empty:
+                                _score, _, _ = calculate_entry_score(
+                                    _ohlcv, ticker, self.market_regime,
+                                    sector_score=0, kis_score=0, dl_score=0, roe_bonus=0
+                                )
+                                _threshold = get_entry_threshold(self.market_regime)
+                                if _score < _threshold - 1:
+                                    # 점수 미달 → 유지하되 교체 가능 슬롯으로 분류 (strong_keeps 제외)
+                                    keep_tickers.add(ticker)
+                                    self.add_log(f"📉 {pos.name}({ticker}) 관망이나 점수 미달 ({_score}/{_threshold}pt) — 교체 후보")
+                                else:
+                                    keep_tickers.add(ticker)
+                                    strong_keeps.add(ticker)
+                                    self.add_log(f"⏸️ {pos.name}({ticker}) 관망 유지 ({profit_rt:+.1f}%, 점수 {_score}pt)")
+                            else:
+                                keep_tickers.add(ticker)
+                                self.add_log(f"⏸️ {pos.name}({ticker}) 관망 유지 ({profit_rt:+.1f}%)")
+                        except Exception:
+                            keep_tickers.add(ticker)
+                            self.add_log(f"⏸️ {pos.name}({ticker}) 관망 유지 ({profit_rt:+.1f}%)")
                     else:
                         # I-05: trading_job과의 이중 매도 방지 — 락 안에서 shares 확인 후 주문
                         with self.lock:
@@ -3760,6 +3781,26 @@ class KRBotController:
                     self.initialize_portfolio(total_cash)
         except Exception as e:
             logger.error(f"[{self.mode_name}] 포트폴리오 초기화 실패 (기본 코어로 계속 진행): {e}", exc_info=True)
+
+        # ── 봇 시작 시 위성 재스크린 판단 (US 봇과 동일 동작) ───────────────
+        # last_screen_date 없거나 7일 이상 지났으면 → 백그라운드에서 주말 스캔 실행
+        try:
+            from datetime import date as _date
+            _today = _now_kst().date()
+            _lsd = getattr(self, 'last_screen_date', None)
+            _days_since = (_today - _lsd).days if _lsd else 999
+            if _days_since >= 7:
+                self.add_log(f"🔄 마지막 위성 스크린 {_days_since}일 전 → 시작 시 재스크린 예약 (5분 후)")
+                def _delayed_rescreen():
+                    import time as _t; _t.sleep(300)  # 봇 완전 초기화 후 실행
+                    now_kst = _now_kst()
+                    if now_kst.weekday() < 5:  # 평일이면 즉시 재스크린
+                        self._rescreen_satellites(force=True)
+                    else:  # 주말이면 주말 스캔
+                        self._weekend_satellite_scan()
+                self._run_threaded(_delayed_rescreen)
+        except Exception as e:
+            logger.warning(f"[{self.mode_name}] 시작 시 재스크린 판단 오류: {e}")
 
         # ── 봇 시작 시 토스 실잔고로 보유 주수 보정 (KIS 시대 DB 잔재 제거) ──
         # __init__이 아닌 실제 봇 시작 시점에 API 호출 — /api/status 응답속도 보호
