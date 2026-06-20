@@ -51,11 +51,29 @@ class TossInvestApi:
     def __init__(self, client_id: str, client_secret: str, account_seq: str = ""):
         self.client_id     = client_id.strip()
         self.client_secret = client_secret.strip()
-        self.account_seq   = account_seq.strip()   # X-Tossinvest-Account 헤더값
+        self._account_seq_raw = account_seq.strip()
+        self.account_seq   = ""                    # 실제 사용할 정수 seq (자동 조회)
         self._token        = ""
         self._token_exp    = 0.0
         self._lock         = threading.Lock()
-        logger.info(f"[Toss] API 초기화 완료 (계좌seq: {account_seq or '미설정'})")
+        # accountSeq 자동 조회 (사용자 입력값은 무시 — API에서 정수로 받아와야 함)
+        self._init_account_seq()
+        logger.info(f"[Toss] API 초기화 완료 (계좌seq: {self.account_seq or '미설정'})")
+
+    def _init_account_seq(self):
+        """GET /api/v1/accounts 로 실제 accountSeq(정수) 자동 조회."""
+        try:
+            accounts = self.get_accounts()
+            if accounts:
+                seq = accounts[0].get("accountSeq")
+                if seq is not None:
+                    self.account_seq = str(int(seq))
+                    logger.info(f"[Toss] 계좌 자동 조회 완료: accountSeq={self.account_seq} "
+                                f"(accountNo={accounts[0].get('accountNo', '?')})")
+                    return
+            logger.warning("[Toss] 계좌 목록이 비어있습니다.")
+        except Exception as e:
+            logger.warning(f"[Toss] 계좌 자동 조회 실패: {e}")
 
     # ── 인증 ────────────────────────────────────────────────────────────
     def _get_token(self) -> str:
@@ -561,21 +579,27 @@ class TossInvestApi:
 
     def get_buyable_cash(self, stock_code: str = "005930", price: int = 0) -> float:
         """KRW 매수가능금액"""
-        params: dict = {"symbol": stock_code}
-        if price:
-            params["price"] = str(price)
-        data = self._get("/api/v1/buying-power", params, with_account=True)
+        data = self._get("/api/v1/buying-power", {"currency": "KRW"}, with_account=True)
         if data:
-            logger.info(f"[Toss] buying-power 응답 구조: {list(data.keys()) if isinstance(data, dict) else type(data)}")
-        return self._extract_cash(data, "krw")
+            val = data.get("cashBuyingPower")
+            if val is not None:
+                try:
+                    return float(val)
+                except (TypeError, ValueError):
+                    pass
+        return 0.0
 
     def get_buyable_cash_usd(self, ticker: str = "AAPL", price: float = 0) -> float:
         """USD 매수가능금액"""
-        params: dict = {"symbol": ticker}
-        if price:
-            params["price"] = str(price)
-        data = self._get("/api/v1/buying-power", params, with_account=True)
-        return self._extract_cash(data, "usd")
+        data = self._get("/api/v1/buying-power", {"currency": "USD"}, with_account=True)
+        if data:
+            val = data.get("cashBuyingPower")
+            if val is not None:
+                try:
+                    return float(val)
+                except (TypeError, ValueError):
+                    pass
+        return 0.0
 
     def get_sellable_qty(self, symbol: str) -> int:
         """매도가능수량"""
