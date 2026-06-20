@@ -1752,39 +1752,25 @@ class KRBotController:
         lines = []
 
                                                                  
-        perplexity_news_done = False
-        if getattr(self, 'perplexity', None):
+        if self.news_monitor:
             try:
-                px_news = self.perplexity.search_stock_news(stock_name, ticker, days=3)
-                if px_news:
-                    lines.append(px_news)
-                    perplexity_news_done = True
-                px_dart = self.perplexity.search_dart_disclosure(stock_name, ticker)
-                if px_dart:
-                    lines.append(px_dart)
-            except Exception as pe:
-                logger.debug(f"[{self.mode_name}] Perplexity 뉴스 조회 실패: {pe}")
-
-        if not perplexity_news_done:
-            if self.news_monitor:
-                try:
-                    naver_news = self.news_monitor.get_news_summary(stock_name, display=5)
-                    dart_disc  = self.news_monitor.get_disclosure_summary(ticker, days=5)
-                    if naver_news:
-                        lines.append(naver_news)
-                    if dart_disc:
-                        lines.append(f"[DART 공시]\n{dart_disc}")
-                except Exception as ne:
-                    logger.warning(f"[{self.mode_name}] NewsMonitor 컨텍스트 조회 실패: {ne}")
-            else:
-                try:
-                    news = fetch_recent_news(stock_name)
-                    if "조회 실패" in news:
-                        news = ""
-                except Exception:
+                naver_news = self.news_monitor.get_news_summary(stock_name, display=5)
+                dart_disc  = self.news_monitor.get_disclosure_summary(ticker, days=5)
+                if naver_news:
+                    lines.append(naver_news)
+                if dart_disc:
+                    lines.append(f"[DART 공시]\n{dart_disc}")
+            except Exception as ne:
+                logger.warning(f"[{self.mode_name}] NewsMonitor 컨텍스트 조회 실패: {ne}")
+        else:
+            try:
+                news = fetch_recent_news(stock_name)
+                if "조회 실패" in news:
                     news = ""
-                if news:
-                    lines.append(f"[최근 뉴스] {news}")
+            except Exception:
+                news = ""
+            if news:
+                lines.append(f"[최근 뉴스] {news}")
 
                                                                
         fundamental = self._fetch_fundamental(ticker, stock_name)
@@ -4083,31 +4069,41 @@ class KRBotController:
         self.scheduler.every(1).minutes.do(_kst_monday_execute)
 
                                                                     
-        _backtest_done_today = {'date': None}
-        def _kst_nightly_backtest():
-            now = _now_kst()
-            today_str = now.strftime('%Y-%m-%d')
-            if now.weekday() >= 5:         
-                return
-            if now.strftime('%H:%M') != '16:30':
-                return
-            if _backtest_done_today['date'] == today_str:
-                return
-            _backtest_done_today['date'] = today_str
-            def _run_bt():
+        _backtest_done_slots = {}
+        _WEEKEND_HOURS = {'00:00', '03:00', '06:00', '09:00', '12:00', '15:00', '18:00', '21:00'}
+
+        def _run_backtest(batch_size: int, label: str):
+            def _worker():
                 try:
                     from KR.backtest_runner import BacktestRunner
                     runner = BacktestRunner(self.user_id, self.claude, self.toss)
-                    n = runner.run_nightly_batch()
-                    self.add_log(f"📊 야간 백테스트 완료: {n}개 시나리오 기록")
+                    n = runner.run_batch(batch_size)
+                    self.add_log(f"📊 [{label}] 백테스트 완료: {n}개 시나리오 기록")
                     self._send_telegram(
-                        f"📊 <b>야간 백테스트 완료</b>  {self.alert_icon}\n"
-                        f"오늘 {n}개 시나리오 AI 학습 데이터 누적",
+                        f"📊 <b>[{label}] 백테스트 완료</b>  {self.alert_icon}\n"
+                        f"{n}개 시나리오 AI 학습 데이터 누적",
                         'info'
                     )
                 except Exception as e:
-                    logger.warning(f"[{self.mode_name}] 야간 백테스트 오류: {e}")
-            self._run_threaded(_run_bt)
+                    logger.warning(f"[{self.mode_name}] 백테스트 오류: {e}")
+            self._run_threaded(_worker)
+
+        def _kst_nightly_backtest():
+            now = _now_kst()
+            slot = f"{now.strftime('%Y-%m-%d')}_{now.strftime('%H:%M')}"
+            if slot in _backtest_done_slots:
+                return
+            if now.weekday() < 5:
+                if now.strftime('%H:%M') != '16:30':
+                    return
+                _backtest_done_slots[slot] = True
+                _run_backtest(100, '평일마감')
+            else:
+                if now.strftime('%H:%M') not in _WEEKEND_HOURS:
+                    return
+                _backtest_done_slots[slot] = True
+                _run_backtest(200, '주말')
+
         self.scheduler.every(1).minutes.do(_kst_nightly_backtest)
 
         try:

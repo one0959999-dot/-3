@@ -147,14 +147,14 @@ class BacktestRunner:
         self.toss = toss_api
         self._running = False
 
-    def run_nightly_batch(self):
+    def run_batch(self, batch_size: int = DAILY_BATCH_SIZE) -> int:
         from base.database import update_backtest_progress, get_backtest_pending_tickers
 
-        logger.info("[백테스트] 야간 배치 시작")
+        logger.info(f"[백테스트] 배치 시작 ({batch_size}종목)")
         all_tickers = _get_all_kr_tickers()
         if not all_tickers:
             logger.warning("[백테스트] 종목 리스트 조회 실패")
-            return
+            return 0
 
         done_set = get_backtest_pending_tickers('KR')
         pending = [t for t in all_tickers if t['ticker'] not in done_set]
@@ -162,7 +162,7 @@ class BacktestRunner:
             logger.info("[백테스트] 전체 순환 완료 — 처음부터 재시작")
             pending = all_tickers
 
-        batch = pending[:DAILY_BATCH_SIZE]
+        batch = pending[:batch_size]
         total_scenarios = 0
 
         for item in batch:
@@ -181,5 +181,5 @@ class BacktestRunner:
                 logger.warning(f"[백테스트] {name}({ticker}) 오류: {e}")
             time.sleep(1)
 
-        logger.info(f"[백테스트] 야간 배치 완료 — {len(batch)}종목 / {total_scenarios}시나리오")
+        logger.info(f"[백테스트] 배치 완료 — {len(batch)}종목 / {total_scenarios}시나리오")
         return total_scenarios

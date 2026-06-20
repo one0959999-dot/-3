@@ -888,8 +888,7 @@ window.saveAccountSettings = async function () {
         account_seq:     (document.getElementById('tossAccountSeq')   || {}).value || '',
         telegram_token:  (document.getElementById('teleToken')        || {}).value || '',
         telegram_chat_id:(document.getElementById('teleChatId')       || {}).value || '',
-        claude_api_key:      (document.getElementById('claudeApiKey')      || {}).value || '',
-        perplexity_api_key:  (document.getElementById('perplexityApiKey') || {}).value || '',
+        claude_api_key: (document.getElementById('claudeApiKey') || {}).value || '',
         us_core_stocks: coreJsonStr,
     };
     try {

@@ -2,7 +2,6 @@ import logging
 from KR.bot import KRBotController
 from US.bot import USBotController
 from ai.claude_api import ClaudeApi
-from base.perplexity_client import PerplexityClient
 
 _log = logging.getLogger('lassi_bot')
 
@@ -62,17 +61,6 @@ class BotManager:
                 except Exception as e:
                     _log.warning(f"ClaudeApi 초기화 실패 (AI 비활성화): {e}")
                     bot.claude = None
-
-        perp_key = (user_data.get('perplexity_api_key') or '').strip()
-        if perp_key:
-            if not getattr(bot, 'perplexity', None) or getattr(bot.perplexity, 'api_key', '') != perp_key:
-                try:
-                    bot.perplexity = PerplexityClient(api_key=perp_key)
-                except Exception as e:
-                    _log.warning(f"PerplexityClient 초기화 실패: {e}")
-                    bot.perplexity = None
-        elif not hasattr(bot, 'perplexity'):
-            bot.perplexity = None
 
         return bot
 

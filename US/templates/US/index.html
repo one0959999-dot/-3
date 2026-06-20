@@ -210,10 +210,6 @@
                         <label>Claude API Key <span style="font-size:0.75rem; color:#94a3b8;">(console.anthropic.com)</span></label>
                         <input type="password" id="claudeApiKey" value="{{ user.data.claude_api_key or '' }}" placeholder="sk-ant-... 입력 시 AI 비서 활성화">
                     </div>
-                    <div class="settings-group">
-                        <label>Perplexity API Key <span style="font-size:0.75rem; color:#94a3b8;">(perplexity.ai/settings/api) — 실시간 뉴스 검색</span></label>
-                        <input type="password" id="perplexityApiKey" value="{{ user.data.perplexity_api_key or '' }}" placeholder="pplx-... 입력 시 AI 실시간 뉴스 검색 활성화">
-                    </div>
                     <button class="btn-save-keys" onclick="saveAccountSettings()" style="background:#10b981; margin-bottom:1.2rem;">알림 설정 저장</button>
 
                     <hr style="border:0; border-top:1px solid rgba(255,255,255,0.07); margin-bottom:1rem;">
