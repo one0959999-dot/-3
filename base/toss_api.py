@@ -62,39 +62,34 @@ class TossInvestApi:
         with self._lock:
             if self._token and time.time() < self._token_exp - 60:
                 return self._token
-            # 재발급 시 이전 토큰 즉시 무효화됨 — lock 안에서 처리
-            for attempt in range(2):
-                try:
-                    res = requests.post(
-                        f"{_BASE}/oauth2/token",
-                        headers={"Content-Type": "application/x-www-form-urlencoded"},
-                        data={
-                            "grant_type":    "client_credentials",
-                            "client_id":     self.client_id,
-                            "client_secret": self.client_secret,
-                        },
-                        timeout=10,
-                    )
-                    data = res.json()
-                    token = data.get("access_token", "")
-                    if not token:
-                        err = (data.get("error") or {})
-                        code = err.get("code", "") if isinstance(err, dict) else str(err)
-                        logger.error(f"[Toss] 토큰 발급 실패: {data}")
-                        # 속도 제한 유사 오류 → 잠시 후 재시도
-                        if attempt == 0 and "rate" in str(code).lower():
-                            logger.warning("[Toss] 토큰 속도 제한 → 65초 후 재시도")
-                            time.sleep(65)
-                            continue
-                        return self._token or ""
-                    self._token     = token
-                    self._token_exp = time.time() + int(data.get("expires_in", 86400)) - 300
-                    logger.info("[Toss] 토큰 발급 완료")
-                    return token
-                except Exception as e:
-                    logger.error(f"[Toss] 토큰 발급 오류: {e}")
+            try:
+                res = requests.post(
+                    f"{_BASE}/oauth2/token",
+                    headers={"Content-Type": "application/x-www-form-urlencoded"},
+                    data={
+                        "grant_type":    "client_credentials",
+                        "client_id":     self.client_id,
+                        "client_secret": self.client_secret,
+                    },
+                    timeout=10,
+                )
+                data = res.json()
+                token = data.get("access_token", "")
+                if not token:
+                    err = (data.get("error") or {})
+                    code = err.get("code", "") if isinstance(err, dict) else str(err)
+                    logger.error(f"[Toss] 토큰 발급 실패: {data}")
+                    # rate-limit / IP 차단 → 락 해제 후 60초 대기 (lock 밖에서 sleep)
+                    if "rate" in str(code).lower() or "access_denied" in str(data):
+                        self._token_exp = time.time() + 60  # 60초 후 재시도 허용
                     return self._token or ""
-            return self._token or ""
+                self._token     = token
+                self._token_exp = time.time() + int(data.get("expires_in", 86400)) - 300
+                logger.info("[Toss] 토큰 발급 완료")
+                return token
+            except Exception as e:
+                logger.error(f"[Toss] 토큰 발급 오류: {e}")
+                return self._token or ""
 
     def _h(self, with_account: bool = False) -> dict:
         h: dict = {
