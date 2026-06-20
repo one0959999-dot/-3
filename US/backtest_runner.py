@@ -244,9 +244,14 @@ def run_full_backtest_ticker_us(ticker: str, user_id: int, ai_client) -> int:
         row   = df.iloc[i]
         prev  = df.iloc[i - 1]
         date  = df.index[i].strftime('%Y-%m-%d')
-        price = float(row['close'])
+        price = float(row['close'] or 0)
+        if not price:
+            continue
 
-        macro     = get_macro_for_date(date)
+        try:
+            macro = get_macro_for_date(date)
+        except Exception:
+            macro = {}
         macro_str = build_macro_context_str(macro)
         from base.market_phase import get_phase_for_date, build_phase_context_str
         phase_info = get_phase_for_date('US', date, macro)
