@@ -1954,7 +1954,26 @@ class KRBotController:
         lines.append(f"[시장 상대강도] {market_rs_str}")
 
                                                              
-        lines.append(f"[시장 국면] {regime} | 적용 전략: {strategy}")
+        try:
+            from base.market_phase import get_phase_for_date, build_phase_context_str
+            from base.database import get_phase_strategy_stats
+            today_str = _now_kst().strftime('%Y-%m-%d')
+            phase_info = get_phase_for_date('KR', today_str)
+            phase_ctx  = build_phase_context_str(phase_info)
+            if phase_ctx:
+                lines.append(phase_ctx)
+            ph = phase_info.get('phase', '')
+            if ph:
+                ph_stats = get_phase_strategy_stats('KR', ph)
+                if ph_stats:
+                    top3 = ph_stats[:3]
+                    stat_str = ' | '.join(
+                        f"{s['signal_type']} 승률{s['win_rate']}%(n={s['total']})" for s in top3
+                    )
+                    lines.append(f"[이 국면 역대 승률 TOP] {stat_str}")
+        except Exception:
+            lines.append(f"[시장 국면] {regime} | 적용 전략: {strategy}")
+
         if self.hot_sectors:
             lines.append(f"[강세 섹터] {', '.join(self.hot_sectors[:5])}")
 
@@ -3844,12 +3863,40 @@ class KRBotController:
                 if not isinstance(self.daily_report, dict) or self.daily_report.get('date') != today_str: self.daily_report = {'date': today_str, '15:40': None}
                 content = report_data.get('report_markdown') if isinstance(report_data, dict) else str(report_data)
                 self.daily_report[time_slot] = content
-                                                           
                 _surge = report_data.get('volume_surge_details', [])
                 if _surge:
                     self.volume_surge_details = _surge
                 self._save_state()
-                self._send_telegram(f"📝 [리포트 발간]\n\n{content[:4000]}")
+
+                phase_block = ''
+                try:
+                    from base.market_phase import get_phase_for_date, build_phase_context_str
+                    from base.database import get_phase_strategy_stats, get_db_connection
+                    phase_info = get_phase_for_date('KR', today_str)
+                    conn = get_db_connection()
+                    bt_total = conn.execute('SELECT COUNT(*) FROM backtest_optimal_points WHERE mode="KR"').fetchone()[0]
+                    bt_today = conn.execute('SELECT COUNT(*) FROM backtest_optimal_points WHERE mode="KR" AND date(created_at)=date("now")').fetchone()[0]
+                    conn.close()
+                    ph = phase_info.get('phase', '')
+                    ph_stats = get_phase_strategy_stats('KR', ph) if ph else []
+                    stat_lines = ''
+                    if ph_stats:
+                        stat_lines = '\n'.join(
+                            f"  {s['signal_type']}: 승률 {s['win_rate']}% (n={s['total']}, 평균 20일 {s['avg_pnl_20d']:+.1f}%)"
+                            for s in ph_stats[:5]
+                        )
+                    phase_block = (
+                        f"\n\n📊 <b>[시장 국면]</b> {phase_info.get('phase_kr','—')} "
+                        f"(신뢰도 {int(phase_info.get('confidence',0)*100)}%)\n"
+                        f"근거: {' | '.join(phase_info.get('evidence',[])[:3])}\n"
+                        f"전략: {phase_info.get('advice','')}\n"
+                        + (f"\n이 국면 역대 신호 승률:\n{stat_lines}" if stat_lines else '')
+                        + f"\n\n🗂 백테스트 누적: {bt_total:,}개 포인트 (오늘 {bt_today:,}개 추가)"
+                    )
+                except Exception:
+                    pass
+
+                self._send_telegram(f"📝 [일일 레포트]\n\n{content[:3500]}{phase_block}")
         except Exception as e:
             logger.error(f"[{self.mode_name}] 일일 리포트 생성 오류: {e}", exc_info=True)
 

@@ -237,10 +237,25 @@ def init_db():
             signals_active TEXT,
             signal_count INTEGER DEFAULT 0,
             macro_date TEXT,
+            market_phase TEXT,
+            market_phase_kr TEXT,
+            phase_confidence REAL,
             ai_analysis TEXT,
             pnl_5d REAL, pnl_20d REAL, pnl_60d REAL,
             max_gain_60d REAL, max_loss_60d REAL,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+        ''')
+
+            cursor.execute('''
+        CREATE TABLE IF NOT EXISTS phase_strategy_stats (
+            mode TEXT, market_phase TEXT, signal_type TEXT,
+            total INTEGER DEFAULT 0,
+            win_20d INTEGER DEFAULT 0,
+            avg_pnl_20d REAL DEFAULT 0,
+            avg_max_gain_60d REAL DEFAULT 0,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            PRIMARY KEY (mode, market_phase, signal_type)
         )
         ''')
 
@@ -849,9 +864,11 @@ def log_optimal_point(data: dict) -> int:
                  rsi, macd, macd_signal, bb_upper, bb_mid, bb_lower,
                  sma5, sma20, sma60, sma120, vol_ratio,
                  support, resistance, fib_382, fib_500, fib_618,
-                 signals_active, signal_count, macro_date, ai_analysis,
+                 signals_active, signal_count, macro_date,
+                 market_phase, market_phase_kr, phase_confidence,
+                 ai_analysis,
                  pnl_5d, pnl_20d, pnl_60d, max_gain_60d, max_loss_60d)
-                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
             ''', (
                 data.get('user_id'), data.get('mode', 'KR'),
                 data.get('ticker'), data.get('stock_name'),
@@ -864,7 +881,9 @@ def log_optimal_point(data: dict) -> int:
                 data.get('support'), data.get('resistance'),
                 data.get('fib_382'), data.get('fib_500'), data.get('fib_618'),
                 data.get('signals_active'), data.get('signal_count', 0),
-                data.get('macro_date'), data.get('ai_analysis'),
+                data.get('macro_date'),
+                data.get('market_phase'), data.get('market_phase_kr'), data.get('phase_confidence'),
+                data.get('ai_analysis'),
                 data.get('pnl_5d'), data.get('pnl_20d'), data.get('pnl_60d'),
                 data.get('max_gain_60d'), data.get('max_loss_60d'),
             ))
@@ -872,6 +891,71 @@ def log_optimal_point(data: dict) -> int:
             return cur.lastrowid
         finally:
             conn.close()
+
+
+def rebuild_phase_strategy_stats(mode: str = 'ALL'):
+    """backtest_optimal_points 에서 국면×신호 승률 매트릭스를 재계산한다."""
+    import json as _json
+    conn = get_db_connection()
+    try:
+        modes = ['KR', 'US'] if mode == 'ALL' else [mode]
+        for m in modes:
+            rows = conn.execute('''
+                SELECT market_phase, signals_active, pnl_20d, max_gain_60d
+                FROM backtest_optimal_points
+                WHERE mode=? AND market_phase IS NOT NULL AND pnl_20d IS NOT NULL
+            ''', (m,)).fetchall()
+
+            stats: dict = {}
+            for r in rows:
+                phase = r['market_phase']
+                try:
+                    sigs = _json.loads(r['signals_active'] or '[]')
+                except Exception:
+                    sigs = []
+                for sig in sigs:
+                    key = (m, phase, sig)
+                    if key not in stats:
+                        stats[key] = {'total': 0, 'win': 0, 'pnl_sum': 0, 'gain_sum': 0}
+                    stats[key]['total'] += 1
+                    if r['pnl_20d'] > 0:
+                        stats[key]['win'] += 1
+                    stats[key]['pnl_sum']  += r['pnl_20d']
+                    stats[key]['gain_sum'] += (r['max_gain_60d'] or 0)
+
+            with db_lock:
+                for (m2, phase, sig), v in stats.items():
+                    conn.execute('''
+                        INSERT INTO phase_strategy_stats
+                        (mode, market_phase, signal_type, total, win_20d, avg_pnl_20d, avg_max_gain_60d)
+                        VALUES (?,?,?,?,?,?,?)
+                        ON CONFLICT(mode, market_phase, signal_type) DO UPDATE SET
+                            total=excluded.total, win_20d=excluded.win_20d,
+                            avg_pnl_20d=excluded.avg_pnl_20d,
+                            avg_max_gain_60d=excluded.avg_max_gain_60d,
+                            updated_at=CURRENT_TIMESTAMP
+                    ''', (m2, phase, sig, v['total'], v['win'],
+                          round(v['pnl_sum'] / v['total'], 2),
+                          round(v['gain_sum'] / v['total'], 2)))
+                conn.commit()
+    finally:
+        conn.close()
+
+
+def get_phase_strategy_stats(mode: str, phase: str) -> list[dict]:
+    conn = get_db_connection()
+    try:
+        rows = conn.execute('''
+            SELECT signal_type, total,
+                   ROUND(100.0*win_20d/total, 1) AS win_rate,
+                   avg_pnl_20d, avg_max_gain_60d
+            FROM phase_strategy_stats
+            WHERE mode=? AND market_phase=? AND total >= 5
+            ORDER BY win_rate DESC
+        ''', (mode, phase)).fetchall()
+        return [dict(r) for r in rows]
+    finally:
+        conn.close()
 
 
 def get_optimal_points_summary(user_id: int):

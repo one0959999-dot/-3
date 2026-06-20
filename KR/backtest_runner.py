@@ -262,6 +262,8 @@ def run_full_backtest_ticker(ticker: str, stock_name: str, user_id: int,
 
         macro     = get_macro_for_date(date, fred_key=fred_key)
         macro_str = build_macro_context_str(macro)
+        from base.market_phase import get_phase_for_date, build_phase_context_str
+        phase_info = get_phase_for_date('KR', date, macro)
         signals   = _active_signals(row, prev)
         support, resistance = _support_resistance(df, i)
         fib_382, fib_500, fib_618 = _fibonacci(support, resistance)
@@ -272,6 +274,9 @@ def run_full_backtest_ticker(ticker: str, stock_name: str, user_id: int,
             'ticker': ticker, 'stock_name': stock_name,
             'date': date, 'point_type': p['type'],
             'price': price, 'magnitude_pct': p['magnitude'],
+            'market_phase':    phase_info.get('phase'),
+            'market_phase_kr': phase_info.get('phase_kr'),
+            'phase_confidence':phase_info.get('confidence'),
             'rsi':        round(float(row.get('rsi', 0)), 2),
             'macd':       round(float(row.get('macd', 0)), 4),
             'macd_signal':round(float(row.get('macd_signal', 0)), 4),
@@ -288,7 +293,7 @@ def run_full_backtest_ticker(ticker: str, stock_name: str, user_id: int,
             'signals_active': json.dumps(signals, ensure_ascii=False),
             'signal_count':   len(signals),
             'macro_date': date,
-            'macro_str':  macro_str,
+            'macro_str':  macro_str + '\n' + build_phase_context_str(phase_info),
             **stats,
         })
 
