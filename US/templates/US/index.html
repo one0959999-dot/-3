@@ -160,22 +160,21 @@
                 <button id="stab-1" onclick="switchSettingsTab(1)"
                     style="flex:1; padding:8px 0; border-radius:8px; border:1px solid rgba(16,185,129,0.5);
                            background:rgba(16,185,129,0.2); color:#10b981; font-size:0.85rem; font-weight:600; cursor:pointer;">
-                    🏦 계좌 &amp; 원금
+                    🏦 계좌 &amp; AI
                 </button>
                 <button id="stab-2" onclick="switchSettingsTab(2)"
                     style="flex:1; padding:8px 0; border-radius:8px; border:1px solid rgba(255,255,255,0.1);
                            background:transparent; color:#8b949e; font-size:0.85rem; font-weight:600; cursor:pointer;">
-                    🔔 알림 &amp; AI
+                    🔔 알림
                 </button>
             </div>
 
             <!-- ── 스크롤 영역 ── -->
             <div style="overflow-y:auto; flex:1; padding-right:4px;">
 
-                <!-- ════ TAB 1: 계좌 & 원금 ════ -->
+                <!-- ════ TAB 1: 계좌 & AI ════ -->
                 <div id="stab-panel-1">
 
-                    <!-- 토스증권 API 설정 (KR/US 통합) -->
                     <div class="settings-group"
                         style="border:1px solid rgba(16,185,129,0.3); padding:10px; border-radius:8px; margin-bottom:14px;">
                         <h3 style="color:#10b981; font-size:0.9rem; margin-bottom:10px;">🟢 토스증권 API 설정</h3>
@@ -191,26 +190,7 @@
                         <input type="text" id="tossAccountSeq" value="{{ user.data.real_account_no or '' }}" placeholder="토스증권 계좌 Seq 번호">
                     </div>
 
-                                        <div class="settings-group">
-                        <label>FRED API Key <span style="font-size:0.75rem; color:#94a3b8;">(fred.stlouisfed.org) — 미국 기준금리/FOMC 정확도 향상</span></label>
-                        <input type="password" id="fredApiKey" value="{{ user.data.fred_api_key or '' }}" placeholder="FRED API 키 입력 시 금리/FOMC 데이터 정밀화">
-                    </div>
-                    <button class="btn-save-keys" onclick="saveAccountSettings()" style="background:#10b981;">설정 저장</button>
-
-                    <!-- 테스트 주문 UI 제거됨 (실전 운영) -->
-                </div>
-
-                <!-- ════ TAB 2: 알림 & AI ════ -->
-                <div id="stab-panel-2" style="display:none;">
-                    <div class="settings-group">
-                        <label>텔레그램 봇 토큰</label>
-                        <input type="text" id="teleToken" value="{{ user.data.telegram_token or '' }}">
-                    </div>
-                    <div class="settings-group">
-                        <label>텔레그램 Chat ID</label>
-                        <input type="text" id="teleChatId" value="{{ user.data.telegram_chat_id or '' }}">
-                    </div>
-                    <div class="settings-group" style="border:1px solid rgba(99,102,241,0.3);padding:14px;border-radius:8px;">
+                    <div class="settings-group" style="border:1px solid rgba(99,102,241,0.3);padding:14px;border-radius:8px;margin-bottom:14px;">
                         <h3 style="color:#818cf8;font-size:0.9rem;margin-bottom:12px;">🤖 AI 설정</h3>
                         <label style="font-size:0.78rem;color:#94a3b8;">API 키 입력 (사용할 AI 키만 입력)</label>
                         <div style="display:grid;gap:8px;margin:8px 0 14px;">
@@ -247,9 +227,23 @@
                         </div>
                         <p style="font-size:0.72rem;color:#64748b;">실거래 AI 키는 선택한 제공자의 키를 위에서 입력하세요.</p>
                     </div>
+
                     <div class="settings-group">
                         <label>FRED API Key <span style="font-size:0.75rem; color:#94a3b8;">(fred.stlouisfed.org) — 미국 기준금리/FOMC 정확도 향상</span></label>
                         <input type="password" id="fredApiKey" value="{{ user.data.fred_api_key or '' }}" placeholder="FRED API 키 입력 시 금리/FOMC 데이터 정밀화">
+                    </div>
+                    <button class="btn-save-keys" onclick="saveAccountSettings()" style="background:#10b981;">설정 저장</button>
+                </div>
+
+                <!-- ════ TAB 2: 알림 ════ -->
+                <div id="stab-panel-2" style="display:none;">
+                    <div class="settings-group">
+                        <label>텔레그램 봇 토큰</label>
+                        <input type="text" id="teleToken" value="{{ user.data.telegram_token or '' }}">
+                    </div>
+                    <div class="settings-group">
+                        <label>텔레그램 Chat ID</label>
+                        <input type="text" id="teleChatId" value="{{ user.data.telegram_chat_id or '' }}">
                     </div>
                     <button class="btn-save-keys" onclick="saveAccountSettings()" style="background:#10b981; margin-bottom:1.2rem;">알림 설정 저장</button>
 
