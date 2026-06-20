@@ -43,6 +43,41 @@ class GeminiApi:
                     time.sleep(5)
         return ""
 
+    def chat(self, user_message: str, portfolio_context=None,
+             stock_analysis_context: str = '') -> str:
+        if not self.client:
+            return '⚠️ Gemini API 키가 설정되지 않았습니다. 설정에서 Gemini API 키를 입력해주세요.'
+
+        port_str = ''
+        if portfolio_context and isinstance(portfolio_context, dict):
+            cores = portfolio_context.get('cores', [])
+            sats  = portfolio_context.get('satellites', [])
+            if cores or sats:
+                lines = ['[포트폴리오 현황]']
+                for c in cores:
+                    lines.append(f"  코어 {c.get('name','')}({c.get('ticker','')}): {c.get('shares',0)}주 | 현재가 {c.get('price',0):,}원")
+                for s in sats:
+                    lines.append(f"  위성 {s.get('name',''')}({s.get('ticker','')}): {s.get('shares',0)}주 | 현재가 {s.get('price',0):,}원")
+                port_str = '\n'.join(lines)
+
+        system = (
+            '당신은 라씨 AI입니다. 주식 매매 분석 전문가로서 시장 분석, 포트폴리오 관리, '
+            '기술적 분석(RSI, MACD, 볼린저밴드 등)에 능통합니다. '
+            '한국어로 명확하고 간결하게 답변하세요.'
+        )
+        context_parts = [p for p in [stock_analysis_context, port_str] if p]
+        context_str = '\n\n'.join(context_parts)
+        full_prompt = f'{system}\n\n{context_str}\n\n사용자: {user_message}\n\n라씨 AI:' if context_str else f'{system}\n\n사용자: {user_message}\n\n라씨 AI:'
+
+        if not hasattr(self, '_conversation_history'):
+            self._conversation_history = []
+
+        reply = self.generate_content(full_prompt, temperature=0.5)
+        if reply:
+            self._conversation_history.append({'role': 'user', 'content': user_message})
+            self._conversation_history.append({'role': 'assistant', 'content': reply})
+        return reply or '⚠️ 응답을 받지 못했습니다.'
+
     def ai_approve_trade(self, signal, stock_name, ticker, price, strategy,
                          indicator_val, hot_sectors=None, recent_trades=None,
                          custom_rules="", context: str = "",

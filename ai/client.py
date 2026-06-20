@@ -107,6 +107,19 @@ class OpenAIClient:
             logger.warning(f"[OpenAI] generate_content 오류: {e}")
             return ''
 
+    def chat(self, user_message: str, portfolio_context=None,
+             stock_analysis_context: str = '') -> str:
+        if not self.client:
+            return '⚠️ OpenAI API 키가 설정되지 않았습니다.'
+        if not hasattr(self, '_conversation_history'):
+            self._conversation_history = []
+        prompt = f'{stock_analysis_context}\n\n{user_message}' if stock_analysis_context else user_message
+        reply = self.generate_content(prompt, temperature=0.5)
+        if reply:
+            self._conversation_history.append({'role': 'user', 'content': user_message})
+            self._conversation_history.append({'role': 'assistant', 'content': reply})
+        return reply or '⚠️ 응답을 받지 못했습니다.'
+
     def ai_approve_trade(self, signal, stock_name, ticker, price, strategy,
                          indicator_val, hot_sectors=None, recent_trades=None,
                          custom_rules='', context='', portfolio_context=''):
@@ -145,6 +158,19 @@ class GrokClient:
             logger.warning(f"[Grok] generate_content 오류: {e}")
             return ''
 
+    def chat(self, user_message: str, portfolio_context=None,
+             stock_analysis_context: str = '') -> str:
+        if not self.client:
+            return '⚠️ Grok API 키가 설정되지 않았습니다.'
+        if not hasattr(self, '_conversation_history'):
+            self._conversation_history = []
+        prompt = f'{stock_analysis_context}\n\n{user_message}' if stock_analysis_context else user_message
+        reply = self.generate_content(prompt, temperature=0.5)
+        if reply:
+            self._conversation_history.append({'role': 'user', 'content': user_message})
+            self._conversation_history.append({'role': 'assistant', 'content': reply})
+        return reply or '⚠️ 응답을 받지 못했습니다.'
+
     def ai_approve_trade(self, signal, stock_name, ticker, price, strategy,
                          indicator_val, hot_sectors=None, recent_trades=None,
                          custom_rules='', context='', portfolio_context=''):
@@ -158,9 +184,13 @@ class GrokClient:
 class NullAIClient:
     def __init__(self, provider: str = ''):
         self.provider = provider
+        self._conversation_history = []
 
     def generate_content(self, prompt: str, **kwargs) -> str:
         return ''
+
+    def chat(self, user_message: str, **kwargs) -> str:
+        return '⚠️ AI API 키가 설정되지 않았습니다. 설정에서 Gemini API 키를 입력해주세요.'
 
     def ai_approve_trade(self, *args, **kwargs):
         return True, f'AI 미설정({self.provider}) — 자동 승인', 60
