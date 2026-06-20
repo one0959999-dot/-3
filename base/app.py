@@ -1721,6 +1721,97 @@ def backtest_page():
     return render_template('backtest.html', user=current_user)
 
 
+@app.route('/api/backtest/history')
+@login_required
+def backtest_history():
+    conn = get_db_connection()
+    try:
+        rows = conn.execute('''
+            SELECT p.mode, p.ticker, p.stock_name,
+                   p.last_processed_date, p.total_signals, p.completed_at,
+                   COUNT(s.id)                                        AS signal_count,
+                   SUM(CASE WHEN s.ai_decision='CONFIRM' THEN 1 ELSE 0 END) AS confirms,
+                   ROUND(AVG(s.pnl_5d),  2)                          AS avg_pnl_5d,
+                   ROUND(AVG(s.pnl_20d), 2)                          AS avg_pnl_20d,
+                   ROUND(AVG(s.confidence), 1)                       AS avg_confidence
+            FROM backtest_full_progress p
+            LEFT JOIN backtest_signals s
+                   ON s.ticker = p.ticker AND s.mode = p.mode AND s.user_id = ?
+            WHERE p.mode IN ('KR','US')
+            GROUP BY p.mode, p.ticker
+            ORDER BY p.completed_at DESC
+        ''', (current_user.id,)).fetchall()
+    finally:
+        conn.close()
+
+    result = []
+    for r in rows:
+        r = dict(r)
+        sc = r.get('signal_count') or 0
+        cf = r.get('confirms') or 0
+        r['confirm_rate'] = round(cf / sc * 100, 1) if sc else 0
+        result.append(r)
+    return jsonify(result)
+
+
+@app.route('/api/backtest/ticker/<mode>/<ticker>')
+@login_required
+def backtest_ticker_detail(mode, ticker):
+    conn = get_db_connection()
+    try:
+        rows = conn.execute('''
+            SELECT trade_date, signal, signal_type, price,
+                   ai_decision, confidence, ai_reason,
+                   rsi, macd, bb_lower, bb_upper, vol_ratio,
+                   support, resistance, fib_382, fib_500, fib_618,
+                   min_price_5d, max_price_5d, pnl_5d,
+                   min_price_20d, max_price_20d, pnl_20d,
+                   optimal_buy_zone, optimal_sell_zone
+            FROM backtest_signals
+            WHERE user_id=? AND mode=? AND ticker=?
+            ORDER BY trade_date ASC
+        ''', (current_user.id, mode.upper(), ticker)).fetchall()
+    finally:
+        conn.close()
+    return jsonify([dict(r) for r in rows])
+
+
+@app.route('/api/backtest/stats')
+@login_required
+def backtest_stats():
+    conn = get_db_connection()
+    try:
+        kr = conn.execute(
+            'SELECT COUNT(DISTINCT ticker) FROM backtest_full_progress WHERE mode="KR"'
+        ).fetchone()[0]
+        us = conn.execute(
+            'SELECT COUNT(DISTINCT ticker) FROM backtest_full_progress WHERE mode="US"'
+        ).fetchone()[0]
+        total = conn.execute(
+            'SELECT COUNT(*) FROM backtest_signals WHERE user_id=?', (current_user.id,)
+        ).fetchone()[0]
+        today = conn.execute(
+            'SELECT COUNT(*) FROM backtest_signals WHERE user_id=? AND date(created_at)=date("now")',
+            (current_user.id,)
+        ).fetchone()[0]
+        acc = conn.execute('''
+            SELECT ROUND(
+                100.0 * SUM(CASE
+                    WHEN (ai_decision='CONFIRM' AND pnl_5d > 0) OR
+                         (ai_decision='REJECT'  AND pnl_5d <= 0) THEN 1 ELSE 0 END
+                ) / COUNT(*), 1)
+            FROM backtest_signals
+            WHERE user_id=? AND pnl_5d IS NOT NULL
+        ''', (current_user.id,)).fetchone()[0]
+    finally:
+        conn.close()
+    return jsonify({
+        'kr_tickers': kr, 'us_tickers': us,
+        'total_signals': total, 'today_signals': today,
+        'accuracy_5d': acc or 0,
+    })
+
+
 @app.route('/api/backtest', methods=['POST'])
 @login_required
 def backtest_api():

@@ -1,0 +1,307 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>백테스트 이력</title>
+<style>
+  :root {
+    --bg: #0e1117; --card: #161b22; --border: #30363d;
+    --text: #e6edf3; --muted: #8b949e; --accent: #58a6ff;
+    --green: #3fb950; --red: #f85149; --yellow: #d29922;
+    --tag-bg: #21262d;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { background: var(--bg); color: var(--text); font-family: -apple-system, 'Segoe UI', sans-serif; min-height: 100vh; }
+  header { background: var(--card); border-bottom: 1px solid var(--border); padding: 12px 24px; display: flex; align-items: center; gap: 16px; }
+  header a { color: var(--muted); text-decoration: none; font-size: 13px; }
+  header a:hover { color: var(--text); }
+  header h1 { font-size: 16px; font-weight: 600; }
+  .main { max-width: 1200px; margin: 0 auto; padding: 24px 16px; }
+  .stats-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 12px; margin-bottom: 24px; }
+  .stat-card { background: var(--card); border: 1px solid var(--border); border-radius: 8px; padding: 16px; }
+  .stat-card .label { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: .5px; }
+  .stat-card .value { font-size: 28px; font-weight: 700; margin-top: 4px; }
+  .stat-card .value.green { color: var(--green); }
+  .stat-card .value.blue  { color: var(--accent); }
+  .tabs { display: flex; gap: 0; border-bottom: 1px solid var(--border); margin-bottom: 20px; }
+  .tab { padding: 10px 20px; cursor: pointer; font-size: 14px; color: var(--muted); border-bottom: 2px solid transparent; transition: color .15s, border-color .15s; }
+  .tab.active { color: var(--text); border-color: var(--accent); }
+  .tab:hover { color: var(--text); }
+  .search-bar { display: flex; gap: 8px; margin-bottom: 16px; }
+  .search-bar input { flex: 1; background: var(--card); border: 1px solid var(--border); border-radius: 6px; padding: 8px 12px; color: var(--text); font-size: 13px; }
+  .search-bar input:focus { outline: none; border-color: var(--accent); }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  th { text-align: left; padding: 8px 12px; color: var(--muted); font-weight: 500; font-size: 11px; text-transform: uppercase; border-bottom: 1px solid var(--border); }
+  td { padding: 10px 12px; border-bottom: 1px solid var(--border); }
+  tr:hover td { background: rgba(255,255,255,.03); }
+  .badge { display: inline-block; padding: 2px 8px; border-radius: 12px; font-size: 11px; font-weight: 600; }
+  .badge-kr  { background: #1f3a5f; color: #58a6ff; }
+  .badge-us  { background: #2d1b4e; color: #bc8cff; }
+  .pnl-pos  { color: var(--green); }
+  .pnl-neg  { color: var(--red); }
+  .pnl-zero { color: var(--muted); }
+  .btn-detail { background: transparent; border: 1px solid var(--border); border-radius: 4px; padding: 4px 10px; color: var(--accent); font-size: 11px; cursor: pointer; transition: background .15s; }
+  .btn-detail:hover { background: rgba(88,166,255,.1); }
+  .empty { text-align: center; padding: 60px 0; color: var(--muted); font-size: 14px; }
+  .loader { text-align: center; padding: 40px; color: var(--muted); }
+
+  /* Modal */
+  .modal-overlay { display: none; position: fixed; inset: 0; background: rgba(0,0,0,.7); z-index: 100; align-items: center; justify-content: center; }
+  .modal-overlay.open { display: flex; }
+  .modal { background: var(--card); border: 1px solid var(--border); border-radius: 10px; width: 92%; max-width: 960px; max-height: 88vh; display: flex; flex-direction: column; }
+  .modal-head { padding: 16px 20px; border-bottom: 1px solid var(--border); display: flex; align-items: center; justify-content: space-between; }
+  .modal-head h2 { font-size: 15px; }
+  .modal-close { background: none; border: none; color: var(--muted); font-size: 20px; cursor: pointer; line-height: 1; }
+  .modal-body { overflow-y: auto; padding: 0; flex: 1; }
+  .modal-stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; padding: 16px 20px; background: var(--bg); border-bottom: 1px solid var(--border); }
+  .modal-stat { }
+  .modal-stat .lbl { font-size: 10px; color: var(--muted); text-transform: uppercase; }
+  .modal-stat .val { font-size: 18px; font-weight: 700; margin-top: 2px; }
+
+  .signal-row { display: none; }
+  .signal-row.expanded { display: table-row; }
+  .signal-detail { background: var(--bg); padding: 14px 20px; font-size: 12px; color: var(--muted); line-height: 1.7; }
+  .signal-detail strong { color: var(--text); }
+
+  @media(max-width: 700px) {
+    .stats-grid { grid-template-columns: 1fr 1fr; }
+    .modal-stats { grid-template-columns: 1fr 1fr; }
+    td:nth-child(5), th:nth-child(5),
+    td:nth-child(6), th:nth-child(6) { display: none; }
+  }
+</style>
+</head>
+<body>
+<header>
+  <a href="/">← 홈</a>
+  <h1>백테스트 이력</h1>
+  <span id="lastRefresh" style="margin-left:auto;font-size:12px;color:var(--muted)"></span>
+</header>
+
+<div class="main">
+  <div class="stats-grid" id="statsGrid">
+    <div class="stat-card"><div class="label">총 신호 수집</div><div class="value blue" id="sTotal">—</div></div>
+    <div class="stat-card"><div class="label">오늘 신호</div><div class="value" id="sToday">—</div></div>
+    <div class="stat-card"><div class="label">KR 완료 종목</div><div class="value green" id="sKR">—</div></div>
+    <div class="stat-card"><div class="label">US 완료 종목</div><div class="value green" id="sUS">—</div></div>
+    <div class="stat-card"><div class="label">5일 예측 정확도</div><div class="value" id="sAcc">—</div></div>
+  </div>
+
+  <div class="tabs">
+    <div class="tab active" onclick="switchTab('KR', this)">KR 한국</div>
+    <div class="tab" onclick="switchTab('US', this)">US 미국</div>
+  </div>
+
+  <div class="search-bar">
+    <input id="searchInput" type="text" placeholder="종목명 / 티커 검색…" oninput="renderTable()">
+  </div>
+
+  <div id="tableWrap">
+    <div class="loader">로딩 중…</div>
+  </div>
+</div>
+
+<!-- 상세 모달 -->
+<div class="modal-overlay" id="detailModal">
+  <div class="modal">
+    <div class="modal-head">
+      <h2 id="modalTitle">신호 상세</h2>
+      <button class="modal-close" onclick="closeModal()">✕</button>
+    </div>
+    <div class="modal-body">
+      <div class="modal-stats" id="modalStats"></div>
+      <div id="modalTableWrap"><div class="loader">로딩 중…</div></div>
+    </div>
+  </div>
+</div>
+
+<script>
+let allData = [];
+let curTab = 'KR';
+
+async function loadStats() {
+  try {
+    const r = await fetch('/api/backtest/stats');
+    const d = await r.json();
+    document.getElementById('sTotal').textContent = d.total_signals?.toLocaleString() ?? '0';
+    document.getElementById('sToday').textContent = d.today_signals?.toLocaleString() ?? '0';
+    document.getElementById('sKR').textContent = d.kr_tickers?.toLocaleString() ?? '0';
+    document.getElementById('sUS').textContent = d.us_tickers?.toLocaleString() ?? '0';
+    const acc = d.accuracy_5d;
+    const el = document.getElementById('sAcc');
+    el.textContent = acc ? acc + '%' : '—';
+    if (acc >= 55) el.classList.add('green');
+  } catch(e) {}
+}
+
+async function loadHistory() {
+  document.getElementById('tableWrap').innerHTML = '<div class="loader">로딩 중…</div>';
+  try {
+    const r = await fetch('/api/backtest/history');
+    allData = await r.json();
+    document.getElementById('lastRefresh').textContent = '갱신: ' + new Date().toLocaleTimeString('ko-KR');
+  } catch(e) {
+    allData = [];
+  }
+  renderTable();
+}
+
+function switchTab(mode, el) {
+  curTab = mode;
+  document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+  el.classList.add('active');
+  document.getElementById('searchInput').value = '';
+  renderTable();
+}
+
+function pnlClass(v) {
+  if (v == null) return 'pnl-zero';
+  return v > 0 ? 'pnl-pos' : v < 0 ? 'pnl-neg' : 'pnl-zero';
+}
+function pnlStr(v) {
+  if (v == null) return '—';
+  return (v > 0 ? '+' : '') + v + '%';
+}
+
+function renderTable() {
+  const q = (document.getElementById('searchInput').value || '').toLowerCase();
+  const rows = allData.filter(r => r.mode === curTab && (
+    !q || r.ticker.toLowerCase().includes(q) || (r.stock_name || '').toLowerCase().includes(q)
+  ));
+
+  if (!rows.length) {
+    document.getElementById('tableWrap').innerHTML = '<div class="empty">백테스트 이력이 없습니다.<br>봇이 실행되면 자동으로 기록됩니다.</div>';
+    return;
+  }
+
+  let html = `<table>
+    <thead><tr>
+      <th>종목</th><th>티커</th><th>완료일</th>
+      <th>신호수</th><th>CONFIRM률</th>
+      <th>5일 평균수익</th><th>20일 평균수익</th>
+      <th></th>
+    </tr></thead><tbody>`;
+
+  for (const r of rows) {
+    const name = r.stock_name || r.ticker;
+    const date = (r.last_processed_date || r.completed_at || '').slice(0, 10);
+    const sc   = r.signal_count || 0;
+    const cr   = r.confirm_rate != null ? r.confirm_rate + '%' : '—';
+    const p5   = pnlStr(r.avg_pnl_5d);
+    const p20  = pnlStr(r.avg_pnl_20d);
+    html += `<tr>
+      <td>${name}</td>
+      <td><span class="badge ${curTab === 'KR' ? 'badge-kr' : 'badge-us'}">${r.ticker}</span></td>
+      <td style="color:var(--muted);font-size:12px">${date}</td>
+      <td>${sc.toLocaleString()}</td>
+      <td>${cr}</td>
+      <td class="${pnlClass(r.avg_pnl_5d)}">${p5}</td>
+      <td class="${pnlClass(r.avg_pnl_20d)}">${p20}</td>
+      <td><button class="btn-detail" onclick="openDetail('${curTab}','${r.ticker}','${name}')">상세보기</button></td>
+    </tr>`;
+  }
+  html += '</tbody></table>';
+  document.getElementById('tableWrap').innerHTML = html;
+}
+
+async function openDetail(mode, ticker, name) {
+  document.getElementById('modalTitle').textContent = `${name} (${ticker}) — 신호 상세`;
+  document.getElementById('modalStats').innerHTML = '';
+  document.getElementById('modalTableWrap').innerHTML = '<div class="loader">로딩 중…</div>';
+  document.getElementById('detailModal').classList.add('open');
+
+  try {
+    const r = await fetch(`/api/backtest/ticker/${mode}/${ticker}`);
+    const signals = await r.json();
+    renderModal(signals);
+  } catch(e) {
+    document.getElementById('modalTableWrap').innerHTML = '<div class="empty">데이터를 불러올 수 없습니다.</div>';
+  }
+}
+
+function renderModal(signals) {
+  const total = signals.length;
+  const confirms = signals.filter(s => s.ai_decision === 'CONFIRM').length;
+  const pos5 = signals.filter(s => s.pnl_5d > 0).length;
+  const avgConf = total ? (signals.reduce((a, s) => a + (s.confidence || 0), 0) / total).toFixed(1) : '—';
+
+  document.getElementById('modalStats').innerHTML = `
+    <div class="modal-stat"><div class="lbl">총 신호</div><div class="val">${total}</div></div>
+    <div class="modal-stat"><div class="lbl">CONFIRM</div><div class="val" style="color:var(--green)">${confirms}</div></div>
+    <div class="modal-stat"><div class="lbl">5일 양봉</div><div class="val" style="color:var(--accent)">${pos5}</div></div>
+    <div class="modal-stat"><div class="lbl">평균 신뢰도</div><div class="val">${avgConf}%</div></div>
+  `;
+
+  if (!total) {
+    document.getElementById('modalTableWrap').innerHTML = '<div class="empty">신호 데이터가 없습니다.</div>';
+    return;
+  }
+
+  let html = `<table>
+    <thead><tr>
+      <th>날짜</th><th>신호유형</th><th>가격</th>
+      <th>AI 판단</th><th>신뢰도</th>
+      <th>5일수익</th><th>20일수익</th>
+      <th>RSI</th><th>MACD</th><th></th>
+    </tr></thead><tbody>`;
+
+  signals.forEach((s, i) => {
+    const dec = s.ai_decision === 'CONFIRM'
+      ? '<span style="color:var(--green)">✓ CONFIRM</span>'
+      : '<span style="color:var(--red)">✗ REJECT</span>';
+    const sigColor = (s.signal_type || '').includes('BUY') ? 'var(--green)' : 'var(--red)';
+    html += `<tr id="srow-${i}">
+      <td style="font-size:12px;color:var(--muted)">${s.trade_date || ''}</td>
+      <td><span style="color:${sigColor};font-weight:600;font-size:12px">${s.signal_type || s.signal}</span></td>
+      <td>${Number(s.price || 0).toLocaleString()}</td>
+      <td>${dec}</td>
+      <td>${s.confidence || '—'}%</td>
+      <td class="${pnlClass(s.pnl_5d)}">${pnlStr(s.pnl_5d)}</td>
+      <td class="${pnlClass(s.pnl_20d)}">${pnlStr(s.pnl_20d)}</td>
+      <td style="font-size:12px">${s.rsi != null ? Number(s.rsi).toFixed(1) : '—'}</td>
+      <td style="font-size:12px">${s.macd != null ? Number(s.macd).toFixed(3) : '—'}</td>
+      <td><button class="btn-detail" onclick="toggleDetail(${i})">▾</button></td>
+    </tr>
+    <tr id="detail-${i}" class="signal-row">
+      <td colspan="10">
+        <div class="signal-detail">
+          <strong>AI 판단 이유:</strong> ${s.ai_reason || '—'}<br>
+          <strong>볼린저:</strong> ${s.bb_lower != null ? Number(s.bb_lower).toLocaleString() : '—'} ~ ${s.bb_upper != null ? Number(s.bb_upper).toLocaleString() : '—'} &nbsp;|&nbsp;
+          <strong>거래량비율:</strong> ${s.vol_ratio != null ? s.vol_ratio + '%' : '—'}<br>
+          <strong>지지:</strong> ${s.support != null ? Number(s.support).toLocaleString() : '—'} &nbsp;|&nbsp;
+          <strong>저항:</strong> ${s.resistance != null ? Number(s.resistance).toLocaleString() : '—'}<br>
+          <strong>피보나치:</strong> 38.2%: ${s.fib_382 != null ? Number(s.fib_382).toLocaleString() : '—'} &nbsp;
+          50%: ${s.fib_500 != null ? Number(s.fib_500).toLocaleString() : '—'} &nbsp;
+          61.8%: ${s.fib_618 != null ? Number(s.fib_618).toLocaleString() : '—'}<br>
+          <strong>최적 매수구간:</strong> ${s.optimal_buy_zone || '—'} &nbsp;|&nbsp;
+          <strong>최적 매도구간:</strong> ${s.optimal_sell_zone || '—'}<br>
+          <strong>5일 최저/최고:</strong> ${s.min_price_5d != null ? Number(s.min_price_5d).toLocaleString() : '—'} / ${s.max_price_5d != null ? Number(s.max_price_5d).toLocaleString() : '—'} &nbsp;|&nbsp;
+          <strong>20일 최저/최고:</strong> ${s.min_price_20d != null ? Number(s.min_price_20d).toLocaleString() : '—'} / ${s.max_price_20d != null ? Number(s.max_price_20d).toLocaleString() : '—'}
+        </div>
+      </td>
+    </tr>`;
+  });
+  html += '</tbody></table>';
+  document.getElementById('modalTableWrap').innerHTML = html;
+}
+
+function toggleDetail(i) {
+  const row = document.getElementById(`detail-${i}`);
+  row.classList.toggle('expanded');
+}
+
+function closeModal() {
+  document.getElementById('detailModal').classList.remove('open');
+}
+
+document.getElementById('detailModal').addEventListener('click', e => {
+  if (e.target === e.currentTarget) closeModal();
+});
+
+loadStats();
+loadHistory();
+setInterval(() => { loadStats(); loadHistory(); }, 60000);
+</script>
+</body>
+</html>
