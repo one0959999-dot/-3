@@ -1,16 +1,11 @@
-"""
-Perplexity API 클라이언트
-- sonar 모델: 실시간 웹 검색 가능
-- 종목 뉴스/이슈를 AI가 직접 검색 → 봇 크롤링 불필요
-"""
 import requests
 import logging
 
 logger = logging.getLogger('lassi_bot')
 
 _BASE = "https://api.perplexity.ai"
-_MODEL = "sonar"          # 실시간 검색 지원
-_MODEL_PRO = "sonar-pro"  # 더 깊은 검색 (비용 높음)
+_MODEL = "sonar"
+_MODEL_PRO = "sonar-pro"
 
 
 class PerplexityClient:
@@ -22,7 +17,6 @@ class PerplexityClient:
         }
 
     def _chat(self, prompt: str, model: str = _MODEL, max_tokens: int = 500) -> str:
-        """Perplexity chat completion 호출."""
         try:
             res = requests.post(
                 f"{_BASE}/chat/completions",
@@ -32,7 +26,7 @@ class PerplexityClient:
                     "messages": [{"role": "user", "content": prompt}],
                     "max_tokens": max_tokens,
                     "temperature": 0.1,
-                    "search_recency_filter": "week",  # 최근 1주일 뉴스 우선
+                    "search_recency_filter": "week",
                 },
                 timeout=15
             )
@@ -43,10 +37,6 @@ class PerplexityClient:
             return ""
 
     def search_stock_news(self, stock_name: str, ticker: str = "", days: int = 3) -> str:
-        """
-        종목 관련 최신 뉴스/이슈 검색.
-        반환: 요약 텍스트 (AI 심사 context에 바로 주입 가능)
-        """
         query = f"{stock_name}"
         if ticker:
             query += f" ({ticker})"
@@ -61,10 +51,6 @@ class PerplexityClient:
         return ""
 
     def search_market_overview(self, mode: str = 'KR') -> str:
-        """
-        오늘 시장 전체 동향 검색 (모닝 브리핑용).
-        mode: 'KR' 또는 'US'
-        """
         if mode == 'KR':
             prompt = (
                 "오늘 한국 주식시장(코스피/코스닥) 주요 이슈와 동향을 검색해서 요약해줘. "
@@ -78,7 +64,6 @@ class PerplexityClient:
         return self._chat(prompt, max_tokens=400)
 
     def search_sector_trend(self, sectors: list[str]) -> str:
-        """강세 섹터 관련 최신 트렌드 검색."""
         if not sectors:
             return ""
         sector_str = ", ".join(sectors[:3])
@@ -89,7 +74,6 @@ class PerplexityClient:
         return self._chat(prompt, max_tokens=200)
 
     def search_dart_disclosure(self, stock_name: str, ticker: str = "") -> str:
-        """최근 공시 검색 (DART 연동 안 될 때 백업)."""
         query = f"{stock_name} {ticker} 공시 IR"
         prompt = (
             f"'{query}' 관련 최근 1주일 이내 주요 공시나 IR 내용을 검색해서 "

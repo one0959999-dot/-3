@@ -1,7 +1,10 @@
-﻿from KR.bot import KRBotController   # KR 실전 봇
-from US.bot import USBotController   # US 실전 매매 봇
+import logging
+from KR.bot import KRBotController
+from US.bot import USBotController
 from ai.claude_api import ClaudeApi
 from base.perplexity_client import PerplexityClient
+
+_log = logging.getLogger('lassi_bot')
 
 
 class BotManager:
@@ -20,12 +23,11 @@ class BotManager:
                 "token": user_data.get('telegram_token'),
                 "chat_id": user_data.get('telegram_chat_id')
             }
-            # 토스증권 단일 계좌: toss_* 필드 우선, 레거시 real_*/us_* 필드 fallback
+
             def _toss_val(key_toss, key_legacy):
                 return (user_data.get(key_toss) or user_data.get(key_legacy) or '')
 
             if is_mock:
-                # ── US 모드 (is_mock=True) → 미국장 실전 매매 봇 (토스증권) ──
                 toss_config = {
                     "client_id":     _toss_val('toss_client_id',     'us_app_key'),
                     "client_secret": _toss_val('toss_client_secret', 'us_app_secret'),
@@ -39,7 +41,6 @@ class BotManager:
                     satellite_stocks=user_data.get('us_satellite_stocks'),
                 )
             else:
-                # ── KR 모드 (is_mock=False) → 한국 실전 봇 (토스증권) ──
                 toss_config = {
                     "client_id":     _toss_val('toss_client_id',     'real_app_key'),
                     "client_secret": _toss_val('toss_client_secret', 'real_app_secret'),
@@ -53,26 +54,22 @@ class BotManager:
 
         bot = self.bots[bot_key]
 
-        # 각 봇은 자체 ClaudeApi 인스턴스를 가짐 — 유저 간 채팅 히스토리 공유 방지
         api_key = (user_data.get('claude_api_key') or '').strip()
         if api_key:
             if bot.claude is None or getattr(bot.claude, '_api_key', '') != api_key:
                 try:
                     bot.claude = ClaudeApi(api_key=api_key)
                 except Exception as e:
-                    import logging
-                    logging.getLogger('lassi_bot').warning(f"ClaudeApi 초기화 실패 (AI 비활성화): {e}")
+                    _log.warning(f"ClaudeApi 초기화 실패 (AI 비활성화): {e}")
                     bot.claude = None
 
-        # Perplexity — 실시간 뉴스 검색 (선택적)
         perp_key = (user_data.get('perplexity_api_key') or '').strip()
         if perp_key:
             if not getattr(bot, 'perplexity', None) or getattr(bot.perplexity, 'api_key', '') != perp_key:
                 try:
                     bot.perplexity = PerplexityClient(api_key=perp_key)
                 except Exception as e:
-                    import logging
-                    logging.getLogger('lassi_bot').warning(f"PerplexityClient 초기화 실패: {e}")
+                    _log.warning(f"PerplexityClient 초기화 실패: {e}")
                     bot.perplexity = None
         elif not hasattr(bot, 'perplexity'):
             bot.perplexity = None
@@ -80,17 +77,11 @@ class BotManager:
         return bot
 
     def get_peer_context(self, user_id: int, want_us: bool = True) -> dict | None:
-        """
-        두 봇 간 시장 컨텍스트 공유 인터페이스.
-        want_us=True  → US 봇 컨텍스트 반환 (KR 봇이 소비)
-        want_us=False → KR 봇 컨텍스트 반환 (US 봇이 소비)
-        """
         peer = self.bots.get((user_id, want_us))
         if not peer:
             return None
 
         if want_us:
-            # US → KR: 미국장 국면 + 주도 섹터 + 보유 위성 성과 + 선물 + 섹터 추세
             sat_summary = []
             for t, p in getattr(peer, 'satellite_positions', {}).items():
                 if p.shares > 0 and p.avg_price_usd > 0:
@@ -100,19 +91,17 @@ class BotManager:
 
             futures = getattr(peer, 'futures_snapshot', {})
             return {
-                "market_regime":    getattr(peer, 'market_regime', 'NEUTRAL'),
-                "hot_sectors":      getattr(peer, 'hot_sectors', []),
-                "satellite_perf":   sat_summary,
-                "is_running":       getattr(peer, 'is_running', False),
-                # 선행지표
-                "futures_summary":  futures.get("summary", ""),
-                "nq_futures":       futures.get("nq", {}),   # 나스닥100 선물
-                "es_futures":       futures.get("es", {}),   # S&P500 선물
-                "ewy_futures":      futures.get("ewy", {}),  # 한국 ETF 프록시
-                "sector_trends":    getattr(peer, 'sector_trends', []),
+                "market_regime":   getattr(peer, 'market_regime', 'NEUTRAL'),
+                "hot_sectors":     getattr(peer, 'hot_sectors', []),
+                "satellite_perf":  sat_summary,
+                "is_running":      getattr(peer, 'is_running', False),
+                "futures_summary": futures.get("summary", ""),
+                "nq_futures":      futures.get("nq", {}),
+                "es_futures":      futures.get("es", {}),
+                "ewy_futures":     futures.get("ewy", {}),
+                "sector_trends":   getattr(peer, 'sector_trends', []),
             }
         else:
-            # KR → US: 한국장 국면 + 주도 섹터
             return {
                 "market_regime": getattr(peer, 'market_regime', 'NEUTRAL'),
                 "hot_sectors":   getattr(peer, 'hot_sectors', []),

@@ -5,18 +5,14 @@ import threading
 from datetime import datetime
 from werkzeug.security import generate_password_hash, check_password_hash
 
-BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))  # 프로젝트 루트
+BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DB_PATH = os.path.join(BASE_DIR, 'lassi.db')
 
-# 🔒 DB 쓰기 충돌 방지를 위한 전역 락
 db_lock = threading.Lock()
 
 def get_db_connection():
-    """데이터베이스 연결 객체를 생성하고 고성능 병렬 처리(WAL) 모드를 활성화합니다."""
     conn = sqlite3.connect(DB_PATH, check_same_thread=False, timeout=20.0)
     conn.row_factory = sqlite3.Row
-    
-    # ⚡ [핵심 안정화] WAL 모드 활성화: 읽기와 쓰기가 동시에 가능해져 database is locked 에러 원천 차단
     conn.execute('PRAGMA journal_mode=WAL;')
     conn.execute('PRAGMA synchronous=NORMAL;')
     conn.execute('PRAGMA busy_timeout=5000;')
@@ -48,30 +44,25 @@ def init_db():
                 ('is_running', 'INTEGER DEFAULT 0'),
                 ('core_stocks', 'TEXT'), ('is_mock', 'INTEGER DEFAULT 1'),
                 ('real_initial_cash', 'REAL DEFAULT 10000000'), ('us_initial_cash', 'REAL DEFAULT 10000000'),
-                ('initial_cash_captured_at', 'TEXT'),   # 원금 최초 감지 날짜 (YYYY-MM-DD)
-                # 뉴스 모니터 API 키
+                ('initial_cash_captured_at', 'TEXT'),
                 ('dart_api_key', 'TEXT'), ('naver_client_id', 'TEXT'), ('naver_client_secret', 'TEXT'),
-                # 섹터 가이드 (사용자가 직접 입력하는 MD 형식 전략 메모)
                 ('sector_guide', 'TEXT'),
-                # 토스증권 API 자격증명 (KR/US 통합 단일 계좌)
                 ('toss_client_id', 'TEXT'),
                 ('toss_client_secret', 'TEXT'),
                 ('toss_account_seq', 'TEXT'),
+                ('perplexity_api_key', 'TEXT'),
             ]
             for col_name, col_type in new_columns:
                 try:
                     cursor.execute(f'ALTER TABLE users ADD COLUMN {col_name} {col_type}')
                 except sqlite3.OperationalError:
-                    pass  # 이미 존재하는 컬럼
+                    pass
 
-            # ── mock_* → us_* 레거시 데이터 자동 복사 ──────────────
-            # 구버전 DB는 mock_app_key 등을 사용했음 → 신버전 컬럼으로 1회 복사
             legacy_copies = [
                 ('mock_app_key',     'us_app_key'),
                 ('mock_app_secret',  'us_app_secret'),
                 ('mock_account_no',  'us_account_no'),
                 ('mock_initial_cash','us_initial_cash'),
-                # real_*/us_* → toss_* 단일 계좌 컬럼으로 마이그레이션
                 ('real_app_key',  'toss_client_id'),
                 ('real_app_secret','toss_client_secret'),
                 ('real_account_no','toss_account_seq'),
@@ -102,7 +93,6 @@ def init_db():
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
         ''')
-            # 기존 DB에 shares/mode 컬럼 없으면 추가
             _tj_cols = {r[1] for r in cursor.execute('PRAGMA table_info(trade_journal)').fetchall()}
             for _col, _typ in [('shares', 'REAL DEFAULT 0'), ('mode', "TEXT DEFAULT 'KR'")]:
                 if _col not in _tj_cols:
@@ -118,7 +108,6 @@ def init_db():
         )
         ''')
 
-            # 규칙 변경 히스토리 — 최근 10버전 보존, 롤백용
             cursor.execute('''
         CREATE TABLE IF NOT EXISTS ai_rules_history (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -129,7 +118,6 @@ def init_db():
         )
         ''')
 
-            # AI 채팅 히스토리 — 세션 종료/서버 재시작 후에도 대화 기억
             cursor.execute('''
         CREATE TABLE IF NOT EXISTS chat_history (
             user_id INTEGER,
@@ -140,42 +128,39 @@ def init_db():
         )
         ''')
 
-            # AI 판단 전체 로그 — fine-tuning 재료
             cursor.execute('''
         CREATE TABLE IF NOT EXISTS ai_decision_log (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             user_id INTEGER,
             mode TEXT DEFAULT 'KR',
-            session_type TEXT DEFAULT 'live',  -- live / backtest
+            session_type TEXT DEFAULT 'live',
             ticker TEXT,
             stock_name TEXT,
-            signal TEXT,           -- BUY / SELL / HOLD
-            ai_decision TEXT,      -- CONFIRM / REJECT
+            signal TEXT,
+            ai_decision TEXT,
             confidence INTEGER DEFAULT 75,
             ai_reason TEXT,
-            input_context TEXT,    -- AI에게 넘긴 전체 데이터 (JSON)
-            portfolio_snapshot TEXT, -- 판단 시점 포트폴리오 (JSON)
+            input_context TEXT,
+            portfolio_snapshot TEXT,
             market_regime TEXT,
             strategy TEXT,
             price REAL,
-            -- 사후 결과 (포지션 종료 시 업데이트)
-            outcome_price REAL,    -- 종료 시점 가격
-            outcome_pnl REAL,      -- 실현 손익
-            outcome_pnl_pct REAL,  -- 수익률 %
-            outcome_days INTEGER,  -- 보유일수
+            outcome_price REAL,
+            outcome_pnl REAL,
+            outcome_pnl_pct REAL,
+            outcome_days INTEGER,
             outcome_updated_at TIMESTAMP,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
         ''')
 
-            # 백테스트 진행 상태 — 어디까지 돌렸는지 추적
             cursor.execute('''
         CREATE TABLE IF NOT EXISTS backtest_progress (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             mode TEXT DEFAULT 'KR',
             ticker TEXT,
             stock_name TEXT,
-            last_date TEXT,        -- 마지막으로 테스트한 날짜
+            last_date TEXT,
             total_scenarios INTEGER DEFAULT 0,
             completed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             UNIQUE(mode, ticker)
@@ -185,7 +170,7 @@ def init_db():
             cursor.execute('UPDATE users SET is_running = 0')
             conn.commit()
         finally:
-            conn.close()   # 예외 발생 시에도 반드시 커넥션 반환
+            conn.close()
 
 def add_user(username, password):
     with db_lock:
@@ -217,13 +202,11 @@ def update_user_keys(user_id, keys_dict):
         try:
             is_mock = keys_dict.get('is_mock', 1)
 
-            # 기존 값 조회 — None으로 넘어온 필드는 덮어쓰지 않음
             existing = conn.execute('SELECT * FROM users WHERE id = ?', (user_id,)).fetchone()
             if not existing:
                 return
 
             def _pick(key):
-                """keys_dict에 값이 있으면 사용, 없거나 None이면 기존 DB 값 유지"""
                 v = keys_dict.get(key)
                 if v is None or (isinstance(v, str) and v.strip() == ''):
                     return existing[key]
@@ -251,11 +234,6 @@ def update_user_keys(user_id, keys_dict):
             conn.close()
 
 def set_user_core_stocks(user_id: int, stocks: list):
-    """코어 종목 리스트만 DB에 저장 (계좌 설정 전체 저장 없이 AI 명령으로 교체 가능).
-
-    Args:
-        stocks: [{"ticker": "005930", "name": "삼성전자"}, ...]  — 사용자 지정 슬롯
-    """
     import json as _json
     with db_lock:
         conn = get_db_connection()
@@ -269,7 +247,6 @@ def set_user_core_stocks(user_id: int, stocks: list):
             conn.close()
 
 def _ensure_extra_stock_columns(conn):
-    """위성/US 전용 컬럼이 없으면 자동 추가 (SQLite ALTER TABLE은 이미 있으면 오류 → 무시)"""
     for col in ['satellite_stocks', 'us_core_stocks', 'us_satellite_stocks']:
         try:
             conn.execute(f'ALTER TABLE users ADD COLUMN {col} TEXT DEFAULT NULL')
@@ -278,10 +255,6 @@ def _ensure_extra_stock_columns(conn):
             pass
 
 def set_user_satellite_stocks(user_id: int, stocks: list, is_us: bool = False):
-    """위성 종목 리스트 DB 저장.
-    is_us=False → KR 봇 (satellite_stocks 컬럼)
-    is_us=True  → US 봇 (us_satellite_stocks 컬럼)
-    """
     import json as _json
     col = 'us_satellite_stocks' if is_us else 'satellite_stocks'
     with db_lock:
@@ -295,7 +268,6 @@ def set_user_satellite_stocks(user_id: int, stocks: list, is_us: bool = False):
             conn.close()
 
 def set_us_core_stocks(user_id: int, stocks: list):
-    """US 봇 코어 종목 리스트 DB 저장 (us_core_stocks 컬럼)."""
     import json as _json
     with db_lock:
         conn = get_db_connection()
@@ -308,16 +280,8 @@ def set_us_core_stocks(user_id: int, stocks: list):
             conn.close()
 
 def update_bot_status(user_id, is_running, is_mock=None):
-    """봇 실행 상태 DB 갱신.
-    is_mock=None  → 레거시 단일 is_running 컬럼만 업데이트 (하위 호환)
-    is_mock=True  → us_running 컬럼 업데이트 (없으면 자동 생성)
-    is_mock=False → real_running 컬럼 업데이트
-    """
     with db_lock:
         conn = get_db_connection()
-        # 모드별 전용 컬럼 확보 (없으면 추가)
-        # [W-06] ALTER TABLE은 암묵적 트랜잭션 안에서 실행될 수 있어
-        # 이후 예외 시 롤백될 가능성 있음. 컬럼 추가 후 바로 커밋.
         for col in [('us_running', 'INTEGER DEFAULT 0'), ('real_running', 'INTEGER DEFAULT 0')]:
             try:
                 conn.execute(f'ALTER TABLE users ADD COLUMN {col[0]} {col[1]}')
@@ -326,16 +290,14 @@ def update_bot_status(user_id, is_running, is_mock=None):
                 pass
         val = 1 if is_running else 0
         try:
-            # 레거시 단일 컬럼 항상 갱신 (UI 호환)
             conn.execute('UPDATE users SET is_running = ? WHERE id = ?', (val, user_id))
-            # 모드별 컬럼 갱신
             if is_mock is True:
                 conn.execute('UPDATE users SET us_running = ? WHERE id = ?', (val, user_id))
             elif is_mock is False:
                 conn.execute('UPDATE users SET real_running = ? WHERE id = ?', (val, user_id))
             conn.commit()
         finally:
-            conn.close()  # [BUG-C6] 예외 시에도 커넥션 반드시 반환
+            conn.close()
 
 def save_portfolio_state(user_id, state, is_mock):
     with db_lock:
@@ -348,7 +310,7 @@ def save_portfolio_state(user_id, state, is_mock):
             ''', (user_id, mode, json.dumps(state, ensure_ascii=False), datetime.now()))
             conn.commit()
         finally:
-            conn.close()  # [BUG-C6]
+            conn.close()
 
 def load_portfolio_state(user_id, is_mock):
     mode = 1 if is_mock else 0
@@ -388,18 +350,15 @@ def get_recent_trades(user_id, ticker, limit=5):
     return [dict(r) for r in rows]
 
 def save_ai_rules(user_id, rule_text, trigger_type: str = 'manual'):
-    """ai_rules 저장 + 자동으로 히스토리에 버전 기록 (최근 10개 유지)."""
     with db_lock:
         conn = get_db_connection()
         try:
-            # 현재 규칙 → 히스토리에 백업 (덮어쓰기 전에 저장)
             current = conn.execute('SELECT rule_text FROM ai_rules WHERE user_id = ?', (user_id,)).fetchone()
             if current and current['rule_text']:
                 conn.execute('''
                     INSERT INTO ai_rules_history (user_id, rule_text, trigger_type)
                     VALUES (?, ?, ?)
                 ''', (user_id, current['rule_text'], trigger_type))
-                # 히스토리 최대 10개 유지 (오래된 것 삭제)
                 conn.execute('''
                     DELETE FROM ai_rules_history
                     WHERE user_id = ? AND id NOT IN (
@@ -413,7 +372,7 @@ def save_ai_rules(user_id, rule_text, trigger_type: str = 'manual'):
             ''', (user_id, rule_text))
             conn.commit()
         finally:
-            conn.close()  # [BUG-C6]
+            conn.close()
 
 def load_ai_rules(user_id):
     conn = get_db_connection()
@@ -424,7 +383,6 @@ def load_ai_rules(user_id):
     return (row['rule_text'] or "") if row else ""
 
 def get_ai_rules_history(user_id, limit: int = 5):
-    """최근 N개 규칙 버전 반환. 롤백/비교용."""
     conn = get_db_connection()
     try:
         rows = conn.execute('''
@@ -436,9 +394,7 @@ def get_ai_rules_history(user_id, limit: int = 5):
         conn.close()
     return [dict(r) for r in rows]
 
-# 🟢 [리팩토링] BaseBot에서 SQL을 직접 다루지 않도록 Repository 함수들을 신규 추가합니다.
 def get_user_initial_cash(user_id, is_mock):
-    """현재 모드(실전/모의)에 맞는 원금 장부를 조회합니다."""
     conn = get_db_connection()
     cash_col = "us_initial_cash" if is_mock else "real_initial_cash"
     try:
@@ -448,7 +404,6 @@ def get_user_initial_cash(user_id, is_mock):
     return float(row[cash_col]) if row and row[cash_col] is not None else 10000000.0
 
 def set_user_initial_cash(user_id, pure_principal, is_mock):
-    """최초 투자 원금을 세팅하여 장부를 잠급니다."""
     from datetime import date as _date
     today_str = _date.today().strftime('%Y-%m-%d')
     with db_lock:
@@ -461,10 +416,9 @@ def set_user_initial_cash(user_id, pure_principal, is_mock):
             )
             conn.commit()
         finally:
-            conn.close()  # [BUG-C6]
+            conn.close()
 
 def add_user_initial_cash(user_id, deposit_delta, is_mock):
-    """외부 입출금 발생 시 해당 모드의 장부 원금을 깔끔하게 증감시킵니다."""
     with db_lock:
         conn = get_db_connection()
         cash_col = "us_initial_cash" if is_mock else "real_initial_cash"
@@ -472,10 +426,9 @@ def add_user_initial_cash(user_id, deposit_delta, is_mock):
             conn.execute(f'UPDATE users SET {cash_col} = {cash_col} + ? WHERE id = ?', (deposit_delta, user_id))
             conn.commit()
         finally:
-            conn.close()  # [BUG-C6]
+            conn.close()
 
 def get_news_api_keys(user_id: int) -> dict:
-    """DART + Naver 뉴스 API 키 조회."""
     conn = get_db_connection()
     try:
         row = conn.execute(
@@ -493,7 +446,6 @@ def get_news_api_keys(user_id: int) -> dict:
     return {'dart_api_key': '', 'naver_client_id': '', 'naver_client_secret': ''}
 
 def set_news_api_keys(user_id: int, dart_api_key: str, naver_client_id: str, naver_client_secret: str):
-    """DART + Naver 뉴스 API 키 저장."""
     with db_lock:
         conn = get_db_connection()
         try:
@@ -507,7 +459,6 @@ def set_news_api_keys(user_id: int, dart_api_key: str, naver_client_id: str, nav
 
 
 def get_sector_guide(user_id: int) -> str:
-    """섹터 가이드 / 커스텀 전략 메모 조회."""
     conn = get_db_connection()
     try:
         row = conn.execute('SELECT sector_guide FROM users WHERE id=?', (user_id,)).fetchone()
@@ -516,7 +467,6 @@ def get_sector_guide(user_id: int) -> str:
         conn.close()
 
 def set_sector_guide(user_id: int, guide_text: str):
-    """섹터 가이드 저장."""
     with db_lock:
         conn = get_db_connection()
         try:
@@ -527,17 +477,11 @@ def set_sector_guide(user_id: int, guide_text: str):
 
 
 def init_default_ai_rules(user_id: int):
-    """
-    사용자의 AI 규칙이 비어 있을 때 실전 검증 매매 원칙을 기본값으로 저장합니다.
-    (출처: 실전 트레이더 원칙모음.zip)
-    """
     existing = load_ai_rules(user_id)
     if existing and len(existing.strip()) > 50:
-        return  # 이미 규칙이 있으면 덮어쓰지 않음
+        return
 
-    DEFAULT_RULES = """[📋 실전 검증 매매 원칙 — 딥러닝 학습 완료]
-
-【최우선 금지 원칙】
+    DEFAULT_RULES = """【최우선 금지 원칙】
 1. 이슈 기대 베팅 금지: "파업 해결 기대", "실적 좋을 것 같다" 등 이슈 기대만으로 매수/보유 금지.
    → 매수 근거 = 실제 결과 + 가격 회복 + 거래량 증가 + 상대강도 중 2개 이상 동시 충족 필수.
 
@@ -573,12 +517,9 @@ def init_default_ai_rules(user_id: int):
     save_ai_rules(user_id, DEFAULT_RULES)
 
 
-# ── AI 채팅 히스토리 ─────────────────────────────────────────────────────────
-
-_CHAT_HISTORY_LIMIT = 30  # 저장 최대 메시지 수 (15쌍 = 충분한 컨텍스트, 토큰 과다 방지)
+_CHAT_HISTORY_LIMIT = 30
 
 def load_chat_history(user_id: int, is_mock: int) -> list:
-    """DB에서 채팅 히스토리를 불러옵니다. 없으면 빈 리스트."""
     conn = get_db_connection()
     try:
         row = conn.execute(
@@ -596,7 +537,6 @@ def load_chat_history(user_id: int, is_mock: int) -> list:
 
 
 def save_chat_history(user_id: int, is_mock: int, messages: list):
-    """채팅 히스토리를 DB에 저장. 최신 _CHAT_HISTORY_LIMIT개만 유지."""
     trimmed = messages[-_CHAT_HISTORY_LIMIT:] if len(messages) > _CHAT_HISTORY_LIMIT else messages
     with db_lock:
         conn = get_db_connection()
@@ -611,7 +551,6 @@ def save_chat_history(user_id: int, is_mock: int, messages: list):
 
 
 def clear_chat_history(user_id: int, is_mock: int):
-    """채팅 히스토리 초기화 (사용자가 '대화 초기화' 버튼 누를 때)."""
     with db_lock:
         conn = get_db_connection()
         try:
@@ -629,7 +568,6 @@ def log_ai_decision(user_id: int, mode: str, ticker: str, stock_name: str,
                      input_context: str = "", portfolio_snapshot: str = "",
                      market_regime: str = "", strategy: str = "", price: float = 0,
                      session_type: str = "live") -> int:
-    """AI 판단을 전체 로그에 기록. 반환값: row id (사후 결과 업데이트에 사용)."""
     with db_lock:
         conn = get_db_connection()
         try:
@@ -651,7 +589,6 @@ def log_ai_decision(user_id: int, mode: str, ticker: str, stock_name: str,
 def update_ai_decision_outcome(log_id: int, outcome_price: float,
                                 outcome_pnl: float, outcome_pnl_pct: float,
                                 outcome_days: int):
-    """포지션 종료 시 AI 판단 로그에 실제 결과 업데이트."""
     with db_lock:
         conn = get_db_connection()
         try:
@@ -668,7 +605,6 @@ def update_ai_decision_outcome(log_id: int, outcome_price: float,
 
 def get_ai_decision_stats(user_id: int, mode: str = 'KR',
                            session_type: str = 'live') -> dict:
-    """AI 판단 정확도 통계 반환 (대시보드/모닝 브리핑용)."""
     conn = get_db_connection()
     try:
         rows = conn.execute('''
@@ -695,7 +631,6 @@ def get_ai_decision_stats(user_id: int, mode: str = 'KR',
 
 def update_backtest_progress(mode: str, ticker: str, stock_name: str,
                               last_date: str, total_scenarios: int):
-    """백테스트 진행 상태 업데이트."""
     with db_lock:
         conn = get_db_connection()
         try:
@@ -713,7 +648,6 @@ def update_backtest_progress(mode: str, ticker: str, stock_name: str,
 
 
 def get_backtest_pending_tickers(mode: str, limit: int = 100) -> list:
-    """아직 백테스트 안 했거나 오래된 종목 우선 반환."""
     conn = get_db_connection()
     try:
         done = {r[0] for r in conn.execute(
@@ -722,8 +656,3 @@ def get_backtest_pending_tickers(mode: str, limit: int = 100) -> list:
     finally:
         conn.close()
     return done
-
-
-if __name__ == '__main__':
-    init_db()
-    print("Database initialized with WAL mode and Thread Locks.")
