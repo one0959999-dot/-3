@@ -1,6 +1,7 @@
 ﻿from KR.bot import KRBotController   # KR 실전 봇
 from US.bot import USBotController   # US 실전 매매 봇
 from ai.claude_api import ClaudeApi
+from base.perplexity_client import PerplexityClient
 
 
 class BotManager:
@@ -58,11 +59,23 @@ class BotManager:
             if bot.claude is None or getattr(bot.claude, '_api_key', '') != api_key:
                 try:
                     bot.claude = ClaudeApi(api_key=api_key)
-                    # anthropic 미설치 시 client=None → AI 기능 비활성화, 봇은 정상 동작
                 except Exception as e:
                     import logging
                     logging.getLogger('lassi_bot').warning(f"ClaudeApi 초기화 실패 (AI 비활성화): {e}")
                     bot.claude = None
+
+        # Perplexity — 실시간 뉴스 검색 (선택적)
+        perp_key = (user_data.get('perplexity_api_key') or '').strip()
+        if perp_key:
+            if not getattr(bot, 'perplexity', None) or getattr(bot.perplexity, 'api_key', '') != perp_key:
+                try:
+                    bot.perplexity = PerplexityClient(api_key=perp_key)
+                except Exception as e:
+                    import logging
+                    logging.getLogger('lassi_bot').warning(f"PerplexityClient 초기화 실패: {e}")
+                    bot.perplexity = None
+        elif not hasattr(bot, 'perplexity'):
+            bot.perplexity = None
 
         return bot
 

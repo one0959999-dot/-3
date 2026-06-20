@@ -1573,3 +1573,125 @@ REASON: (핵심 근거 한 줄)"""
             import logging
             logging.getLogger('lassi_bot').debug(f"[AI US 시장판단] 파싱 오류: {e}")
         return {"regime": spy_regime, "bias": 0, "entry_bonus": 0, "reason": "AI 판단 실패 — SPY 기술적 국면 유지"}
+
+    def ai_portfolio_decision(self, portfolio_context: str, market_context: str,
+                               positions_detail: str, mode: str = 'KR') -> dict:
+        """
+        포트폴리오 전체를 보고 AI가 오늘의 전략 + 포지션별 행동 지침 결정.
+        매매 전 한 번 호출 → 결과를 봇이 실행 지침으로 활용.
+        반환: {
+            "overall_stance": "AGGRESSIVE|NEUTRAL|DEFENSIVE",
+            "regime": "BULL|NEUTRAL|BEAR",
+            "actions": [{"ticker": ..., "action": "BUY|SELL|HOLD|WATCH", "reason": ...}],
+            "cash_target_pct": 0~100,
+            "notes": "종합 판단 메모"
+        }
+        """
+        if not self.client:
+            return {"overall_stance": "NEUTRAL", "regime": "NEUTRAL",
+                    "actions": [], "cash_target_pct": 30, "notes": "AI 미설정"}
+
+        prompt = f"""[포트폴리오 전체 판단 요청] — {mode} 봇
+
+[현재 시장 상황]
+{market_context}
+
+[현재 포트폴리오]
+{portfolio_context}
+
+[보유 포지션 상세]
+{positions_detail}
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+【지시사항】
+1. 현재 시장 상황과 포트폴리오를 종합 분석하라
+2. 오늘의 전반적 전략 스탠스를 결정하라 (AGGRESSIVE/NEUTRAL/DEFENSIVE)
+3. 각 보유 포지션에 대해 BUY(추가매수)/SELL(매도)/HOLD(유지)/WATCH(주시) 중 하나를 권고하라
+4. 적정 현금 보유 비율을 제시하라 (0~100%)
+5. 시장 국면을 판단하라 (BULL/NEUTRAL/BEAR)
+
+반드시 아래 JSON 형식으로만 답변하라. 다른 텍스트 금지:
+{{
+  "overall_stance": "NEUTRAL",
+  "regime": "NEUTRAL",
+  "cash_target_pct": 30,
+  "actions": [
+    {{"ticker": "005930", "action": "HOLD", "reason": "이유 1줄"}},
+    {{"ticker": "NEW", "action": "WATCH", "reason": "신규 관심 종목 이유"}}
+  ],
+  "notes": "종합 판단 1~2줄"
+}}"""
+
+        try:
+            res = self.generate_content(prompt, temperature=0.2, model=self._SMART_MODEL)
+            import re as _re, json as _json
+            m = _re.search(r'\{[\s\S]+\}', res)
+            if m:
+                data = _json.loads(m.group())
+                return {
+                    "overall_stance": str(data.get("overall_stance", "NEUTRAL")).upper(),
+                    "regime": str(data.get("regime", "NEUTRAL")).upper(),
+                    "cash_target_pct": max(0, min(100, int(data.get("cash_target_pct", 30)))),
+                    "actions": data.get("actions", []),
+                    "notes": str(data.get("notes", ""))[:200]
+                }
+        except Exception as e:
+            import logging
+            logging.getLogger('lassi_bot').warning(f"[AI 포트폴리오 판단] 오류: {e}")
+        return {"overall_stance": "NEUTRAL", "regime": "NEUTRAL",
+                "actions": [], "cash_target_pct": 30, "notes": "AI 판단 실패"}
+
+    def ai_rich_context_decision(self, signal: str, stock_name: str, ticker: str,
+                                  price: float, trade_context: str,
+                                  portfolio_context: str, custom_rules: str = "") -> tuple:
+        """
+        _build_trade_context의 풀 데이터를 받아 AI가 종합 판단.
+        기존 ai_approve_trade보다 훨씬 풍부한 데이터 기반.
+        반환: (approved: bool, reason: str, confidence: int)
+        """
+        if not self.client:
+            return True, "API 미설정 — 자동 승인", 100
+
+        action = "매수" if signal == 'BUY' else "매도"
+        prompt = f"""[{action} 최종 판단 — 풀 데이터 기반]
+종목: {stock_name}({ticker}) | {action} | 현재가: {price:,}
+
+[종합 분석 데이터 (RSI/MACD/볼린저/수급/뉴스/공시/분봉 포함)]
+{trade_context}
+
+[현재 포트폴리오 현황]
+{portfolio_context}
+
+[매매 원칙]
+{custom_rules or "시스템 기본 원칙 적용"}
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+위 모든 데이터를 종합하여 {action} 여부를 판단하라.
+N/A 항목은 무시. 구체적 수치를 근거로 사용할 것.
+
+DECISION: CONFIRM 또는 REJECT
+CONFIDENCE: 50~100
+REASON: 핵심 근거 2~3줄 (수치 포함)"""
+
+        try:
+            res = self.generate_content(prompt, temperature=0.1, model=self._FAST_MODEL)
+            upper = res.upper()
+            decision_line = next((ln for ln in upper.splitlines() if "DECISION:" in ln), "")
+            if decision_line:
+                first_word = decision_line.split("DECISION:", 1)[-1].strip().split()[0] if decision_line.split("DECISION:", 1)[-1].strip().split() else ""
+                decision = first_word == "CONFIRM"
+            else:
+                decision = "CONFIRM" in upper and "REJECT" not in upper
+            conf_line = next((ln for ln in upper.splitlines() if "CONFIDENCE:" in ln), "")
+            confidence = 75
+            if conf_line:
+                import re as _re
+                m = _re.search(r'CONFIDENCE:\s*(\d+)', conf_line)
+                if m:
+                    confidence = max(50, min(100, int(m.group(1))))
+            reason = res.split("REASON:")[-1].strip() if "REASON:" in res else res.strip()
+            return decision, reason, confidence
+        except Exception as e:
+            import logging
+            logging.getLogger('lassi_bot').warning(f"[AI 풀컨텍스트 판단] 오류: {e}")
+            return True, f"AI 오류 — 자동 승인: {e}", 75

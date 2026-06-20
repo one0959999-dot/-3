@@ -37,6 +37,9 @@ from base.database import (
     add_user_initial_cash,
     get_sector_guide,
     log_trade_journal,
+    log_ai_decision,
+    get_recent_trades,
+    load_ai_rules,
 )
 from KR.strategy import (calculate_entry_score, get_entry_threshold, get_budget_ratio_from_score,
                       get_bull_momentum_score, calc_rsi, _calc_adx, _get_up_streak,
@@ -706,6 +709,95 @@ class USBotController:
         return score, reason
 
     # ─────────────────────────────────────────────────────────────────
+    # AI 게이트 — 모든 매수/매도 전 AI 심사 (KR 봇과 동일 구조)
+    # ─────────────────────────────────────────────────────────────────
+
+    def _build_portfolio_context_us(self) -> str:
+        """US 포트폴리오 현황 AI 심사용 텍스트."""
+        try:
+            lines = [f"가용현금(USD): ${self.cash_usd:,.2f} | 시장국면: {getattr(self, 'market_regime', 'N/A')}"]
+            for ticker, pos in self.positions.items():
+                price = self._price(ticker) or pos.avg_price or 0
+                pnl_rt = ((price - pos.avg_price) / pos.avg_price * 100) if pos.avg_price > 0 and pos.shares > 0 else 0
+                tag = "🔴손실" if pnl_rt < 0 else "🟢수익"
+                if pos.shares > 0:
+                    lines.append(f"  {pos.name}({ticker}): {pos.shares:.3f}주 @ ${pos.avg_price:.2f} | 현재${price:.2f} | {pnl_rt:+.1f}% {tag}")
+            return "\n".join(lines)
+        except Exception:
+            return "포트폴리오 정보 조회 실패"
+
+    def _ai_gate_us(self, signal: str, ticker: str, name: str, price: float,
+                    strategy: str, pos=None) -> tuple:
+        """US 매수/매도 전 AI 심사 게이트. (approved, reason, confidence) 반환."""
+        if not self.claude:
+            return True, "AI 미설정 — 자동 승인", 100
+        action = "매수" if signal == 'BUY' else "매도"
+        avg_price = getattr(pos, 'avg_price', 0) or 0
+        shares = getattr(pos, 'shares', 0) or 0
+        profit_rt = ((price - avg_price) / avg_price * 100) if avg_price > 0 else 0
+        context = (
+            f"현재가: ${price:.2f}"
+            + (f" | 평단가: ${avg_price:.2f} | 보유: {shares:.3f}주 | 수익률: {profit_rt:+.2f}%" if avg_price > 0 else "")
+            + f" | 시장국면: {getattr(self, 'market_regime', 'N/A')}"
+        )
+        portfolio_context = self._build_portfolio_context_us()
+        alert_icon = getattr(self, 'alert_icon', '🇺🇸')
+        mode_name = getattr(self, 'mode_name', 'US')
+        if self.telegram:
+            self.telegram.send_message(
+                f"🤔 <b>AI 심사 중</b>  {alert_icon} {mode_name}\n"
+                f"📌 <b>{name}</b>({ticker})  |  {action}\n"
+                f"🔍 전략: {strategy or 'N/A'}",
+                'info'
+            )
+        self.add_log(f"🤔 AI 심사 중: {name}({ticker}) {action}")
+        try:
+            result = self.claude.ai_approve_trade(
+                signal, name, ticker, price, strategy or 'N/A',
+                {}, getattr(self, 'hot_sectors', []),
+                get_recent_trades(self.user_id, ticker),
+                load_ai_rules(self.user_id),
+                context=context,
+                portfolio_context=portfolio_context
+            )
+            decision, reason = result[0], result[1]
+            confidence = result[2] if len(result) > 2 else 75
+        except Exception as e:
+            return True, f"AI 오류 — 자동 승인: {e}", 75
+
+        # AI 판단 로그 기록
+        try:
+            log_ai_decision(
+                user_id=self.user_id, mode='US', ticker=ticker, stock_name=name,
+                signal=signal, ai_decision='CONFIRM' if decision else 'REJECT',
+                confidence=confidence, ai_reason=reason[:300],
+                input_context=context, portfolio_snapshot=portfolio_context[:1000],
+                market_regime=getattr(self, 'market_regime', ''),
+                strategy=strategy or '', price=price, session_type='live'
+            )
+        except Exception:
+            pass
+
+        conf_tag = f" (확신도 {confidence}%)"
+        if decision:
+            if self.telegram:
+                self.telegram.send_message(
+                    f"✅ <b>AI 승인{conf_tag}</b>  {alert_icon} {mode_name}\n"
+                    f"📌 <b>{name}</b>({ticker})  |  {action}\n"
+                    f"🤖 {reason[:120]}", 'trade'
+                )
+            self.add_log(f"✅ AI 승인{conf_tag}: {name}({ticker}) {action}")
+        else:
+            if self.telegram:
+                self.telegram.send_message(
+                    f"🚫 <b>AI 거절{conf_tag}</b>  {alert_icon} {mode_name}\n"
+                    f"📌 <b>{name}</b>({ticker})  |  {action}\n"
+                    f"🤖 {reason[:120]}", 'reject'
+                )
+            self.add_log(f"🚫 AI 거절{conf_tag}: {name}({ticker}) {action}")
+        return decision, reason, confidence
+
+    # ─────────────────────────────────────────────────────────────────
     # 주문 — 토스 실주문 후 즉시 잔고 재동기화
     # ─────────────────────────────────────────────────────────────────
 
@@ -718,6 +810,16 @@ class USBotController:
         if self.cash_usd is None:
             self.add_log(f"⏳ [{name}] 매수 보류 — 토스 잔고 초기화 대기 중")
             return 0
+        # AI 심사 — upstream에서 이미 심사된 경우(ai_reason 있음) 재심사 생략
+        if not ai_reason and self.claude:
+            pos = self.positions.get(ticker)
+            price_now = price or self._price(ticker)
+            approved, ai_reason, confidence = self._ai_gate_us('BUY', ticker, name, price_now, strategy, pos)
+            if not approved:
+                return 0
+            if confidence < 70 and budget_usd > 0:
+                budget_usd = budget_usd / 2
+                self.add_log(f"⚠️ AI 확신도 {confidence}% → 매수 예산 절반으로 축소")
         price = price or self._price(ticker)
         if price <= 0 or budget_usd <= 0:
             return 0
@@ -769,10 +871,17 @@ class USBotController:
         if not self.toss:
             self.add_log(f"⚠️ SELL 실패: 토스 API 미설정 ({ticker})")
             return 0.0
-        # 미국 장이 닫혀 있으면 주문 차단 (토스가 거절 → 쓸데없는 에러 방지)
+        # 미국 장이 닫혀 있으면 주문 차단
         if not _is_us_market_open():
             self.add_log(f"⏸ SELL 보류: 미국 장 외 시간 — {name}({ticker}) {shares:.3g}주 (장 열리면 신호 재평가)")
             return 0.0
+        # AI 심사 — upstream에서 이미 심사된 경우(ai_reason 있음) 재심사 생략
+        if not ai_reason and self.claude:
+            pos = self.positions.get(ticker)
+            price_now = price or self._price(ticker)
+            approved, ai_reason, _ = self._ai_gate_us('SELL', ticker, name, price_now, strategy, pos)
+            if not approved:
+                return 0.0
         price = price or self._price(ticker)
         qty_frac = round(shares, 3)
         qty_int  = int(qty_frac)

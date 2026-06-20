@@ -704,15 +704,27 @@ class KRBotController:
             return "포트폴리오 정보 조회 실패"
 
     def _ai_gate(self, signal: str, ticker: str, name: str, price: float,
-                 strategy: str, pos=None) -> tuple[bool, str, int]:
-        """매수/매도 전 AI 심사 게이트. (approved, reason, confidence) 반환."""
+                 strategy: str, pos=None, ex_df=None) -> tuple[bool, str, int]:
+        """매수/매도 전 AI 심사 게이트. (approved, reason, confidence) 반환.
+        ex_df: OHLCV DataFrame 있으면 풀 컨텍스트(RSI/MACD/뉴스 등) 사용."""
         if not self.claude:
             return True, "AI 미설정 — 자동 승인", 100
         action = "매수" if signal == 'BUY' else "매도"
         avg_price = getattr(pos, 'avg_price', 0) or 0
         shares = getattr(pos, 'shares', 0) or 0
         profit_rt = ((price - avg_price) / avg_price * 100) if avg_price > 0 else 0
-        context = (
+
+        # ex_df 있으면 풀 컨텍스트 (RSI, MACD, 뉴스, 수급 전부 포함)
+        if ex_df is not None and not ex_df.empty:
+            try:
+                rich_ctx = self._build_trade_context(ticker, name, price, ex_df, strategy or 'N/A',
+                                                     getattr(self, 'market_regime', 'N/A'))
+            except Exception:
+                rich_ctx = None
+        else:
+            rich_ctx = None
+
+        context = rich_ctx or (
             f"현재가: {price:,.0f}원"
             + (f" | 평단가: {avg_price:,.0f}원 | 보유: {shares}주 | 수익률: {profit_rt:+.2f}%" if avg_price > 0 else "")
             + f" | 시장국면: {getattr(self, 'market_regime', 'N/A')}"
@@ -1739,27 +1751,40 @@ class KRBotController:
         """AI에게 전달할 종합 분석 컨텍스트를 빌드합니다 (뉴스·재무·기술적 지표·분봉)."""
         lines = []
 
-        # ── 1. 뉴스 + 공시 (NewsMonitor 우선, 없으면 기존 크롤러 사용) ──
-        if self.news_monitor:
+        # ── 1. 뉴스 + 공시 (Perplexity 우선 → NewsMonitor → 기존 크롤러) ──
+        perplexity_news_done = False
+        if getattr(self, 'perplexity', None):
             try:
-                naver_news = self.news_monitor.get_news_summary(stock_name, display=5)
-                dart_disc  = self.news_monitor.get_disclosure_summary(ticker, days=5)
-                if naver_news:
-                    lines.append(naver_news)
-                if dart_disc:
-                    lines.append(f"[DART 공시]\n{dart_disc}")
-            except Exception as ne:
-                logger.warning(f"[{self.mode_name}] NewsMonitor 컨텍스트 조회 실패: {ne}")
-        else:
-            try:
-                news = fetch_recent_news(stock_name)
-                # "뉴스 조회 실패" 텍스트는 AI에 전달 금지 — 악재 오인 방지
-                if "조회 실패" in news:
+                px_news = self.perplexity.search_stock_news(stock_name, ticker, days=3)
+                if px_news:
+                    lines.append(px_news)
+                    perplexity_news_done = True
+                px_dart = self.perplexity.search_dart_disclosure(stock_name, ticker)
+                if px_dart:
+                    lines.append(px_dart)
+            except Exception as pe:
+                logger.debug(f"[{self.mode_name}] Perplexity 뉴스 조회 실패: {pe}")
+
+        if not perplexity_news_done:
+            if self.news_monitor:
+                try:
+                    naver_news = self.news_monitor.get_news_summary(stock_name, display=5)
+                    dart_disc  = self.news_monitor.get_disclosure_summary(ticker, days=5)
+                    if naver_news:
+                        lines.append(naver_news)
+                    if dart_disc:
+                        lines.append(f"[DART 공시]\n{dart_disc}")
+                except Exception as ne:
+                    logger.warning(f"[{self.mode_name}] NewsMonitor 컨텍스트 조회 실패: {ne}")
+            else:
+                try:
+                    news = fetch_recent_news(stock_name)
+                    if "조회 실패" in news:
+                        news = ""
+                except Exception:
                     news = ""
-            except Exception:
-                news = ""
-            if news:
-                lines.append(f"[최근 뉴스] {news}")
+                if news:
+                    lines.append(f"[최근 뉴스] {news}")
 
         # ── 2. 재무지표 (PER·PBR·ROE — yfinance .info, 일 1회 캐싱) ──
         fundamental = self._fetch_fundamental(ticker, stock_name)
@@ -2042,6 +2067,41 @@ class KRBotController:
             return  # W-08: 장외 시간엔 나머지 로직 스킵 (불필요한 API 호출 방지)
         else:
             self.add_log(f"--- 🎯 {self.mode_name} 실시간 점검 ({current_time_str}) ---")
+
+            # ── AI 포트폴리오 전체 판단 (매 1시간, 장중 한 번) ─────────────
+            _ai_portfolio_key = f"_ai_portfolio_done_{today_str}_{current_time_str[:2]}"
+            if self.claude and not getattr(self, _ai_portfolio_key, False):
+                setattr(self, _ai_portfolio_key, True)
+                def _run_portfolio_decision():
+                    try:
+                        market_ctx = (
+                            f"시장국면: {getattr(self, 'market_regime', 'N/A')}\n"
+                            f"강세섹터: {', '.join(getattr(self, 'hot_sectors', [])[:5]) or '없음'}\n"
+                            + getattr(self, 'current_ai_market_view', '')
+                        )
+                        port_ctx = self._build_portfolio_context()
+                        positions_detail = "\n".join(
+                            [f"{cp.name}({cp.ticker}): 코어 {cp.shares}주 @ {cp.avg_price:,.0f}원"
+                             for cp in self.core_positions if cp.shares > 0]
+                            + [f"{sp.name}({tk}): 위성 {sp.shares}주 @ {sp.avg_price:,.0f}원"
+                               for tk, sp in self.satellite_positions.items() if sp.shares > 0]
+                        ) or "보유 포지션 없음"
+                        result = self.claude.ai_portfolio_decision(port_ctx, market_ctx, positions_detail, 'KR')
+                        with self.lock:
+                            self._ai_portfolio_guidance = result
+                        self.add_log(
+                            f"🧠 AI 포트폴리오 판단: {result['overall_stance']} | "
+                            f"국면: {result['regime']} | 현금목표: {result['cash_target_pct']}% | "
+                            f"{result['notes'][:60]}"
+                        )
+                        # AI가 시장 국면을 다르게 판단하면 반영
+                        if result['regime'] in ('BULL', 'BEAR', 'NEUTRAL'):
+                            with self.lock:
+                                self.market_regime = result['regime']
+                    except Exception as e:
+                        logger.warning(f"[{self.mode_name}] AI 포트폴리오 판단 오류: {e}")
+                self._run_threaded(_run_portfolio_decision)
+
             with self.lock:
                 _regime_now = getattr(self, 'market_regime', 'NEUTRAL')
                 _regime_label = {"BULL": "상승장 🚀", "BEAR": "하락장 🐻", "NEUTRAL": "횡보장 ➡️"}.get(_regime_now, "분석 중")
