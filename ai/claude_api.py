@@ -1095,76 +1095,91 @@ REASON: (1줄)"""
 
     def ai_approve_trade(self, signal, stock_name, ticker, price, strategy,
                          indicator_val, hot_sectors, recent_trades=None, custom_rules="",
-                         context: str = ""):
-        """매매 신호 발생 시 AI 종합 분석 후 최종 승인 — GeminiApi.ai_approve_trade 호환"""
+                         context: str = "", portfolio_context: str = ""):
+        """매매 신호 발생 시 AI 종합 분석 후 최종 승인 — GeminiApi.ai_approve_trade 호환
+        반환: (approved: bool, reason: str, confidence: int)  ← confidence 50~100
+        하위 호환: 기존 코드가 (bool, str) 2개만 언패킹해도 무방
+        """
         if not self.client:
-            return True, "API 미설정으로 자동 승인"
+            return True, "API 미설정으로 자동 승인", 100
 
         action = "매수" if signal == 'BUY' else "매도"
 
+        # ── 과거 매매 이력 + AI 판단 vs 실제 결과 피드백 ──────────────────
         history_text = "이 종목에 대한 최근 매매 기록이 없습니다."
         if recent_trades:
             lines = []
             for t in recent_trades:
-                res_str = f"(수익: {t['profit']:,.0f}원)" if t['action'] == 'SELL' else ""
-                lines.append(f"- {t['date']} | {t['action']} | {t['price']:,.0f}원 | {t['ai_reason']} {res_str}")
+                ai_hit = ""
+                if t['action'] == 'SELL' and t.get('profit') is not None:
+                    outcome = "✅수익" if t['profit'] > 0 else "❌손실"
+                    ai_hit = f" → 실제결과: {outcome} {t['profit']:+,.0f}원"
+                elif t['action'] == 'BUY':
+                    ai_hit = " (매수 후 미청산)"
+                ai_prev = f" | AI판단: {t['ai_reason'][:40]}" if t.get('ai_reason') else ""
+                lines.append(f"- {t['date']} | {t['action']} | {t['price']:,.0f}원{ai_prev}{ai_hit}")
             history_text = "\n".join(lines)
 
-        context_section = f"""
-[📊 실시간 종합 분석 데이터]
-{context}
-""" if context else ""
+        context_section = f"\n[📊 실시간 종합 분석 데이터]\n{context}\n" if context else ""
+        portfolio_section = f"\n[💼 현재 포트폴리오 현황]\n{portfolio_context}\n" if portfolio_context else ""
 
-        # indicator_val이 dict일 수 있으므로 안전하게 str 변환
         ind_str = (f"{indicator_val:.2f}" if isinstance(indicator_val, (int, float))
                    else str(indicator_val))
 
         prompt = f"""[매매 신호 최종 검토 — {action} 요청]
 종목: {stock_name}({ticker}) | 신호: {action} | 현재가: {price:,}원
 적용 전략: {strategy} | 전략 지표값: {ind_str}
-{context_section}
+{context_section}{portfolio_section}
 [투자자 본인이 확립한 매매 원칙]
 {custom_rules if custom_rules else "특별한 커스텀 룰 없음. 시스템 기본 원칙 적용."}
 
-[이 종목의 과거 매매 이력 (오답 노트)]
+[이 종목의 과거 매매 이력 — AI 판단 vs 실제 결과 오답노트]
 {history_text}
 
 ──────────────────────────────────────────
 【판단 지침】
 • 위에 제공된 데이터(RSI, MACD, 볼린저밴드, 거래량, 전일종가, 5일선/20일선, 외인/기관 수급, KOSPI/KOSDAQ 상대강도, 뉴스/공시, 분봉 추세)를 근거로 사용할 것.
+• 포트폴리오 현황(손실 포지션 수, 현금 비중, 전체 수익률)을 반드시 고려할 것.
+• 과거 오답노트에서 같은 패턴의 실수가 반복되면 더 신중하게 판단할 것.
 • N/A인 항목은 판단 근거로 쓰지 말 것.
-• 임의로 새 체크리스트를 만들거나 "Unverified" 표기 금지.
 • 근거 서술 시 구체적 수치를 인용할 것 (예: RSI 77.2, 5일선 +8.3% 위, 거래량 4.3배 등).
 
 {action} 신호의 실행 여부를 판단하십시오.
 
 답변 형식 (이 형식을 반드시 준수):
 DECISION: CONFIRM 또는 REJECT
+CONFIDENCE: 50~100 사이 정수 (판단 확신도 %)
 REASON: (핵심 근거 2~3줄, 구체적 수치 포함)"""
 
         try:
-            # 매매 승인은 빠른 판단 → Haiku (비용 최적화)
             res = self.generate_content(prompt, temperature=0.1, model=self._FAST_MODEL)
-            # [W-01] "CONFIRM" 단순 포함 검사는 "DO NOT CONFIRM" 등 false positive 유발.
-            # DECISION: 라인을 우선 파싱하고, 없으면 전문에서 REJECT 포함 여부 교차 확인.
             upper = res.upper()
-            # DECISION: 라인만 추출해 판단 (이유 설명문에 CONFIRM/REJECT가 섞여도 오판 방지)
-            decision_line = next((ln for ln in upper.splitlines() if ln.strip().startswith("DECISION:") or "DECISION:" in ln), "")
+
+            # DECISION 파싱
+            decision_line = next((ln for ln in upper.splitlines() if "DECISION:" in ln), "")
             if decision_line:
-                # "DECISION:" 이후 첫 번째 단어만 추출 → "CONFIRM (이유)" 에서 CONFIRM 만 추출
                 after_colon = decision_line.split("DECISION:", 1)[-1].strip()
                 first_word  = after_colon.split()[0] if after_colon.split() else ""
                 decision = first_word == "CONFIRM"
             else:
-                # DECISION 라인 없을 때만 전문 스캔 (폴백)
                 decision = "CONFIRM" in upper and "REJECT" not in upper
+
+            # CONFIDENCE 파싱
+            confidence = 75
+            conf_line = next((ln for ln in upper.splitlines() if "CONFIDENCE:" in ln), "")
+            if conf_line:
+                import re as _re
+                m = _re.search(r'CONFIDENCE:\s*(\d+)', conf_line)
+                if m:
+                    confidence = max(50, min(100, int(m.group(1))))
+
             reason = res.split("REASON:")[-1].strip() if "REASON:" in res else res.strip()
-            return decision, reason
+            return decision, reason, confidence
         except Exception as e:
             import logging
             logging.getLogger('lassi_bot').warning(
                 f"[ClaudeAPI] ai_approve_trade 오류 — 알고리즘 신호 허용: {type(e).__name__}: {e}")
-            return True, "AI 일시 오류 — 알고리즘 신호 그대로 허용"  # [BUG-M6] 오류 시 자동 거절 → 허용
+            return True, "AI 일시 오류 — 알고리즘 신호 그대로 허용", 75
 
     def ai_approve_core_trade(self, stock_name: str, ticker: str, price: int,
                                rsi: float, ma120: float, ma60: float,

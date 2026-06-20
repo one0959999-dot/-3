@@ -671,11 +671,43 @@ class KRBotController:
         """거래 거절 알림 전용 헬퍼."""
         self._send_telegram(message, msg_type='reject')
 
+    def _build_portfolio_context(self) -> str:
+        """현재 포트폴리오 전체 현황을 AI 심사용 텍스트로 빌드."""
+        try:
+            cash = self.internal_cash or 0
+            lines = [f"가용현금: {cash:,.0f}원 | 시장국면: {getattr(self, 'market_regime', 'N/A')}"]
+            total_eval = cash
+            loss_cnt = profit_cnt = 0
+            for cp in self.core_positions:
+                price = self.live_prices.get(cp.ticker, 0) or cp.avg_price or 0
+                pnl_rt = ((price - cp.avg_price) / cp.avg_price * 100) if cp.avg_price > 0 and cp.shares > 0 else 0
+                eval_v = price * cp.shares
+                total_eval += eval_v
+                tag = "🔴손실" if pnl_rt < 0 else "🟢수익"
+                if cp.shares > 0:
+                    lines.append(f"  [코어] {cp.name}({cp.ticker}): {cp.shares}주 @ 평단{cp.avg_price:,.0f}원 | 현재{price:,.0f}원 | {pnl_rt:+.1f}% {tag}")
+                    if pnl_rt < 0: loss_cnt += 1
+                    else: profit_cnt += 1
+            for ticker, sp in self.satellite_positions.items():
+                price = self.live_prices.get(ticker, 0) or sp.avg_price or 0
+                pnl_rt = ((price - sp.avg_price) / sp.avg_price * 100) if sp.avg_price > 0 and sp.shares > 0 else 0
+                eval_v = price * sp.shares
+                total_eval += eval_v
+                tag = "🔴손실" if pnl_rt < 0 else "🟢수익"
+                if sp.shares > 0:
+                    lines.append(f"  [위성] {sp.name}({ticker}): {sp.shares}주 @ 평단{sp.avg_price:,.0f}원 | 현재{price:,.0f}원 | {pnl_rt:+.1f}% {tag}")
+                    if pnl_rt < 0: loss_cnt += 1
+                    else: profit_cnt += 1
+            lines.append(f"총평가액: {total_eval:,.0f}원 | 손실포지션: {loss_cnt}개 | 수익포지션: {profit_cnt}개")
+            return "\n".join(lines)
+        except Exception:
+            return "포트폴리오 정보 조회 실패"
+
     def _ai_gate(self, signal: str, ticker: str, name: str, price: float,
-                 strategy: str, pos=None) -> tuple[bool, str]:
-        """매수/매도 전 AI 심사 게이트. (approved, reason) 반환."""
+                 strategy: str, pos=None) -> tuple[bool, str, int]:
+        """매수/매도 전 AI 심사 게이트. (approved, reason, confidence) 반환."""
         if not self.claude:
-            return True, "AI 미설정 — 자동 승인"
+            return True, "AI 미설정 — 자동 승인", 100
         action = "매수" if signal == 'BUY' else "매도"
         avg_price = getattr(pos, 'avg_price', 0) or 0
         shares = getattr(pos, 'shares', 0) or 0
@@ -685,6 +717,7 @@ class KRBotController:
             + (f" | 평단가: {avg_price:,.0f}원 | 보유: {shares}주 | 수익률: {profit_rt:+.2f}%" if avg_price > 0 else "")
             + f" | 시장국면: {getattr(self, 'market_regime', 'N/A')}"
         )
+        portfolio_context = self._build_portfolio_context()
         self._send_telegram(
             f"🤔 <b>AI 심사 중</b>  {self.alert_icon} {self.mode_name}\n"
             f"📌 <b>{name}</b>({ticker})  |  {action}\n"
@@ -693,33 +726,38 @@ class KRBotController:
         )
         self.add_log(f"🤔 AI 심사 중: {name}({ticker}) {action}")
         try:
-            decision, reason = self.claude.ai_approve_trade(
+            result = self.claude.ai_approve_trade(
                 signal, name, ticker, price, strategy or 'N/A',
                 {}, getattr(self, 'hot_sectors', []),
                 get_recent_trades(self.user_id, ticker),
                 load_ai_rules(self.user_id) + (f"\n\n[섹터 가이드]\n{self.sector_guide}" if getattr(self, 'sector_guide', '') else ''),
-                context=context
+                context=context,
+                portfolio_context=portfolio_context
             )
+            # 하위 호환: (bool, str) 또는 (bool, str, int)
+            decision, reason = result[0], result[1]
+            confidence = result[2] if len(result) > 2 else 75
         except Exception as e:
             logger.warning(f"[{self.mode_name}] AI 게이트 오류 ({ticker}): {e}")
-            return True, f"AI 오류 — 자동 승인: {e}"
+            return True, f"AI 오류 — 자동 승인: {e}", 75
+        conf_tag = f" (확신도 {confidence}%)"
         if decision:
             self._send_telegram(
-                f"✅ <b>AI 승인</b>  {self.alert_icon} {self.mode_name}\n"
+                f"✅ <b>AI 승인{conf_tag}</b>  {self.alert_icon} {self.mode_name}\n"
                 f"📌 <b>{name}</b>({ticker})  |  {action}\n"
                 f"🤖 {reason[:120]}",
                 'trade'
             )
-            self.add_log(f"✅ AI 승인: {name}({ticker}) {action} — {reason[:80]}")
+            self.add_log(f"✅ AI 승인{conf_tag}: {name}({ticker}) {action} — {reason[:80]}")
         else:
             self._send_telegram(
-                f"🚫 <b>AI 거절</b>  {self.alert_icon} {self.mode_name}\n"
+                f"🚫 <b>AI 거절{conf_tag}</b>  {self.alert_icon} {self.mode_name}\n"
                 f"📌 <b>{name}</b>({ticker})  |  {action}\n"
                 f"🤖 {reason[:120]}",
                 'reject'
             )
-            self.add_log(f"🚫 AI 거절: {name}({ticker}) {action} — {reason[:80]}")
-        return decision, reason
+            self.add_log(f"🚫 AI 거절{conf_tag}: {name}({ticker}) {action} — {reason[:80]}")
+        return decision, reason, confidence
 
     def _buy_order(self, ticker: str, qty: int, pos, name: str, limit_price: int = 0,
                    strategy: str = "", ai_reason: str = "") -> bool:
@@ -734,9 +772,14 @@ class KRBotController:
         # AI 심사 — upstream에서 이미 심사된 경우(ai_reason 있음) 재심사 생략
         if not ai_reason and self.claude:
             price_now = self.live_prices.get(ticker, 0) or getattr(pos, 'avg_price', 0) or 0
-            approved, ai_reason = self._ai_gate('BUY', ticker, name, price_now, strategy, pos)
+            approved, ai_reason, confidence = self._ai_gate('BUY', ticker, name, price_now, strategy, pos)
             if not approved:
                 return False
+            # 확신도 70% 미만 → 계획 수량 절반만 매수
+            if confidence < 70 and qty > 1:
+                scaled = max(1, qty // 2)
+                self.add_log(f"⚠️ AI 확신도 {confidence}% → {qty}주 → {scaled}주로 축소 매수")
+                qty = scaled
         if limit_price == 0:
             # 코어·위성: 현재가 +0.3% 지정가 → 빠른 체결 + 슬리피지 제한
             cp = self.live_prices.get(ticker, 0)
@@ -783,7 +826,7 @@ class KRBotController:
         # AI 심사 — upstream에서 이미 심사된 경우(ai_reason 있음) 재심사 생략
         if not ai_reason and self.claude:
             price_now = price or self.live_prices.get(ticker, 0) or getattr(pos, 'avg_price', 0) or 0
-            approved, ai_reason = self._ai_gate('SELL', ticker, name, price_now, strategy, pos)
+            approved, ai_reason, _ = self._ai_gate('SELL', ticker, name, price_now, strategy, pos)
             if not approved:
                 return False
         result = self.toss.sell_market_order(ticker, qty, price=price)
