@@ -172,27 +172,25 @@ def get_macro_for_date(date_str: str, fred_key: str = '') -> dict:
     data['yield_spread'] = round(us_10y - (us_2y or 0), 3) if us_10y and us_2y else None
 
     try:
-        from pykrx import stock as pykrx_stock
-        date_fmt  = date_str.replace('-', '')
-        start_fmt = (datetime.strptime(date_str, '%Y-%m-%d') - timedelta(days=300)).strftime('%Y%m%d')
-
-        kospi_df = pykrx_stock.get_index_ohlcv_by_date(date_fmt, date_fmt, '1001')
-        if not kospi_df.empty:
-            data['kospi_close'] = float(kospi_df['종가'].iloc[-1])
-            hist = pykrx_stock.get_index_ohlcv_by_date(start_fmt, date_fmt, '1001')
-            if len(hist) >= 200:
-                ma200 = float(hist['종가'].rolling(200).mean().iloc[-1])
-                data['kospi_vs_ma200'] = round((data['kospi_close'] / ma200 - 1) * 100, 2)
-            if len(hist) >= 252:
-                high52 = float(hist['종가'].rolling(252).max().iloc[-1])
-                low52  = float(hist['종가'].rolling(252).min().iloc[-1])
-                rng = high52 - low52
-                data['kospi_52w_pct'] = round((data['kospi_close'] - low52) / rng * 100, 1) if rng else 50
-
-        inv_df = pykrx_stock.get_market_trading_value_by_date(date_fmt, date_fmt, '1001')
-        if not inv_df.empty:
-            data['foreign_net_buy']     = float(inv_df.get('외국인합계', pd.Series([None])).iloc[-1])
-            data['institution_net_buy'] = float(inv_df.get('기관합계',   pd.Series([None])).iloc[-1])
+        import yfinance as yf
+        end_dt   = datetime.strptime(date_str, '%Y-%m-%d')
+        start_dt = end_dt - timedelta(days=400)
+        hist = yf.download('^KS11', start=start_dt.strftime('%Y-%m-%d'),
+                           end=(end_dt + timedelta(days=1)).strftime('%Y-%m-%d'),
+                           progress=False, auto_adjust=True)
+        if not hist.empty:
+            close = hist['Close'].squeeze()
+            idx = close.index.get_indexer([end_dt], method='ffill')
+            if idx[0] >= 0:
+                data['kospi_close'] = round(float(close.iloc[idx[0]]), 2)
+                if len(close) >= 200:
+                    ma200 = float(close.rolling(200).mean().iloc[idx[0]])
+                    data['kospi_vs_ma200'] = round((data['kospi_close'] / ma200 - 1) * 100, 2)
+                if len(close) >= 252:
+                    high52 = float(close.rolling(252).max().iloc[idx[0]])
+                    low52  = float(close.rolling(252).min().iloc[idx[0]])
+                    rng = high52 - low52
+                    data['kospi_52w_pct'] = round((data['kospi_close'] - low52) / rng * 100, 1) if rng else 50
     except Exception:
         pass
 
