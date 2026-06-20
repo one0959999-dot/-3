@@ -371,6 +371,26 @@ class TossInvestApi:
         info_list = self.get_stock_info(symbols)
         return {i["symbol"]: i.get("name", i["symbol"]) for i in info_list}
 
+    @staticmethod
+    def _krw(obj) -> float:
+        """{"krw": "...", "usd": "..."} 또는 숫자/문자열에서 KRW 값 추출."""
+        if isinstance(obj, dict):
+            return float(obj.get("krw") or 0)
+        try:
+            return float(obj or 0)
+        except (TypeError, ValueError):
+            return 0.0
+
+    @staticmethod
+    def _usd(obj) -> float:
+        """{"krw": "...", "usd": "..."} 또는 숫자/문자열에서 USD 값 추출."""
+        if isinstance(obj, dict):
+            return float(obj.get("usd") or 0)
+        try:
+            return float(obj or 0)
+        except (TypeError, ValueError):
+            return 0.0
+
     def get_account_balance(self) -> dict:
         """KIS KR compat:
         {cash, stocks:[{ticker,name,shares,purchase_price,current_price,profit_loss}], total_value}
@@ -390,10 +410,12 @@ class TossInvestApi:
         for item in kr_items:
             sym   = item.get("symbol", "")
             qty   = int(float(item.get("quantity", 0)))
-            avg_p = float(item.get("averagePurchasePrice", 0))
-            cur_p = float(item.get("lastPrice", 0))
+            avg_p = float(item.get("averagePurchasePrice", 0) or 0)
+            cur_p = float(item.get("lastPrice", 0) or 0)
             pl    = item.get("profitLoss") or {}
-            profit = float(pl.get("amount", 0)) if isinstance(pl, dict) else 0.0
+            # profitLoss.amount = {"krw": "...", "usd": "..."}
+            profit = self._krw(pl.get("amount"))
+            profit_rt = float(pl.get("rate") or 0) * 100  # 소수 → %
             stocks.append({
                 "ticker":         sym,
                 "name":           name_map.get(sym, sym),
@@ -401,11 +423,13 @@ class TossInvestApi:
                 "purchase_price": avg_p,
                 "current_price":  cur_p,
                 "profit_loss":    profit,
+                "profit_rt":      profit_rt,
             })
 
         cash_krw = self.get_buyable_cash()
+        # marketValue.amount = {"krw": "...", "usd": "..."}
         mv_obj   = raw.get("marketValue") or {}
-        total_mv = float(mv_obj.get("amount", 0)) if isinstance(mv_obj, dict) else 0.0
+        total_mv = self._krw((mv_obj.get("amount") if isinstance(mv_obj, dict) else mv_obj))
 
         return {
             "cash":        cash_krw,
@@ -428,11 +452,14 @@ class TossInvestApi:
         stocks = []
         for item in us_items:
             sym   = item.get("symbol", "")
-            qty   = float(item.get("quantity", 0))
-            avg_p = float(item.get("averagePurchasePrice", 0))
-            cur_p = float(item.get("lastPrice", 0))
-            mv    = item.get("marketValue") or {}
-            value = float(mv.get("amount", 0)) if isinstance(mv, dict) else qty * cur_p
+            qty   = float(item.get("quantity", 0) or 0)
+            avg_p = float(item.get("averagePurchasePrice", 0) or 0)
+            cur_p = float(item.get("lastPrice", 0) or 0)
+            # marketValue.amount = {"krw": "...", "usd": "..."}
+            mv_amount = (item.get("marketValue") or {}).get("amount")
+            value = self._usd(mv_amount) if mv_amount else qty * cur_p
+            pl    = item.get("profitLoss") or {}
+            profit_rt = float(pl.get("rate") or 0) * 100
             stocks.append({
                 "ticker":        sym,
                 "name":          sym,
@@ -440,6 +467,7 @@ class TossInvestApi:
                 "avg_price":     avg_p,
                 "current_price": cur_p,
                 "value":         value,
+                "profit_rt":     profit_rt,
             })
 
         cash_usd = self.get_buyable_cash_usd()
@@ -454,8 +482,11 @@ class TossInvestApi:
         if price:
             params["price"] = str(price)
         data = self._get("/api/v1/buying-power", params, with_account=True)
+        logger.debug(f"[Toss] buying-power 응답: {data}")
         if data:
-            return float(data.get("amount") or data.get("buyableAmount") or 0)
+            # amount가 {"krw":"...", "usd":"..."} 형태일 수도 있음
+            raw_amount = data.get("amount") or data.get("buyableAmount") or data.get("krw") or 0
+            return self._krw(raw_amount) if isinstance(raw_amount, dict) else float(raw_amount or 0)
         return 0.0
 
     def get_buyable_cash_usd(self, ticker: str = "AAPL", price: float = 0) -> float:
@@ -464,13 +495,16 @@ class TossInvestApi:
         if price:
             params["price"] = str(price)
         data = self._get("/api/v1/buying-power", params, with_account=True)
+        logger.debug(f"[Toss] buying-power(USD) 응답: {data}")
         if data:
-            return float(data.get("amount") or data.get("buyableAmount") or 0)
+            raw_amount = data.get("amount") or data.get("buyableAmount") or data.get("usd") or 0
+            return self._usd(raw_amount) if isinstance(raw_amount, dict) else float(raw_amount or 0)
         return 0.0
 
     def get_sellable_qty(self, symbol: str) -> int:
         """매도가능수량"""
         data = self._get("/api/v1/sellable-quantity", {"symbol": symbol}, with_account=True)
+        logger.debug(f"[Toss] sellable-quantity 응답: {data}")
         if data:
             return int(float(data.get("quantity") or data.get("sellableQuantity") or 0))
         return 0
