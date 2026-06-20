@@ -70,7 +70,7 @@ def get_ai_client_from_db(user_id: int, role: str = 'trade'):
 
     row = dict(row)
     if role == 'trade':
-        return get_ai_client(row.get('trade_ai_provider') or 'claude',
+        return get_ai_client(row.get('trade_ai_provider') or 'gemini',
                              row.get('trade_ai_key') or '')
     else:
         return get_ai_client(row.get('backtest_ai_provider') or 'gemini',

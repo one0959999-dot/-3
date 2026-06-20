@@ -215,10 +215,6 @@
                         <label style="font-size:0.78rem;color:#94a3b8;">API 키 입력 (사용할 AI 키만 입력)</label>
                         <div style="display:grid;gap:8px;margin:8px 0 14px;">
                             <div style="display:flex;align-items:center;gap:8px;">
-                                <span style="width:80px;font-size:0.78rem;color:#94a3b8;">Claude</span>
-                                <input type="password" id="claudeApiKey" value="{{ user.data.claude_api_key or '' }}" placeholder="sk-ant-..." style="flex:1;">
-                            </div>
-                            <div style="display:flex;align-items:center;gap:8px;">
                                 <span style="width:80px;font-size:0.78rem;color:#94a3b8;">Gemini</span>
                                 <input type="password" id="geminiApiKey" value="{{ user.data.gemini_api_key or '' }}" placeholder="AIza..." style="flex:1;">
                             </div>
@@ -235,8 +231,7 @@
                             <div>
                                 <label style="font-size:0.78rem;color:#94a3b8;display:block;margin-bottom:4px;">실거래 AI</label>
                                 <select id="tradeAiProvider" style="width:100%;background:#1e293b;border:1px solid #334155;border-radius:6px;padding:7px;color:#e2e8f0;font-size:0.82rem;">
-                                    <option value="claude"  {% if (user.data.trade_ai_provider or 'claude')=='claude'  %}selected{% endif %}>Claude (Anthropic)</option>
-                                    <option value="gemini"  {% if user.data.trade_ai_provider=='gemini'  %}selected{% endif %}>Gemini (Google)</option>
+                                    <option value="gemini"  {% if (user.data.trade_ai_provider or 'gemini')=='gemini'  %}selected{% endif %}>Gemini (Google)</option>
                                     <option value="openai"  {% if user.data.trade_ai_provider=='openai'  %}selected{% endif %}>OpenAI GPT</option>
                                     <option value="grok"    {% if user.data.trade_ai_provider=='grok'    %}selected{% endif %}>Grok (xAI)</option>
                                 </select>
@@ -245,7 +240,6 @@
                                 <label style="font-size:0.78rem;color:#94a3b8;display:block;margin-bottom:4px;">백테스트 AI</label>
                                 <select id="backtestAiProvider" style="width:100%;background:#1e293b;border:1px solid #334155;border-radius:6px;padding:7px;color:#e2e8f0;font-size:0.82rem;">
                                     <option value="gemini"  {% if (user.data.backtest_ai_provider or 'gemini')=='gemini'  %}selected{% endif %}>Gemini Flash (무료)</option>
-                                    <option value="claude"  {% if user.data.backtest_ai_provider=='claude'  %}selected{% endif %}>Claude</option>
                                     <option value="openai"  {% if user.data.backtest_ai_provider=='openai'  %}selected{% endif %}>OpenAI GPT</option>
                                     <option value="grok"    {% if user.data.backtest_ai_provider=='grok'    %}selected{% endif %}>Grok (xAI)</option>
                                 </select>
