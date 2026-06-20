@@ -406,7 +406,11 @@ class TossInvestApi:
     def has_investment_warning(self, symbol: str) -> bool:
         """투자경고·VI 발동 여부 — 매수 전 체크용"""
         warnings = self.get_warnings(symbol)
-        danger = {"INVESTMENT_WARNING", "OVERHEATED", "LIQUIDATION_TRADING"}
+        danger = {
+            "INVESTMENT_WARNING", "INVESTMENT_RISK",
+            "OVERHEATED", "LIQUIDATION_TRADING",
+            "VI_STATIC", "VI_DYNAMIC", "VI_STATIC_AND_DYNAMIC",
+        }
         return any(w.get("warningType") in danger for w in warnings)
 
     def search_stock_name(self, query: str) -> list[dict]:
