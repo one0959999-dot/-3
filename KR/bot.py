@@ -3992,9 +3992,16 @@ class KRBotController:
 
     def get_status(self):
         try:
-            with self.lock:
+            # 락 획득 최대 2초 대기 — 백그라운드 스레드가 락 보유 중이어도 UI 블로킹 방지
+            if not self.lock.acquire(timeout=2):
+                return {"running": self.is_running, "is_running": self.is_running,
+                        "cores": [], "satellites": [], "logs": list(self._log_buffer)[-30:],
+                        "mock_total_asset": 0, "mock_pnl_rt": 0, "_lock_timeout": True}
+            try:
                 safe_core_positions = list(self.core_positions)
                 safe_satellite_items = list(self.satellite_positions.items())
+            finally:
+                self.lock.release()
 
             # [BUG-FIX] 토스 cached_balance에서 실제 평단가 + 현재가 추출
             # pos.avg_price는 봇 내부 추정값으로 실제 체결가와 다를 수 있음.
