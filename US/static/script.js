@@ -299,7 +299,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 const warn = document.createElement('div');
                 warn.id = 'key-warning';
                 warn.style.cssText = 'background: rgba(239, 68, 68, 0.2); color: #ef4444; border: 1px solid #ef4444; padding: 12px; border-radius: 12px; text-align: center; margin-bottom: 25px; font-weight: bold; font-size: 0.9rem;';
-                warn.innerHTML = '⚠️ API 키가 설정되지 않았습니다. [계좌 설정] 버튼을 눌러 본인의 KIS 정보를 입력해 주세요.';
+                warn.innerHTML = '⚠️ API 키가 설정되지 않았습니다. [계좌 설정] 버튼을 눌러 본인의 토스증권 정보를 입력해 주세요.';
                 document.querySelector('.dashboard-container').prepend(warn);
             }
         } else {

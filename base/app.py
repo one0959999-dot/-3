@@ -289,36 +289,36 @@ def status():
 
     return jsonify(result)
 
-@app.route('/api/kis_balance')
+@app.route('/api/balance')
 @app.route('/api/toss_balance')
 @login_required
-def kis_balance():
-    """실시간 토스증권 계좌 잔고 조회 API (kis_balance URL 하위 호환 유지)"""
+def toss_balance():
+    """실시간 토스증권 계좌 잔고 조회 API"""
     try:
         bot = get_current_bot()
-        _api = getattr(bot, 'toss', None) or getattr(bot, 'kis', None)
+        _api = getattr(bot, 'toss', None)
         if not bot or not _api:
             return jsonify({"status": "error", "message": "API 설정이 필요합니다."})
-        
+
         rt_prices = bot.live_prices if hasattr(bot, 'live_prices') else {}
-            
+
         def patch_balance(balance_data):
             patched = dict(balance_data)
-            
+
             patched_stocks = []
             recalc_total_value = 0.0
             recalc_total_purchase = 0.0
-            
+
             for stock in patched.get('stocks', []):
                 new_stock = dict(stock)
                 ticker = new_stock.get('ticker')
                 shares = float(new_stock.get('shares', 0))
                 purchase_p = float(new_stock.get('purchase_price', 0))
-                
-                # 웹소켓 실시간 가격이 있으면 최우선 덮어쓰고, 없으면 증권사가 보낸 진짜 현재가 사용
+
+                # 웹소켓 실시간 가격이 있으면 최우선 덮어쓰고, 없으면 토스증권이 보낸 진짜 현재가 사용
                 ws_price = rt_prices.get(ticker)
-                kis_price = float(new_stock.get('current_price', 0))
-                current_p = ws_price if ws_price else kis_price
+                toss_price = float(new_stock.get('current_price', 0))
+                current_p = ws_price if ws_price else toss_price
 
                 new_stock['current_price'] = current_p
                 new_stock['value'] = shares * current_p
@@ -328,15 +328,15 @@ def kis_balance():
                         # 웹소켓 실시간가 → 직접 재계산 (가장 최신 수익률)
                         new_stock['profit_rt'] = ((ws_price / purchase_p) - 1) * 100
                     else:
-                        # 웹소켓 미연결 → KIS 원본 evlu_pfls_rt 그대로 사용 (KIS 앱과 일치)
+                        # 웹소켓 미연결 → 토스증권 원본 수익률 그대로 사용 (앱과 일치)
                         new_stock['profit_rt'] = float(new_stock.get('profit_rt', 0.0))
                 else:
                     new_stock['profit_rt'] = 0.0
-                
+
                 recalc_total_value += new_stock['value']
                 recalc_total_purchase += (shares * purchase_p)
                 patched_stocks.append(new_stock)
-                
+
             patched['stocks'] = patched_stocks
             patched['total_value'] = recalc_total_value
             patched['total_purchase'] = recalc_total_purchase
@@ -346,18 +346,18 @@ def kis_balance():
             return jsonify({"status": "success", "data": patch_balance(bot.cached_balance)})
         else:
             return jsonify({
-                "status": "success", 
+                "status": "success",
                 "data": {
-                    "total_cash": 0, 
-                    "total_value": 0, 
-                    "total_purchase": 0, 
+                    "total_cash": 0,
+                    "total_value": 0,
+                    "total_purchase": 0,
                     "stocks": []
                 }
             })
-            
+
     except Exception as e:
         import traceback
-        logger.error(f"kis_balance 동기화 에러: {e}")
+        logger.error(f"toss_balance 동기화 에러: {e}")
         traceback.print_exc()
         return jsonify({"status": "error", "message": f"잔고 조회 중 오류: {str(e)}"})
 
@@ -659,11 +659,11 @@ def reset_initial_cash():
             msg = f"투자 원금 기준값이 {amount:,.0f}원으로 재설정되었습니다."
     else:
         # amount 없음 → initial_capital_captured 리셋
-        # 다음 _sync_internal_balances에서 KIS 잔고 기준으로 자동 재측정
+        # 다음 _sync_internal_balances에서 토스증권 잔고 기준으로 자동 재측정
         bot = manager.bots.get((current_user.id, is_mock))
         if bot:
             bot.initial_capital_captured = False
-            msg = "원금 기준값 재측정 예약 완료 — 1분 내 KIS 잔고 기준으로 자동 갱신됩니다."
+            msg = "원금 기준값 재측정 예약 완료 — 1분 내 토스증권 잔고 기준으로 자동 갱신됩니다."
         else:
             # 봇 없으면 DB 기본값(10M) 복원
             set_user_initial_cash(current_user.id, 10_000_000, is_mock)
@@ -825,7 +825,7 @@ def ai_chat():
 
             macro_lines = []
             for m_ticker, m_name in [("069500", "KOSPI 대용(KODEX 200)"), ("229200", "KOSDAQ 대용(KODEX 코스닥150)")]:
-                m_df = fetch_ohlcv(m_ticker, days=40, kis=getattr(bot, "toss", None) or bot.kis)
+                m_df = fetch_ohlcv(m_ticker, days=40, toss=getattr(bot, "toss", None))
                 if not m_df.empty:
                     m_close = m_df['close']
                     m_price = m_close.iloc[-1]
@@ -880,7 +880,7 @@ def ai_chat():
             context_lines = ["[📈 회원님이 궁금해하시는 종목의 실시간 데이터 분석 장부]"]
             for ticker, name in target_tickers:
                 try:
-                    ohlcv_df = fetch_ohlcv(ticker, days=130, kis=getattr(bot, "toss", None) or bot.kis)
+                    ohlcv_df = fetch_ohlcv(ticker, days=130, toss=getattr(bot, "toss", None))
                     today_str = datetime.now(timezone(timedelta(hours=9))).strftime('%Y-%m-%d')
                     cache_key = f"{ticker}_{today_str}"
                     financial_data = getattr(bot, 'fundamental_cache', {}).get(cache_key, "PER: 10.0배, PBR: 1.0배 (실시간 추정치)")
@@ -1407,9 +1407,9 @@ def _save_keys_common(data, is_mock):
         return v.strip() if isinstance(v, str) and v.strip() else None
 
     # 토스증권은 KR/US 공통 단일 계좌
-    _client_id     = _v('client_id')     or existing.get('real_app_key')
-    _client_secret = _v('client_secret') or existing.get('real_app_secret')
-    _account_seq   = _v('account_seq')   or existing.get('real_account_no')
+    _client_id     = _v('client_id')     or existing.get('toss_client_id')
+    _client_secret = _v('client_secret') or existing.get('toss_client_secret')
+    _account_seq   = _v('account_seq')   or existing.get('toss_account_seq')
 
     toss_cfg = {
         "client_id":     _client_id     or "",
@@ -1417,12 +1417,15 @@ def _save_keys_common(data, is_mock):
         "account_seq":   _account_seq   or "",
     }
 
-    # DB에는 KR/US 구분 없이 real_* 필드에 통합 저장
+    # DB에 토스증권 단일 계좌 정보 저장 (KR/US 공통)
     update_data = {
+        'toss_client_id':     _client_id,
+        'toss_client_secret': _client_secret,
+        'toss_account_seq':   _account_seq,
+        # 레거시 필드 동기화 (구버전 코드 호환)
         'real_app_key':    _client_id,
         'real_app_secret': _client_secret,
         'real_account_no': _account_seq,
-        # US 필드도 동일값으로 동기화 (레거시 코드 호환)
         'us_app_key':      _client_id,
         'us_app_secret':   _client_secret,
         'us_account_no':   _account_seq,
@@ -1449,7 +1452,7 @@ def _save_keys_common(data, is_mock):
     tele = {"token": update_data.get('telegram_token'), "chat_id": update_data.get('telegram_chat_id')}
     bot = manager.bots.get((current_user.id, is_mock))
     if bot:
-        bot.reload_api_keys(kis_config=toss_cfg, telegram_config=tele, gemini_config={}, core_stocks=core)
+        bot.reload_api_keys(toss_config=toss_cfg, telegram_config=tele, gemini_config={}, core_stocks=core)
 
     return jsonify({"status": "success"})
 
@@ -1545,11 +1548,10 @@ def search_stock():
     # 3순위: 토스증권 API 검색 — KR 봇 우선, 현재 봇 차선
     try:
         kr_bot = manager.bots.get((current_user.id, False))
-        _toss = (getattr(kr_bot, 'toss', None) or getattr(kr_bot, 'kis', None)
-                 if kr_bot else None)
+        _toss = getattr(kr_bot, 'toss', None) if kr_bot else None
         if not _toss:
             _cb = get_current_bot()
-            _toss = getattr(_cb, 'toss', None) or getattr(_cb, 'kis', None)
+            _toss = getattr(_cb, 'toss', None)
         if _toss:
             results = _toss.search_stock_name(query)
             if results:

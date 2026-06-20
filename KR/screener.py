@@ -70,7 +70,7 @@ _ohlcv_cache: dict = {}   # {(ticker, days): (date_str, DataFrame)}
 _cache_lock  = threading.Lock()
 _OHLCV_CACHE_MAX = 500    # 최대 캐시 항목 수 — 초과 시 오래된 절반 제거
 
-def fetch_ohlcv(ticker, days=200, kis=None):
+def fetch_ohlcv(ticker, days=200, toss=None):
     today_str = datetime.today().strftime('%Y%m%d')
     key = (ticker, days)
 
@@ -80,9 +80,9 @@ def fetch_ohlcv(ticker, days=200, kis=None):
             return _ohlcv_cache[key][1]
 
     try:
-        if kis is not None:
+        if toss is not None:
             time.sleep(0.25)  # 모의투자 API 초당 4회 제한 대응
-            df = kis.get_ohlcv(ticker, "D")
+            df = toss.get_ohlcv(ticker, "D")
             if df is not None and not df.empty:
                 result = df.dropna(subset=['close']).tail(days)
                 with _cache_lock:
@@ -349,7 +349,7 @@ def _get_all_listed_tickers() -> tuple:
     return list(movers), list(all_sorted)
 
 
-def get_candidate_tickers(kis=None, verbose=False):
+def get_candidate_tickers(toss=None, verbose=False):
     """
     KOSPI+KOSDAQ 후보 종목 풀 생성.
     - 방법1: KIS API 동적 거래량/등락률 상위 종목 수집
@@ -385,21 +385,21 @@ def get_candidate_tickers(kis=None, verbose=False):
     seen = set()
     unique = []
 
-    # 1. KIS 실시간 상위 (가장 빠른 신호)
+    # 1. 토스 실시간 상위 (가장 빠른 신호)
     dynamic_count = 0
-    if kis is not None:
+    if toss is not None:
         if verbose:
-            print("   🌐 KIS API 실시간 거래량/등락률 상위 종목 수집 중...")
+            print("   🌐 토스 API 실시간 거래량/등락률 상위 종목 수집 중...")
         try:
-            top_kospi      = kis.get_volume_rank(market_div="J", limit=30)
-            top_kosdaq     = kis.get_volume_rank(market_div="Q", limit=30)
-            top_rise_kospi = kis.get_price_change_rank(market_div="J", limit=20)
-            top_rise_kosdaq= kis.get_price_change_rank(market_div="Q", limit=20)
+            top_kospi      = toss.get_volume_rank(market_div="J", limit=30)
+            top_kosdaq     = toss.get_volume_rank(market_div="Q", limit=30)
+            top_rise_kospi = toss.get_price_change_rank(market_div="J", limit=20)
+            top_rise_kosdaq= toss.get_price_change_rank(market_div="Q", limit=20)
             for t in top_kospi + top_kosdaq + top_rise_kospi + top_rise_kosdaq:
                 if t not in seen and t not in EXCLUDE_TICKERS:
                     seen.add(t); unique.append(t); dynamic_count += 1
             if verbose:
-                print(f"   ✨ KIS 실시간 {dynamic_count}개")
+                print(f"   ✨ 토스 실시간 {dynamic_count}개")
         except Exception as e:
             if verbose:
                 print(f"   ⚠️ KIS 실시간 수집 실패: {e}")
@@ -437,7 +437,7 @@ def get_candidate_tickers(kis=None, verbose=False):
     return unique
 
 
-def get_volume_surge_tickers(kis=None,
+def get_volume_surge_tickers(toss=None,
                               market_list=("KOSPI", "KOSDAQ"),
                               surge_ratio=1.8,
                               min_cap_billion=300,
@@ -450,7 +450,7 @@ def get_volume_surge_tickers(kis=None,
     - max_scan: OHLCV 분석 최대 종목 수 (후보는 중요도순 정렬 — 상위가 핵심)
     Returns: dict { ticker: volume_score }
     """
-    tickers = get_candidate_tickers(kis=kis, verbose=verbose)
+    tickers = get_candidate_tickers(toss=toss, verbose=verbose)
     # 하드 캡: 급등 활황일에도 max_scan 이내로 제한 (서버 보호)
     # 후보 순서 = KIS 실시간 → BASE_POOL → pykrx 급등 조건 → 중요도 높은 순
     if len(tickers) > max_scan:
@@ -467,7 +467,7 @@ def get_volume_surge_tickers(kis=None,
             continue
         try:
             # 💡 days=80 대신 백테스트 기간인 BACKTEST_DAYS(130)로 일치시켜 캐시된 데이터를 재사용하게 만듭니다.
-            df = fetch_ohlcv(ticker, days=BACKTEST_DAYS, kis=kis) # 🟢 kis 파라미터 추가
+            df = fetch_ohlcv(ticker, days=BACKTEST_DAYS, toss=toss)
             if len(df) < 30 or 'volume' not in df.columns:
                 continue
             if df['close'].iloc[-1] < 1000:
@@ -853,7 +853,7 @@ def find_best_strategy(df):
 # ──────────────────────────────────────────────
 # 5. 메인 선정 함수
 # ──────────────────────────────────────────────
-def select_satellites(kis=None, n=NUM_SATELLITES, verbose=True, claude_client=None, bear_mode=False, sector_guide: str = '', real_kis=None, exclude: set = None):
+def select_satellites(toss=None, n=NUM_SATELLITES, verbose=True, claude_client=None, bear_mode=False, sector_guide: str = '', real_toss=None, exclude: set = None):
     """
     멀티팩터 위성 종목 선정 (딥러닝 PyTorch 확률 예측 엔진 연동 완료)
 
@@ -899,20 +899,20 @@ def select_satellites(kis=None, n=NUM_SATELLITES, verbose=True, claude_client=No
 
     # 거래량 임계치 1.3x — 한국 급등주 백테스트 분석 결과 평균 1.33x (기존 1.5에서 완화)
     volume_surges = get_volume_surge_tickers(
-        kis=kis, market_list=("KOSPI", "KOSDAQ"),
+        toss=toss, market_list=("KOSPI", "KOSDAQ"),
         surge_ratio=1.3, min_cap_billion=300, max_tickers=150, verbose=verbose
     )
 
     # 외인/기관 순매수 팩터 수집
-    # real_kis가 주입된 경우(모의봇) 실전 API로 데이터 조회, 없으면 kis 자체 사용
-    _fi_kis = real_kis or kis
+    # real_toss가 주입된 경우(모의봇) 실전 API로 데이터 조회, 없으면 toss 자체 사용
+    _fi_toss = real_toss or toss
     frgn_inst_tickers = set()
     frgn_only_tickers = set()   # 161번: 외국계 전용 순매수 (037과 구분해 보너스 차별화)
-    if _fi_kis is not None:
+    if _fi_toss is not None:
         # ① 037: 국내기관+외국인 합산 순매수 상위
         try:
-            fi_kospi  = _fi_kis.get_foreign_institution_rank(market_div="J", limit=30)
-            fi_kosdaq = _fi_kis.get_foreign_institution_rank(market_div="Q", limit=30)
+            fi_kospi  = _fi_toss.get_foreign_institution_rank(market_div="J", limit=30)
+            fi_kosdaq = _fi_toss.get_foreign_institution_rank(market_div="Q", limit=30)
             for item in fi_kospi + fi_kosdaq:
                 if (item.get("frgn_ntby_qty", 0) > 0 or item.get("orgn_ntby_qty", 0) > 0):
                     frgn_inst_tickers.add(item["ticker"])
@@ -921,8 +921,8 @@ def select_satellites(kis=None, n=NUM_SATELLITES, verbose=True, claude_client=No
 
         # ② 161: 외국계 증권사 전용 순매수 상위 (전체시장 기준, 금액순)
         try:
-            if hasattr(_fi_kis, 'get_foreign_buy_rank'):
-                fi_frgn = _fi_kis.get_foreign_buy_rank(market_div="0000", sort_by="0", limit=50)
+            if hasattr(_fi_toss, 'get_foreign_buy_rank'):
+                fi_frgn = _fi_toss.get_foreign_buy_rank(market_div="0000", sort_by="0", limit=50)
                 for item in fi_frgn:
                     if item.get("frgn_net_qty", 0) > 0:
                         t = item["ticker"]
@@ -932,7 +932,7 @@ def select_satellites(kis=None, n=NUM_SATELLITES, verbose=True, claude_client=No
             pass
 
         if verbose:
-            src = "(실전 API)" if real_kis else ""
+            src = "(실전 API)" if real_toss else ""
             print(f"   💼 외인/기관 순매수(037): {len(frgn_inst_tickers) - len(frgn_only_tickers - frgn_inst_tickers)}개  "
                   f"외국계 전용(161): {len(frgn_only_tickers)}개 {src}")
 
@@ -983,7 +983,7 @@ def select_satellites(kis=None, n=NUM_SATELLITES, verbose=True, claude_client=No
                 logger.debug(f"[스크리너] ETF 제외: {name}({ticker})")
                 continue
 
-            df   = fetch_ohlcv(ticker, days=BACKTEST_DAYS, kis=kis)
+            df   = fetch_ohlcv(ticker, days=BACKTEST_DAYS, toss=toss)
             if len(df) < 40 or 'close' not in df.columns:
                 continue
 
@@ -1384,7 +1384,7 @@ def select_ai_core_stock(n: int = 2, exclude_tickers=None, verbose: bool = False
 # ──────────────────────────────────────────────
 # 7. 일일 시장 분석 리포트 자동 생성
 # ──────────────────────────────────────────────
-def generate_daily_market_report(claude_client=None, verbose=False, news_context=None, kis=None):
+def generate_daily_market_report(claude_client=None, verbose=False, news_context=None, toss=None):
     """
     코스피/코스닥 대리 지수(ETF) 및 주도 섹터 데이터를 활용하여 텍스트 리포트를 생성합니다.
     claude_client가 제공되면 AI 기반 분석을 수행합니다.
@@ -1430,7 +1430,7 @@ def generate_daily_market_report(claude_client=None, verbose=False, news_context
     volume_surges = {}
     volume_surge_details = []   # [{ticker, name, ratio}] — 봇에 저장용
     try:
-        volume_surges = get_volume_surge_tickers(kis=kis, surge_ratio=2.0, verbose=False)
+        volume_surges = get_volume_surge_tickers(toss=toss, surge_ratio=2.0, verbose=False)
         _surge_lines = [f"- 거래량 2배 급증 종목: 총 {len(volume_surges)}개 (상위 30개 상세)"]
         for _t, _r in list(volume_surges.items())[:30]:
             try:

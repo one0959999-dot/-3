@@ -100,8 +100,8 @@ def fetch_recent_news(stock_name):
 
 
 class KRBotController:
-    """KR 실전 매매 봇 — KIS 국내주식 API"""
-    def __init__(self, user_id, kis_config=None, telegram_config=None, core_stocks=None, satellite_stocks=None):
+    """KR 실전 매매 봇 — 토스증권 국내주식 API"""
+    def __init__(self, user_id, toss_config=None, telegram_config=None, core_stocks=None, satellite_stocks=None):
         self.user_id = user_id
         self.is_running = False
         self.thread = None
@@ -149,9 +149,9 @@ class KRBotController:
         self._last_total_equity = 0.0    # 최근 총자산 스냅샷 (방어자산 예산 계산용)
 
         # 예수금 즉시 반영용 내부 현금 추적기
-        # KIS 모의 API는 체결 후 1~3분 지연이 있어 캐시 API 값 대신 내부 추적값 사용
-        self.internal_cash = None          # 최초 KIS API 값으로 초기화 후 매수/매도마다 즉각 갱신
-        self._last_trade_ts = 0.0          # 마지막 체결 타임스탬프 (KIS API 재동기화 시점 판단)
+        # 토스증권 API는 체결 후 1~3분 지연이 있어 캐시 API 값 대신 내부 추적값 사용
+        self.internal_cash = None          # 최초 토스 API 값으로 초기화 후 매수/매도마다 즉각 갱신
+        self._last_trade_ts = 0.0          # 마지막 체결 타임스탬프 (토스 API 재동기화 시점 판단)
         self._dca_prev_cash      = 0.0     # 전 턴 예수금 스냅샷 (입금 감지용)
         self._dca_deposit_trigger= False   # 이번 턴 입금 감지 플래그
         self._dca_deposit_amount = 0.0     # 감지된 입금액
@@ -195,8 +195,7 @@ class KRBotController:
         self._EMERGENCY_COOLDOWN = 4 * 3600       # 긴급 반성 최소 간격 (4시간)
 
         self.toss: TossInvestApi | None = None
-        self.kis  = None   # 하위 호환성 alias (self.toss 를 가리킴)
-        self.real_kis = None   # legacy compat
+        self.real_toss = None   # legacy compat
         self.telegram = None
         self.claude = None
         self.news_monitor: NewsMonitor | None = None   # DART + Naver 뉴스 모니터
@@ -213,7 +212,7 @@ class KRBotController:
         # 섹터 가이드: 사용자가 입력한 MD 형식 전략 메모 → Claude 매매 심사 시 context로 주입
         self.sector_guide: str = get_sector_guide(user_id) or ''
 
-        self._init_api(kis_config)
+        self._init_api(toss_config)
         self._init_news_monitor()  # DB에서 뉴스 API 키 로드
         
         if telegram_config and telegram_config.get('token'):
@@ -239,11 +238,11 @@ class KRBotController:
         self.perpetual_thread.start()
         self.add_log(f"User {user_id} [{self.mode_name}] Bot Controller 가동 완료.")
 
-    def _init_api(self, kis_config):
-        """토스증권 API 초기화 (kis_config 키 이름 하위 호환 유지)."""
-        client_id     = (kis_config or {}).get('client_id') or (kis_config or {}).get('app_key', '')
-        client_secret = (kis_config or {}).get('client_secret') or (kis_config or {}).get('app_secret', '')
-        account_seq   = (kis_config or {}).get('account_seq') or (kis_config or {}).get('account_no', '')
+    def _init_api(self, toss_config):
+        """토스증권 API 초기화."""
+        client_id     = (toss_config or {}).get('client_id') or (toss_config or {}).get('app_key', '')
+        client_secret = (toss_config or {}).get('client_secret') or (toss_config or {}).get('app_secret', '')
+        account_seq   = (toss_config or {}).get('account_seq') or (toss_config or {}).get('account_no', '')
         if client_id and client_secret:
             try:
                 self.toss = TossInvestApi(
@@ -251,15 +250,12 @@ class KRBotController:
                     client_secret = client_secret.strip(),
                     account_seq   = account_seq.strip(),
                 )
-                self.kis = self.toss   # 하위 호환 alias
                 self.add_log(f"✅ [KR봇] 토스증권 API 연결됨")
             except Exception as e:
                 logger.warning(f"[{self.mode_name}] 토스 API 초기화 실패: {e}")
                 self.toss = None
-                self.kis  = None
         else:
             self.toss = None
-            self.kis  = None
 
     def _init_news_monitor(self):
         """DB에 저장된 뉴스 API 키로 NewsMonitor 초기화."""
@@ -332,7 +328,7 @@ class KRBotController:
             try:
                 if not real_balance or 'stocks' not in real_balance:
                     if self.internal_cash is None:
-                        self.internal_cash = 0.0   # KIS API 실패 지속 시 완전 봉쇄 방지
+                        self.internal_cash = 0.0   # 토스 API 실패 지속 시 완전 봉쇄 방지
                     return
                 real_cash = float(real_balance.get('total_cash', 0))
                 real_stock_value = float(real_balance.get('total_value', 0))
@@ -343,8 +339,8 @@ class KRBotController:
                     self._last_total_equity = total_equity
 
                 # 내부 현금 동기화:
-                # - 첫 조회 시 KIS 값으로 초기화
-                # - 마지막 체결로부터 2분 이상 경과 시 KIS 값으로 재동기화 (드리프트 보정)
+                # - 첫 조회 시 토스 API 값으로 초기화
+                # - 마지막 체결로부터 2분 이상 경과 시 토스 API 값으로 재동기화 (드리프트 보정)
                 if self.internal_cash is None or (time.time() - self._last_trade_ts >= 120):
                     self.internal_cash = real_cash
 
@@ -356,7 +352,7 @@ class KRBotController:
                     #   봇이 재기동할 때마다 "현재 잔고"를 원금으로 덮어쓰는 버그가 있었음.
                     #   (예: 손실 발생 후 재시작 → 남은 잔고를 원금으로 저장 → 수익률 왜곡)
                     # ─ 수정: 파일 플래그 제거, DB 값이 기본값일 때만 업데이트 (재시작-덮어쓰기 방지).
-                    # ─ BUG-FIX: KIS API 첫 응답이 0이면 pure_principal=0 → 조건 미충족 → 기본값 고착
+                    # ─ BUG-FIX: 토스 API 첫 응답이 0이면 pure_principal=0 → 조건 미충족 → 기본값 고착
                     #   → pure_principal > 0인 경우에만 initial_capital_captured=True 확정
                     if pure_principal > 0:
                         db_cash = get_user_initial_cash(self.user_id, self._is_mock)
@@ -373,7 +369,7 @@ class KRBotController:
                     self.pnl_this_turn = 0.0
                     deposit_delta = current_asset_cost - expected_asset_cost
                     # 모의투자에서는 deposit_delta 감지 비활성화:
-                    # KIS 모의 API의 dnca_tot_amt / real_purchase 값이 T+2 정산 지연으로
+                    # 토스 API의 dnca_tot_amt / real_purchase 값이 T+2 정산 지연으로
                     # 30초마다 들쭉날쭉하여 "외부 입금"으로 오인 → initial_cash 누적 부풀기 버그.
                     # 실전 계좌에서만 실제 외부 입출금 감지가 의미 있음.
                     if not self._is_mock:
@@ -423,9 +419,9 @@ class KRBotController:
 
                     # 위성 예산 sync (주문가능현금 캡 적용)
                     buyable_cash = real_cash
-                    if self.kis and hasattr(self.kis, 'get_buyable_cash'):
+                    if self.toss and hasattr(self.toss, 'get_buyable_cash'):
                         try:
-                            _bc = float(self.kis.get_buyable_cash() or 0)
+                            _bc = float(self.toss.get_buyable_cash() or 0)
                             if _bc > 0:
                                 buyable_cash = _bc
                         except Exception:
@@ -451,20 +447,20 @@ class KRBotController:
                         p   = float(real_stock['purchase_price'])
                         c_p = float(real_stock.get('current_price', p))
                     except (KeyError, ValueError, TypeError) as _e:
-                        logger.warning(f"[{self.mode_name}] KIS 잔고 파싱 오류 ({t}): {_e} — 건너뜀")
+                        logger.warning(f"[{self.mode_name}] 토스 잔고 파싱 오류 ({t}): {_e} — 건너뜀")
                         continue
                     if q < 0 or p < 0 or c_p < 0:
-                        logger.warning(f"[{self.mode_name}] KIS 비정상 값 ({t}) q={q} p={p} cp={c_p} — 건너뜀")
+                        logger.warning(f"[{self.mode_name}] 토스 비정상 값 ({t}) q={q} p={p} cp={c_p} — 건너뜀")
                         continue
                     stock_name = real_stock.get('name', t)
                     new_shares[t] = (q, p, c_p, stock_name)
 
                 # API 조회 성공 후에만 shares 초기화 → 교체 (원자적)
-                # stocks=빈목록인데 total_value > 0 → KIS API 오류로 판단, 초기화 건너뜀
+                # stocks=빈목록인데 total_value > 0 → 토스 API 오류로 판단, 초기화 건너뜀
                 _reported_val = float(real_balance.get('total_value', 0))
                 if not new_shares and _reported_val > 100_000:
                     logger.warning(
-                        f"[{self.mode_name}] KIS stocks 빈 응답 (total_value={_reported_val:,.0f}원) — 포지션 초기화 건너뜀"
+                        f"[{self.mode_name}] 토스 stocks 빈 응답 (total_value={_reported_val:,.0f}원) — 포지션 초기화 건너뜀"
                     )
                     return
                 for core in self.core_positions:
@@ -476,20 +472,20 @@ class KRBotController:
                     is_core = False
                     for core in self.core_positions:
                         if core.ticker == t:
-                            core.shares = q; core.avg_price = p; core.kis_current_price = c_p
+                            core.shares = q; core.avg_price = p; core.toss_current_price = c_p
                             if core.floor_shares == 0 and q > 0: core.floor_shares = max(1, int(q * self.core_min_floor_ratio))
                             is_core = True; break
 
                     if not is_core:
                         if t in self.satellite_positions:
                             sat = self.satellite_positions[t]
-                            sat.shares = q; sat.avg_price = p; sat.kis_current_price = c_p
+                            sat.shares = q; sat.avg_price = p; sat.toss_current_price = c_p
                         else:
                             # num_satellites 한도 초과 시 새 위성 자동 추가 차단
                             if len(self.satellite_positions) < self.num_satellites:
                                 self.add_log(f"🌟 {self.mode_name} 계좌 미등록 종목 '{stock_name}'을 위성으로 강제 편입합니다!")
                                 new_sat = Position(t, stock_name, 0.0)
-                                new_sat.shares = q; new_sat.avg_price = p; new_sat.kis_current_price = c_p
+                                new_sat.shares = q; new_sat.avg_price = p; new_sat.toss_current_price = c_p
                                 new_sat.user_managed = True   # 수동 매수 종목 — 스크리너 교체/강제 청산 금지
                                 self.satellite_positions[t] = new_sat
                                 if not any(x['ticker'] == t for x in self.satellite_info):
@@ -559,10 +555,10 @@ class KRBotController:
             ph.status_msg = "상단 ⚙️ 버튼을 눌러 코어 종목을 지정해주세요."
             self.core_positions.append(ph)
             
-        if self.kis:
+        if self.toss:
             def _async_init_balance():
                 try:
-                    real_balance = self.kis.get_account_balance()
+                    real_balance = self.toss.get_account_balance()
                     if real_balance and 'stocks' in real_balance:
                         for real_stock in real_balance['stocks']:
                             t = real_stock['ticker']; q = int(real_stock['shares']); p = float(real_stock['purchase_price'])
@@ -603,12 +599,12 @@ class KRBotController:
             if not (t.isdigit() and len(t) == 6):
                 logger.warning(f"[KR봇] 사용자지정 위성 무시: {t} (KR 형식 아님 — US 봇 전용 종목)")
                 continue
-            # 기본 지표 계산 (OHLCV 캐시 활용 — 없으면 KIS 호출)
+            # 기본 지표 계산 (OHLCV 캐시 활용 — 없으면 토스 API 호출)
             _ret = 0.0; _rsi = None; _vol_ratio = None
             try:
                 df = self._get_cached_base_ohlcv(t)
-                if df.empty and self.kis:
-                    df = self.kis.get_ohlcv(t, "D")
+                if df.empty and self.toss:
+                    df = self.toss.get_ohlcv(t, "D")
                 if df is not None and not df.empty and 'close' in df.columns:
                     c_s = df['close'].dropna()
                     if len(c_s) >= 20:
@@ -637,8 +633,8 @@ class KRBotController:
         with self.lock:
             if ticker in self.ohlcv_cache and self.ohlcv_cache[ticker]['date'] == today_str:
                 return self.ohlcv_cache[ticker]['df'].copy()
-        if self.kis:
-            df = self.kis.get_ohlcv(ticker, "D")
+        if self.toss:
+            df = self.toss.get_ohlcv(ticker, "D")
             if df is None or (not hasattr(df, 'columns')) or ('high' not in df.columns): return pd.DataFrame()
             if df is not None and not df.empty and 'date' in df.columns:
                 df['date'] = pd.to_datetime(df['date'])
@@ -649,8 +645,8 @@ class KRBotController:
 
     def _get_extended_ohlcv(self, ticker, current_price):
         base_df = self._get_cached_base_ohlcv(ticker)
-        if base_df.empty: return self.kis.get_ohlcv(ticker, "D") if self.kis else pd.DataFrame()
-        realtime_data = self.kis.get_realtime_price_data(ticker) if self.kis else None
+        if base_df.empty: return self.toss.get_ohlcv(ticker, "D") if self.toss else pd.DataFrame()
+        realtime_data = self.toss.get_realtime_price_data(ticker) if self.toss else None
         if realtime_data:
             today_row = pd.DataFrame([{'date': pd.to_datetime(_now_kst().date()), 'open': realtime_data['open'], 'high': realtime_data['high'], 'low': realtime_data['low'], 'close': realtime_data['close'], 'volume': realtime_data['volume']}])
         else:
@@ -677,13 +673,13 @@ class KRBotController:
 
     def _buy_order(self, ticker: str, qty: int, pos, name: str, limit_price: int = 0,
                    strategy: str = "", ai_reason: str = "") -> bool:
-        """매수 주문 실행 + KIS 응답 체크. 성공 True, 실패 False (봇 로그에 에러 기록).
+        """매수 주문 실행 + 토스증권 응답 체크. 성공 True, 실패 False (봇 로그에 에러 기록).
         limit_price = 0 → 현재가 +0.3% 지정가 자동 계산 (슬리피지 제한)
         limit_price = -1 → 강제 시장가"""
-        if not self.kis:
+        if not self.toss:
             return False
         if self.internal_cash is None:
-            self.add_log(f"⏳ [{name}] 매수 보류 — KIS 잔고 초기화 대기 중")
+            self.add_log(f"⏳ [{name}] 매수 보류 — 토스 잔고 초기화 대기 중")
             return False
         if limit_price == 0:
             # 코어·위성: 현재가 +0.3% 지정가 → 빠른 체결 + 슬리피지 제한
@@ -692,9 +688,9 @@ class KRBotController:
                 limit_price = int(cp * 1.003)
         elif limit_price == -1:
             limit_price = 0  # 시장가
-        result = self.kis.buy_market_order(ticker, qty, price=limit_price)
+        result = self.toss.buy_market_order(ticker, qty, price=limit_price)
         if result:
-            # 내부 현금 즉시 차감 — KIS 모의 API 반영 지연 보정
+            # 내부 현금 즉시 차감 — 토스 API 반영 지연 보정
             with self.lock:
                 self._last_trade_ts = time.time()
             est_price = self.live_prices.get(ticker, 0) or getattr(pos, 'avg_price', 0) or 0
@@ -708,12 +704,12 @@ class KRBotController:
             except Exception:
                 pass
             return True
-        err = f"⚠️ [{self.mode_name}] {name}({ticker}) {qty}주 매수 주문 실패 — KIS API 오류"
+        err = f"⚠️ [{self.mode_name}] {name}({ticker}) {qty}주 매수 주문 실패 — 토스 API 오류"
         self.add_log(err)
         logger.warning(err)
         with self.lock:
             pos.status = "주문 실패 ❌"
-            pos.status_msg = "KIS API 오류 — 서버 로그 확인 필요"
+            pos.status_msg = "토스 API 오류 — 서버 로그 확인 필요"
             # [BUG-FIX] 주문 실패 시 pos.cash 즉시 초기화.
             # 초기화하지 않으면 다음 사이클에도 동일 금액으로 재시도 → 반복 실패.
             # _sync_internal_balances 가 30초 후 실제 잔고 기준으로 재배정함.
@@ -722,15 +718,15 @@ class KRBotController:
 
     def _sell_order(self, ticker: str, qty: int, pos, name: str, price: int = 0,
                     strategy: str = "", ai_reason: str = "", profit: float = 0) -> bool:
-        """매도 주문 실행 + KIS 응답 체크. 성공 True, 실패 False (봇 로그에 에러 기록)."""
-        if not self.kis:
+        """매도 주문 실행 + 토스증권 응답 체크. 성공 True, 실패 False (봇 로그에 에러 기록)."""
+        if not self.toss:
             return False
         if qty <= 0:
             self.add_log(f"⚠️ SELL 건너뜀: {name}({ticker}) qty={qty} ≤ 0")
             return False
-        result = self.kis.sell_market_order(ticker, qty, price=price)
+        result = self.toss.sell_market_order(ticker, qty, price=price)
         if result:
-            # 내부 현금 즉시 증가 — KIS 모의 API 반영 지연 보정
+            # 내부 현금 즉시 증가 — 토스 API 반영 지연 보정
             with self.lock:
                 self._last_trade_ts = time.time()
             est_price = price or self.live_prices.get(ticker, 0) or getattr(pos, 'avg_price', 0) or 0
@@ -745,7 +741,7 @@ class KRBotController:
             except Exception:
                 pass
             return True
-        err = f"⚠️ [{self.mode_name}] {name}({ticker}) {qty}주 매도 주문 실패 — KIS API 오류"
+        err = f"⚠️ [{self.mode_name}] {name}({ticker}) {qty}주 매도 주문 실패 — 토스 API 오류"
         self.add_log(err)
         logger.warning(err)
         with self.lock:
@@ -1063,7 +1059,7 @@ class KRBotController:
         lines.append(f"⏰ {now_str}")
         return "\n".join(lines)
 
-    def reload_api_keys(self, kis_config, telegram_config, gemini_config, core_stocks):
+    def reload_api_keys(self, toss_config, telegram_config, gemini_config, core_stocks):
         self.cached_balance = None
         try: self.user_core_stocks = json.loads(core_stocks) if core_stocks else []
         except Exception: self.user_core_stocks = []
@@ -1071,7 +1067,7 @@ class KRBotController:
         self.core_ticker = _u['ticker'] if _u else ""
         self.core_name   = _u['name']   if _u else ""
 
-        self._init_api(kis_config)  # toss_config도 같은 형식으로 수용
+        self._init_api(toss_config)
 
         if telegram_config and telegram_config.get('token'):
             self.telegram = TelegramNotifier(token=telegram_config.get('token', '').strip(), chat_id=telegram_config.get('chat_id', '').strip())
@@ -1127,7 +1123,7 @@ class KRBotController:
 
     def initialize_portfolio(self, total_cash):
         self.add_log("포트폴리오 초기화 중...")
-        raw_info, _new_hot = select_satellites(kis=self.kis, n=self.num_satellites * 2, verbose=False, claude_client=self.claude, sector_guide=self.sector_guide)
+        raw_info, _new_hot = select_satellites(toss=self.toss, n=self.num_satellites * 2, verbose=False, claude_client=self.claude, sector_guide=self.sector_guide)
         if _new_hot:
             self.hot_sectors = _new_hot
         if self.hot_sectors:
@@ -1195,8 +1191,8 @@ class KRBotController:
 
         self.satellite_positions = {c['ticker']: Position(c['ticker'], c['name'], per_sat) for c in self.satellite_info}
         
-        if self.kis:
-            real_balance = self.kis.get_account_balance()
+        if self.toss:
+            real_balance = self.toss.get_account_balance()
             if real_balance and 'stocks' in real_balance:
                 for real_stock in real_balance['stocks']:
                     t = real_stock['ticker']; q = int(real_stock['shares']); p = float(real_stock['purchase_price'])
@@ -1368,13 +1364,13 @@ class KRBotController:
         KOSPI200 ETF(069500) 이중 이동평균(20/60일) 배열로 판단.
         국면 변경 시 텔레그램 알림 발송.
         """
-        if not self.kis:
+        if not self.toss:
             return self.market_regime
         if time.time() - self.last_regime_check < self._regime_check_interval:
             return self.market_regime
         try:
             prev   = self.market_regime
-            detail = get_market_regime_detail(self.kis)
+            detail = get_market_regime_detail(self.toss)
             self.last_regime_check = time.time()
 
             # ── 외부 선행 신호 수집 (EWY, NQ선물, USD/KRW) ──────────────────
@@ -1453,12 +1449,12 @@ class KRBotController:
 
             if self.market_regime != prev:
                 # BEAR 전환 시 보유 위성 30% 즉시 손절 (방치 방지)
-                if self.market_regime == "BEAR" and self.kis:
+                if self.market_regime == "BEAR" and self.toss:
                     with self.lock:
                         bear_sat_items = [(t, p) for t, p in self.satellite_positions.items() if p.shares > 0]
                     for _bt, _bp in bear_sat_items:
                         try:
-                            _bprice = self.live_prices.get(_bt) or self.kis.get_current_price(_bt) or 0
+                            _bprice = self.live_prices.get(_bt) or self.toss.get_current_price(_bt) or 0
                             _bqty   = max(1, int(_bp.shares * 0.30))
                             if _bprice > 0 and _bqty > 0 and self._sell_order(_bt, _bqty, _bp, _bp.name):
                                 with self.lock:
@@ -1512,13 +1508,13 @@ class KRBotController:
         종목별 독립 24h 재매수 쿨다운 (휩쏘 방지).
         5분마다 한 번만 실행 (매분 API 호출 방지).
         """
-        if not self.kis:
+        if not self.toss:
             return
         if time.time() - self._last_defensive_check < 300:  # 5분 캐시
             return
         self._last_defensive_check = time.time()
         try:
-            balance = self.kis.get_account_balance()
+            balance = self.toss.get_account_balance()
             if not balance:
                 return
 
@@ -1549,11 +1545,11 @@ class KRBotController:
                     # BEAR 방어헤지: ratio 그대로 사용 (인버스 20% + 달러 13% + 금 7% = 40%)
                     # 나머지 60%는 현금 보유 → 저점매수(bear_bottom_score) 탄약
                     budget = int(total_assets * ratio)
-                    price  = self.kis.get_current_price(ticker)
+                    price  = self.toss.get_current_price(ticker)
                     if price and price > 0:
                         qty = int(budget // price)
                         if qty > 0 and total_cash >= qty * price * 1.002:
-                            if self.kis.buy_market_order(ticker, qty):  # [BUG-FIX] 반환값 확인
+                            if self.toss.buy_market_order(ticker, qty):  # [BUG-FIX] 반환값 확인
                                 total_cash -= qty * price  # 현금 차감 (다음 종목 계산용)
                                 self.add_log(f"🐻 하락장 방어 매수 | {emoji} {name} {qty}주 @ {price:,.0f}원")
                                 self._log_trade(ticker, name, 'BUY', price, "방어자산", f"BEAR 국면 총자산 {ratio*100:.0f}% 헤지")
@@ -1569,9 +1565,9 @@ class KRBotController:
                                 )
 
                 elif regime != "BEAR" and has_pos and shares_held > 0:
-                    if self.kis.sell_market_order(ticker, shares_held):  # [BUG-FIX] 반환값 확인
+                    if self.toss.sell_market_order(ticker, shares_held):  # [BUG-FIX] 반환값 확인
                         self._defensive_sold_ts[ticker] = time.time()  # 종목별 24h 쿨다운 시작
-                        price = self.kis.get_current_price(ticker) or 0
+                        price = self.toss.get_current_price(ticker) or 0
                         def_profit = _net_profit(price, float(holding.get('purchase_price', price)), shares_held) if holding else 0
                         # [C-05] 방어 자산 청산 손익을 장부에 반영
                         with self.lock:
@@ -1595,7 +1591,7 @@ class KRBotController:
 
     def _check_etf_market_positive(self) -> bool:
         """시장 대표 ETF(KOSPI200·KOSDAQ150) 전일 대비율이 모두 -1% 이상이면 매수 허용."""
-        if not self.kis:
+        if not self.toss:
             return True
         # 모의투자는 ETF API 미지원 → 항상 허용
         if getattr(self, '_is_mock', False):
@@ -1603,7 +1599,7 @@ class KRBotController:
         try:
             threshold = -1.0
             for etf_code, _ in self.market_indices:
-                info = self.kis.get_etf_price(etf_code)
+                info = self.toss.get_etf_price(etf_code)
                 if info and info.get("prdy_ctrt", 0) < threshold:
                     return False
             return True
@@ -1766,8 +1762,8 @@ class KRBotController:
 
         # ── 4. 분봉 추세 ─────────────────────────────────────────
         try:
-            if self.kis:
-                candles = self.kis.get_minute_candles(ticker, count=5)
+            if self.toss:
+                candles = self.toss.get_minute_candles(ticker, count=5)
                 if candles and len(candles) >= 3:
                     c_prices = [c["close"] for c in candles if c["close"] > 0]
                     if c_prices:
@@ -1779,8 +1775,8 @@ class KRBotController:
         # ── 5. 외국계 순매수 실시간 조회 [국내주식-164] ──────────────
         frgn_inst_str = "N/A"
         try:
-            if self.kis and hasattr(self.kis, 'get_foreign_buy_by_ticker'):
-                fi = self.kis.get_foreign_buy_by_ticker(ticker)
+            if self.toss and hasattr(self.toss, 'get_foreign_buy_by_ticker'):
+                fi = self.toss.get_foreign_buy_by_ticker(ticker)
                 if fi is not None:
                     net  = fi["frgn_net"]
                     buy  = fi["frgn_buy"]
@@ -1797,14 +1793,14 @@ class KRBotController:
         # ── 6. KOSPI / KOSDAQ 대비 상대강도 ─────────────────────────
         market_rs_str = "N/A"
         try:
-            if self.kis and ex_df is not None and not ex_df.empty and 'close' in ex_df.columns:
+            if self.toss and ex_df is not None and not ex_df.empty and 'close' in ex_df.columns:
                 close_s = ex_df['close'].dropna()
                 if len(close_s) >= 2:
                     stock_chg = (float(price) / float(close_s.iloc[-2]) - 1) * 100
                     parts = []
                     for etf_code, idx_name in [("069500", "KOSPI"), ("229200", "KOSDAQ")]:
                         try:
-                            _etf = self.kis.get_etf_price(etf_code)
+                            _etf = self.toss.get_etf_price(etf_code)
                             if _etf and "prdy_ctrt" in _etf:
                                 idx_chg = float(_etf["prdy_ctrt"])
                                 rs = stock_chg - idx_chg
@@ -1853,10 +1849,10 @@ class KRBotController:
 
     def _check_minute_trend_up(self, ticker: str) -> bool:
         """최근 5개 분봉 종가 기울기가 양수(상승 추세)이면 True."""
-        if not self.kis:
+        if not self.toss:
             return True
         try:
-            candles = self.kis.get_minute_candles(ticker, count=5)
+            candles = self.toss.get_minute_candles(ticker, count=5)
             if len(candles) < 3:
                 return True  # 데이터 부족 시 차단하지 않음
             closes = [c["close"] for c in candles if c["close"] > 0]
@@ -1924,7 +1920,7 @@ class KRBotController:
                 for core in self.core_positions:
                     if "대기" not in core.status and "심사" not in core.status:
                         if core.shares > 0:
-                            _cp = getattr(core, 'kis_current_price', 0) or self.live_prices.get(core.ticker, 0)
+                            _cp = getattr(core, 'toss_current_price', 0) or self.live_prices.get(core.ticker, 0)
                             _pnl = ((_cp - core.avg_price) / core.avg_price * 100) if core.avg_price > 0 and _cp > 0 else 0
                             core.status = "보유 중 💎"
                             core.status_msg = f"{core.shares}주 보유 중 | 평단 {core.avg_price:,.0f}원 | 수익률 {_pnl:+.1f}% | {_regime_label}"
@@ -1938,7 +1934,7 @@ class KRBotController:
                 for sat in self.satellite_positions.values():
                     if "대기" not in sat.status and "심사" not in sat.status:
                         if sat.shares > 0:
-                            _sp = getattr(sat, 'kis_current_price', 0) or self.live_prices.get(sat.ticker, 0)
+                            _sp = getattr(sat, 'toss_current_price', 0) or self.live_prices.get(sat.ticker, 0)
                             _pnl = ((_sp - sat.avg_price) / sat.avg_price * 100) if sat.avg_price > 0 and _sp > 0 else 0
                             sat.status = "보유 중 ✅"
                             sat.status_msg = f"{sat.shares}주 보유 중 | 평단 {sat.avg_price:,.0f}원 | 수익률 {_pnl:+.1f}% | {_regime_label}"
@@ -1957,9 +1953,9 @@ class KRBotController:
         # → 장중(golden hours)이 아닐 때도 위기 모드가 유지되며,
         #   장이 열리면 반등 여부를 체크하고, 그 전까지는 매매 전체 차단
         if getattr(self, 'is_crisis_mode', False):
-            if is_golden_hours and self.kis:
+            if is_golden_hours and self.toss:
                 main_idx_ticker = self.market_indices[0][0]
-                idx_cp = self.kis.get_current_price(main_idx_ticker)
+                idx_cp = self.toss.get_current_price(main_idx_ticker)
                 if idx_cp:
                     extended_df = self._get_extended_ohlcv(main_idx_ticker, idx_cp)
                     if not extended_df.empty and len(extended_df) >= 5:
@@ -1975,9 +1971,9 @@ class KRBotController:
         if is_golden_hours:
             self._handle_defensive_assets(regime)
 
-        if self.kis:
+        if self.toss:
             try:
-                real_balance = self.kis.get_account_balance()
+                real_balance = self.toss.get_account_balance()
                 if real_balance and 'stocks' in real_balance:
                     self._sync_internal_balances(real_balance)
                     current_total_asset = float(real_balance.get('total_cash', 0)) + float(real_balance.get('total_value', 0))
@@ -1995,13 +1991,13 @@ class KRBotController:
                             safe_satellite_items = list(self.satellite_positions.items())
                         for core in safe_core_positions:
                             if core.shares > 0:
-                                self.kis.sell_market_order(core.ticker, core.shares)
+                                self.toss.sell_market_order(core.ticker, core.shares)
                                 with self.lock:
                                     core.shares = 0  # [C-NEW-03] 서킷브레이커 청산 후 잔여주수 초기화
                                 self.add_log(f"🔥 {self.mode_name} 코어 {core.name} 청산")
                         for ticker, pos in safe_satellite_items:
                             if pos.shares > 0:
-                                self.kis.sell_market_order(ticker, pos.shares)
+                                self.toss.sell_market_order(ticker, pos.shares)
                                 with self.lock:
                                     self._sat_exit_reset(pos)   # 서킷브레이커 전량 청산
                                 self.add_log(f"🔥 {self.mode_name} 위성 {pos.name} 청산")
@@ -2028,13 +2024,13 @@ class KRBotController:
         for core in safe_core_positions:
             if core.ticker == "TBD":  # AI 선정 대기 중 — 매매 스킵
                 continue
-            cp = self.live_prices.get(core.ticker) or getattr(core, 'kis_current_price', 0) or (self.kis.get_current_price(core.ticker) if self.kis else 0)
+            cp = self.live_prices.get(core.ticker) or getattr(core, 'toss_current_price', 0) or (self.toss.get_current_price(core.ticker) if self.toss else 0)
             if not cp or cp <= 0: continue
             with self.lock: core._last_price = cp; c_sh = core.shares; c_fl = core.floor_shares; c_avg = core.avg_price; c_cash = core.cash; c_nm = core.name; c_tk = core.ticker
             try:
                 from KR.strategy import get_rsi_signal
                 ex_df = self._get_extended_ohlcv(c_tk, cp)
-                c_sig, _, c_rsi = get_rsi_signal(c_tk, kis_api=self.kis, df=ex_df)
+                c_sig, _, c_rsi = get_rsi_signal(c_tk, toss_api=self.toss, df=ex_df)
 
                 # ── BULL 국면 진입 신호 보완 ────────────────────────────────
                 # RSI 30/70 전략은 BULL 장에서 RSI 50~70 구간이 대부분이라 BUY 신호가 거의 안 뜸.
@@ -2504,7 +2500,7 @@ class KRBotController:
         for ticker, pos in trading_sat_items:
             try:
                 with self.lock: p_sh = pos.shares; p_avg = pos.avg_price; p_max = pos.max_price; p_cash = pos.cash; p_nm = pos.name
-                price = self.live_prices.get(ticker) or getattr(pos, 'kis_current_price', 0) or (self.kis.get_current_price(ticker) if self.kis else 0)
+                price = self.live_prices.get(ticker) or getattr(pos, 'toss_current_price', 0) or (self.toss.get_current_price(ticker) if self.toss else 0)
                 if not price or price <= 0: continue
                 with self.lock: pos._last_price = price
 
@@ -2516,8 +2512,8 @@ class KRBotController:
                 # ── 진입 점수 계산 (RSI 30은 더이상 필수 아님 — 점수제로 통합) ──
                 _frgn_net = 0
                 try:
-                    if self.kis and hasattr(self.kis, 'get_foreign_buy_by_ticker'):
-                        _fi = self.kis.get_foreign_buy_by_ticker(ticker)
+                    if self.toss and hasattr(self.toss, 'get_foreign_buy_by_ticker'):
+                        _fi = self.toss.get_foreign_buy_by_ticker(ticker)
                         if _fi:
                             _frgn_net = int(_fi.get("frgn_net", 0))
                 except Exception:
@@ -2857,7 +2853,7 @@ class KRBotController:
                     if pyramid_qty > 0 and self._buy_order(ticker, pyramid_qty, pos, p_nm):
                         with self.lock:
                             pos.last_order_time = time.time(); pos.pyramid_done = True; pos.status = "피라미딩 📈"
-                            # [BUG-C4] 피라미딩 후 평단가·보유주수 즉시 갱신 (KIS 동기화 전 손절 방지)
+                            # [BUG-C4] 피라미딩 후 평단가·보유주수 즉시 갱신 (토스 동기화 전 손절 방지)
                             new_shares = pos.shares + pyramid_qty
                             if new_shares > 0:
                                 pos.avg_price = round((pos.avg_price * pos.shares + price * pyramid_qty) / new_shares, 2)
@@ -3289,7 +3285,7 @@ class KRBotController:
             # 새 후보 스캔 (현재 보유 제외)
             from KR.strategy import calculate_entry_score, get_entry_threshold, get_market_regime
             raw_candidates, new_hot = select_satellites(
-                kis=self.kis, n=self.num_satellites * 4,
+                toss=self.toss, n=self.num_satellites * 4,
                 verbose=False, claude_client=self.claude,
                 sector_guide=self.sector_guide,
                 exclude=current_tickers
@@ -3369,7 +3365,7 @@ class KRBotController:
                     pos = self.satellite_positions.get(old_ticker)
                 if not pos or pos.shares == 0:
                     continue  # 이미 청산됨
-                price = self.live_prices.get(old_ticker) or (self.kis.get_current_price(old_ticker) if self.kis else 0)
+                price = self.live_prices.get(old_ticker) or (self.toss.get_current_price(old_ticker) if self.toss else 0)
                 if not price:
                     continue
                 # 기존 종목 매도
@@ -3427,7 +3423,7 @@ class KRBotController:
                     self.add_log(f"🔒 {pos.name}({ticker}) 수동편입 보호 — 재스크리닝 제외")
                     continue
                 time.sleep(0.2)
-                price = self.kis.get_current_price(ticker) if self.kis else 0
+                price = self.toss.get_current_price(ticker) if self.toss else 0
                 if price and pos.avg_price > 0:
                     profit_rt = (price / pos.avg_price - 1) * 100
                     if profit_rt >= _GROWTH_KEEP:
@@ -3444,7 +3440,7 @@ class KRBotController:
                         with self.lock:
                             shares_now = pos.shares
                         if shares_now > 0:
-                            if self.kis: self.kis.sell_market_order(ticker, shares_now, price=int(price))
+                            if self.toss: self.toss.sell_market_order(ticker, shares_now, price=int(price))
                             sell_qty = 0; sell_profit = 0.0  # [BUG-M2] 초기화
                             with self.lock:
                                 # trading_job이 먼저 매도했을 경우 재진입 차단
@@ -3468,7 +3464,7 @@ class KRBotController:
                 for t in list(keep_tickers):
                     pos = self.satellite_positions.get(t)
                     if pos and pos.avg_price > 0:
-                        p = self.live_prices.get(t) or (self.kis.get_current_price(t) if self.kis else 0) or pos.avg_price
+                        p = self.live_prices.get(t) or (self.toss.get_current_price(t) if self.toss else 0) or pos.avg_price
                         profit_map[t] = (p / pos.avg_price - 1) * 100
                     else:
                         profit_map[t] = 0.0
@@ -3484,11 +3480,11 @@ class KRBotController:
                         with self.lock:
                             shares_now = pos.shares
                         price_e = (self.live_prices.get(t)
-                                   or (self.kis.get_current_price(t) if self.kis else 0)
+                                   or (self.toss.get_current_price(t) if self.toss else 0)
                                    or pos.avg_price or 0)
                         sell_qty, excess_profit = 0, 0.0
                         if shares_now > 0 and price_e:
-                            if self.kis and self.kis.sell_market_order(t, shares_now, price=int(price_e)):
+                            if self.toss and self.toss.sell_market_order(t, shares_now, price=int(price_e)):
                                 with self.lock:
                                     if pos.shares > 0:
                                         # [C-03] pos.sell()로 내부 현금 갱신 + 손익 계산
@@ -3527,7 +3523,7 @@ class KRBotController:
             #    기존엔 후보풀이 블랙리스트 종목으로 꽉 차서 pre_filter 후 0개가 남는 문제 발생.
             exclude_set = keep_tickers | bl_set
             raw_info, _new_hot = select_satellites(
-                kis=self.kis, n=self.num_satellites + n_needed + 3,
+                toss=self.toss, n=self.num_satellites + n_needed + 3,
                 verbose=False, claude_client=self.claude, bear_mode=(self.market_regime == "BEAR"),
                 sector_guide=self.sector_guide,
                 exclude=exclude_set,
@@ -3609,10 +3605,10 @@ class KRBotController:
             if not ("09:00" <= now_time_str <= "15:30") or _now.weekday() >= 5: return
 
             market_data = []
-            if self.kis:
+            if self.toss:
                 for ticker, name in self.market_indices:
                     df = self._get_cached_base_ohlcv(ticker)
-                    cp = self.live_prices.get(ticker) or self.kis.get_current_price(ticker)
+                    cp = self.live_prices.get(ticker) or self.toss.get_current_price(ticker)
                     if not df.empty and cp: market_data.append(f"{name}: {cp:,}원 ({((cp/df['close'].iloc[-1])-1)*100:+.2f}%)")
             
             prompt = f"시각 {now_time_str}. 지수: {' | '.join(market_data)}.강세: {', '.join(self.hot_sectors)}. 장중 분위기 짧게 2줄 요약."
@@ -3647,7 +3643,7 @@ class KRBotController:
                 parts.append(f"[실시간 AI 추적]\n{flow_context}")
             combined_context = "\n\n".join(parts) if parts else ""
             
-            report_data = generate_daily_market_report(claude_client=self.claude, verbose=False, news_context=combined_context, kis=self.kis)
+            report_data = generate_daily_market_report(claude_client=self.claude, verbose=False, news_context=combined_context, toss=self.toss)
             if report_data:
                 today_str = _now_kst().strftime('%Y-%m-%d')
                 if not isinstance(self.daily_report, dict) or self.daily_report.get('date') != today_str: self.daily_report = {'date': today_str, '15:40': None}
@@ -3867,7 +3863,7 @@ class KRBotController:
         except Exception: pass
 
     def start(self, total_cash=10_000_000):
-        if not self.kis: return False
+        if not self.toss: return False
         if not self.is_running:
             self.is_running = True
             self.initial_capital_captured = False
@@ -3936,32 +3932,32 @@ class KRBotController:
                 safe_core_positions = list(self.core_positions)
                 safe_satellite_items = list(self.satellite_positions.items())
 
-            # [BUG-FIX] KIS cached_balance에서 실제 pchs_avg_pric(평단가) + prpr(현재가) 추출
+            # [BUG-FIX] 토스 cached_balance에서 실제 평단가 + 현재가 추출
             # pos.avg_price는 봇 내부 추정값으로 실제 체결가와 다를 수 있음.
-            # KIS API 값을 우선 사용하여 KIS 앱과 수익률 일치.
-            _kis_avg: dict = {}   # ticker → pchs_avg_pric (평단가)
-            _kis_price: dict = {} # ticker → prpr (현재가, KIS 잔고 스냅샷 기준)
+            # 토스 API 값을 우선 사용하여 앱과 수익률 일치.
+            _toss_avg: dict = {}   # ticker → 평단가
+            _toss_price: dict = {} # ticker → 현재가 (잔고 스냅샷 기준)
             if self.cached_balance:
                 for _s in self.cached_balance.get('stocks', []):
                     _t = _s.get('ticker', '')
                     _p = float(_s.get('purchase_price', 0))
                     _c = float(_s.get('current_price', 0))
                     if _t and _p > 0:
-                        _kis_avg[_t] = _p
+                        _toss_avg[_t] = _p
                     if _t and _c > 0:
-                        _kis_price[_t] = _c
+                        _toss_price[_t] = _c
 
             total_realtime_stock_val = 0.0
             tracked_tickers = set()   # 봇이 알고 있는 종목 — 나중에 미추적 종목 합산 시 제외용
             cores_data = []
             for core in safe_core_positions:
-                # 대시보드 표시: KIS 잔고 스냅샷(30초 단위) 우선 → WebSocket 보완
-                cp = float(_kis_price.get(core.ticker, 0) or self.live_prices.get(core.ticker, 0) or getattr(core, '_last_price', 0) or getattr(core, 'kis_current_price', 0) or core.avg_price or 0)
+                # 대시보드 표시: 토스 잔고 스냅샷(30초 단위) 우선 → WebSocket 보완
+                cp = float(_toss_price.get(core.ticker, 0) or self.live_prices.get(core.ticker, 0) or getattr(core, '_last_price', 0) or getattr(core, 'toss_current_price', 0) or core.avg_price or 0)
                 core_val = float(core.shares) * cp
                 total_realtime_stock_val += core_val
                 tracked_tickers.add(core.ticker)
-                # KIS 실제 평단가 우선 사용 (봇 내부 추정값 대신)
-                _avg_p = _kis_avg.get(core.ticker) or float(getattr(core, 'avg_price', 0) or 0)
+                # 토스 실제 평단가 우선 사용 (봇 내부 추정값 대신)
+                _avg_p = _toss_avg.get(core.ticker) or float(getattr(core, 'avg_price', 0) or 0)
                 cores_data.append({"name": core.name, "ticker": core.ticker, "shares": core.shares, "floor": core.floor_shares, "price": cp, "value": core_val, "avg_price": _avg_p, "budget": float(getattr(core, 'cash', 0) or 0), "strategy": "장기 우상향" if core.ticker != self.core_ticker else "RSI + floor 보호", "status": getattr(core, 'status', '감시 중 👀'), "status_msg": getattr(core, 'status_msg', '지표 점검 중...'), "dca_mode": bool(getattr(core, 'dca_mode', False))})
 
             satellites = []
@@ -3977,16 +3973,16 @@ class KRBotController:
             for ticker, pos in safe_satellite_items:
                 tracked_tickers.add(ticker)   # 이중 계산 방지 (캡 무관하게 전체 등록)
                 if pos.shares > 0:
-                    sp = float(_kis_price.get(ticker, 0) or self.live_prices.get(ticker, 0) or getattr(pos, '_last_price', 0) or getattr(pos, 'kis_current_price', 0) or pos.avg_price or 0)
+                    sp = float(_toss_price.get(ticker, 0) or self.live_prices.get(ticker, 0) or getattr(pos, '_last_price', 0) or getattr(pos, 'toss_current_price', 0) or pos.avg_price or 0)
                     _sat_price_cache[ticker] = sp
                     total_realtime_stock_val += float(pos.shares) * sp
 
             # UI 표시는 capped_items으로만
             for ticker, pos in capped_items:
-                sp = _sat_price_cache.get(ticker) or float(_kis_price.get(ticker, 0) or self.live_prices.get(ticker, 0) or getattr(pos, '_last_price', 0) or getattr(pos, 'kis_current_price', 0) or pos.avg_price or 0)
+                sp = _sat_price_cache.get(ticker) or float(_toss_price.get(ticker, 0) or self.live_prices.get(ticker, 0) or getattr(pos, '_last_price', 0) or getattr(pos, 'toss_current_price', 0) or pos.avg_price or 0)
                 sat_val = float(pos.shares) * sp
-                # KIS 실제 평단가 우선 사용 (봇 내부 추정값 대신)
-                _avg_p = _kis_avg.get(ticker) or float(getattr(pos, 'avg_price', 0) or 0)
+                # 토스 실제 평단가 우선 사용 (봇 내부 추정값 대신)
+                _avg_p = _toss_avg.get(ticker) or float(getattr(pos, 'avg_price', 0) or 0)
                 satellites.append({"name": pos.name, "ticker": ticker, "shares": pos.shares, "price": sp, "value": sat_val, "avg_price": _avg_p, "budget": float(getattr(pos, 'cash', 0) or 0), "status": getattr(pos, 'status', '감시 중 👀'), "status_msg": getattr(pos, 'status_msg', '지표 점검 중...')})
 
             try:
@@ -4008,7 +4004,7 @@ class KRBotController:
 
             # mock_total_asset: 코어+위성+미추적 종목 전체 반영 후 계산
             if self.cached_balance or self.internal_cash is not None:
-                # internal_cash 우선 사용 — KIS 모의 API 1~3분 반영 지연 보정
+                # internal_cash 우선 사용 — 토스 API 1~3분 반영 지연 보정
                 if self.internal_cash is not None:
                     api_cash = self.internal_cash
                 else:
@@ -4028,10 +4024,10 @@ class KRBotController:
             for asset in DEFENSIVE_ASSETS:
                 d_ticker = asset['ticker']
                 d_price  = self.live_prices.get(d_ticker, 0)
-                # WebSocket 미연결 시 KIS API fallback
-                if not d_price and self.kis:
+                # WebSocket 미연결 시 토스 API fallback
+                if not d_price and self.toss:
                     try:
-                        d_price = self.kis.get_current_price(d_ticker) or 0
+                        d_price = self.toss.get_current_price(d_ticker) or 0
                         if d_price:
                             with self.lock:
                                 self.live_prices[d_ticker] = d_price
@@ -4092,6 +4088,6 @@ class KRBotController:
             _today_str = _now_kst().strftime('%Y-%m-%d')
             pnl_today = float(self.daily_pnl.get(_today_str, 0.0)) if hasattr(self, 'daily_pnl') else 0.0
 
-            return {"is_running": self.is_running, "is_mock": self._is_mock, "has_keys": self.kis is not None, "logs": recent_logs, "hot_sectors": self.hot_sectors, "num_satellites": self.num_satellites, "cores": cores_data, "satellites": satellites, "satellite_info": sat_info_snapshot, "momentum_list": momentum_list, "defensive_list": defensive_list, "market_regime": self.market_regime, "mock_total_asset": mock_total_asset, "mock_pnl": mock_pnl, "mock_pnl_rt": mock_pnl_rt, "initial_cash": current_initial_cash, "available_cash": available_cash, "pnl_today": pnl_today}
+            return {"is_running": self.is_running, "is_mock": self._is_mock, "has_keys": self.toss is not None, "logs": recent_logs, "hot_sectors": self.hot_sectors, "num_satellites": self.num_satellites, "cores": cores_data, "satellites": satellites, "satellite_info": sat_info_snapshot, "momentum_list": momentum_list, "defensive_list": defensive_list, "market_regime": self.market_regime, "mock_total_asset": mock_total_asset, "mock_pnl": mock_pnl, "mock_pnl_rt": mock_pnl_rt, "initial_cash": current_initial_cash, "available_cash": available_cash, "pnl_today": pnl_today}
         except Exception as critical_e:
             return {"is_running": False, "is_mock": self._is_mock, "has_keys": False, "logs": [{"time": "Error", "message": f"오류: {str(critical_e)}"}], "hot_sectors": [], "num_satellites": self.num_satellites, "cores": [], "satellites": [], "momentum_list": [], "mock_total_asset": 0, "mock_pnl": 0, "mock_pnl_rt": 0, "initial_cash": 10000000}

@@ -27,11 +27,11 @@ from pykrx import stock
 warnings.filterwarnings("ignore")
 
 # ── 토스증권 API 로드 (종목 유니버스 수집용) ──
-_KIS = None
-def _init_kis():
-    global _KIS
-    if _KIS is not None:
-        return _KIS
+_TOSS = None
+def _init_toss():
+    global _TOSS
+    if _TOSS is not None:
+        return _TOSS
     try:
         sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
         import database
@@ -41,14 +41,14 @@ def _init_kis():
         conn.close()
         if user and user["real_app_key"]:
             from base.toss_api import TossInvestApi
-            _KIS = TossInvestApi(
+            _TOSS = TossInvestApi(
                 client_id     = user["real_app_key"],
                 client_secret = user["real_app_secret"],
                 account_seq   = user["real_account_no"] or "",
             )
     except Exception as e:
         print(f"  [경고] 토스 API 로드 실패: {e}")
-    return _KIS
+    return _TOSS
 
 # ═══════════════════════════════════════════════
 #  설정
@@ -182,14 +182,14 @@ _FALLBACK_TICKERS = [
 def get_target_tickers():
     """KIS API 랭킹 여러 소스 + fallback → 중복제거 유니버스 반환"""
     print("  📋 종목 유니버스 수집 중...", end=" ", flush=True)
-    kis = _init_kis()
+    toss = _init_toss()
     universe = set()
 
-    if kis:
+    if toss:
         try:
             for market in ["J", "Q"]:   # J=KOSPI, Q=KOSDAQ
                 for fn_name in ["get_volume_rank", "get_price_change_rank"]:
-                    fn = getattr(kis, fn_name, None)
+                    fn = getattr(toss, fn_name, None)
                     if fn:
                         result = fn(market_div=market, limit=30)
                         if result:

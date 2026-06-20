@@ -1,5 +1,5 @@
 ﻿"""
-us_screener.py — 미국장 위성 종목 스크리너 (yfinance 기반, KR 동등 수준)
+us_screener.py — 미국장 위성 종목 스크리너 (yfinance 기반, KR 동등 수준, 토스증권 API 통합)
 ──────────────────────────────────────────────────────────────────────
 ① S&P 500 동적 유니버스 (Wikipedia, 일 1회 캐싱) + 기존 고성장 목록
 ② 섹터 ETF 모멘텀 (GICS 기반, 20d×0.7 + 5d×0.3 듀얼 모멘텀, 4시간 캐시)
@@ -606,7 +606,7 @@ def scan_us_cores(n: int = 3, exclude: set = None) -> list[dict]:
     return _scan_universe(CORE_UNIVERSE, n, exclude or set(), _core_score)
 
 
-def scan_us_satellites(n: int = 5, exclude: set = None, kis_api=None) -> list[dict]:
+def scan_us_satellites(n: int = 5, exclude: set = None, toss_api=None) -> list[dict]:
     """
     US 위성 종목 멀티팩터 스크리닝 (KR select_satellites와 동등 수준).
 
@@ -618,12 +618,12 @@ def scan_us_satellites(n: int = 5, exclude: set = None, kis_api=None) -> list[di
     ⑥ 신호 준비도 (BUY 신호까지 거리)
     ⑦ PyTorch LSTM 딥러닝 상승확률
     ⑧ 과열 패널티 (20d +15% 초과 + 거래량 서지 없으면 패널티)
-    ⑨ KIS 랭킹 보너스 (kis_api 제공 시 자동 통합)
+    ⑨ 토스 랭킹 보너스 (toss_api 제공 시 자동 통합)
 
     Returns list of dicts (score 내림차순 전체):
       ticker, name, sector, score, price, momentum_20d, momentum_60d,
       rsi, golden, vol_ratio, sector_bonus, best_strategy, backtest_return,
-      signal_readiness, ai_up_prob, kis_bonus
+      signal_readiness, ai_up_prob, toss_bonus
     """
     global _dl_predictor_us
 
@@ -649,14 +649,14 @@ def scan_us_satellites(n: int = 5, exclude: set = None, kis_api=None) -> list[di
         top4 = [f"{s}({v:+.1f}%)" for s, v in sorted_sectors[:4]]
         logger.info(f"[US스크리너] 강세섹터 TOP4: {', '.join(top4)}")
 
-    # ③ KIS 랭킹 보너스 수집 (선택)
-    kis_bonuses: dict[str, float] = {}
-    if kis_api is not None:
+    # ③ 토스 랭킹 보너스 수집 (선택)
+    toss_bonuses: dict[str, float] = {}
+    if toss_api is not None:
         try:
-            kis_results = scan_us_satellites_kis(kis_api, n=50, exclude=exclude_set)
-            for item in kis_results:
-                kis_bonuses[item['ticker']] = item.get('score', 0.0)
-            logger.info(f"[US스크리너] KIS 랭킹 보너스: {len(kis_bonuses)}개 종목")
+            toss_results = scan_us_satellites_toss(toss_api, n=50, exclude=exclude_set)
+            for item in toss_results:
+                toss_bonuses[item['ticker']] = item.get('score', 0.0)
+            logger.info(f"[US스크리너] 토스 랭킹 보너스: {len(toss_bonuses)}개 종목")
         except Exception as e:
             logger.warning(f"[US스크리너] KIS 랭킹 수집 실패: {e}")
 
@@ -818,9 +818,9 @@ def scan_us_satellites(n: int = 5, exclude: set = None, kis_api=None) -> list[di
                     ai_up_prob = 50.0
             score += (ai_up_prob - 50.0) * 0.2
 
-            # ── ⑩ KIS 랭킹 보너스 ───────────────────────────────────
-            kis_bonus = min(30.0, kis_bonuses.get(ticker, 0.0) * 0.15)
-            score += kis_bonus
+            # ── ⑩ 토스 랭킹 보너스 ───────────────────────────────────
+            toss_bonus = min(30.0, toss_bonuses.get(ticker, 0.0) * 0.15)
+            score += toss_bonus
 
             # ── ⑪ MACD 역추세 눌림목 보너스 ──────────────────────────
             # 데드크로스 구간 = 단기 눌림 = 저점 진입 기회 → 가산
@@ -860,7 +860,7 @@ def scan_us_satellites(n: int = 5, exclude: set = None, kis_api=None) -> list[di
                 "backtest_return":      round(best_ret_val, 1),
                 "signal_readiness":     round(sig_ready, 1),
                 "ai_up_prob":           round(ai_up_prob, 1),
-                "kis_bonus":            round(kis_bonus, 1),
+                "toss_bonus":           round(toss_bonus, 1),
                 "macd_state":           macd_state,
                 "macd_pullback_bonus":  round(macd_pullback_bonus, 1),
             })
@@ -882,18 +882,18 @@ def scan_us_satellites(n: int = 5, exclude: set = None, kis_api=None) -> list[di
             f"  RSI:{r['rsi']:4.1f}  20d:{r['momentum_20d']:+5.1f}%"
             f"  {'🟡골든' if r['golden'] else '      '}"
             f"  {r['best_strategy']:<14}  DL:{r['ai_up_prob']:.0f}%"
-            f"  KIS:{r['kis_bonus']:.0f}pt"
+            f"  토스:{r['toss_bonus']:.0f}pt"
         )
     return results
 
 
-# ── KIS 기반 스크리너 ─────────────────────────────────────────────────
+# ── 토스 기반 스크리너 ─────────────────────────────────────────────────
 
-def scan_us_satellites_kis(kis_api, n: int = 5, exclude: set = None) -> list[dict]:
+def scan_us_satellites_toss(toss_api, n: int = 5, exclude: set = None) -> list[dict]:
     """
-    KIS 해외주식 랭킹 API 기반 미국 위성 스크리너.
+    토스증권 해외주식 랭킹 API 기반 미국 위성 스크리너.
 
-    yfinance 대신 KIS 실시간 데이터를 사용:
+    yfinance 대신 토스 실시간 데이터를 사용:
     - 거래량 순위 (HHDFS76310010)
     - 거래증가율 순위 (HHDFS76330000)
     - 52주 신고가 돌파 (HHDFS76300000)
@@ -925,7 +925,7 @@ def scan_us_satellites_kis(kis_api, n: int = 5, exclude: set = None) -> list[dic
                     "rate":    float(item.get("rate", 0)),
                     "score":   0.0,
                     "sources": [],
-                    "sector":  "KIS랭킹",
+                    "sector":  "토스랭킹",
                 }
             all_items[ticker]["score"]   += score_bonus
             all_items[ticker]["sources"].append(source)
@@ -938,23 +938,23 @@ def scan_us_satellites_kis(kis_api, n: int = 5, exclude: set = None) -> list[dic
     try:
         for excd in exchanges:
             # ① 거래증가율 (서프라이즈 모멘텀) — 가장 중요
-            _add(kis_api.scan_trade_growth(exchange=excd, n=50),
+            _add(toss_api.scan_trade_growth(exchange=excd, n=50),
                  "trade_growth", 30.0)
             time.sleep(0.1)
             # ② 52주 신고가 (강한 추세 확인)
-            _add(kis_api.scan_new_highs(exchange=excd, n=50),
+            _add(toss_api.scan_new_highs(exchange=excd, n=50),
                  "new_high", 25.0)
             time.sleep(0.1)
             # ③ 거래량 순위 (유동성 확인)
-            _add(kis_api.scan_top_volume(exchange=excd, n=50, min_price=MIN_PRICE),
+            _add(toss_api.scan_top_volume(exchange=excd, n=50, min_price=MIN_PRICE),
                  "top_volume", 15.0)
             time.sleep(0.1)
             # ④ 상승율 순위 (단기 가격 모멘텀)
-            _add(kis_api.scan_top_gainers(exchange=excd, n=50),
+            _add(toss_api.scan_top_gainers(exchange=excd, n=50),
                  "top_gainer", 20.0)
             time.sleep(0.1)
     except Exception as e:
-        logger.warning(f"[KIS스크리너] 랭킹 수집 중 오류: {e}")
+        logger.warning(f"[토스스크리너] 랭킹 수집 중 오류: {e}")
 
     if not all_items:
         logger.warning("[KIS스크리너] 결과 없음")
@@ -993,10 +993,10 @@ def scan_us_satellites_kis(kis_api, n: int = 5, exclude: set = None) -> list[dic
 
 # ── 실시간 가격 조회 ──────────────────────────────────────────────────
 
-def get_us_prices_batch(tickers, kis_api=None) -> dict[str, float]:
+def get_us_prices_batch(tickers, toss_api=None) -> dict[str, float]:
     """
     복수 종목 USD 가격 배치 조회.
-    kis_api 제공 시 KIS 복수시세조회(HHDFS76220000) 우선 사용.
+    toss_api 제공 시 토스 복수시세조회(HHDFS76220000) 우선 사용.
     Returns {ticker: price_usd}
     """
     tickers = list(tickers)
@@ -1005,13 +1005,13 @@ def get_us_prices_batch(tickers, kis_api=None) -> dict[str, float]:
 
     prices: dict[str, float] = {}
 
-    # ── KIS 우선 조회 ────────────────────────────────────────────────
-    if kis_api is not None:
+    # ── 토스 우선 조회 ────────────────────────────────────────────────
+    if toss_api is not None:
         try:
-            kis_prices = kis_api.get_prices_batch_multi(tickers)
-            prices.update(kis_prices)
+            toss_prices = toss_api.get_prices_batch_multi(tickers)
+            prices.update(toss_prices)
         except Exception as e:
-            logger.debug(f"[US스크리너] KIS 배치 가격 조회 실패: {e}")
+            logger.debug(f"[US스크리너] 토스 배치 가격 조회 실패: {e}")
 
     missing = [t for t in tickers if t not in prices]
     if not missing:

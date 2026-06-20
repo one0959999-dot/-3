@@ -35,7 +35,6 @@ def init_db():
             password_hash TEXT NOT NULL,
             real_app_key TEXT, real_app_secret TEXT, real_account_no TEXT,
             us_app_key TEXT, us_app_secret TEXT, us_account_no TEXT,
-            kis_app_key TEXT, kis_app_secret TEXT, kis_account_no TEXT,
             telegram_token TEXT, telegram_chat_id TEXT, gemini_api_key TEXT,
             initial_cash REAL DEFAULT 10000000, is_running INTEGER DEFAULT 0,
             is_mock INTEGER DEFAULT 1, core_stocks TEXT
@@ -54,6 +53,10 @@ def init_db():
                 ('dart_api_key', 'TEXT'), ('naver_client_id', 'TEXT'), ('naver_client_secret', 'TEXT'),
                 # 섹터 가이드 (사용자가 직접 입력하는 MD 형식 전략 메모)
                 ('sector_guide', 'TEXT'),
+                # 토스증권 API 자격증명 (KR/US 통합 단일 계좌)
+                ('toss_client_id', 'TEXT'),
+                ('toss_client_secret', 'TEXT'),
+                ('toss_account_seq', 'TEXT'),
             ]
             for col_name, col_type in new_columns:
                 try:
@@ -68,6 +71,10 @@ def init_db():
                 ('mock_app_secret',  'us_app_secret'),
                 ('mock_account_no',  'us_account_no'),
                 ('mock_initial_cash','us_initial_cash'),
+                # real_*/us_* → toss_* 단일 계좌 컬럼으로 마이그레이션
+                ('real_app_key',  'toss_client_id'),
+                ('real_app_secret','toss_client_secret'),
+                ('real_account_no','toss_account_seq'),
             ]
             existing_cols = {r[1] for r in cursor.execute('PRAGMA table_info(users)').fetchall()}
             for src, dst in legacy_copies:

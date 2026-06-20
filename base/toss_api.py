@@ -7,7 +7,7 @@ https://developers.tossinvest.com/docs
 - 시장 데이터: 현재가(200종목 일괄), 캔들, 상하한가, 환율, 장운영정보
 - 계좌/자산: 보유주식, 매수가능금액
 - 주문: KR 지정가(시장가 불가), US 시장가/지정가
-- KIS 호환 메서드: get_account_balance(), get_balance(), buy_market_order(),
+- 토스증권 compat 메서드: get_account_balance(), get_balance(), buy_market_order(),
                   sell_market_order(), get_ohlcv(), get_prices_batch() 등
 """
 
@@ -162,12 +162,12 @@ class TossInvestApi:
         return self.get_prices([symbol]).get(symbol, 0.0)
 
     def get_current_price(self, symbol: str) -> float | None:
-        """KIS compat"""
+        """토스증권 compat"""
         p = self.get_price(symbol)
         return p if p > 0 else None
 
     def get_prices_batch(self, symbols: list[str]) -> dict[str, float]:
-        """KIS compat"""
+        """토스증권 compat"""
         return self.get_prices(symbols)
 
     # ────────────────────────────────────────────────────────────────────
@@ -227,16 +227,16 @@ class TossInvestApi:
         return df
 
     def get_ohlcv(self, symbol: str, period: str = "D") -> pd.DataFrame:
-        """KIS compat: period 'D'=일봉, 'M'=분봉"""
+        """토스증권 compat: period 'D'=일봉, 'M'=분봉"""
         interval = "1m" if period == "M" else "1d"
         return self.get_candles(symbol, interval=interval, count=200)
 
     def get_minute_candles(self, ticker: str, count: int = 10, market: str = "J") -> pd.DataFrame:
-        """KIS compat"""
+        """토스증권 compat"""
         return self.get_candles(ticker, interval="1m", count=count)
 
     def get_realtime_price_data(self, symbol: str) -> dict | None:
-        """KIS compat — 현재가 dict 형태로 반환"""
+        """토스증권 compat — 현재가 dict 형태로 반환"""
         p = self.get_price(symbol)
         if p > 0:
             return {"stck_prpr": str(int(p)), "prpr": str(int(p))}
@@ -340,14 +340,14 @@ class TossInvestApi:
         return any(w.get("warningType") in danger for w in warnings)
 
     def search_stock_name(self, query: str) -> list[dict]:
-        """KIS compat — symbol 직접 조회로 대체"""
+        """토스증권 compat — symbol 직접 조회로 대체"""
         data = self.get_stock_info([query.upper()])
         if data:
             return [{"ticker": d["symbol"], "name": d.get("name", d["symbol"])} for d in data]
         return []
 
     def get_etf_price(self, etf_code: str) -> dict | None:
-        """KIS compat"""
+        """토스증권 compat"""
         price = self.get_price(etf_code)
         return {"current_price": price} if price > 0 else None
 
@@ -392,7 +392,7 @@ class TossInvestApi:
             return 0.0
 
     def get_account_balance(self) -> dict:
-        """KIS KR compat:
+        """토스증권 KR 잔고 조회:
         {cash, stocks:[{ticker,name,shares,purchase_price,current_price,profit_loss}], total_value}
         KR 종목(6자리 숫자)만 반환.
         """
@@ -438,7 +438,7 @@ class TossInvestApi:
         }
 
     def get_balance(self) -> dict:
-        """KIS US compat:
+        """토스증권 US 잔고 조회:
         {cash_usd, stocks:[{ticker,name,shares,avg_price,current_price,value}]}
         US 종목(알파벳 티커)만 반환.
         """
@@ -543,7 +543,7 @@ class TossInvestApi:
         return False
 
     def buy_market_order(self, symbol: str, qty: int, price: int = 0) -> bool:
-        """KIS compat — KR: 지정가(시장가 불가), US: 시장가
+        """토스증권 compat — KR: 지정가(시장가 불가), US: 시장가
         price=0  → KR: 상한가(즉시체결), US: 시장가
         price>0  → KR/US: 지정가
         price=-1 → 강제 시장가(US only)
@@ -571,7 +571,7 @@ class TossInvestApi:
             return False
 
     def sell_market_order(self, symbol: str, qty: int, price: int = 0) -> bool:
-        """KIS compat — KR: 지정가, US: 시장가
+        """토스증권 compat — KR: 지정가, US: 시장가
         price=0  → KR: 현재가-1틱(빠른체결), US: 시장가
         price>0  → 지정가
         """
@@ -619,7 +619,7 @@ class TossInvestApi:
         return (data or {}).get("orders", [])
 
     def get_unfilled_orders(self) -> list[dict]:
-        """KIS compat"""
+        """토스증권 compat"""
         return self.get_open_orders()
 
     def get_filled_orders(
@@ -639,7 +639,7 @@ class TossInvestApi:
         return (data or {}).get("orders", [])
 
     def get_order_fills(self, date_str: str = "") -> list[dict]:
-        """KIS compat"""
+        """토스증권 compat"""
         today = datetime.now(_KST).strftime("%Y-%m-%d")
         return self.get_filled_orders(from_date=date_str or today, to_date=today)
 
@@ -658,28 +658,21 @@ class TossInvestApi:
         return success
 
     # ────────────────────────────────────────────────────────────────────
-    # KIS compat stubs (스크리너 호환 — 데이터 없음 → 빈 결과)
+    # 토스증권 미지원 메서드 stubs (스크리너 호환 — 데이터 없음 → 빈 결과)
     # ────────────────────────────────────────────────────────────────────
     def get_volume_rank(self, market_div: str = "J", limit: int = 30) -> list:
-        """KIS 거래량 순위 → Toss 미지원, 빈 리스트 반환 (스크리너 fallback 처리)"""
+        """토스증권 미지원 — 빈 리스트 반환 (스크리너 fallback 처리)"""
         return []
 
     def get_price_change_rank(self, market_div: str = "J", limit: int = 20) -> list:
-        """KIS 상승률 순위 → Toss 미지원"""
+        """토스증권 미지원"""
         return []
 
     def get_foreign_institution_rank(self, market_div: str = "0000", limit: int = 30) -> list:
-        """KIS 외국인/기관 순매수 → Toss 미지원"""
+        """토스증권 미지원"""
         return []
 
     def get_foreign_buy_rank(self, market_div: str = "J", limit: int = 30) -> list:
-        """KIS 외국인 순매수 → Toss 미지원"""
+        """토스증권 미지원"""
         return []
 
-    def get_approval_key(self) -> str | None:
-        """KIS WebSocket 인증키 → Toss WebSocket 미지원, None 반환"""
-        return None
-
-    def get_hashkey(self, data: dict) -> str:
-        """KIS hashkey → Toss 불필요"""
-        return ""

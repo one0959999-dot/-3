@@ -157,7 +157,7 @@ def _calc_regime_score(c: pd.Series) -> tuple:
     return score, round(rsi, 1), round(ret22, 2)
 
 
-def get_market_regime(kis_api) -> str:
+def get_market_regime(toss_api) -> str:
     """
     KOSPI200 ETF(069500) 일봉 기준 시장 국면 판단.
     Returns: 'BULL' | 'BEAR' | 'NEUTRAL'
@@ -184,7 +184,7 @@ def get_market_regime(kis_api) -> str:
     최종 판정: score ≥ +5 → BULL (과열 필터 통과 시) | score ≤ -4 → BEAR | 그 외 → NEUTRAL
     """
     try:
-        df = kis_api.get_ohlcv("069500", "D")
+        df = toss_api.get_ohlcv("069500", "D")
         if df is None or df.empty or len(df) < 65:
             return "NEUTRAL"
         c = df['close'].dropna()
@@ -219,7 +219,7 @@ def get_market_regime(kis_api) -> str:
         return "NEUTRAL"
 
 
-def get_market_regime_detail(kis_api) -> dict:
+def get_market_regime_detail(toss_api) -> dict:
     """
     get_market_regime()의 상세 진단 버전.
     국면 판단 근거(점수·ADX·연속일·RSI)를 함께 반환해 로그/알림에 활용.
@@ -243,7 +243,7 @@ def get_market_regime_detail(kis_api) -> dict:
         'downgrade_reason': '',
     }
     try:
-        df = kis_api.get_ohlcv("069500", "D")
+        df = toss_api.get_ohlcv("069500", "D")
         if df is None or df.empty or len(df) < 65:
             return result
         c = df['close'].dropna()
@@ -1255,13 +1255,13 @@ def calc_rsi(series, period=RSI_PERIOD):
     return 100 - 100 / (1 + gain / (loss + 1e-10))
 
 
-def get_recent_prices(ticker, kis_api=None, days=30):
-    """최근 N일 종가 Series 반환 (KIS API 사용)"""
-    if kis_api is None:
+def get_recent_prices(ticker, toss_api=None, days=30):
+    """최근 N일 종가 Series 반환 (토스 API 사용)"""
+    if toss_api is None:
         import pandas as pd
         return pd.Series(dtype=float)
         
-    df = kis_api.get_ohlcv(ticker, "D")
+    df = toss_api.get_ohlcv(ticker, "D")
     if df is None or df.empty or 'close' not in df.columns:
         import pandas as pd
         return pd.Series(dtype=float)
@@ -1269,7 +1269,7 @@ def get_recent_prices(ticker, kis_api=None, days=30):
     return df['close'].dropna().tail(days)
 
 
-def get_rsi_signal(ticker, kis_api=None, df=None):
+def get_rsi_signal(ticker, toss_api=None, df=None):
     """
     RSI(9) 기반 현재 매매 신호 반환 (떨어지는 칼날 방지 및 캐시 데이터프레임 우선 연동)
     Returns: ('BUY' | 'SELL' | 'HOLD', current_price, rsi_value)
@@ -1277,7 +1277,7 @@ def get_rsi_signal(ticker, kis_api=None, df=None):
     if df is not None and not df.empty:
         prices = df['close'].dropna().tail(30)
     else:
-        prices = get_recent_prices(ticker, kis_api, days=30)
+        prices = get_recent_prices(ticker, toss_api, days=30)
         
     if len(prices) < RSI_PERIOD + 2:
         return 'HOLD', 0, 0
@@ -1297,17 +1297,17 @@ def get_rsi_signal(ticker, kis_api=None, df=None):
     return 'HOLD', price, current_rsi
 
 
-def get_signal_by_strategy(ticker, strategy_name, kis_api=None, df=None):
+def get_signal_by_strategy(ticker, strategy_name, toss_api=None, df=None):
     """
-    전략 이름에 따라 실시간 매매 신호 생성 (로컬 패치 캐시 및 KIS 하이브리드 지원)
+    전략 이름에 따라 실시간 매매 신호 생성 (로컬 패치 캐시 및 토스 하이브리드 지원)
     Returns: ('BUY' | 'SELL' | 'HOLD', price, indicator_value)
     """
-    if kis_api is None and df is None:
+    if toss_api is None and df is None:
         return 'HOLD', 0, 0
 
-    # 주입된 캐시 장부가 없다면 백업용으로 KIS API 직접 호출
+    # 주입된 캐시 장부가 없다면 백업용으로 토스 API 직접 호출
     if df is None or df.empty:
-        df = kis_api.get_ohlcv(ticker, "D")
+        df = toss_api.get_ohlcv(ticker, "D")
 
     if df is None or df.empty:
         return 'HOLD', 0, 0

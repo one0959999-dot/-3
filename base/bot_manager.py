@@ -19,16 +19,20 @@ class BotManager:
                 "token": user_data.get('telegram_token'),
                 "chat_id": user_data.get('telegram_chat_id')
             }
+            # 토스증권 단일 계좌: toss_* 필드 우선, 레거시 real_*/us_* 필드 fallback
+            def _toss_val(key_toss, key_legacy):
+                return (user_data.get(key_toss) or user_data.get(key_legacy) or '')
+
             if is_mock:
                 # ── US 모드 (is_mock=True) → 미국장 실전 매매 봇 (토스증권) ──
                 toss_config = {
-                    "client_id":     user_data.get('us_app_key'),
-                    "client_secret": user_data.get('us_app_secret'),
-                    "account_seq":   user_data.get('us_account_no'),
+                    "client_id":     _toss_val('toss_client_id',     'us_app_key'),
+                    "client_secret": _toss_val('toss_client_secret', 'us_app_secret'),
+                    "account_seq":   _toss_val('toss_account_seq',   'us_account_no'),
                 }
                 self.bots[bot_key] = USBotController(
                     user_id,
-                    kis_config=toss_config,
+                    toss_config=toss_config,
                     telegram_config=tele_config,
                     core_stocks=user_data.get('us_core_stocks'),
                     satellite_stocks=user_data.get('us_satellite_stocks'),
@@ -36,9 +40,9 @@ class BotManager:
             else:
                 # ── KR 모드 (is_mock=False) → 한국 실전 봇 (토스증권) ──
                 toss_config = {
-                    "client_id":     user_data.get('real_app_key'),
-                    "client_secret": user_data.get('real_app_secret'),
-                    "account_seq":   user_data.get('real_account_no'),
+                    "client_id":     _toss_val('toss_client_id',     'real_app_key'),
+                    "client_secret": _toss_val('toss_client_secret', 'real_app_secret'),
+                    "account_seq":   _toss_val('toss_account_seq',   'real_account_no'),
                 }
                 self.bots[bot_key] = KRBotController(
                     user_id, toss_config, tele_config,
