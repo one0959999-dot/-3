@@ -561,29 +561,6 @@ class TossInvestApi:
     # ────────────────────────────────────────────────────────────────────
     # 매수가능금액 / 매도가능수량
     # ────────────────────────────────────────────────────────────────────
-    def _extract_cash(self, data: dict | None, currency: str) -> float:
-        """buying-power 응답에서 금액 추출. 응답 구조 불확실하여 가능한 모든 필드 시도."""
-        if not data:
-            return 0.0
-        # 가능한 필드명들 시도
-        for key in ("amount", "buyingPower", "buyableAmount", "availableAmount", "cash"):
-            val = data.get(key)
-            if val is not None:
-                if isinstance(val, dict):
-                    return float(val.get(currency) or 0)
-                try:
-                    return float(val)
-                except (TypeError, ValueError):
-                    pass
-        # 최상위가 직접 {"krw": ..., "usd": ...} 구조인 경우
-        if currency in data:
-            try:
-                return float(data[currency] or 0)
-            except (TypeError, ValueError):
-                pass
-        logger.warning(f"[Toss] buying-power 알 수 없는 응답 구조: {data}")
-        return 0.0
-
     def get_buyable_cash(self, stock_code: str = "005930", price: int = 0) -> float:
         """KRW 매수가능금액"""
         data = self._get("/api/v1/buying-power", {"currency": "KRW"}, with_account=True)
@@ -612,14 +589,12 @@ class TossInvestApi:
         """매도가능수량"""
         data = self._get("/api/v1/sellable-quantity", {"symbol": symbol}, with_account=True)
         if data:
-            logger.info(f"[Toss] sellable-quantity 응답 구조: {list(data.keys()) if isinstance(data, dict) else type(data)}")
-            for key in ("quantity", "sellableQuantity", "sellable", "availableQuantity"):
-                val = data.get(key)
-                if val is not None:
-                    try:
-                        return int(float(val))
-                    except (TypeError, ValueError):
-                        pass
+            val = data.get("sellableQuantity")
+            if val is not None:
+                try:
+                    return int(float(val))
+                except (TypeError, ValueError):
+                    pass
         return 0
 
     # ────────────────────────────────────────────────────────────────────
