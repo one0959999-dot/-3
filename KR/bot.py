@@ -1127,7 +1127,7 @@ class KRBotController:
 
     def initialize_portfolio(self, total_cash):
         self.add_log("포트폴리오 초기화 중...")
-        raw_info, _new_hot = select_satellites(kis=self.kis, n=self.num_satellites * 2, verbose=False, claude_client=self.claude, sector_guide=self.sector_guide, real_kis=self.real_kis)
+        raw_info, _new_hot = select_satellites(kis=self.kis, n=self.num_satellites * 2, verbose=False, claude_client=self.claude, sector_guide=self.sector_guide)
         if _new_hot:
             self.hot_sectors = _new_hot
         if self.hot_sectors:
@@ -3291,7 +3291,7 @@ class KRBotController:
             raw_candidates, new_hot = select_satellites(
                 kis=self.kis, n=self.num_satellites * 4,
                 verbose=False, claude_client=self.claude,
-                sector_guide=self.sector_guide, real_kis=self.real_kis,
+                sector_guide=self.sector_guide,
                 exclude=current_tickers
             )
             if new_hot:
@@ -3529,7 +3529,7 @@ class KRBotController:
             raw_info, _new_hot = select_satellites(
                 kis=self.kis, n=self.num_satellites + n_needed + 3,
                 verbose=False, claude_client=self.claude, bear_mode=(self.market_regime == "BEAR"),
-                sector_guide=self.sector_guide, real_kis=self.real_kis,
+                sector_guide=self.sector_guide,
                 exclude=exclude_set,
             )
             if _new_hot:

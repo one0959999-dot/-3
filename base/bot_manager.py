@@ -1,7 +1,6 @@
 ﻿from KR.bot import KRBotController   # KR 실전 봇
 from US.bot import USBotController   # US 실전 매매 봇
 from ai.claude_api import ClaudeApi
-from KR.kis.real_api import KisRealApi
 
 
 class BotManager:
@@ -21,51 +20,33 @@ class BotManager:
                 "chat_id": user_data.get('telegram_chat_id')
             }
             if is_mock:
-                # ── US 모드 (is_mock=True) → 미국장 실전 매매 봇 (KIS 해외주식) ──
-                us_kis_config = {
-                    "app_key":    user_data.get('us_app_key'),
-                    "app_secret": user_data.get('us_app_secret'),
-                    "account_no": user_data.get('us_account_no'),
+                # ── US 모드 (is_mock=True) → 미국장 실전 매매 봇 (토스증권) ──
+                toss_config = {
+                    "client_id":     user_data.get('us_app_key'),
+                    "client_secret": user_data.get('us_app_secret'),
+                    "account_seq":   user_data.get('us_account_no'),
                 }
                 self.bots[bot_key] = USBotController(
                     user_id,
-                    kis_config=us_kis_config,
+                    kis_config=toss_config,
                     telegram_config=tele_config,
                     core_stocks=user_data.get('us_core_stocks'),
                     satellite_stocks=user_data.get('us_satellite_stocks'),
                 )
             else:
-                # ── KR 모드 (is_mock=False) → 한국 실전 봇 ──
-                kis_config = {
-                    "app_key":    user_data.get('real_app_key'),
-                    "app_secret": user_data.get('real_app_secret'),
-                    "account_no": user_data.get('real_account_no'),
+                # ── KR 모드 (is_mock=False) → 한국 실전 봇 (토스증권) ──
+                toss_config = {
+                    "client_id":     user_data.get('real_app_key'),
+                    "client_secret": user_data.get('real_app_secret'),
+                    "account_seq":   user_data.get('real_account_no'),
                 }
                 self.bots[bot_key] = KRBotController(
-                    user_id, kis_config, tele_config,
+                    user_id, toss_config, tele_config,
                     core_stocks=user_data.get('core_stocks'),
                     satellite_stocks=user_data.get('satellite_stocks'),
                 )
 
         bot = self.bots[bot_key]
-
-        # KR 실전봇: real_kis 인스턴스 주입 (외인/기관 데이터 조회용)
-        # US 봇(is_mock=True)은 yfinance만 사용하므로 KIS 주입 불필요
-        if not is_mock:
-            real_bot = self.bots.get((user_id, False))
-            if real_bot and getattr(real_bot, 'real_kis', None) is None:
-                if user_data.get('real_app_key') and user_data.get('real_app_secret'):
-                    try:
-                        app_key = user_data['real_app_key'].strip()
-                        existing = getattr(bot, 'real_kis', None)
-                        if not existing or getattr(existing, 'app_key', '') != app_key:
-                            bot.real_kis = KisRealApi(
-                                app_key=app_key,
-                                app_secret=user_data['real_app_secret'].strip(),
-                                account_no=(user_data.get('real_account_no') or '').strip(),
-                            )
-                    except Exception:
-                        pass
 
         # 각 봇은 자체 ClaudeApi 인스턴스를 가짐 — 유저 간 채팅 히스토리 공유 방지
         api_key = (user_data.get('claude_api_key') or '').strip()

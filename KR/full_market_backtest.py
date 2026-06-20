@@ -26,7 +26,7 @@ from pykrx import stock
 
 warnings.filterwarnings("ignore")
 
-# ── KIS API 로드 (종목 유니버스 수집용) ──
+# ── 토스증권 API 로드 (종목 유니버스 수집용) ──
 _KIS = None
 def _init_kis():
     global _KIS
@@ -40,14 +40,14 @@ def _init_kis():
         user = conn.execute("SELECT * FROM users LIMIT 1").fetchone()
         conn.close()
         if user and user["real_app_key"]:
-            from kis_brokers.kis_real_api import KisRealApi
-            _KIS = KisRealApi(
-                app_key=user["real_app_key"],
-                app_secret=user["real_app_secret"],
-                account_no=user["real_account_no"] or "",
+            from base.toss_api import TossInvestApi
+            _KIS = TossInvestApi(
+                client_id     = user["real_app_key"],
+                client_secret = user["real_app_secret"],
+                account_seq   = user["real_account_no"] or "",
             )
     except Exception as e:
-        print(f"  [경고] KIS API 로드 실패: {e}")
+        print(f"  [경고] 토스 API 로드 실패: {e}")
     return _KIS
 
 # ═══════════════════════════════════════════════

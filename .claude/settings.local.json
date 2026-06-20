@@ -6,7 +6,8 @@
       "Write(*)",
       "Edit(*)",
       "Glob(*)",
-      "Grep(*)"
+      "Grep(*)",
+      "WebFetch(domain:openapi.tossinvest.com)"
     ]
   }
 }
