@@ -57,7 +57,7 @@ class GeminiApi:
                 for c in cores:
                     lines.append(f"  코어 {c.get('name','')}({c.get('ticker','')}): {c.get('shares',0)}주 | 현재가 {c.get('price',0):,}원")
                 for s in sats:
-                    lines.append(f"  위성 {s.get('name',''')}({s.get('ticker','')}): {s.get('shares',0)}주 | 현재가 {s.get('price',0):,}원")
+                    lines.append(f"  위성 {s.get('name','')}({s.get('ticker','')}): {s.get('shares',0)}주 | 현재가 {s.get('price',0):,}원")
                 port_str = '\n'.join(lines)
 
         system = (
