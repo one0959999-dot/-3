@@ -1182,6 +1182,21 @@ window.resetInitialCash = async function () {
     }
 }
 
+window.resetBotState = async function () {
+    if (!confirm('⚠️ 봇 포지션 상태를 초기화합니다.\n\nKIS 시대 잔재 데이터를 제거하고\n토스증권 실제 잔고 기준으로 새로 시작합니다.\n\n계속하시겠습니까?')) return;
+    try {
+        const res = await fetch('/api/reset_bot_state', { method: 'POST' });
+        const data = await res.json();
+        if (data.status === 'ok') {
+            alert('✅ ' + data.message);
+        } else {
+            alert('❌ ' + (data.message || '오류 발생'));
+        }
+    } catch (e) {
+        alert('❌ 서버 통신 오류: ' + e.message);
+    }
+}
+
 // ─── Growth 편입 후보군 목록 모달 (1단계) ────────────────────────────
 window.showUsSatCandidateListModal = function () {
     const candidates = window._usSatCandidates || [];

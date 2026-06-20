@@ -672,6 +672,32 @@ def reset_initial_cash():
     return jsonify({"status": "ok", "message": msg})
 
 
+@app.route('/api/reset_bot_state', methods=['POST'])
+@login_required
+def reset_bot_state():
+    """KIS 시대 bot_states 잔재 제거 — 서버 DB에서 현재 유저의 bot_states 전체 삭제."""
+    import sqlite3
+    from base.database import DB_PATH
+    try:
+        with sqlite3.connect(DB_PATH) as conn:
+            conn.execute('DELETE FROM bot_states WHERE user_id = ?', (current_user.id,))
+            conn.commit()
+        # 메모리 내 봇 상태도 초기화
+        for is_mock in (False, True):
+            bot = manager.bots.get((current_user.id, is_mock))
+            if bot:
+                with bot.lock:
+                    if hasattr(bot, 'core_position'):
+                        bot.core_position = None
+                    if hasattr(bot, 'satellite_positions'):
+                        bot.satellite_positions = {}
+                    if hasattr(bot, 'core_stock'):
+                        bot.core_stock = None
+        return jsonify({"status": "ok", "message": "봇 상태(포지션)가 초기화되었습니다. 봇을 재시작하면 토스증권 실제 잔고 기준으로 새로 시작합니다."})
+    except Exception as e:
+        return jsonify({"status": "error", "message": str(e)})
+
+
 @app.route('/api/clear_blacklist', methods=['POST'])
 @login_required
 def clear_blacklist():

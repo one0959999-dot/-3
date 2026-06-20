@@ -7,7 +7,13 @@
       "Edit(*)",
       "Glob(*)",
       "Grep(*)",
-      "WebFetch(domain:openapi.tossinvest.com)"
+      "WebFetch(domain:openapi.tossinvest.com)",
+      "WebFetch(domain:developers.tossinvest.com)",
+      "WebFetch(domain:corp.tossinvest.com)",
+      "mcp__Claude_in_Chrome__tabs_context_mcp",
+      "mcp__Claude_in_Chrome__navigate",
+      "mcp__Claude_in_Chrome__get_page_text",
+      "mcp__Claude_in_Chrome__read_page"
     ]
   }
 }
