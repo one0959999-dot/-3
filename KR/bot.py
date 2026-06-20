@@ -25,8 +25,7 @@ from KR.strategy import CorePosition, Position, get_rsi_signal, get_composite_si
 from KR.screener import select_satellites, generate_daily_market_report
 from base.database import update_bot_status, save_portfolio_state, load_portfolio_state, log_trade_journal, get_recent_trades, save_ai_rules, load_ai_rules, get_ai_rules_history, get_user_initial_cash, set_user_initial_cash, add_user_initial_cash, get_news_api_keys, get_sector_guide
 from ai.news_monitor import NewsMonitor
-from KR.kis.real_api import KisRealApi
-from KR.kis.real_websocket import KisRealWebSocket
+from base.toss_api import TossInvestApi
 
 _SELL_FEE = 0.00015   # 매도 수수료율 (0.015%)
 _SELL_TAX = 0.0018    # 증권거래세율 (0.18%)
@@ -195,8 +194,9 @@ class KRBotController:
         self._EMERGENCY_LOSS_THRESHOLD = -80_000  # 8만원 이상 손실 시 긴급 반성 트리거
         self._EMERGENCY_COOLDOWN = 4 * 3600       # 긴급 반성 최소 간격 (4시간)
 
-        self.kis = None
-        self.real_kis = None   # 모의봇에서 외인/기관 데이터 조회용 실전 KIS 인스턴스 (주입 시 사용)
+        self.toss: TossInvestApi | None = None
+        self.kis  = None   # 하위 호환성 alias (self.toss 를 가리킴)
+        self.real_kis = None   # legacy compat
         self.telegram = None
         self.claude = None
         self.news_monitor: NewsMonitor | None = None   # DART + Naver 뉴스 모니터
@@ -232,44 +232,34 @@ class KRBotController:
         self._init_dummy_cores()
         self._init_state_restored = self._restore_state()  # W-06: 결과 저장해 이중 호출 방지
         
-        self.live_prices = {}
-        self.ws_client = None
-
-        def _async_network_connect():
-            if self.kis:
-                try:
-                    app_key_token = self.kis.get_approval_key()
-                    if app_key_token:
-                        def on_price_update(ticker, price):
-                            # W-07: live_prices 쓰기를 lock으로 보호
-                            with self.lock:
-                                self.live_prices[ticker] = price
-                        self.ws_client = self._create_websocket(app_key_token, on_price_update)
-                        if self.ws_client:
-                            self.ws_client.start()
-                except Exception as net_err:
-                    logger.warning(f"[{self.mode_name}] WebSocket 초기 연결 실패: {net_err}")
-
-        threading.Thread(target=_async_network_connect, daemon=True).start()
+        self.live_prices: dict = {}   # 토스 REST 폴링으로 갱신 (WebSocket 대체)
+        self.ws_client = None         # 토스 미지원 — None 유지
 
         self.perpetual_thread = threading.Thread(target=self._perpetual_sync_loop, daemon=True)
         self.perpetual_thread.start()
         self.add_log(f"User {user_id} [{self.mode_name}] Bot Controller 가동 완료.")
 
     def _init_api(self, kis_config):
-        """KIS 실전투자 API 초기화."""
-        if kis_config and kis_config.get('app_key'):
-            self.kis = KisRealApi(
-                app_key    = kis_config.get('app_key', '').strip(),
-                app_secret = kis_config.get('app_secret', '').strip(),
-                account_no = kis_config.get('account_no', '').strip(),
-            )
+        """토스증권 API 초기화 (kis_config 키 이름 하위 호환 유지)."""
+        client_id     = (kis_config or {}).get('client_id') or (kis_config or {}).get('app_key', '')
+        client_secret = (kis_config or {}).get('client_secret') or (kis_config or {}).get('app_secret', '')
+        account_seq   = (kis_config or {}).get('account_seq') or (kis_config or {}).get('account_no', '')
+        if client_id and client_secret:
+            try:
+                self.toss = TossInvestApi(
+                    client_id     = client_id.strip(),
+                    client_secret = client_secret.strip(),
+                    account_seq   = account_seq.strip(),
+                )
+                self.kis = self.toss   # 하위 호환 alias
+                self.add_log(f"✅ [KR봇] 토스증권 API 연결됨")
+            except Exception as e:
+                logger.warning(f"[{self.mode_name}] 토스 API 초기화 실패: {e}")
+                self.toss = None
+                self.kis  = None
         else:
-            self.kis = None
-
-    def _create_websocket(self, app_key, callback):
-        """KIS 실전투자 웹소켓 생성."""
-        return KisRealWebSocket(app_key, price_callback=callback)
+            self.toss = None
+            self.kis  = None
 
     def _init_news_monitor(self):
         """DB에 저장된 뉴스 API 키로 NewsMonitor 초기화."""
@@ -295,48 +285,43 @@ class KRBotController:
     def _perpetual_sync_loop(self):
         while True:
             try:
-                if self.kis:
-                    # 잔고 조회를 별도 스레드에서 실행해 메인 sync 루프 블록 방지
+                if self.toss:
+                    # ── 잔고 조회 (별도 스레드, 최대 15초) ─────────────────
                     result_holder = [None]
                     def _fetch():
                         try:
-                            result_holder[0] = self.kis.get_account_balance()
+                            result_holder[0] = self.toss.get_account_balance()
                         except Exception as fe:
                             logger.warning(f"[{self.mode_name}] 잔고 조회 오류: {fe}")
                     t = threading.Thread(target=_fetch, daemon=True)
                     t.start()
-                    t.join(timeout=15)  # 최대 15초 대기 후 포기
+                    t.join(timeout=15)
 
                     real_balance = result_holder[0]
                     if real_balance:
                         self.cached_balance = real_balance
                         self._sync_internal_balances(real_balance)
 
-                    if self.ws_client:
+                    # ── 현재가 폴링 (Toss REST, WebSocket 대체) ─────────────
+                    try:
                         with self.lock:
-                            current_tickers = [c.ticker for c in self.core_positions] + list(self.satellite_positions.keys())
-                            for idx_ticker, _ in self.market_indices:
-                                if idx_ticker not in current_tickers:
-                                    current_tickers.append(idx_ticker)
-                            # 방어자산 항상 구독 — 대기 상태에도 현재가 표시
-                            for _da in DEFENSIVE_ASSETS:
-                                if _da['ticker'] not in current_tickers:
-                                    current_tickers.append(_da['ticker'])
+                            poll_tickers = (
+                                [c.ticker for c in self.core_positions]
+                                + list(self.satellite_positions.keys())
+                                + [t for t, _ in self.market_indices]
+                                + [d['ticker'] for d in DEFENSIVE_ASSETS]
+                            )
+                        poll_tickers = list(dict.fromkeys(poll_tickers))  # 중복 제거
+                        if poll_tickers:
+                            prices = self.toss.get_prices(poll_tickers)
+                            with self.lock:
+                                self.live_prices.update(prices)
+                    except Exception as _pe:
+                        logger.debug(f"[{self.mode_name}] 현재가 폴링 오류: {_pe}")
 
-                        # [BUG-FIX] subscribed_tickers는 ws_client 내부 set — 반복 중 수정 방지용 스냅샷
-                        try:
-                            current_subscribed = set(self.ws_client.subscribed_tickers)
-                        except Exception:
-                            current_subscribed = set()
-                        for t2 in current_tickers:
-                            if t2 not in current_subscribed:
-                                self.ws_client.subscribe(t2)
-                        for t2 in current_subscribed:
-                            if t2 not in current_tickers:
-                                self.ws_client.unsubscribe(t2)
             except Exception as e:
                 logger.error(f"[{self.mode_name}] _perpetual_sync_loop 오류: {e}", exc_info=True)
-            # 5분마다 상태 자동 저장 (systemctl restart 시 최근 상태 보존)
+            # 5분마다 상태 자동 저장
             if int(time.time()) % 300 < 30:
                 try: self._save_state()
                 except Exception: pass
@@ -1086,7 +1071,7 @@ class KRBotController:
         self.core_ticker = _u['ticker'] if _u else ""
         self.core_name   = _u['name']   if _u else ""
 
-        self._init_api(kis_config)
+        self._init_api(kis_config)  # toss_config도 같은 형식으로 수용
 
         if telegram_config and telegram_config.get('token'):
             self.telegram = TelegramNotifier(token=telegram_config.get('token', '').strip(), chat_id=telegram_config.get('chat_id', '').strip())
@@ -3811,9 +3796,8 @@ class KRBotController:
                 self._run_threaded(self._weekly_self_reflection)
 
         def _kst_morning_websocket():
-            """KST 08:00에만 웹소켓 재연결 (UTC 서버 대응)."""
-            if _now_kst().strftime('%H:%M') == "08:00":
-                self._run_threaded(self.refresh_websocket)
+            """토스 API는 WebSocket 미지원 — REST 폴링이 _perpetual_sync_loop에서 실행됨."""
+            pass
 
         def _kst_morning_prescreen():
             """KST 08:50 — 9:05 첫 매매 전 위성 사전 스크리닝.
@@ -3872,25 +3856,8 @@ class KRBotController:
             time.sleep(1)
     
     def refresh_websocket(self):
-        try:
-            if self.kis:
-                if self.ws_client and self.ws_client.ws:
-                    try: self.ws_client.ws.close()
-                    except Exception: pass
-                app_key = self.kis.get_approval_key()
-                if app_key:
-                    old_subscribed = list(self.ws_client.subscribed_tickers) if self.ws_client else []
-                    # W-07: live_prices 쓰기도 lock으로 보호
-                    def _on_price(t, p):
-                        with self.lock:
-                            self.live_prices[t] = p
-                    self.ws_client = self._create_websocket(app_key, _on_price)
-                    if self.ws_client:
-                        self.ws_client.start()
-                        time.sleep(3.0)
-                        for t in old_subscribed: self.ws_client.subscribe(t)
-        except Exception as e:
-            logger.error(f"[{self.mode_name}] WebSocket 재연결 오류: {e}", exc_info=True)
+        """토스 API는 WebSocket 미지원 — REST 폴링이 _perpetual_sync_loop에서 자동 처리됨."""
+        pass
 
     def run_lstm_training(self):
         try:

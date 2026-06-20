@@ -27,7 +27,7 @@ from US.screener import (
     get_us_prices_batch, generate_us_daily_report,
     get_futures_snapshot, get_sector_trends,
 )
-from US.kis.overseas_api import KisOverseasApi
+from base.toss_api import TossInvestApi
 from base.database import (
     update_bot_status,
     save_portfolio_state,
@@ -100,11 +100,25 @@ def _is_us_sell_hours() -> bool:
 # ── USD/KRW 환율 캐시 (60초) ────────────────────────────────────────
 _fx_cache: dict = {"rate": 1400.0, "ts": 0.0}
 _fx_lock  = threading.Lock()
+_toss_fx_api: "TossInvestApi | None" = None  # US봇 init 시 주입
 
 def _get_fx_rate() -> float:
+    """USD/KRW 환율. 토스 API 우선(1분 갱신) → yfinance fallback."""
     with _fx_lock:
         if time.time() - _fx_cache["ts"] < 60:
             return _fx_cache["rate"]
+    # ① 토스 실시간 환율
+    if _toss_fx_api is not None:
+        try:
+            rate = _toss_fx_api.get_exchange_rate("USD", "KRW")
+            if rate > 0:
+                with _fx_lock:
+                    _fx_cache["rate"] = rate
+                    _fx_cache["ts"]   = time.time()
+                return rate
+        except Exception:
+            pass
+    # ② yfinance fallback
     try:
         hist = yf.Ticker("USDKRW=X").history(period="5d").dropna(subset=["Close"])
         if not hist.empty:
@@ -180,8 +194,10 @@ class USBotController:
         self.mode_name = "US실전"
         self.alert_icon = "🇺🇸"
 
-        # ── KIS 해외주식 API ──────────────────────────────────────────
-        self.kis_overseas: KisOverseasApi | None = None
+        # ── 토스증권 API (KR/US 통합) ────────────────────────────────
+        self.toss: TossInvestApi | None = None
+        self.kis_overseas = None   # 하위 호환 alias (self.toss 를 가리킴)
+        self.kis          = None   # KR compat
         self._init_api(kis_config)
 
         # ── 사용자 지정 종목 (AI 선정 대신 고정) ────────────────────────
@@ -291,19 +307,31 @@ class USBotController:
     # ─────────────────────────────────────────────────────────────────
 
     def _init_api(self, kis_config):
-        """KIS 해외주식 API 초기화"""
-        if kis_config and kis_config.get("app_key") and kis_config.get("app_secret"):
+        """토스증권 API 초기화 (kis_config 키 이름 하위 호환 유지)"""
+        client_id     = (kis_config or {}).get('client_id') or (kis_config or {}).get('app_key', '')
+        client_secret = (kis_config or {}).get('client_secret') or (kis_config or {}).get('app_secret', '')
+        account_seq   = (kis_config or {}).get('account_seq') or (kis_config or {}).get('account_no', '')
+        if client_id and client_secret:
             try:
-                self.kis_overseas = KisOverseasApi(
-                    app_key    = kis_config["app_key"].strip(),
-                    app_secret = kis_config["app_secret"].strip(),
-                    account_no = (kis_config.get("account_no") or "").strip(),
+                self.toss = TossInvestApi(
+                    client_id     = client_id.strip(),
+                    client_secret = client_secret.strip(),
+                    account_seq   = account_seq.strip(),
                 )
+                self.kis_overseas = self.toss   # 하위 호환 alias
+                self.kis          = self.toss
+                # 환율 함수에 Toss API 주입 (모듈 레벨 캐시 갱신)
+                global _toss_fx_api
+                _toss_fx_api = self.toss
+                has_api = "✅ 토스증권 API 연결됨"
             except Exception as e:
-                logger.warning(f"[US봇] KIS 해외주식 API 초기화 실패: {e}")
-                self.kis_overseas = None
+                logger.warning(f"[US봇] 토스 API 초기화 실패: {e}")
+                self.toss = self.kis_overseas = self.kis = None
+                has_api = "⚠️ API 초기화 실패"
         else:
-            self.kis_overseas = None
+            self.toss = self.kis_overseas = self.kis = None
+            has_api = "⚠️ API 미설정"
+        self.add_log(f"[US봇] 🇺🇸 US 실전 매매 봇 초기화 완료 — {has_api}")
 
     # ─────────────────────────────────────────────────────────────────
     # 로그 / 텔레그램
@@ -328,7 +356,7 @@ class USBotController:
     # 잔고 동기화 — KRBotController._sync_internal_balances 패턴 이식
     # ─────────────────────────────────────────────────────────────────
 
-    def _sync_balance_from_kis(self):
+    def _sync_balance_from_toss(self):
         """
         KIS 잔고 재조회 → 현금·포지션·원금 동기화.
         KR 봇의 _sync_internal_balances 패턴을 USD 기준으로 이식.
@@ -534,7 +562,7 @@ class USBotController:
         while True:
             try:
                 if self.kis_overseas:
-                    self._sync_balance_from_kis()
+                    self._sync_balance_from_toss()
             except Exception as e:
                 logger.debug(f"[US봇] 잔고 동기화 오류: {e}")
             time.sleep(60)
@@ -734,7 +762,7 @@ class USBotController:
             except Exception:
                 pass
             # 주문 후 5초 대기 후 즉시 잔고 재조회
-            self._run_threaded(lambda: (time.sleep(5), self._sync_balance_from_kis()))
+            self._run_threaded(lambda: (time.sleep(5), self._sync_balance_from_toss()))
             return qty
         else:
             self.add_log(f"❌ BUY 주문 실패: {name}({ticker}) — KIS 응답 확인 필요")
@@ -778,7 +806,7 @@ class USBotController:
             except Exception:
                 pass
             # 주문 후 5초 대기 후 즉시 잔고 재조회
-            self._run_threaded(lambda: (time.sleep(5), self._sync_balance_from_kis()))
+            self._run_threaded(lambda: (time.sleep(5), self._sync_balance_from_toss()))
             return proceeds
         else:
             self.add_log(f"❌ SELL 주문 실패: {name}({ticker}) — KIS 응답 확인 필요")
@@ -2619,7 +2647,7 @@ class USBotController:
 
         # 초기 자금: KIS 잔고 우선 동기화
         if self.kis_overseas:
-            self._sync_balance_from_kis()
+            self._sync_balance_from_toss()
 
         # ── 초기 종목 스크리닝 (KR봇 initialize_portfolio 동일 패턴) ──
         # satellite_info / core_info 가 비어 있으면 즉시 스크리닝 후 텔레그램 알림
@@ -2678,7 +2706,7 @@ class USBotController:
                     # 완전 장외 / 주말 — 매매 없음, 가격·잔고·스크리닝은 유지
                     self._refresh_prices()
                     if time.time() - _last_bal_ts >= 60:
-                        self._sync_balance_from_kis()
+                        self._sync_balance_from_toss()
                         _last_bal_ts = time.time()
                     # 주말에도 종목 스크리닝 — 순차 실행 (rebuild 경합 방지)
                     try:
@@ -2727,7 +2755,7 @@ class USBotController:
 
                 # ── KIS 잔고 동기화 (5분마다) ─────────────────────────
                 if time.time() - _last_bal_ts >= _bal_interval:
-                    self._sync_balance_from_kis()
+                    self._sync_balance_from_toss()
                     _last_bal_ts = time.time()
 
                 # ── 시장 국면 갱신 (1시간마다) ───────────────────────

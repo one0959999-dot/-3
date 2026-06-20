@@ -290,12 +290,14 @@ def status():
     return jsonify(result)
 
 @app.route('/api/kis_balance')
+@app.route('/api/toss_balance')
 @login_required
 def kis_balance():
-    """실시간 한국투자증권 계좌 잔고 조회 API"""
+    """실시간 토스증권 계좌 잔고 조회 API (kis_balance URL 하위 호환 유지)"""
     try:
         bot = get_current_bot()
-        if not bot or not bot.kis:
+        _api = getattr(bot, 'toss', None) or getattr(bot, 'kis', None)
+        if not bot or not _api:
             return jsonify({"status": "error", "message": "API 설정이 필요합니다."})
         
         rt_prices = bot.live_prices if hasattr(bot, 'live_prices') else {}
@@ -823,7 +825,7 @@ def ai_chat():
 
             macro_lines = []
             for m_ticker, m_name in [("069500", "KOSPI 대용(KODEX 200)"), ("229200", "KOSDAQ 대용(KODEX 코스닥150)")]:
-                m_df = fetch_ohlcv(m_ticker, days=40, kis=bot.kis)
+                m_df = fetch_ohlcv(m_ticker, days=40, kis=getattr(bot, "toss", None) or bot.kis)
                 if not m_df.empty:
                     m_close = m_df['close']
                     m_price = m_close.iloc[-1]
@@ -878,7 +880,7 @@ def ai_chat():
             context_lines = ["[📈 회원님이 궁금해하시는 종목의 실시간 데이터 분석 장부]"]
             for ticker, name in target_tickers:
                 try:
-                    ohlcv_df = fetch_ohlcv(ticker, days=130, kis=bot.kis)
+                    ohlcv_df = fetch_ohlcv(ticker, days=130, kis=getattr(bot, "toss", None) or bot.kis)
                     today_str = datetime.now(timezone(timedelta(hours=9))).strftime('%Y-%m-%d')
                     cache_key = f"{ticker}_{today_str}"
                     financial_data = getattr(bot, 'fundamental_cache', {}).get(cache_key, "PER: 10.0배, PBR: 1.0배 (실시간 추정치)")
@@ -1404,37 +1406,58 @@ def _save_keys_common(data, is_mock):
         v = data.get(key)
         return v.strip() if isinstance(v, str) and v.strip() else None
 
+    # 토스증권 API — client_id/client_secret/account_seq 공통 사용
+    # 하위 호환: 기존 app_key/app_secret/account_no 필드명도 수용
+    _client_id     = (_v('client_id')     or _v('toss_client_id')
+                      or _v('real_app_key') or _v('us_app_key'))
+    _client_secret = (_v('client_secret') or _v('toss_client_secret')
+                      or _v('real_app_secret') or _v('us_app_secret'))
+    _account_seq   = (_v('account_seq')   or _v('toss_account_seq')
+                      or _v('real_account_no') or _v('us_account_no'))
+
     if is_mock:
         # US 전용 필드만 업데이트
         update_data = {
-            'us_app_key':      _v('us_app_key')      or existing.get('us_app_key'),
-            'us_app_secret':   _v('us_app_secret')   or existing.get('us_app_secret'),
-            'us_account_no':   _v('us_account_no')   or existing.get('us_account_no'),
+            'us_app_key':      _client_id     or existing.get('us_app_key'),
+            'us_app_secret':   _client_secret or existing.get('us_app_secret'),
+            'us_account_no':   _account_seq   or existing.get('us_account_no'),
             'us_core_stocks':  data.get('us_core_stocks') or existing.get('us_core_stocks'),
             'telegram_token':  _v('telegram_token')  or existing.get('telegram_token'),
             'telegram_chat_id':_v('telegram_chat_id')or existing.get('telegram_chat_id'),
             'claude_api_key':  _v('claude_api_key')  or existing.get('claude_api_key'),
             'is_mock': 1,
         }
-        kis_cfg = {"app_key": update_data['us_app_key'],
-                   "app_secret": update_data['us_app_secret'],
-                   "account_no": update_data['us_account_no']}
+        kis_cfg = {
+            "client_id":     update_data['us_app_key'],
+            "client_secret": update_data['us_app_secret'],
+            "account_seq":   update_data['us_account_no'],
+            # 하위 호환 alias
+            "app_key":       update_data['us_app_key'],
+            "app_secret":    update_data['us_app_secret'],
+            "account_no":    update_data['us_account_no'],
+        }
         core = update_data['us_core_stocks']
     else:
         # KR 전용 필드만 업데이트
         update_data = {
-            'real_app_key':    _v('real_app_key')    or existing.get('real_app_key'),
-            'real_app_secret': _v('real_app_secret') or existing.get('real_app_secret'),
-            'real_account_no': _v('real_account_no') or existing.get('real_account_no'),
+            'real_app_key':    _client_id     or existing.get('real_app_key'),
+            'real_app_secret': _client_secret or existing.get('real_app_secret'),
+            'real_account_no': _account_seq   or existing.get('real_account_no'),
             'core_stocks':     data.get('core_stocks') or existing.get('core_stocks'),
             'telegram_token':  _v('telegram_token')  or existing.get('telegram_token'),
             'telegram_chat_id':_v('telegram_chat_id')or existing.get('telegram_chat_id'),
             'claude_api_key':  _v('claude_api_key')  or existing.get('claude_api_key'),
             'is_mock': 0,
         }
-        kis_cfg = {"app_key": update_data['real_app_key'],
-                   "app_secret": update_data['real_app_secret'],
-                   "account_no": update_data['real_account_no']}
+        kis_cfg = {
+            "client_id":     update_data['real_app_key'],
+            "client_secret": update_data['real_app_secret'],
+            "account_seq":   update_data['real_account_no'],
+            # 하위 호환 alias
+            "app_key":       update_data['real_app_key'],
+            "app_secret":    update_data['real_app_secret'],
+            "account_no":    update_data['real_account_no'],
+        }
         core = update_data['core_stocks']
 
     update_user_keys(current_user.id, update_data)
@@ -1537,17 +1560,20 @@ def search_stock():
     except Exception as e:
         logger.warning(f"네이버 모바일 종목검색 실패: {e}")
 
-    # 3순위: KIS 실전 API 검색 — KR 봇 우선, 현재 봇 차선 (EC2에서 Naver 차단 시 주 경로)
+    # 3순위: 토스증권 API 검색 — KR 봇 우선, 현재 봇 차선
     try:
-        kr_bot = manager.bots.get((current_user.id, False))  # KR 봇 (is_mock=False)
-        _kis = (kr_bot.kis if kr_bot and kr_bot.kis else
-                (get_current_bot().kis if get_current_bot() and get_current_bot().kis else None))
-        if _kis:
-            results = _kis.search_stock_name(query)
+        kr_bot = manager.bots.get((current_user.id, False))
+        _toss = (getattr(kr_bot, 'toss', None) or getattr(kr_bot, 'kis', None)
+                 if kr_bot else None)
+        if not _toss:
+            _cb = get_current_bot()
+            _toss = getattr(_cb, 'toss', None) or getattr(_cb, 'kis', None)
+        if _toss:
+            results = _toss.search_stock_name(query)
             if results:
                 return jsonify({"results": results})
     except Exception as e:
-        logger.warning(f"KIS 종목검색 실패: {e}")
+        logger.warning(f"토스 종목검색 실패: {e}")
 
     # 4순위: pykrx — KOSPI + KOSDAQ 전체 검색 (캐시)
     try:
