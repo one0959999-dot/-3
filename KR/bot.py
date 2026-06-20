@@ -1153,7 +1153,7 @@ class KRBotController:
             self.add_log(f"🤖 AI가 위성 후보 {len(candidates)}개 종목·전략 검토 중...")
             if self.telegram:
                 self.telegram.send_message(
-                    f"🔍 <b>위성 후보 AI 심사 시작</b>  {self.alert_icon} {self.mode_name}\n"
+                    f"🤔 <b>위성 후보 AI 심사 시작</b>  {self.alert_icon} {self.mode_name}\n"
                     f"━━━━━━━━━━━━━━━━━━━━\n"
                     f"📋 후보 <b>{len(candidates)}개</b> → AI 검토 중...\n"
                     f"📝 {preview}"
@@ -2476,7 +2476,7 @@ class KRBotController:
                             approved, ai_reason = True, "AI 미설정"
                             if self.claude:
                                 with self.lock:
-                                    core.status     = "AI 심사 중 🤖"
+                                    core.status     = "🤔 AI 심사 중"
                                     core.status_msg = f"RSI{c_rsi:.0f}+120MA 기준 충족 | 악재 리스크 확인 중..."
                                 # 120MA, 60MA 값 추출
                                 try:
@@ -3036,7 +3036,7 @@ class KRBotController:
                         if qty > 0:
                             # 하락장은 더 신중해야 하므로 AI 심사 필수
                             if self.claude:
-                                pos.status     = "AI 심사 중 🤖"
+                                pos.status     = "🤔 AI 심사 중"
                                 pos.status_msg = f"하락장 저점 신호 | {bear_reason_str} — AI 최종 승인 대기 중..."
                                 trade_ctx = self._build_trade_context(ticker, p_nm, price, ex_df, st_nm, regime)
                                 decision, ai_reason = self.claude.ai_approve_trade(sig, p_nm, ticker, price, st_nm, ind_val, self.hot_sectors, get_recent_trades(self.user_id, ticker), load_ai_rules(self.user_id) + "\n" + getattr(self, 'current_ai_market_view', '') + ("\n\n[📊 섹터 가이드 / 커스텀 전략]\n" + self.sector_guide if self.sector_guide else ''), context=trade_ctx)
@@ -3132,7 +3132,7 @@ class KRBotController:
                         pass
 
                     if self.claude:
-                        pos.status     = "AI 심사 중 🤖"
+                        pos.status     = "🤔 AI 심사 중"
                         pos.status_msg = f"매수 신호 발생 | {st_nm} — AI 최종 승인 대기 중..."
                         trade_ctx = self._build_trade_context(ticker, p_nm, price, ex_df, st_nm, regime)
                         if _52w_note_kr:
@@ -3192,7 +3192,7 @@ class KRBotController:
 
                 elif sig == 'SELL' and p_sh > 0 and is_cd_passed:
                     if self.claude:
-                        pos.status     = "AI 심사 중 🤖"
+                        pos.status     = "🤔 AI 심사 중"
                         pos.status_msg = f"매도 신호 발생 | {st_nm} — AI 최종 승인 대기 중..."
                         trade_ctx = self._build_trade_context(ticker, p_nm, price, ex_df, st_nm, regime)
                         decision, ai_reason = self.claude.ai_approve_trade(sig, p_nm, ticker, price, st_nm, ind_val, self.hot_sectors, get_recent_trades(self.user_id, ticker), load_ai_rules(self.user_id) + "\n" + getattr(self, 'current_ai_market_view', '') + ("\n\n[📊 섹터 가이드 / 커스텀 전략]\n" + self.sector_guide if self.sector_guide else ''), context=trade_ctx)
