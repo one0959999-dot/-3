@@ -350,10 +350,11 @@ class TossInvestApi:
     def is_kr_market_open(self) -> bool:
         """KRX 정규장 여부 (API 기반). 실패 시 시간 기반 fallback."""
         try:
-            cal     = self.get_market_calendar_kr()
-            regular = (cal.get("today") or {}).get("regularMarket") or {}
-            start   = self._parse_iso(regular.get("startTime", ""))
-            end     = self._parse_iso(regular.get("endTime",   ""))
+            cal        = self.get_market_calendar_kr()
+            integrated = (cal.get("today") or {}).get("integrated") or {}
+            regular    = integrated.get("regularMarket") or {}
+            start      = self._parse_iso(regular.get("startTime", ""))
+            end        = self._parse_iso(regular.get("endTime",   ""))
             if start and end:
                 now = datetime.now(start.tzinfo)
                 return start <= now < end
