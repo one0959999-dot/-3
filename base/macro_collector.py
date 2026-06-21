@@ -100,14 +100,26 @@ def _is_cpi_week(date_str: str) -> int:
     return 1 if 8 <= dt.day <= 16 and dt.weekday() <= 4 else 0
 
 
+def _yf_download_safe(ticker: str, start: str, end: str, timeout: int = 10):
+    from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeout
+    import yfinance as yf
+    def _dl():
+        return yf.download(ticker, start=start, end=end, progress=False, auto_adjust=True)
+    try:
+        with ThreadPoolExecutor(max_workers=1) as ex:
+            return ex.submit(_dl).result(timeout=timeout)
+    except FuturesTimeout:
+        return None
+    except Exception:
+        return None
+
+
 def _yf_close(ticker: str, date_str: str) -> float | None:
     try:
-        import yfinance as yf
         end   = datetime.strptime(date_str, '%Y-%m-%d') + timedelta(days=5)
         start = datetime.strptime(date_str, '%Y-%m-%d') - timedelta(days=5)
-        df = yf.download(ticker, start=start.strftime('%Y-%m-%d'),
-                         end=end.strftime('%Y-%m-%d'), progress=False, auto_adjust=True)
-        if df.empty:
+        df = _yf_download_safe(ticker, start.strftime('%Y-%m-%d'), end.strftime('%Y-%m-%d'))
+        if df is None or df.empty:
             return None
         target = pd.Timestamp(date_str)
         idx = df.index.searchsorted(target, side='left')
@@ -120,12 +132,10 @@ def _yf_close(ticker: str, date_str: str) -> float | None:
 
 def _yf_chg(ticker: str, date_str: str) -> float | None:
     try:
-        import yfinance as yf
         end   = datetime.strptime(date_str, '%Y-%m-%d') + timedelta(days=5)
         start = datetime.strptime(date_str, '%Y-%m-%d') - timedelta(days=5)
-        df = yf.download(ticker, start=start.strftime('%Y-%m-%d'),
-                         end=end.strftime('%Y-%m-%d'), progress=False, auto_adjust=True)
-        if df.empty or len(df) < 2:
+        df = _yf_download_safe(ticker, start.strftime('%Y-%m-%d'), end.strftime('%Y-%m-%d'))
+        if df is None or df.empty or len(df) < 2:
             return None
         target = pd.Timestamp(date_str)
         idx = df.index.searchsorted(target, side='left')
