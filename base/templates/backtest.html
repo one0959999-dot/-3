@@ -95,7 +95,7 @@
 
   <!-- 실행 패널 -->
   <div class="run-panel">
-    <h2>상장일 ~ 현재 전체 구간 바닥/고점 분석</h2>
+    <h2>상장일 ~ 현재 전체 구간 신호 기반 백테스트</h2>
     <select class="mode-select" id="modeSelect">
       <option value="ALL">KR + US 전체</option>
       <option value="KR">KR 한국만</option>
@@ -109,11 +109,11 @@
 
   <!-- 통계 -->
   <div class="stats-grid">
-    <div class="stat-card"><div class="label">수집된 포인트</div><div class="value" style="color:var(--accent)" id="sTotal">—</div></div>
+    <div class="stat-card"><div class="label">수집된 신호</div><div class="value" style="color:var(--accent)" id="sTotal">—</div></div>
     <div class="stat-card"><div class="label">오늘 수집</div><div class="value" id="sToday">—</div></div>
     <div class="stat-card"><div class="label">KR 완료 종목</div><div class="value" style="color:var(--green)" id="sKR">—</div></div>
     <div class="stat-card"><div class="label">US 완료 종목</div><div class="value" style="color:var(--purple)" id="sUS">—</div></div>
-    <div class="stat-card"><div class="label">바닥 후 60일 평균 최대수익</div><div class="value" style="color:var(--green)" id="sGain">—</div></div>
+    <div class="stat-card"><div class="label">BUY 신호 평균 최대수익</div><div class="value" style="color:var(--green)" id="sGain">—</div></div>
   </div>
 
   <!-- 탭 -->
@@ -195,7 +195,7 @@ async function loadStats() {
     document.getElementById('sToday').textContent = (d.today_points||0).toLocaleString();
     document.getElementById('sKR').textContent    = (d.kr_tickers||0).toLocaleString();
     document.getElementById('sUS').textContent    = (d.us_tickers||0).toLocaleString();
-    const gain = d.avg_max_gain_bottom;
+    const gain = d.avg_max_gain_buy;
     document.getElementById('sGain').textContent = gain ? '+' + gain + '%' : '—';
   } catch(e) {}
 }
@@ -241,23 +241,26 @@ function renderTable() {
   }
 
   let html = `<table><thead><tr>
-    <th>종목</th><th>티커</th><th>완료일</th>
-    <th>바닥</th><th>고점</th>
-    <th>바닥 후 20일 평균</th><th>60일 최대수익</th>
+    <th>종목</th><th>티커</th><th>완료일</th><th>섹터</th>
+    <th>BUY</th><th>SELL</th>
+    <th>신호매매 수익</th><th>1000만→</th><th>평균 최대수익</th>
     <th></th>
   </tr></thead><tbody>`;
 
   for (const r of rows) {
     const date = (r.completed_at||r.last_processed_date||'').slice(0,10);
+    const finalVal = r.final_value_10m ? Math.round(r.final_value_10m).toLocaleString()+'원' : '—';
     html += `<tr>
       <td>${r.stock_name||r.ticker}</td>
       <td><span class="badge ${curTab==='KR'?'badge-kr':'badge-us'}">${r.ticker}</span></td>
       <td class="muted" style="font-size:12px">${date}</td>
-      <td><span class="badge badge-bottom">${(r.bottoms||0)}개</span></td>
-      <td><span class="badge badge-top">${(r.tops||0)}개</span></td>
-      <td class="${pClass(r.avg_pnl_20d)}">${pStr(r.avg_pnl_20d)}</td>
-      <td class="${pClass(r.avg_max_gain_60d)}">${pStr(r.avg_max_gain_60d)}</td>
-      <td><button class="btn-detail" onclick="openDetail('${curTab}','${r.ticker}','${r.stock_name||r.ticker}')">분석보기</button></td>
+      <td class="muted" style="font-size:11px">${r.sector||'—'}</td>
+      <td><span class="badge badge-bottom">${(r.buy_signals||0)}개</span></td>
+      <td><span class="badge badge-top">${(r.sell_signals||0)}개</span></td>
+      <td class="${pClass(r.return_pct)}">${pStr(r.return_pct)}</td>
+      <td class="${pClass(r.return_pct)}" style="font-size:12px">${finalVal}</td>
+      <td class="${pClass(r.avg_max_gain)}">${pStr(r.avg_max_gain)}</td>
+      <td><button class="btn-detail" onclick="openDetail('${curTab}','${r.ticker}','${r.stock_name||r.ticker}')">신호보기</button></td>
     </tr>`;
   }
   html += '</tbody></table>';
@@ -266,7 +269,7 @@ function renderTable() {
 
 /* ── 상세 모달 ── */
 async function openDetail(mode, ticker, name) {
-  document.getElementById('modalTitle').textContent = `${name}(${ticker}) — 바닥/고점 분석`;
+  document.getElementById('modalTitle').textContent = `${name}(${ticker}) — 신호 상세`;
   document.getElementById('modalStats').innerHTML = '';
   document.getElementById('modalTableWrap').innerHTML = '<div class="loader">로딩 중…</div>';
   document.getElementById('detailModal').classList.add('open');
@@ -281,20 +284,21 @@ async function openDetail(mode, ticker, name) {
 }
 
 function renderModal(pts) {
-  const bottoms = pts.filter(p => p.point_type === 'BOTTOM');
-  const tops    = pts.filter(p => p.point_type === 'TOP');
-  const avgGain = bottoms.length
-    ? (bottoms.reduce((a,p) => a+(p.max_gain_60d||0), 0)/bottoms.length).toFixed(1)
-    : '—';
-  const avgPnl20 = pts.length
-    ? (pts.reduce((a,p) => a+(p.pnl_20d||0), 0)/pts.length).toFixed(1)
-    : '—';
+  const buys  = pts.filter(p => p.signal_direction === 'BUY');
+  const sells = pts.filter(p => p.signal_direction === 'SELL');
+  const avgGain = buys.length
+    ? (buys.reduce((a,p) => a+(p.max_gain_pct||0), 0)/buys.length).toFixed(1)
+    : null;
+  const avgDays = buys.length
+    ? Math.round(buys.reduce((a,p) => a+(p.days_to_peak||0), 0)/buys.length)
+    : null;
 
   document.getElementById('modalStats').innerHTML = `
-    <div class="modal-stat"><div class="lbl">총 포인트</div><div class="val">${pts.length}</div></div>
-    <div class="modal-stat"><div class="lbl">바닥</div><div class="val" style="color:var(--green)">${bottoms.length}</div></div>
-    <div class="modal-stat"><div class="lbl">고점</div><div class="val" style="color:var(--red)">${tops.length}</div></div>
-    <div class="modal-stat"><div class="lbl">바닥 후 60일 최대수익 평균</div><div class="val" style="color:var(--green)">${avgGain !== '—' ? '+'+avgGain+'%' : '—'}</div></div>
+    <div class="modal-stat"><div class="lbl">총 신호</div><div class="val">${pts.length}</div></div>
+    <div class="modal-stat"><div class="lbl">BUY</div><div class="val" style="color:var(--green)">${buys.length}</div></div>
+    <div class="modal-stat"><div class="lbl">SELL</div><div class="val" style="color:var(--red)">${sells.length}</div></div>
+    <div class="modal-stat"><div class="lbl">BUY 평균 최대수익</div><div class="val" style="color:var(--green)">${avgGain!=null?'+'+avgGain+'%':'—'}</div></div>
+    <div class="modal-stat"><div class="lbl">평균 고점 도달일</div><div class="val" style="color:var(--accent)">${avgDays!=null?avgDays+'일':'—'}</div></div>
   `;
 
   if (!pts.length) {
@@ -303,30 +307,29 @@ function renderModal(pts) {
   }
 
   let html = `<table><thead><tr>
-    <th>날짜</th><th>유형</th><th>가격</th><th>등락폭</th>
-    <th>RSI</th><th>활성신호</th>
-    <th>5일</th><th>20일</th><th>60일최대</th><th></th>
+    <th>날짜</th><th>방향</th><th>가격</th><th>국면</th>
+    <th>RSI</th><th>신호 종류</th>
+    <th>최대수익</th><th>고점(일)</th><th>최대낙폭</th><th></th>
   </tr></thead><tbody>`;
 
   pts.forEach((p, i) => {
-    const isBottom = p.point_type === 'BOTTOM';
-    const typeEl   = isBottom
-      ? '<span class="badge badge-bottom">▲ 바닥</span>'
-      : '<span class="badge badge-top">▼ 고점</span>';
-    const mag  = p.magnitude_pct ? (isBottom ? '-' : '+') + p.magnitude_pct + '%' : '—';
+    const isBuy = p.signal_direction === 'BUY';
+    const dirEl = isBuy
+      ? '<span class="badge badge-bottom">▲ BUY</span>'
+      : '<span class="badge badge-top">▼ SELL</span>';
     let sigs = [];
-    try { sigs = JSON.parse(p.signals_active||'[]'); } catch(e) {}
+    try { sigs = JSON.parse(p.signal_types||'[]'); } catch(e) {}
 
     html += `<tr id="pr-${i}">
-      <td style="font-size:12px;color:var(--muted)">${p.date||''}</td>
-      <td>${typeEl}</td>
+      <td style="font-size:12px;color:var(--muted)">${p.trade_date||''}</td>
+      <td>${dirEl}</td>
       <td>${Number(p.price||0).toLocaleString()}</td>
-      <td class="${isBottom?'neg':'pos'}">${mag}</td>
+      <td style="font-size:11px;color:var(--muted)">${p.market_phase_kr||'—'}</td>
       <td style="font-size:12px">${p.rsi!=null?Number(p.rsi).toFixed(1):'—'}</td>
-      <td style="font-size:11px;color:var(--muted)">${sigs.join(' ')}</td>
-      <td class="${pClass(p.pnl_5d)}">${pStr(p.pnl_5d)}</td>
-      <td class="${pClass(p.pnl_20d)}">${pStr(p.pnl_20d)}</td>
-      <td class="${pClass(p.max_gain_60d)}">${pStr(p.max_gain_60d)}</td>
+      <td style="font-size:11px;color:var(--accent)">${sigs.join(' · ')}</td>
+      <td class="${pClass(p.max_gain_pct)}">${pStr(p.max_gain_pct)}</td>
+      <td class="muted" style="font-size:12px">${p.days_to_peak!=null?p.days_to_peak+'일':'—'}</td>
+      <td class="${pClass(p.max_drawdown_pct)}">${pStr(p.max_drawdown_pct)}</td>
       <td><button class="btn-detail" onclick="toggleAnalysis(${i})">▾ AI</button></td>
     </tr>
     <tr id="ar-${i}" class="analysis-row">
@@ -334,15 +337,9 @@ function renderModal(pts) {
         <strong>AI 분석:</strong><br>
         ${(p.ai_analysis||'분석 없음').replace(/\n/g,'<br>')}
         <br><br>
-        <strong>지지:</strong> ${Number(p.support||0).toLocaleString()} &nbsp;
-        <strong>저항:</strong> ${Number(p.resistance||0).toLocaleString()} &nbsp;
-        <strong>볼린저:</strong> ${Number(p.bb_lower||0).toLocaleString()}~${Number(p.bb_upper||0).toLocaleString()} &nbsp;
-        <strong>거래량:</strong> 평소대비 ${p.vol_ratio||'—'}% <br>
-        <strong>SMA5:</strong>${Number(p.sma5||0).toLocaleString()} &nbsp;
-        <strong>SMA20:</strong>${Number(p.sma20||0).toLocaleString()} &nbsp;
-        <strong>SMA60:</strong>${Number(p.sma60||0).toLocaleString()} &nbsp;
-        <strong>SMA120:</strong>${Number(p.sma120||0).toLocaleString()} <br>
-        <strong>60일 최대손실:</strong> <span class="neg">${pStr(p.max_loss_60d)}</span>
+        <strong>볼린저:</strong> ${Number(p.bb_lower||0).toLocaleString()} ~ ${Number(p.bb_upper||0).toLocaleString()} &nbsp;
+        <strong>거래량:</strong> 평소대비 ${p.vol_ratio||'—'}% &nbsp;
+        <strong>회복까지:</strong> ${p.days_to_recovery!=null?p.days_to_recovery+'일':'미회복'}
       </td>
     </tr>`;
   });
