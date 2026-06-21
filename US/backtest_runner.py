@@ -364,7 +364,8 @@ def run_full_backtest_ticker_us(ticker: str, user_id: int, ai_client,
                                  toss_api=None, skip_ai: bool = False,
                                  news_monitor=None) -> int:
     from base.database import (log_trade_signal_backtest, update_backtest_full_progress,
-                                rebuild_sector_phase_stats, rebuild_seasonality_stats)
+                                rebuild_sector_phase_stats, rebuild_seasonality_stats,
+                                delete_backtest_signals_for_ticker)
     from base.macro_collector import get_macro_for_date, build_macro_context_str
     from base.market_phase import get_phase_for_date
 
@@ -478,6 +479,9 @@ def run_full_backtest_ticker_us(ticker: str, user_id: int, ai_client,
                 last_buy_idx = i
             else:
                 last_sell_idx = i
+
+    # 멱등성: 재처리 전 기존 신호 삭제 (크래시 후 재시작 시 중복 방지)
+    delete_backtest_signals_for_ticker(user_id, 'US', ticker)
 
     for batch_start in range(0, len(records), _AI_BATCH):
         batch = records[batch_start: batch_start + _AI_BATCH]

@@ -946,6 +946,20 @@ def log_backtest_signal(data: dict) -> int:
             conn.close()
 
 
+def delete_backtest_signals_for_ticker(user_id: int, mode: str, ticker: str) -> int:
+    """종목 재처리 전 기존 신호 삭제 — 크래시 후 재시작 시 중복 방지(멱등성)."""
+    with db_lock:
+        conn = get_db_connection()
+        try:
+            cur = conn.execute(
+                'DELETE FROM backtest_trade_signals WHERE user_id=? AND mode=? AND ticker=?',
+                (user_id, mode, ticker))
+            conn.commit()
+            return cur.rowcount
+        finally:
+            conn.close()
+
+
 def log_trade_signal_backtest(data: dict) -> int:
     with db_lock:
         conn = get_db_connection()

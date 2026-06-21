@@ -19,18 +19,22 @@ def _get_yf_series(ticker: str) -> pd.Series:
     if ticker in _yf_series_cache:
         return _yf_series_cache[ticker]
     s = pd.Series(dtype=float)
-    try:
-        import yfinance as yf
-        df = yf.download(ticker, period='max', interval='1d',
-                         progress=False, auto_adjust=True)
-        if df is not None and not df.empty:
-            if hasattr(df.columns, 'get_level_values'):
-                df.columns = df.columns.get_level_values(0)
-            if 'Close' in df.columns:
-                s = pd.to_numeric(df['Close'], errors='coerce').dropna()
-                s.index = pd.to_datetime(s.index)
-    except Exception as e:
-        logger.debug(f"[macro] {ticker} 전체 시계열 로드 실패: {e}")
+    import time as _t
+    for attempt in range(3):
+        try:
+            import yfinance as yf
+            df = yf.download(ticker, period='max', interval='1d',
+                             progress=False, auto_adjust=True)
+            if df is not None and not df.empty:
+                if hasattr(df.columns, 'get_level_values'):
+                    df.columns = df.columns.get_level_values(0)
+                if 'Close' in df.columns:
+                    s = pd.to_numeric(df['Close'], errors='coerce').dropna()
+                    s.index = pd.to_datetime(s.index)
+                break
+        except Exception as e:
+            logger.debug(f"[macro] {ticker} 시계열 로드 실패(시도{attempt+1}): {e}")
+            _t.sleep(2 * (attempt + 1))  # rate limit 백오프
     _yf_series_cache[ticker] = s
     return s
 

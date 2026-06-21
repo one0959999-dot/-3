@@ -75,18 +75,22 @@ def _get_index_full(symbol: str) -> pd.DataFrame | None:
     if symbol in _index_full_cache:
         return _index_full_cache[symbol]
     df = None
-    try:
-        import yfinance as yf
-        raw = yf.download(symbol, period='max', interval='1d',
-                          progress=False, auto_adjust=True)
-        if raw is not None and not raw.empty:
-            if hasattr(raw.columns, 'get_level_values'):
-                raw.columns = raw.columns.get_level_values(0)
-            raw.columns = [c.lower() for c in raw.columns]
-            raw.index = pd.to_datetime(raw.index)
-            df = raw.dropna(subset=['close'])
-    except Exception as e:
-        logger.debug(f"[국면] {symbol} 전체 지수 로드 실패: {e}")
+    import time as _t
+    for attempt in range(3):
+        try:
+            import yfinance as yf
+            raw = yf.download(symbol, period='max', interval='1d',
+                              progress=False, auto_adjust=True)
+            if raw is not None and not raw.empty:
+                if hasattr(raw.columns, 'get_level_values'):
+                    raw.columns = raw.columns.get_level_values(0)
+                raw.columns = [c.lower() for c in raw.columns]
+                raw.index = pd.to_datetime(raw.index)
+                df = raw.dropna(subset=['close'])
+                break
+        except Exception as e:
+            logger.debug(f"[국면] {symbol} 지수 로드 실패(시도{attempt+1}): {e}")
+            _t.sleep(2 * (attempt + 1))
     _index_full_cache[symbol] = df
     return df
 
