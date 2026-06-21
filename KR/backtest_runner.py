@@ -372,7 +372,8 @@ def _buyhold_simulation(df: pd.DataFrame, first_signal_idx: int,
 
 def run_full_backtest_ticker(ticker: str, stock_name: str, user_id: int,
                               ai_client, toss_api=None, fred_key: str = '',
-                              skip_ai: bool = False) -> int:
+                              skip_ai: bool = False,
+                              rebuild_stats: bool = True) -> int:
     from base.database import (log_trade_signal_backtest, update_backtest_full_progress,
                                 rebuild_sector_phase_stats, rebuild_seasonality_stats)
     from base.macro_collector import get_macro_for_date, build_macro_context_str
@@ -497,12 +498,13 @@ def run_full_backtest_ticker(ticker: str, stock_name: str, user_id: int,
         buyhold_return_pct=buyhold.get('buyhold_return_pct'),
     )
 
-    # 섹터 로테이션 / 계절성 통계 갱신
-    try:
-        rebuild_sector_phase_stats('KR')
-        rebuild_seasonality_stats('KR')
-    except Exception:
-        pass
+    # 섹터 로테이션 / 계절성 통계 갱신 (병렬 모드에서는 호출하지 않음)
+    if rebuild_stats:
+        try:
+            rebuild_sector_phase_stats('KR')
+            rebuild_seasonality_stats('KR')
+        except Exception:
+            pass
 
     logger.info(
         f"[KR 백테스트] {stock_name}({ticker}): {len(records)}개 신호 | "
@@ -536,19 +538,37 @@ class BacktestRunner:
             logger.info("[KR 백테스트] 전체 완료 — 처음부터 재시작")
             pending = all_tickers
 
+        PARALLEL_WORKERS = 4
+        batch = pending[:batch_size]
         total = 0
-        for i, item in enumerate(pending[:batch_size]):
-            if progress_cb:
-                progress_cb(f"KR:{item['ticker']}({item['name']})", i)
+
+        def _process(item):
             try:
-                n = run_full_backtest_ticker(
+                return run_full_backtest_ticker(
                     item['ticker'], item['name'],
                     self.user_id, self.ai, self.toss, self.fred_key,
-                    skip_ai=self.skip_ai
+                    skip_ai=self.skip_ai, rebuild_stats=False,
                 )
-                total += n
             except Exception as e:
                 logger.warning(f"[KR 백테스트] {item['ticker']} 오류: {e}")
-            time.sleep(1)
+                return 0
+
+        from concurrent.futures import ThreadPoolExecutor, as_completed
+        done_count = 0
+        with ThreadPoolExecutor(max_workers=PARALLEL_WORKERS) as ex:
+            futures = {ex.submit(_process, item): item for item in batch}
+            for future in as_completed(futures):
+                item = futures[future]
+                done_count += 1
+                if progress_cb:
+                    progress_cb(f"KR:{item['ticker']}({item['name']})", done_count)
+                total += future.result() or 0
+
+        # 전체 완료 후 통계 1회 재빌드
+        try:
+            rebuild_sector_phase_stats('KR')
+            rebuild_seasonality_stats('KR')
+        except Exception:
+            pass
 
         return total
