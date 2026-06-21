@@ -22,9 +22,16 @@ _RATE_LIMIT_SEC = 4      # Gemini free 15RPM → 4초 간격
 def _get_all_kr_tickers() -> list[dict]:
     try:
         from pykrx import stock as pykrx_stock
-        today = datetime.now().strftime('%Y%m%d')
-        kospi  = pykrx_stock.get_market_ticker_list(today, market='KOSPI')
-        kosdaq = pykrx_stock.get_market_ticker_list(today, market='KOSDAQ')
+        # 주말/공휴일에는 가장 최근 금요일 날짜로 조회
+        dt = datetime.now()
+        weekday = dt.weekday()  # 0=월 ... 5=토 6=일
+        if weekday == 5:
+            dt = dt.replace(day=dt.day - 1)
+        elif weekday == 6:
+            dt = dt.replace(day=dt.day - 2)
+        date_str = dt.strftime('%Y%m%d')
+        kospi  = pykrx_stock.get_market_ticker_list(date_str, market='KOSPI')
+        kosdaq = pykrx_stock.get_market_ticker_list(date_str, market='KOSDAQ')
         tickers = []
         for t in kospi + kosdaq:
             name = pykrx_stock.get_market_ticker_name(t)
