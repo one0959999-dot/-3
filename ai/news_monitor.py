@@ -49,30 +49,56 @@ class NewsMonitor:
         self.naver_secret  = naver_client_secret.strip()
         self._corp_cache: dict[str, str] = {}   # ticker → corp_code
         self._corp_cache_lock = threading.Lock()  # [BUG-M3] 멀티스레드 캐시 보호
+        self._corp_map_loaded = False             # corpCode.xml 전체 매핑 로드 여부
 
     # ══════════════════════════════════════════════════════════════════
     # DART 공시 조회
     # ══════════════════════════════════════════════════════════════════
 
-    def get_corp_code(self, ticker: str) -> str | None:
-        """종목코드(6자리) → DART 고유번호(8자리) 변환. 결과 캐싱."""
-        with self._corp_cache_lock:  # [BUG-M3] 캐시 읽기/쓰기 원자적 처리
-            if ticker in self._corp_cache:
-                return self._corp_cache[ticker]
+    def _load_corp_map(self) -> None:
+        """DART corpCode.xml 전체 매핑(종목코드→고유번호)을 1회 다운로드해 캐싱.
+
+        company.json 은 stock_code 로 역조회가 불가(필수값 corp_code 누락).
+        전체 상장사 매핑 파일을 받아 종목코드→corp_code 딕셔너리를 구성한다.
+        """
+        import zipfile, io
+        import xml.etree.ElementTree as ET
         try:
             res = requests.get(
-                "https://opendart.fss.or.kr/api/company.json",
-                params={"crtfc_key": self.dart_key, "stock_code": ticker},
-                timeout=5,
+                "https://opendart.fss.or.kr/api/corpCode.xml",
+                params={"crtfc_key": self.dart_key},
+                timeout=30,
             )
-            data = res.json()
-            if data.get('status') == '000':
-                corp_code = data['corp_code']
-                with self._corp_cache_lock:  # [BUG-M3]
-                    self._corp_cache[ticker] = corp_code
-                return corp_code
+            if res.status_code != 200 or len(res.content) < 1000:
+                logger.warning(f"[NewsMonitor] corpCode.xml 다운로드 실패 (status={res.status_code})")
+                return
+            z = zipfile.ZipFile(io.BytesIO(res.content))
+            xml = z.read(z.namelist()[0])
+            root = ET.fromstring(xml)
+            mapping = {}
+            for el in root.iter('list'):
+                sc = (el.findtext('stock_code') or '').strip()
+                cc = (el.findtext('corp_code') or '').strip()
+                if sc and cc:
+                    mapping[sc] = cc
+            with self._corp_cache_lock:
+                self._corp_cache.update(mapping)
+                self._corp_map_loaded = True
+            logger.info(f"[NewsMonitor] DART 종목 매핑 로드 완료: {len(mapping)}개")
         except Exception as e:
-            logger.warning(f"[NewsMonitor] DART corp_code 조회 실패 ({ticker}): {e}")
+            logger.warning(f"[NewsMonitor] corpCode.xml 로드 오류: {e}")
+
+    def get_corp_code(self, ticker: str) -> str | None:
+        """종목코드(6자리) → DART 고유번호(8자리) 변환. 전체 매핑 캐싱."""
+        ticker = (ticker or '').strip()
+        with self._corp_cache_lock:
+            if ticker in self._corp_cache:
+                return self._corp_cache[ticker]
+            loaded = self._corp_map_loaded
+        if not loaded:
+            self._load_corp_map()
+            with self._corp_cache_lock:
+                return self._corp_cache.get(ticker)
         return None
 
     def get_recent_disclosures(self, ticker: str, days: int = 3) -> list[dict]:
