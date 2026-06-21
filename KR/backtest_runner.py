@@ -343,7 +343,7 @@ def run_full_backtest_ticker(ticker: str, stock_name: str, user_id: int,
     last_sell_idx = -_SIGNAL_GAP
     first_sig_idx = None
 
-    for i in range(1, len(df) - _PATH_DAYS):
+    for i in range(1, len(df) - 1):
         row  = df.iloc[i]
         prev = df.iloc[i - 1]
         sigs = _detect_signals(row, prev)
