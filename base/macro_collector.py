@@ -7,6 +7,7 @@ logger = logging.getLogger('lassi_bot')
 
 _macro_cache: dict = {}
 _fred_cache:  dict = {}
+_MACRO_CACHE_MAX = 500  # 최대 500개 날짜 유지, 초과 시 오래된 것 제거
 
 _FRED_BASE = "https://api.stlouisfed.org/fred/series/observations"
 
@@ -198,6 +199,9 @@ def get_macro_for_date(date_str: str, fred_key: str = '') -> dict:
     data['is_cpi_week']  = _is_cpi_week(date_str)
 
     save_macro_snapshot(date_str, data)
+    if len(_macro_cache) >= _MACRO_CACHE_MAX:
+        oldest = next(iter(_macro_cache))
+        del _macro_cache[oldest]
     _macro_cache[date_str] = data
     return data
 
