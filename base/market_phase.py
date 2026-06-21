@@ -136,8 +136,8 @@ def classify_phase(mode: str, date_str: str, macro: dict | None = None) -> dict:
                           float(close.rolling(200).mean().iloc[-21]) - 1) * 100, 2) \
                   if len(avail) >= 221 else 0
 
-    vix = float(macro.get('vix', 0)) if macro else 0
-    us_rate = float(macro.get('us_rate', 0)) if macro else 0
+    vix = float(macro.get('vix') or 0) if macro else 0
+    us_rate = float(macro.get('us_rate') or 0) if macro else 0
 
     evidence = []
 
