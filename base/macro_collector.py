@@ -101,15 +101,15 @@ def _is_cpi_week(date_str: str) -> int:
 
 
 def _yf_download_safe(ticker: str, start: str, end: str, timeout: int = 10):
-    from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeout
-    import yfinance as yf
-    def _dl():
-        return yf.download(ticker, start=start, end=end, progress=False, auto_adjust=True)
     try:
-        with ThreadPoolExecutor(max_workers=1) as ex:
-            return ex.submit(_dl).result(timeout=timeout)
-    except FuturesTimeout:
-        return None
+        import requests, yfinance as yf
+        session = requests.Session()
+        adapter = requests.adapters.HTTPAdapter()
+        session.mount('https://', adapter)
+        session.mount('http://', adapter)
+        return yf.download(ticker, start=start, end=end, progress=False,
+                           auto_adjust=True, session=session,
+                           timeout=timeout)
     except Exception:
         return None
 

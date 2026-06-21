@@ -80,12 +80,7 @@ def _get_full_history(ticker: str, toss_api=None) -> Optional[pd.DataFrame]:
         from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeout
         start = '19900101'
         end = datetime.now().strftime('%Y%m%d')
-        with ThreadPoolExecutor(max_workers=1) as ex:
-            try:
-                raw = ex.submit(pykrx_stock.get_market_ohlcv_by_date, start, end, ticker).result(timeout=60)
-            except FuturesTimeout:
-                logger.debug(f"[KR 백테스트] {ticker} pykrx timeout")
-                raw = None
+        raw = pykrx_stock.get_market_ohlcv_by_date(start, end, ticker)
         if raw is not None and not raw.empty:
             raw.columns = [c.lower() for c in raw.columns]
             # pykrx 컬럼: 시가/고가/저가/종가/거래량
@@ -98,18 +93,14 @@ def _get_full_history(ticker: str, toss_api=None) -> Optional[pd.DataFrame]:
         logger.debug(f"[KR 백테스트] {ticker} pykrx 실패: {e}")
     # fallback: yfinance
     try:
-        import yfinance as yf
-        from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeout
-        def _download(sym):
-            return yf.download(sym, period='max', interval='1d',
-                               progress=False, auto_adjust=True)
+        import requests, yfinance as yf
+        session = requests.Session()
         for suffix in ['.KS', '.KQ']:
             try:
-                with ThreadPoolExecutor(max_workers=1) as ex:
-                    future = ex.submit(_download, ticker + suffix)
-                    df = future.result(timeout=30)
-            except FuturesTimeout:
-                logger.debug(f"[KR 백테스트] {ticker}{suffix} yfinance timeout")
+                df = yf.download(ticker + suffix, period='max', interval='1d',
+                                 progress=False, auto_adjust=True,
+                                 session=session, timeout=30)
+            except Exception:
                 continue
             if df is not None and not df.empty:
                 if hasattr(df.columns, 'get_level_values'):
