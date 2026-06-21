@@ -12,10 +12,11 @@ logger = logging.getLogger('lassi_bot')
 BATCH_SIZE_WEEKDAY = 50
 BATCH_SIZE_WEEKEND = 150
 
-_AI_BATCH       = 5
-_RATE_LIMIT_SEC = 4
-_SIGNAL_GAP     = 10
-_PATH_DAYS      = 120
+_AI_BATCH        = 5
+_RATE_LIMIT_SEC  = 4
+_SIGNAL_GAP      = 10
+_PATH_DAYS       = 120
+_MIN_VOL_US      = 500000  # 일평균 최소 거래량 — 미달 시 스킵
 
 _US_UNIVERSE = [
     'AAPL','MSFT','NVDA','AMZN','GOOGL','META','TSLA','AVGO','JPM','UNH',
@@ -280,9 +281,24 @@ def _batch_ai_analysis(records: list[dict], ticker: str,
         return [('Other', '')] * len(records)
 
 
+def _buyhold_simulation(df: pd.DataFrame, first_signal_idx: int,
+                         initial_cash: float = 10_000_000) -> dict:
+    entry_price = float(df.iloc[first_signal_idx]['close'])
+    last_price  = float(df.iloc[-1]['close'])
+    if not entry_price:
+        return {}
+    shares      = initial_cash / entry_price
+    final_value = shares * last_price
+    return {
+        'buyhold_value_10m':  round(final_value),
+        'buyhold_return_pct': round((final_value / initial_cash - 1) * 100, 2),
+    }
+
+
 def run_full_backtest_ticker_us(ticker: str, user_id: int, ai_client,
                                  toss_api=None) -> int:
-    from base.database import log_trade_signal_backtest, update_backtest_full_progress
+    from base.database import (log_trade_signal_backtest, update_backtest_full_progress,
+                                rebuild_sector_phase_stats, rebuild_seasonality_stats)
     from base.macro_collector import get_macro_for_date, build_macro_context_str
     from base.market_phase import get_phase_for_date
 
@@ -294,9 +310,15 @@ def run_full_backtest_ticker_us(ticker: str, user_id: int, ai_client,
     if len(df) < 60:
         return 0
 
+    avg_vol = df['volume'].tail(60).mean()
+    if avg_vol < _MIN_VOL_US:
+        logger.debug(f"[US 백테스트] {ticker} 거래량 부족 ({avg_vol:.0f}주) 스킵")
+        return 0
+
     records = []
     last_buy_idx  = -_SIGNAL_GAP
     last_sell_idx = -_SIGNAL_GAP
+    first_sig_idx = None
 
     for i in range(1, len(df) - _PATH_DAYS):
         row  = df.iloc[i]
@@ -337,6 +359,7 @@ def run_full_backtest_ticker_us(ticker: str, user_id: int, ai_client,
                 'trade_date': date,
                 'signal_types':     json.dumps(sig_list, ensure_ascii=False),
                 'signal_direction': direction,
+                'signal_count':     len(sig_list),
                 'price': price,
                 'rsi':        round(float(row.get('rsi', 0) or 0), 2),
                 'macd':       round(float(row.get('macd', 0) or 0), 6),
@@ -363,6 +386,8 @@ def run_full_backtest_ticker_us(ticker: str, user_id: int, ai_client,
             records.append(rec)
 
             if direction == 'BUY':
+                if first_sig_idx is None:
+                    first_sig_idx = i
                 last_buy_idx = i
             else:
                 last_sell_idx = i
@@ -376,16 +401,28 @@ def run_full_backtest_ticker_us(ticker: str, user_id: int, ai_client,
             log_trade_signal_backtest(rec)
         time.sleep(_RATE_LIMIT_SEC)
 
-    sim = _simulate_portfolio(df, records)
+    sim     = _simulate_portfolio(df, records)
+    buyhold = _buyhold_simulation(df, first_sig_idx) if first_sig_idx is not None else {}
+
     update_backtest_full_progress(
         'US', ticker, datetime.now().strftime('%Y-%m-%d'), len(records),
         final_value_10m=sim.get('final_value_10m'),
         return_pct=sim.get('return_pct'),
         trade_count=sim.get('trade_count', 0),
+        buyhold_value_10m=buyhold.get('buyhold_value_10m'),
+        buyhold_return_pct=buyhold.get('buyhold_return_pct'),
     )
+
+    try:
+        rebuild_sector_phase_stats('US')
+        rebuild_seasonality_stats('US')
+    except Exception:
+        pass
+
     logger.info(
         f"[US 백테스트] {ticker}: {len(records)}개 신호 | "
-        f"$100k→${sim.get('final_value_10m',0):,} ({sim.get('return_pct',0):+.1f}%)"
+        f"신호매매 1000만→{sim.get('final_value_10m',0):,} ({sim.get('return_pct',0):+.1f}%) | "
+        f"보유시 {buyhold.get('buyhold_return_pct',0):+.1f}%"
     )
     return len(records)
 

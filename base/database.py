@@ -221,6 +221,8 @@ def init_db():
             final_value_10m REAL,
             return_pct REAL,
             trade_count INTEGER DEFAULT 0,
+            buyhold_value_10m REAL,
+            buyhold_return_pct REAL,
             completed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             PRIMARY KEY (mode, ticker)
         )
@@ -268,6 +270,34 @@ def init_db():
         ''')
 
             cursor.execute('''
+        CREATE TABLE IF NOT EXISTS sector_phase_stats (
+            mode TEXT, sector TEXT, market_phase TEXT,
+            total_signals INTEGER DEFAULT 0,
+            win_count INTEGER DEFAULT 0,
+            win_rate REAL DEFAULT 0,
+            avg_max_gain_pct REAL DEFAULT 0,
+            avg_days_to_peak REAL DEFAULT 0,
+            avg_max_drawdown_pct REAL DEFAULT 0,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            PRIMARY KEY (mode, sector, market_phase)
+        )
+        ''')
+
+            cursor.execute('''
+        CREATE TABLE IF NOT EXISTS seasonality_stats (
+            mode TEXT, month INTEGER,
+            total_buy INTEGER DEFAULT 0,
+            win_buy INTEGER DEFAULT 0,
+            avg_max_gain_buy REAL DEFAULT 0,
+            total_sell INTEGER DEFAULT 0,
+            win_sell INTEGER DEFAULT 0,
+            avg_max_gain_sell REAL DEFAULT 0,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            PRIMARY KEY (mode, month)
+        )
+        ''')
+
+            cursor.execute('''
         CREATE TABLE IF NOT EXISTS backtest_trade_signals (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             user_id INTEGER,
@@ -294,6 +324,7 @@ def init_db():
             max_drawdown_pct REAL,
             days_to_recovery INTEGER,
             price_path_json TEXT,
+            signal_count INTEGER DEFAULT 1,
             sector TEXT,
             ai_analysis TEXT,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
@@ -303,6 +334,10 @@ def init_db():
             cursor.execute('''
         CREATE INDEX IF NOT EXISTS idx_bts_mode_phase
             ON backtest_trade_signals(mode, market_phase, signal_direction)
+        ''')
+            cursor.execute('''
+        CREATE INDEX IF NOT EXISTS idx_bts_sector_phase
+            ON backtest_trade_signals(mode, sector, market_phase)
         ''')
 
             cursor.execute('UPDATE users SET is_running = 0')
@@ -886,7 +921,7 @@ def log_trade_signal_backtest(data: dict) -> int:
             cur = conn.execute('''
                 INSERT INTO backtest_trade_signals
                 (user_id, mode, ticker, stock_name, trade_date,
-                 signal_types, signal_direction, price,
+                 signal_types, signal_direction, signal_count, price,
                  rsi, macd, macd_signal, bb_upper, bb_mid, bb_lower,
                  sma5, sma20, sma60, sma120, vol_ratio,
                  support, resistance,
@@ -896,10 +931,11 @@ def log_trade_signal_backtest(data: dict) -> int:
                  days_to_max_drawdown, max_drawdown_pct,
                  days_to_recovery, price_path_json,
                  sector, ai_analysis)
-                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
             ''', (
                 data.get('user_id'), data.get('mode'), data.get('ticker'), data.get('stock_name'),
-                data.get('trade_date'), data.get('signal_types'), data.get('signal_direction'), data.get('price'),
+                data.get('trade_date'), data.get('signal_types'), data.get('signal_direction'),
+                data.get('signal_count', 1), data.get('price'),
                 data.get('rsi'), data.get('macd'), data.get('macd_signal'),
                 data.get('bb_upper'), data.get('bb_mid'), data.get('bb_lower'),
                 data.get('sma5'), data.get('sma20'), data.get('sma60'), data.get('sma120'),
@@ -956,24 +992,135 @@ def get_backtest_full_done(mode: str) -> set:
 
 def update_backtest_full_progress(mode: str, ticker: str, last_date: str,
                                    total_signals: int, final_value_10m: float = None,
-                                   return_pct: float = None, trade_count: int = 0):
+                                   return_pct: float = None, trade_count: int = 0,
+                                   buyhold_value_10m: float = None,
+                                   buyhold_return_pct: float = None):
     with db_lock:
         conn = get_db_connection()
         try:
             conn.execute('''
                 INSERT INTO backtest_full_progress
                     (mode, ticker, last_processed_date, total_signals,
-                     final_value_10m, return_pct, trade_count)
-                VALUES (?,?,?,?,?,?,?)
+                     final_value_10m, return_pct, trade_count,
+                     buyhold_value_10m, buyhold_return_pct)
+                VALUES (?,?,?,?,?,?,?,?,?)
                 ON CONFLICT(mode, ticker) DO UPDATE SET
                     last_processed_date=excluded.last_processed_date,
                     total_signals=excluded.total_signals,
                     final_value_10m=excluded.final_value_10m,
                     return_pct=excluded.return_pct,
                     trade_count=excluded.trade_count,
+                    buyhold_value_10m=excluded.buyhold_value_10m,
+                    buyhold_return_pct=excluded.buyhold_return_pct,
                     completed_at=CURRENT_TIMESTAMP
             ''', (mode, ticker, last_date, total_signals,
-                  final_value_10m, return_pct, trade_count))
+                  final_value_10m, return_pct, trade_count,
+                  buyhold_value_10m, buyhold_return_pct))
+            conn.commit()
+        finally:
+            conn.close()
+
+
+def rebuild_sector_phase_stats(mode: str):
+    """backtest_trade_signals에서 섹터×국면 승률 집계."""
+    with db_lock:
+        conn = get_db_connection()
+        try:
+            rows = conn.execute('''
+                SELECT sector, market_phase, signal_direction,
+                       max_gain_pct, days_to_peak, max_drawdown_pct
+                FROM backtest_trade_signals
+                WHERE mode=? AND sector IS NOT NULL AND max_gain_pct IS NOT NULL
+            ''', (mode,)).fetchall()
+
+            stats: dict = {}
+            for r in rows:
+                if r['signal_direction'] != 'BUY':
+                    continue
+                key = (r['sector'] or '기타', r['market_phase'] or '불명')
+                if key not in stats:
+                    stats[key] = {'gains': [], 'peaks': [], 'dds': []}
+                stats[key]['gains'].append(r['max_gain_pct'])
+                if r['days_to_peak']:
+                    stats[key]['peaks'].append(r['days_to_peak'])
+                if r['max_drawdown_pct']:
+                    stats[key]['dds'].append(r['max_drawdown_pct'])
+
+            for (sector, phase), d in stats.items():
+                gains = d['gains']
+                win_count = sum(1 for g in gains if g > 0)
+                conn.execute('''
+                    INSERT INTO sector_phase_stats
+                        (mode, sector, market_phase, total_signals, win_count,
+                         win_rate, avg_max_gain_pct, avg_days_to_peak, avg_max_drawdown_pct)
+                    VALUES (?,?,?,?,?,?,?,?,?)
+                    ON CONFLICT(mode, sector, market_phase) DO UPDATE SET
+                        total_signals=excluded.total_signals,
+                        win_count=excluded.win_count,
+                        win_rate=excluded.win_rate,
+                        avg_max_gain_pct=excluded.avg_max_gain_pct,
+                        avg_days_to_peak=excluded.avg_days_to_peak,
+                        avg_max_drawdown_pct=excluded.avg_max_drawdown_pct,
+                        updated_at=CURRENT_TIMESTAMP
+                ''', (
+                    mode, sector, phase, len(gains), win_count,
+                    round(win_count / len(gains) * 100, 1) if gains else 0,
+                    round(sum(gains) / len(gains), 2) if gains else 0,
+                    round(sum(d['peaks']) / len(d['peaks']), 1) if d['peaks'] else None,
+                    round(sum(d['dds']) / len(d['dds']), 2) if d['dds'] else None,
+                ))
+            conn.commit()
+        finally:
+            conn.close()
+
+
+def rebuild_seasonality_stats(mode: str):
+    """월별 신호 승률 집계."""
+    with db_lock:
+        conn = get_db_connection()
+        try:
+            rows = conn.execute('''
+                SELECT signal_direction, trade_date, max_gain_pct
+                FROM backtest_trade_signals
+                WHERE mode=? AND max_gain_pct IS NOT NULL
+            ''', (mode,)).fetchall()
+
+            buy_by_month: dict  = {}
+            sell_by_month: dict = {}
+            for r in rows:
+                try:
+                    month = int(r['trade_date'][5:7])
+                except Exception:
+                    continue
+                gain = r['max_gain_pct']
+                if r['signal_direction'] == 'BUY':
+                    buy_by_month.setdefault(month, []).append(gain)
+                else:
+                    sell_by_month.setdefault(month, []).append(gain)
+
+            for month in range(1, 13):
+                buys  = buy_by_month.get(month, [])
+                sells = sell_by_month.get(month, [])
+                conn.execute('''
+                    INSERT INTO seasonality_stats
+                        (mode, month, total_buy, win_buy, avg_max_gain_buy,
+                         total_sell, win_sell, avg_max_gain_sell)
+                    VALUES (?,?,?,?,?,?,?,?)
+                    ON CONFLICT(mode, month) DO UPDATE SET
+                        total_buy=excluded.total_buy,
+                        win_buy=excluded.win_buy,
+                        avg_max_gain_buy=excluded.avg_max_gain_buy,
+                        total_sell=excluded.total_sell,
+                        win_sell=excluded.win_sell,
+                        avg_max_gain_sell=excluded.avg_max_gain_sell,
+                        updated_at=CURRENT_TIMESTAMP
+                ''', (
+                    mode, month,
+                    len(buys), sum(1 for g in buys if g > 0),
+                    round(sum(buys) / len(buys), 2) if buys else 0,
+                    len(sells), sum(1 for g in sells if g > 0),
+                    round(sum(sells) / len(sells), 2) if sells else 0,
+                ))
             conn.commit()
         finally:
             conn.close()

@@ -12,10 +12,11 @@ logger = logging.getLogger('lassi_bot')
 BATCH_SIZE_WEEKDAY = 100
 BATCH_SIZE_WEEKEND = 200
 
-_AI_BATCH       = 5
-_RATE_LIMIT_SEC = 4
-_SIGNAL_GAP     = 10   # 같은 방향 신호 재발생 최소 간격 (일)
-_PATH_DAYS      = 120  # 신호 이후 추적 기간
+_AI_BATCH        = 5
+_RATE_LIMIT_SEC  = 4
+_SIGNAL_GAP      = 10    # 같은 방향 신호 재발생 최소 간격 (일)
+_PATH_DAYS       = 120   # 신호 이후 추적 기간
+_MIN_VOL_KR      = 50000 # 일평균 최소 거래량 (주) — 미달 시 스킵
 
 
 def _get_all_kr_tickers() -> list[dict]:
@@ -304,9 +305,25 @@ def _batch_ai_analysis(records: list[dict], ticker: str, stock_name: str,
         return [('기타', '')] * len(records)
 
 
+def _buyhold_simulation(df: pd.DataFrame, first_signal_idx: int,
+                         initial_cash: float = 10_000_000) -> dict:
+    """첫 신호 시점 매수 → 현재까지 보유 시 수익."""
+    entry_price = float(df.iloc[first_signal_idx]['close'])
+    last_price  = float(df.iloc[-1]['close'])
+    if not entry_price:
+        return {}
+    shares      = initial_cash / entry_price
+    final_value = shares * last_price
+    return {
+        'buyhold_value_10m':  round(final_value),
+        'buyhold_return_pct': round((final_value / initial_cash - 1) * 100, 2),
+    }
+
+
 def run_full_backtest_ticker(ticker: str, stock_name: str, user_id: int,
                               ai_client, toss_api=None, fred_key: str = '') -> int:
-    from base.database import log_trade_signal_backtest, update_backtest_full_progress
+    from base.database import (log_trade_signal_backtest, update_backtest_full_progress,
+                                rebuild_sector_phase_stats, rebuild_seasonality_stats)
     from base.macro_collector import get_macro_for_date, build_macro_context_str
     from base.market_phase import get_phase_for_date
 
@@ -318,9 +335,16 @@ def run_full_backtest_ticker(ticker: str, stock_name: str, user_id: int,
     if len(df) < 60:
         return 0
 
+    # 거래량 필터 — 일평균 거래량 미달 종목 스킵
+    avg_vol = df['volume'].tail(60).mean()
+    if avg_vol < _MIN_VOL_KR:
+        logger.debug(f"[KR 백테스트] {ticker} 거래량 부족 ({avg_vol:.0f}주) 스킵")
+        return 0
+
     records = []
     last_buy_idx  = -_SIGNAL_GAP
     last_sell_idx = -_SIGNAL_GAP
+    first_sig_idx = None
 
     for i in range(1, len(df) - _PATH_DAYS):
         row  = df.iloc[i]
@@ -346,6 +370,9 @@ def run_full_backtest_ticker(ticker: str, stock_name: str, user_id: int,
             if not price:
                 continue
 
+            if first_sig_idx is None:
+                first_sig_idx = i
+
             try:
                 macro = get_macro_for_date(date, fred_key=fred_key)
             except Exception:
@@ -361,6 +388,7 @@ def run_full_backtest_ticker(ticker: str, stock_name: str, user_id: int,
                 'trade_date': date,
                 'signal_types':     json.dumps(sig_list, ensure_ascii=False),
                 'signal_direction': direction,
+                'signal_count':     len(sig_list),
                 'price': price,
                 'rsi':        round(float(row.get('rsi', 0) or 0), 2),
                 'macd':       round(float(row.get('macd', 0) or 0), 6),
@@ -400,16 +428,29 @@ def run_full_backtest_ticker(ticker: str, stock_name: str, user_id: int,
             log_trade_signal_backtest(rec)
         time.sleep(_RATE_LIMIT_SEC)
 
-    sim = _simulate_portfolio(df, records)
+    sim     = _simulate_portfolio(df, records)
+    buyhold = _buyhold_simulation(df, first_sig_idx) if first_sig_idx is not None else {}
+
     update_backtest_full_progress(
         'KR', ticker, datetime.now().strftime('%Y-%m-%d'), len(records),
         final_value_10m=sim.get('final_value_10m'),
         return_pct=sim.get('return_pct'),
         trade_count=sim.get('trade_count', 0),
+        buyhold_value_10m=buyhold.get('buyhold_value_10m'),
+        buyhold_return_pct=buyhold.get('buyhold_return_pct'),
     )
+
+    # 섹터 로테이션 / 계절성 통계 갱신
+    try:
+        rebuild_sector_phase_stats('KR')
+        rebuild_seasonality_stats('KR')
+    except Exception:
+        pass
+
     logger.info(
         f"[KR 백테스트] {stock_name}({ticker}): {len(records)}개 신호 | "
-        f"1000만→{sim.get('final_value_10m',0):,}원 ({sim.get('return_pct',0):+.1f}%)"
+        f"신호매매 1000만→{sim.get('final_value_10m',0):,}원 ({sim.get('return_pct',0):+.1f}%) | "
+        f"보유시 {buyhold.get('buyhold_return_pct',0):+.1f}%"
     )
     return len(records)
 
