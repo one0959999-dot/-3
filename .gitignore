@@ -18,3 +18,7 @@ server_log.txt
 lassi.db
 *.flag
 
+.env
+
+# Fine-tuning data (generated locally)
+finetune*.jsonl
