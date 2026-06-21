@@ -13,7 +13,7 @@ BATCH_SIZE_WEEKDAY = 100
 BATCH_SIZE_WEEKEND = 200
 
 _AI_BATCH        = 5
-_RATE_LIMIT_SEC  = 4
+_RATE_LIMIT_SEC  = 1
 _SIGNAL_GAP      = 10    # 같은 방향 신호 재발생 최소 간격 (일)
 _PATH_DAYS       = 120   # 신호 이후 추적 기간
 _MIN_VOL_KR      = 50000 # 일평균 최소 거래량 (주) — 미달 시 스킵

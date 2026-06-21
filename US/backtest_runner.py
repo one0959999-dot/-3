@@ -13,7 +13,7 @@ BATCH_SIZE_WEEKDAY = 50
 BATCH_SIZE_WEEKEND = 150
 
 _AI_BATCH        = 5
-_RATE_LIMIT_SEC  = 4
+_RATE_LIMIT_SEC  = 1
 _SIGNAL_GAP      = 10
 _PATH_DAYS       = 120
 _MIN_VOL_US      = 500000  # 일평균 최소 거래량 — 미달 시 스킵
