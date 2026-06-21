@@ -82,8 +82,8 @@ def run_kr(user: dict, once: bool = False, skip_ai: bool = True):
             logger.error(f"[KR 백테스트] 오류: {e}", exc_info=True)
         if once:
             break
-        logger.info("[KR 백테스트] 다음 배치까지 5분 대기…")
-        time.sleep(300)
+        logger.info("[KR 백테스트] 다음 배치까지 20초 대기…")
+        time.sleep(20)
 
 
 def run_us(user: dict, once: bool = False, skip_ai: bool = True):
@@ -102,8 +102,8 @@ def run_us(user: dict, once: bool = False, skip_ai: bool = True):
             logger.error(f"[US 백테스트] 오류: {e}", exc_info=True)
         if once:
             break
-        logger.info("[US 백테스트] 다음 배치까지 5분 대기…")
-        time.sleep(300)
+        logger.info("[US 백테스트] 다음 배치까지 20초 대기…")
+        time.sleep(20)
 
 
 def main():

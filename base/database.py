@@ -339,6 +339,10 @@ def init_db():
         CREATE INDEX IF NOT EXISTS idx_bts_sector_phase
             ON backtest_trade_signals(mode, sector, market_phase)
         ''')
+            cursor.execute('''
+        CREATE INDEX IF NOT EXISTS idx_bts_ticker
+            ON backtest_trade_signals(user_id, mode, ticker)
+        ''')
 
             # 마이그레이션: backtest_full_progress 에 새 컬럼 추가
             _new_cols = [
