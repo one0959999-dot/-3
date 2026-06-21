@@ -584,6 +584,8 @@ class USBotController:
         news         = self._fetch_us_news([ticker])
         fundamental  = self._fetch_fundamental(ticker)
 
+        _sw_ind = self._build_us_indicators_dict(ticker, price, signal_types=[reason])
+        _sw_mkt = self._build_us_market_info_dict()
         decision = self.claude.ai_swing_trade_check(
             ticker         = ticker,
             name           = pos.name,
@@ -597,6 +599,8 @@ class USBotController:
             fundamental    = fundamental,
             hot_sectors    = self.hot_sectors or [],
             accumulate_count = acc_cnt,
+            indicators     = _sw_ind,
+            market_info    = _sw_mkt,
         )
         return decision
 
@@ -1306,6 +1310,8 @@ class USBotController:
                         _core_ai_reason = info.get("ai_reason", "")
                         if _core_fundamental:
                             _core_ai_reason = f"{_core_ai_reason} | [{_core_fundamental}]".strip(" |")
+                        _c_ind = self._build_us_indicators_dict(ticker, price, signal_types=['CORE_BUY'], sector=info.get("sector",""), rsi=info.get("rsi", 50.0))
+                        _c_mkt = self._build_us_market_info_dict()
                         approved, ai_reason = self.claude.ai_approve_us_trade(
                             signal         = 'BUY',
                             stock_name     = pos.name,
@@ -1317,6 +1323,8 @@ class USBotController:
                             rsi            = info.get("rsi", 50.0),
                             ai_reason      = _core_ai_reason,
                             news_headlines = _core_news,
+                            indicators     = _c_ind,
+                            market_info    = _c_mkt,
                         )
                     if not approved:
                         with self.lock:
@@ -2153,6 +2161,8 @@ class USBotController:
                         _full_ai_reason = f"{_full_ai_reason} | {_52w_note}".strip(" |")
                     if _fundamental:
                         _full_ai_reason = f"{_full_ai_reason} | [{_fundamental}]".strip(" |")
+                    _s_ind = self._build_us_indicators_dict(ticker, price, signal_types=['SAT_BUY'], sector=info.get("sector",""), rsi=info.get("rsi", 50.0))
+                    _s_mkt = self._build_us_market_info_dict()
                     approved, ai_reason = self.claude.ai_approve_us_trade(
                         signal         = 'BUY',
                         stock_name     = info["name"],
@@ -2164,6 +2174,8 @@ class USBotController:
                         rsi            = info.get("rsi", 50.0),
                         ai_reason      = _full_ai_reason,
                         news_headlines = _news_str,
+                        indicators     = _s_ind,
+                        market_info    = _s_mkt,
                     )
                     if not approved:
                                                                    
@@ -2586,12 +2598,15 @@ class USBotController:
             approved, ai_reason = True, "AI 미설정"
             if self.claude:
                 news = self._fetch_us_news([ticker])
+                _rb_ind = self._build_us_indicators_dict(ticker, price, signal_types=['SWING_REBUY'])
+                _rb_mkt = self._build_us_market_info_dict()
                 approved, ai_reason = self.claude.ai_approve_us_trade(
                     signal='BUY', stock_name=name, ticker=ticker,
                     price_usd=price, sector='',
                     hot_sectors=self.hot_sectors or [],
                     ai_reason=f"스윙 재진입 | 트리거: {trigger_reason} | 원매도가: ${rebuy['sell_price']:.2f}",
                     news_headlines=news,
+                    indicators=_rb_ind, market_info=_rb_mkt,
                 )
 
             if approved:
@@ -3245,6 +3260,70 @@ class USBotController:
                                                                        
                                                        
                                                                        
+
+    def _build_us_indicators_dict(self, ticker: str, price: float,
+                                   df=None, signal_types: list = None,
+                                   sector: str = '기타', rsi: float = None) -> dict:
+        """US 파인튜닝 형식 지표 dict."""
+        ind = {'sector': sector, 'signal_types': signal_types or [], 'mode': 'US'}
+        if rsi is not None:
+            ind['rsi'] = rsi
+        if df is None or (hasattr(df, 'empty') and df.empty) or 'close' not in (df.columns if hasattr(df, 'columns') else []):
+            return ind
+        try:
+            import pandas as pd
+            close = df['close'].dropna() if hasattr(df, '__getitem__') else pd.Series(dtype=float)
+            vol   = df['volume'].dropna() if 'volume' in (df.columns if hasattr(df, 'columns') else []) else pd.Series(dtype=float)
+            if len(close) >= 16:
+                delta = close.diff()
+                gain  = delta.clip(lower=0).rolling(14).mean()
+                loss  = (-delta.clip(upper=0)).rolling(14).mean()
+                rs    = gain / (loss + 1e-9)
+                ind['rsi'] = round(float(100 - 100 / (1 + rs.iloc[-1])), 2)
+            if len(close) >= 30:
+                ema12 = close.ewm(span=12, adjust=False).mean()
+                ema26 = close.ewm(span=26, adjust=False).mean()
+                macd  = ema12 - ema26
+                sig   = macd.ewm(span=9, adjust=False).mean()
+                ind['macd']        = round(float(macd.iloc[-1]), 6)
+                ind['macd_signal'] = round(float(sig.iloc[-1]), 6)
+            if len(close) >= 22:
+                sma20 = float(close.rolling(20).mean().iloc[-1])
+                std20 = float(close.rolling(20).std().iloc[-1])
+                ind['bb_upper'] = round(sma20 + 2 * std20, 4)
+                ind['bb_mid']   = round(sma20, 4)
+                ind['bb_lower'] = round(sma20 - 2 * std20, 4)
+                ind['sma20']    = round(sma20, 4)
+            if len(close) >= 6:
+                ind['sma5'] = round(float(close.rolling(5).mean().iloc[-1]), 4)
+            if len(close) >= 60:
+                ind['sma60'] = round(float(close.rolling(60).mean().iloc[-1]), 4)
+            if len(close) >= 120:
+                ind['sma120'] = round(float(close.rolling(120).mean().iloc[-1]), 4)
+            if len(vol) >= 21:
+                vol_avg = float(vol.iloc[:-1].rolling(20, min_periods=5).mean().iloc[-1])
+                ind['vol_ratio'] = round(float(vol.iloc[-1]) / (vol_avg + 1) * 100, 1)
+        except Exception:
+            pass
+        return ind
+
+    def _build_us_market_info_dict(self) -> dict:
+        """US 파인튜닝 형식 시장 국면/매크로 dict."""
+        mkt = {}
+        try:
+            from base.market_phase import get_phase_for_date
+            from base.macro_collector import get_macro_for_date, build_macro_context_str
+            import datetime as _dt
+            today_str = _dt.date.today().strftime('%Y-%m-%d')
+            phase_info = get_phase_for_date('US', today_str)
+            mkt['market_phase']    = phase_info.get('phase')
+            mkt['market_phase_kr'] = phase_info.get('phase_kr')
+            mkt['phase_confidence']= phase_info.get('confidence')
+            macro = get_macro_for_date(today_str)
+            mkt['macro_str'] = build_macro_context_str(macro)
+        except Exception:
+            pass
+        return mkt
 
     def _fetch_fundamental(self, ticker: str) -> str:
 \

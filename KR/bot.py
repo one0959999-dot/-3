@@ -1979,6 +1979,77 @@ class KRBotController:
 
         return "\n".join(lines)
 
+    def _build_indicators_dict(self, ticker: str, price: float,
+                                ex_df: 'pd.DataFrame', signal_types: list = None,
+                                sector: str = '기타') -> dict:
+        """파인튜닝 형식 판단에 필요한 지표 dict 구성."""
+        ind = {'sector': sector, 'signal_types': signal_types or []}
+        if ex_df is None or ex_df.empty or 'close' not in ex_df.columns:
+            return ind
+        try:
+            from KR.strategy import calc_rsi
+            close = ex_df['close'].dropna()
+            vol   = ex_df['volume'].dropna() if 'volume' in ex_df.columns else pd.Series(dtype=float)
+
+            if len(close) >= 16:
+                ind['rsi'] = round(float(calc_rsi(close, 14).iloc[-1]), 2)
+            if len(close) >= 30:
+                ema12 = close.ewm(span=12, adjust=False).mean()
+                ema26 = close.ewm(span=26, adjust=False).mean()
+                macd_line   = ema12 - ema26
+                signal_line = macd_line.ewm(span=9, adjust=False).mean()
+                ind['macd']        = round(float(macd_line.iloc[-1]), 6)
+                ind['macd_signal'] = round(float(signal_line.iloc[-1]), 6)
+            if len(close) >= 22:
+                sma20 = float(close.rolling(20).mean().iloc[-1])
+                std20 = float(close.rolling(20).std().iloc[-1])
+                ind['bb_upper'] = round(sma20 + 2 * std20, 2)
+                ind['bb_mid']   = round(sma20, 2)
+                ind['bb_lower'] = round(sma20 - 2 * std20, 2)
+                ind['sma20']    = round(sma20, 2)
+            if len(close) >= 6:
+                ind['sma5'] = round(float(close.rolling(5).mean().iloc[-1]), 2)
+            if len(close) >= 60:
+                ind['sma60']  = round(float(close.rolling(60).mean().iloc[-1]), 2)
+            if len(close) >= 120:
+                ind['sma120'] = round(float(close.rolling(120).mean().iloc[-1]), 2)
+            if len(vol) >= 21:
+                vol_avg20 = float(vol.iloc[:-1].rolling(20, min_periods=5).mean().iloc[-1])
+                vol_today = float(vol.iloc[-1])
+                ind['vol_ratio'] = round(vol_today / (vol_avg20 + 1) * 100, 1)
+
+            # 뉴스/공시
+            if self.news_monitor:
+                try:
+                    news_parts = []
+                    naver = self.news_monitor.get_news_summary(ticker, display=3)
+                    dart  = self.news_monitor.get_disclosure_summary(ticker, days=5)
+                    if naver: news_parts.append(naver)
+                    if dart:  news_parts.append(dart)
+                    ind['news_summary'] = '\n'.join(news_parts)
+                except Exception:
+                    pass
+        except Exception as e:
+            logger.debug(f"[{self.mode_name}] indicators_dict 오류 ({ticker}): {e}")
+        return ind
+
+    def _build_market_info_dict(self) -> dict:
+        """파인튜닝 형식 판단에 필요한 시장 국면/매크로 dict 구성."""
+        mkt = {}
+        try:
+            from base.market_phase import get_phase_for_date
+            from base.macro_collector import get_macro_for_date, build_macro_context_str
+            today_str = _now_kst().strftime('%Y-%m-%d')
+            phase_info = get_phase_for_date('KR', today_str)
+            mkt['market_phase']    = phase_info.get('phase')
+            mkt['market_phase_kr'] = phase_info.get('phase_kr')
+            mkt['phase_confidence']= phase_info.get('confidence')
+            macro = get_macro_for_date(today_str)
+            mkt['macro_str'] = build_macro_context_str(macro)
+        except Exception:
+            pass
+        return mkt
+
     def _fetch_fundamental(self, ticker: str, stock_name: str) -> str:
 \
 \
@@ -2617,12 +2688,14 @@ class KRBotController:
                                 except Exception:
                                     _ma120 = _ma60 = 0
                                 _news_raw = fetch_recent_news(c_nm)
-                                                                      
                                 _news = _news_raw if _news_raw and "조회 실패" not in _news_raw else ""
+                                _c_ind = self._build_indicators_dict(c_tk, cp, c_df if 'c_df' in dir() else None, signal_types=['CORE_BUY'])
+                                _c_mkt = self._build_market_info_dict()
                                 approved, ai_reason = self.claude.ai_approve_core_trade(
                                     stock_name=c_nm, ticker=c_tk, price=cp,
                                     rsi=c_rsi, ma120=_ma120, ma60=_ma60,
                                     regime=regime, news_headlines=_news,
+                                    indicators=_c_ind, market_info=_c_mkt,
                                 )
                             if not approved:
                                 with self.lock:
@@ -3170,7 +3243,9 @@ class KRBotController:
                                 pos.status     = "🤔 AI 심사 중"
                                 pos.status_msg = f"하락장 저점 신호 | {bear_reason_str} — AI 최종 승인 대기 중..."
                                 trade_ctx = self._build_trade_context(ticker, p_nm, price, ex_df, st_nm, regime)
-                                decision, ai_reason = self.claude.ai_approve_trade(sig, p_nm, ticker, price, st_nm, ind_val, self.hot_sectors, get_recent_trades(self.user_id, ticker), load_ai_rules(self.user_id) + "\n" + getattr(self, 'current_ai_market_view', '') + ("\n\n[📊 섹터 가이드 / 커스텀 전략]\n" + self.sector_guide if self.sector_guide else ''), context=trade_ctx)
+                                _ind = self._build_indicators_dict(ticker, price, ex_df, signal_types=[st_nm])
+                                _mkt = self._build_market_info_dict()
+                                decision, ai_reason = self.claude.ai_approve_trade(sig, p_nm, ticker, price, st_nm, ind_val, self.hot_sectors, context=trade_ctx, indicators=_ind, market_info=_mkt)
                                 if decision:
                                     if self._buy_order(ticker, qty, pos, p_nm):
                                         with self.lock:
@@ -3268,7 +3343,9 @@ class KRBotController:
                         trade_ctx = self._build_trade_context(ticker, p_nm, price, ex_df, st_nm, regime)
                         if _52w_note_kr:
                             trade_ctx += f"\n[52주 신고가] {_52w_note_kr}"
-                        decision, ai_reason = self.claude.ai_approve_trade(sig, p_nm, ticker, price, st_nm, ind_val, self.hot_sectors, get_recent_trades(self.user_id, ticker), load_ai_rules(self.user_id) + "\n" + getattr(self, 'current_ai_market_view', '') + ("\n\n[📊 섹터 가이드 / 커스텀 전략]\n" + self.sector_guide if self.sector_guide else ''), context=trade_ctx)
+                        _ind = self._build_indicators_dict(ticker, price, ex_df, signal_types=[st_nm])
+                        _mkt = self._build_market_info_dict()
+                        decision, ai_reason = self.claude.ai_approve_trade(sig, p_nm, ticker, price, st_nm, ind_val, self.hot_sectors, context=trade_ctx, indicators=_ind, market_info=_mkt)
                         if decision:
                             qty = int((entry_cash * 0.98) // price)
                             if qty > 0 and self._buy_order(ticker, qty, pos, p_nm):
@@ -3326,7 +3403,9 @@ class KRBotController:
                         pos.status     = "🤔 AI 심사 중"
                         pos.status_msg = f"매도 신호 발생 | {st_nm} — AI 최종 승인 대기 중..."
                         trade_ctx = self._build_trade_context(ticker, p_nm, price, ex_df, st_nm, regime)
-                        decision, ai_reason = self.claude.ai_approve_trade(sig, p_nm, ticker, price, st_nm, ind_val, self.hot_sectors, get_recent_trades(self.user_id, ticker), load_ai_rules(self.user_id) + "\n" + getattr(self, 'current_ai_market_view', '') + ("\n\n[📊 섹터 가이드 / 커스텀 전략]\n" + self.sector_guide if self.sector_guide else ''), context=trade_ctx)
+                        _ind = self._build_indicators_dict(ticker, price, ex_df, signal_types=[st_nm])
+                        _mkt = self._build_market_info_dict()
+                        decision, ai_reason = self.claude.ai_approve_trade(sig, p_nm, ticker, price, st_nm, ind_val, self.hot_sectors, context=trade_ctx, indicators=_ind, market_info=_mkt)
                         if decision:
                             if self._sell_order(ticker, p_sh, pos, p_nm):
                                 with self.lock:
@@ -3438,6 +3517,8 @@ class KRBotController:
                         _news = self.news_monitor.get_news_summary(name, display=3)
                     except Exception:
                         pass
+                _exit_ind = self._build_indicators_dict(ticker, price, getattr(pos, 'df', None), signal_types=['PARTIAL_EXIT'])
+                _exit_mkt = self._build_market_info_dict()
                 decision = self.claude.ai_partial_exit(
                     ticker=ticker, stock_name=name, price=price,
                     avg_price=avg, pnl_pct=pnl_pct,
@@ -3445,6 +3526,7 @@ class KRBotController:
                     partial_sold=bool(getattr(pos, 'partial_sold', False)),
                     regime=regime,
                     news_headlines=_news,
+                    indicators=_exit_ind, market_info=_exit_mkt,
                 )
                 with self.lock:
                     pos.ai_exit_decision = decision
