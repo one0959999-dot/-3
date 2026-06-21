@@ -73,6 +73,24 @@ def _get_full_history(ticker: str, toss_api=None) -> Optional[pd.DataFrame]:
                 return df
         except Exception:
             pass
+    # pykrx로 KRX 직접 조회 (yfinance보다 안정적)
+    try:
+        from pykrx import stock as pykrx_stock
+        from datetime import datetime
+        start = '19900101'
+        end = datetime.now().strftime('%Y%m%d')
+        raw = pykrx_stock.get_market_ohlcv_by_date(start, end, ticker)
+        if raw is not None and not raw.empty:
+            raw.columns = [c.lower() for c in raw.columns]
+            # pykrx 컬럼: 시가/고가/저가/종가/거래량
+            col_map = {'시가': 'open', '고가': 'high', '저가': 'low', '종가': 'close', '거래량': 'volume'}
+            raw = raw.rename(columns=col_map)
+            raw.index = pd.to_datetime(raw.index)
+            if 'close' in raw.columns:
+                return raw.dropna(subset=['close'])
+    except Exception as e:
+        logger.debug(f"[KR 백테스트] {ticker} pykrx 실패: {e}")
+    # fallback: yfinance
     try:
         import yfinance as yf
         from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeout
