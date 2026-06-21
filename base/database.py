@@ -340,6 +340,21 @@ def init_db():
             ON backtest_trade_signals(mode, sector, market_phase)
         ''')
 
+            # 마이그레이션: backtest_full_progress 에 새 컬럼 추가
+            _new_cols = [
+                ('final_value_10m',    'REAL'),
+                ('return_pct',         'REAL'),
+                ('trade_count',        'INTEGER DEFAULT 0'),
+                ('buyhold_value_10m',  'REAL'),
+                ('buyhold_return_pct', 'REAL'),
+            ]
+            existing = {row[1] for row in cursor.execute(
+                "PRAGMA table_info(backtest_full_progress)")}
+            for col_name, col_type in _new_cols:
+                if col_name not in existing:
+                    cursor.execute(
+                        f'ALTER TABLE backtest_full_progress ADD COLUMN {col_name} {col_type}')
+
             cursor.execute('UPDATE users SET is_running = 0')
             conn.commit()
         finally:
