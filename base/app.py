@@ -1810,8 +1810,12 @@ def backtest_run():
             skip_ai = bool(data.get('skip_ai', True))
             if mode in ('KR', 'ALL'):
                 from KR.backtest_runner import BacktestRunner, BATCH_SIZE_WEEKEND
+                _news_keys = get_news_api_keys(user_id)
                 runner = BacktestRunner(user_id, ai, toss_api=toss, fred_key=fred,
-                                        skip_ai=skip_ai)
+                                        skip_ai=skip_ai,
+                                        dart_key=_news_keys.get('dart_api_key') or '',
+                                        naver_id=_news_keys.get('naver_client_id') or '',
+                                        naver_secret=_news_keys.get('naver_client_secret') or '')
                 runner.run_batch(BATCH_SIZE_WEEKEND, progress_cb=_progress)
                 from base.database import get_backtest_full_done
                 kr_done = len(get_backtest_full_done('KR'))

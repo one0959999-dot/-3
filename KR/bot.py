@@ -4132,8 +4132,13 @@ class KRBotController:
             def _worker():
                 try:
                     from KR.backtest_runner import BacktestRunner
+                    from base.database import get_news_api_keys
                     _ai, _fred = _build_backtest_ai()
-                    runner = BacktestRunner(self.user_id, _ai, self.toss, _fred)
+                    _nk = get_news_api_keys(self.user_id)
+                    runner = BacktestRunner(self.user_id, _ai, self.toss, _fred,
+                                           dart_key=_nk.get('dart_api_key') or '',
+                                           naver_id=_nk.get('naver_client_id') or '',
+                                           naver_secret=_nk.get('naver_client_secret') or '')
                     n = runner.run_batch(batch_size)
                     self.add_log(f"📊 [KR/{label}] 백테스트 완료: {n}개 신호 기록")
                     self._send_telegram(

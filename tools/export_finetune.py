@@ -100,6 +100,11 @@ def build_input_text(row: dict) -> str:
             lines.append("=== 거시경제 ===")
             lines.append(' | '.join(macro_parts))
 
+    if row.get('news_summary'):
+        lines.append("")
+        lines.append("=== 공시 정보 ===")
+        lines.append(row['news_summary'])
+
     lines.append("")
     lines.append(f"질문: 위 조건에서 {row['signal_direction']} 신호가 발생했습니다. 향후 가격 결과를 예측하세요.")
     return '\n'.join(lines)

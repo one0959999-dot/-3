@@ -962,8 +962,8 @@ def log_trade_signal_backtest(data: dict) -> int:
                  days_to_peak, max_gain_pct,
                  days_to_max_drawdown, max_drawdown_pct,
                  days_to_recovery, price_path_json,
-                 sector, ai_analysis)
-                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                 sector, ai_analysis, news_summary)
+                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
             ''', (
                 data.get('user_id'), data.get('mode'), data.get('ticker'), data.get('stock_name'),
                 data.get('trade_date'), data.get('signal_types'), data.get('signal_direction'),
@@ -979,6 +979,7 @@ def log_trade_signal_backtest(data: dict) -> int:
                 data.get('days_to_max_drawdown'), data.get('max_drawdown_pct'),
                 data.get('days_to_recovery'), data.get('price_path_json'),
                 data.get('sector'), data.get('ai_analysis'),
+                data.get('news_summary', ''),
             ))
             conn.commit()
             return cur.lastrowid

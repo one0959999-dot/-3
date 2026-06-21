@@ -119,7 +119,7 @@ class NewsMonitor:
         return classified['negative']
 
     def get_disclosure_summary(self, ticker: str, days: int = 3) -> str:
-        """AI 컨텍스트용 공시 요약 문자열 생성."""
+        """AI 컨텍스트용 공시 요약 문자열 생성 (현재 기준)."""
         disclosures = self.get_recent_disclosures(ticker, days=days)
         if not disclosures:
             return ""
@@ -130,9 +130,47 @@ class NewsMonitor:
             lines.append(f"⚠️ [악재공시] {d.get('rcept_dt','')} {d.get('report_nm','')}")
         for d in classified['positive']:
             lines.append(f"✅ [호재공시] {d.get('rcept_dt','')} {d.get('report_nm','')}")
-        for d in classified['neutral'][:3]:   # 중립은 최근 3개만
+        for d in classified['neutral'][:3]:
             lines.append(f"📋 [공시] {d.get('rcept_dt','')} {d.get('report_nm','')}")
         return "\n".join(lines) if lines else ""
+
+    def get_disclosure_summary_for_date(self, ticker: str, date_str: str, days: int = 5) -> str:
+        """백테스트용 — 특정 날짜 기준 ±days일 DART 공시 요약."""
+        corp_code = self.get_corp_code(ticker)
+        if not corp_code:
+            return ""
+        try:
+            target = datetime.strptime(date_str, '%Y-%m-%d')
+            bgn = (target - timedelta(days=days)).strftime('%Y%m%d')
+            end = (target + timedelta(days=days)).strftime('%Y%m%d')
+            res = requests.get(
+                "https://opendart.fss.or.kr/api/list.json",
+                params={
+                    "crtfc_key": self.dart_key,
+                    "corp_code": corp_code,
+                    "bgn_de": bgn,
+                    "end_de": end,
+                },
+                timeout=5,
+            )
+            data = res.json()
+            if data.get('status') != '000':
+                return ""
+            disclosures = data.get('list', [])
+            if not disclosures:
+                return ""
+            classified = self.classify_disclosures(disclosures)
+            lines = []
+            for d in classified['negative']:
+                lines.append(f"⚠️ [악재공시] {d.get('rcept_dt','')} {d.get('report_nm','')}")
+            for d in classified['positive']:
+                lines.append(f"✅ [호재공시] {d.get('rcept_dt','')} {d.get('report_nm','')}")
+            for d in classified['neutral'][:2]:
+                lines.append(f"📋 [공시] {d.get('rcept_dt','')} {d.get('report_nm','')}")
+            return "\n".join(lines) if lines else ""
+        except Exception as e:
+            logger.warning(f"[NewsMonitor] 날짜기준 공시 조회 실패 ({ticker} {date_str}): {e}")
+            return ""
 
     # ══════════════════════════════════════════════════════════════════
     # 실적 발표 예정일 추정 (DART 분기보고서 패턴 기반)
