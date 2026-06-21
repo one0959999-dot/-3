@@ -317,7 +317,8 @@ def _buyhold_simulation(df: pd.DataFrame, first_signal_idx: int,
 
 
 def run_full_backtest_ticker(ticker: str, stock_name: str, user_id: int,
-                              ai_client, toss_api=None, fred_key: str = '') -> int:
+                              ai_client, toss_api=None, fred_key: str = '',
+                              skip_ai: bool = False) -> int:
     from base.database import (log_trade_signal_backtest, update_backtest_full_progress,
                                 rebuild_sector_phase_stats, rebuild_seasonality_stats)
     from base.macro_collector import get_macro_for_date, build_macro_context_str
@@ -416,13 +417,19 @@ def run_full_backtest_ticker(ticker: str, stock_name: str, user_id: int,
                 last_sell_idx = i
 
     for batch_start in range(0, len(records), _AI_BATCH):
-        batch    = records[batch_start: batch_start + _AI_BATCH]
-        analyses = _batch_ai_analysis(batch, ticker, stock_name, ai_client)
-        for rec, (sector, analysis) in zip(batch, analyses):
-            rec['sector']      = sector
-            rec['ai_analysis'] = analysis
-            log_trade_signal_backtest(rec)
-        time.sleep(_RATE_LIMIT_SEC)
+        batch = records[batch_start: batch_start + _AI_BATCH]
+        if skip_ai:
+            for rec in batch:
+                rec['sector']      = '기타'
+                rec['ai_analysis'] = ''
+                log_trade_signal_backtest(rec)
+        else:
+            analyses = _batch_ai_analysis(batch, ticker, stock_name, ai_client)
+            for rec, (sector, analysis) in zip(batch, analyses):
+                rec['sector']      = sector
+                rec['ai_analysis'] = analysis
+                log_trade_signal_backtest(rec)
+            time.sleep(_RATE_LIMIT_SEC)
 
     sim     = _simulate_portfolio(df, records)
     buyhold = _buyhold_simulation(df, first_sig_idx) if first_sig_idx is not None else {}
@@ -453,11 +460,13 @@ def run_full_backtest_ticker(ticker: str, stock_name: str, user_id: int,
 
 class BacktestRunner:
 
-    def __init__(self, user_id: int, ai_client, toss_api=None, fred_key: str = ''):
+    def __init__(self, user_id: int, ai_client, toss_api=None, fred_key: str = '',
+                 skip_ai: bool = False):
         self.user_id  = user_id
         self.ai       = ai_client
         self.toss     = toss_api
         self.fred_key = fred_key
+        self.skip_ai  = skip_ai
 
     def run_batch(self, batch_size: int = BATCH_SIZE_WEEKDAY,
                   progress_cb=None) -> int:
@@ -480,7 +489,8 @@ class BacktestRunner:
             try:
                 n = run_full_backtest_ticker(
                     item['ticker'], item['name'],
-                    self.user_id, self.ai, self.toss, self.fred_key
+                    self.user_id, self.ai, self.toss, self.fred_key,
+                    skip_ai=self.skip_ai
                 )
                 total += n
             except Exception as e:

@@ -1773,13 +1773,15 @@ def backtest_run():
         try:
             ai = _build_ai()
             toss, fred = _build_toss()
+            skip_ai = bool(data.get('skip_ai', True))
             if mode in ('KR', 'ALL'):
                 from KR.backtest_runner import BacktestRunner, BATCH_SIZE_WEEKEND
-                runner = BacktestRunner(user_id, ai, toss_api=toss, fred_key=fred)
+                runner = BacktestRunner(user_id, ai, toss_api=toss, fred_key=fred,
+                                        skip_ai=skip_ai)
                 runner.run_batch(BATCH_SIZE_WEEKEND, progress_cb=_progress)
             if mode in ('US', 'ALL'):
                 from US.backtest_runner import USBacktestRunner, BATCH_SIZE_WEEKEND
-                runner = USBacktestRunner(user_id, ai, toss_api=toss)
+                runner = USBacktestRunner(user_id, ai, toss_api=toss, skip_ai=skip_ai)
                 runner.run_batch(BATCH_SIZE_WEEKEND, progress_cb=_progress)
         except Exception as e:
             logger.warning(f"[백테스트 실행] 오류: {e}", exc_info=True)
