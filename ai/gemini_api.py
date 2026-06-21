@@ -150,3 +150,69 @@ REASON: 핵심 근거 1~2줄"""
         except Exception as e:
             logger.warning(f"[Gemini] ai_approve_trade 오류: {e}")
             return True, f"오류로 자동 승인: {e}", 60
+
+    def ai_select_us_satellites(self, candidates: list, hot_sectors: list,
+                                n: int, sector_guide: str = '') -> list:
+        if not self.client:
+            return None
+
+        lines = []
+        for c in candidates[:200]:
+            lines.append(
+                f"- {c.get('name', c['ticker'])}({c['ticker']}) | 섹터:{c.get('sector','-')} | "
+                f"가격:${c.get('price',0):.2f} | 20일모멘텀:{c.get('momentum_20d',0):+.1f}% | "
+                f"RSI:{c.get('rsi',50):.1f} | 골든크로스:{'✓' if c.get('golden') else '✗'} | "
+                f"거래량비율:{c.get('vol_ratio',1):.1f}x | 종합점수:{c.get('score',0):.1f}"
+            )
+        candidate_text = "\n".join(lines)
+        sector_guide_section = f"\n[📊 투자 전략 가이드]\n{sector_guide}\n" if sector_guide else ""
+
+        prompt = f"""[US 위성 종목 최종 선정 요청]
+
+━━ US 위성 슬롯 투자 목표 ━━
+• 시장: 미국 NASDAQ/NYSE
+• 보유 기간: 1~3개월 중기
+• 목표: 상승 모멘텀이 시작됐거나 임박한 미국 성장주 — 수익 실현 후 교체
+• 우선순위: ① 20일 모멘텀 플러스 + RSI 40~65 (추세 시작 구간)
+             ② 골든크로스(50일선>200일선) 확인된 종목
+             ③ 아직 덜 오른 종목 (20일 모멘텀 25%↑ 종목은 배제)
+• 강세 섹터는 가산점 기준 (필수 조건 아님) — 비강세 섹터라도 지표 좋으면 선정
+• 배제: 과매수(RSI>78), 최근 급락(-8% 이하), 레버리지 ETF는 최소화
+
+━━ 현재 강세 섹터 (참고용 — 보너스 점수 기준) ━━
+{', '.join(hot_sectors) if hot_sectors else '전 섹터 중립'}
+{sector_guide_section}
+━━ 퀀트 검증 후보 종목 ━━
+{candidate_text}
+
+위 후보 중 "지금 당장 또는 1~2주 내 매수 타이밍이 오고,
+1~3개월 내 15~30% 수익 실현이 기대되는" 미국 성장주 {n}개를 선정하세요.
+PLTR, ANET, IONQ, RKLB처럼 성장 테마 + 기관 수급이 뒷받침되는 종목을 선호합니다.
+강세 섹터가 아니더라도 지표가 좋으면 반드시 선정하세요.
+
+반드시 아래 JSON 형식으로만 답변하세요. 다른 텍스트는 절대 포함하지 마세요.
+[
+  {{"ticker": "TICKER", "reason": "선정이유(1~3달 수익 근거 포함)"}},
+  ...
+]"""
+        try:
+            import json
+            text = self.generate_content(prompt, temperature=0.3)
+            if not text:
+                return None
+            if "```" in text:
+                text = text.split("```")[1].lstrip("json").strip()
+            selected_data = json.loads(text)
+
+            final_selection = []
+            for item in selected_data:
+                for cand in candidates:
+                    if cand['ticker'] == item['ticker']:
+                        cand['ai_selected'] = True
+                        cand['ai_reason']   = item.get('reason', '')
+                        final_selection.append(cand)
+                        break
+            return final_selection[:n]
+        except Exception as e:
+            logger.warning(f"[Gemini] ai_select_us_satellites 오류: {e}")
+            return None
