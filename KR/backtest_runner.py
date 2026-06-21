@@ -75,10 +75,19 @@ def _get_full_history(ticker: str, toss_api=None) -> Optional[pd.DataFrame]:
             pass
     try:
         import yfinance as yf
+        from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeout
+        def _download(sym):
+            return yf.download(sym, period='max', interval='1d',
+                               progress=False, auto_adjust=True)
         for suffix in ['.KS', '.KQ']:
-            df = yf.download(ticker + suffix, period='max', interval='1d',
-                             progress=False, auto_adjust=True)
-            if not df.empty:
+            try:
+                with ThreadPoolExecutor(max_workers=1) as ex:
+                    future = ex.submit(_download, ticker + suffix)
+                    df = future.result(timeout=30)
+            except FuturesTimeout:
+                logger.debug(f"[KR 백테스트] {ticker}{suffix} yfinance timeout")
+                continue
+            if df is not None and not df.empty:
                 if hasattr(df.columns, 'get_level_values'):
                     df.columns = df.columns.get_level_values(0)
                 df.columns = [c.lower() for c in df.columns]
