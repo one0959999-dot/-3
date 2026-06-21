@@ -47,8 +47,8 @@ def _build_ai(user: dict):
 
 def _build_toss(user: dict):
     try:
-        from base.toss_api import TossApi
-        toss = TossApi(
+        from base.toss_api import TossInvestApi
+        toss = TossInvestApi(
             client_id=user.get('toss_client_id') or '',
             client_secret=user.get('toss_client_secret') or '',
             account_seq=user.get('toss_account_seq') or '',
@@ -83,8 +83,9 @@ def run_kr(user: dict, once: bool = False):
 
 def run_us(user: dict, once: bool = False):
     from US.backtest_runner import USBacktestRunner, BATCH_SIZE_WEEKEND
-    ai     = _build_ai(user)
-    runner = USBacktestRunner(user['id'], ai)
+    ai   = _build_ai(user)
+    toss = _build_toss(user)
+    runner = USBacktestRunner(user['id'], ai, toss_api=toss)
 
     batch = BATCH_SIZE_WEEKEND
     logger.info(f"[US 백테스트] 배치 크기: {batch}종목")

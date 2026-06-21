@@ -34,7 +34,14 @@ _US_UNIVERSE = [
 ]
 
 
-def _get_full_history_us(ticker: str) -> Optional[pd.DataFrame]:
+def _get_full_history_us(ticker: str, toss_api=None) -> Optional[pd.DataFrame]:
+    if toss_api:
+        try:
+            df = toss_api.get_full_history(ticker)
+            if df is not None and not df.empty:
+                return df
+        except Exception:
+            pass
     try:
         import yfinance as yf
         df = yf.download(ticker, period='max', interval='1d',
@@ -222,11 +229,11 @@ def _batch_ai_analysis(points: list[dict], ticker: str, stock_name: str, ai_clie
         return [''] * len(points)
 
 
-def run_full_backtest_ticker_us(ticker: str, user_id: int, ai_client) -> int:
+def run_full_backtest_ticker_us(ticker: str, user_id: int, ai_client, toss_api=None) -> int:
     from base.database import log_optimal_point, update_backtest_full_progress
     from base.macro_collector import get_macro_for_date, build_macro_context_str
 
-    df = _get_full_history_us(ticker)
+    df = _get_full_history_us(ticker, toss_api)
     if df is None or len(df) < 60:
         return 0
 
@@ -302,9 +309,10 @@ def run_full_backtest_ticker_us(ticker: str, user_id: int, ai_client) -> int:
 
 class USBacktestRunner:
 
-    def __init__(self, user_id: int, ai_client):
+    def __init__(self, user_id: int, ai_client, toss_api=None):
         self.user_id = user_id
         self.ai      = ai_client
+        self.toss    = toss_api
 
     def run_batch(self, batch_size: int = BATCH_SIZE_WEEKDAY) -> int:
         from base.database import get_backtest_full_done
@@ -318,7 +326,7 @@ class USBacktestRunner:
         total = 0
         for ticker in pending[:batch_size]:
             try:
-                n = run_full_backtest_ticker_us(ticker, self.user_id, self.ai)
+                n = run_full_backtest_ticker_us(ticker, self.user_id, self.ai, self.toss)
                 if n:
                     logger.info(f"[US 백테스트] {ticker}: {n}개 포인트")
                     total += n
