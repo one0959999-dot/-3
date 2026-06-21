@@ -52,6 +52,9 @@ def _get_full_history_us(ticker: str, toss_api=None) -> Optional[pd.DataFrame]:
             df.columns = df.columns.get_level_values(0)
         df.columns = [c.lower() for c in df.columns]
         df.index = pd.to_datetime(df.index)
+        for c in ('open', 'high', 'low', 'close', 'volume'):
+            if c in df.columns:
+                df[c] = pd.to_numeric(df[c], errors='coerce')
         return df.dropna(subset=['close'])
     except Exception as e:
         logger.debug(f"[US 백테스트] {ticker} yfinance 실패: {e}")
@@ -196,7 +199,10 @@ def _simulate_portfolio(df: pd.DataFrame, signal_records: list[dict],
         idx = date_to_idx.get(rec['trade_date'])
         if idx is None:
             continue
-        price = float(df.iloc[idx]['close'])
+        _raw = df.iloc[idx]['close']
+        if _raw is None or pd.isna(_raw):
+            continue
+        price = float(_raw)
         if not price:
             continue
 
@@ -204,7 +210,10 @@ def _simulate_portfolio(df: pd.DataFrame, signal_records: list[dict],
         if shares > 0 and entry_idx is not None and days_to_pk:
             if idx >= entry_idx + days_to_pk:
                 exit_idx   = min(entry_idx + days_to_pk, len(df) - 1)
-                exit_price = float(df.iloc[exit_idx]['close'])
+                _ep = df.iloc[exit_idx]['close']
+                if _ep is None or pd.isna(_ep):
+                    continue
+                exit_price = float(_ep)
                 cash   = shares * exit_price
                 shares = 0.0
                 entry_idx = None
@@ -223,7 +232,8 @@ def _simulate_portfolio(df: pd.DataFrame, signal_records: list[dict],
             entry_idx = None
             trade_count += 1
 
-    last_price  = float(df.iloc[-1]['close'])
+    _lp = df.iloc[-1]['close']
+    last_price  = float(_lp) if _lp is not None and not pd.isna(_lp) else 0.0
     final_value = cash + (shares * last_price if shares > 0 else 0)
     return_pct  = round((final_value / initial_cash - 1) * 100, 2)
 
@@ -288,8 +298,12 @@ def _batch_ai_analysis(records: list[dict], ticker: str,
 
 def _buyhold_simulation(df: pd.DataFrame, first_signal_idx: int,
                          initial_cash: float = 10_000_000) -> dict:
-    entry_price = float(df.iloc[first_signal_idx]['close'])
-    last_price  = float(df.iloc[-1]['close'])
+    _ep = df.iloc[first_signal_idx]['close']
+    _lp = df.iloc[-1]['close']
+    if _ep is None or pd.isna(_ep) or _lp is None or pd.isna(_lp):
+        return {}
+    entry_price = float(_ep)
+    last_price  = float(_lp)
     if not entry_price:
         return {}
     shares      = initial_cash / entry_price
@@ -457,7 +471,7 @@ class USBacktestRunner:
                 n = run_full_backtest_ticker_us(ticker, self.user_id, self.ai, self.toss)
                 total += n
             except Exception as e:
-                logger.warning(f"[US 백테스트] {ticker} 오류: {e}")
+                logger.warning(f"[US 백테스트] {ticker} 오류: {e}", exc_info=True)
             time.sleep(1)
 
         return total
