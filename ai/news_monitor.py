@@ -199,6 +199,179 @@ class NewsMonitor:
             return ""
 
     # ══════════════════════════════════════════════════════════════════
+    # 백테스트용 일괄 공시 조회 (종목당 1회 — 신호별 호출 제거)
+    # ══════════════════════════════════════════════════════════════════
+
+    def get_all_disclosures(self, ticker: str, start_date: str, end_date: str) -> list[dict]:
+        """[KR/DART] 전체 기간 공시를 연도별로 일괄 수집.
+
+        반환: [{'dt': 'YYYYMMDD', 'nm': 보고서명, 'label': '악재'|'호재'|'공시'}, ...]
+        신호별 API 호출(수백 회) 대신 종목당 ~연수 회로 축소.
+        """
+        corp_code = self.get_corp_code(ticker)
+        if not corp_code:
+            return []
+        from datetime import datetime as _dt
+        try:
+            y0 = int(start_date[:4]); y1 = int(end_date[:4])
+        except Exception:
+            return []
+        out = []
+        for year in range(y0, y1 + 1):
+            bgn = f"{year}0101"
+            end = f"{year}1231"
+            page = 1
+            while True:
+                try:
+                    res = requests.get(
+                        "https://opendart.fss.or.kr/api/list.json",
+                        params={
+                            "crtfc_key": self.dart_key, "corp_code": corp_code,
+                            "bgn_de": bgn, "end_de": end,
+                            "page_no": page, "page_count": 100,
+                        },
+                        timeout=10,
+                    )
+                    data = res.json()
+                except Exception as e:
+                    logger.debug(f"[NewsMonitor] DART 일괄조회 실패 ({ticker} {year} p{page}): {e}")
+                    break
+                if data.get('status') != '000':
+                    break
+                for d in data.get('list', []):
+                    nm = d.get('report_nm', '')
+                    if any(k in nm for k in _NEGATIVE_KEYWORDS):
+                        label = '악재'
+                    elif any(k in nm for k in _POSITIVE_KEYWORDS):
+                        label = '호재'
+                    else:
+                        label = '공시'
+                    out.append({'dt': d.get('rcept_dt', ''), 'nm': nm, 'label': label})
+                total_page = int(data.get('total_page', 1) or 1)
+                if page >= total_page:
+                    break
+                page += 1
+        return out
+
+    def get_cik(self, ticker: str) -> str | None:
+        """[US/EDGAR] 티커 → CIK(10자리) 변환. 전체 매핑 1회 다운로드 캐싱."""
+        ticker = (ticker or '').strip().upper()
+        cache = getattr(self, '_cik_cache', None)
+        if cache is None:
+            cache = {}
+            try:
+                res = requests.get(
+                    "https://www.sec.gov/files/company_tickers.json",
+                    headers={"User-Agent": "lassi-bot backtest contact@example.com"},
+                    timeout=30,
+                )
+                data = res.json()
+                for v in data.values():
+                    t = str(v.get('ticker', '')).upper()
+                    cik = str(v.get('cik_str', '')).zfill(10)
+                    if t:
+                        cache[t] = cik
+                logger.info(f"[NewsMonitor] EDGAR CIK 매핑 로드: {len(cache)}개")
+            except Exception as e:
+                logger.warning(f"[NewsMonitor] EDGAR CIK 매핑 로드 실패: {e}")
+            self._cik_cache = cache
+        return cache.get(ticker)
+
+    # EDGAR 공시 폼 분류
+    _EDGAR_NEG = ('NT ', 'SC 13D', 'BANKRUPT', '15-', '25-')
+    _EDGAR_POS = ('8-K', 'SC 13G')
+
+    def get_all_edgar_disclosures(self, ticker: str, start_date: str, end_date: str) -> list[dict]:
+        """[US/EDGAR] 전체 기간 SEC 공시(submissions)를 일괄 수집.
+
+        반환: [{'dt': 'YYYYMMDD', 'nm': form, 'label': ...}, ...]
+        """
+        cik = self.get_cik(ticker)
+        if not cik:
+            return []
+        out = []
+        try:
+            res = requests.get(
+                f"https://data.sec.gov/submissions/CIK{cik}.json",
+                headers={"User-Agent": "lassi-bot backtest contact@example.com"},
+                timeout=30,
+            )
+            data = res.json()
+        except Exception as e:
+            logger.debug(f"[NewsMonitor] EDGAR 조회 실패 ({ticker}): {e}")
+            return []
+
+        # 의미있는 공시 폼만 — Form 3/4/5(내부자 거래) 등 노이즈 제외
+        KEEP = ('10-K', '10-Q', '8-K', 'SC 13D', 'SC 13G', 'S-1', 'DEF 14A', '20-F', '6-K', 'NT ')
+
+        def _consume(forms, dates):
+            for form, date in zip(forms, dates):
+                d = (date or '').replace('-', '')
+                if not d or d < start_date.replace('-', '') or d > end_date.replace('-', ''):
+                    continue
+                f = form or ''
+                if not any(f.startswith(k) or k in f for k in KEEP):
+                    continue
+                if any(k in f for k in self._EDGAR_NEG):
+                    label = '악재'
+                elif any(k in f for k in self._EDGAR_POS):
+                    label = '호재'
+                else:
+                    label = '공시'
+                out.append({'dt': d, 'nm': f, 'label': label})
+
+        try:
+            recent = data.get('filings', {}).get('recent', {})
+            _consume(recent.get('form', []), recent.get('filingDate', []))
+            # 오래된 분량은 별도 파일 참조
+            for extra in data.get('filings', {}).get('files', []):
+                try:
+                    r2 = requests.get(
+                        f"https://data.sec.gov/submissions/{extra.get('name')}",
+                        headers={"User-Agent": "lassi-bot backtest contact@example.com"},
+                        timeout=30,
+                    )
+                    d2 = r2.json()
+                    _consume(d2.get('form', []), d2.get('filingDate', []))
+                except Exception:
+                    continue
+        except Exception as e:
+            logger.debug(f"[NewsMonitor] EDGAR 파싱 실패 ({ticker}): {e}")
+        return out
+
+    @staticmethod
+    def format_disclosures_around(disclosures: list[dict], date_str: str, days: int = 5) -> str:
+        """일괄 수집한 공시 리스트에서 특정 날짜 ±days일 구간만 메모리에서 추출·포맷."""
+        if not disclosures:
+            return ""
+        from datetime import datetime as _dt, timedelta as _td
+        try:
+            target = _dt.strptime(date_str, '%Y-%m-%d')
+        except Exception:
+            return ""
+        bgn = (target - _td(days=days)).strftime('%Y%m%d')
+        end = (target + _td(days=days)).strftime('%Y%m%d')
+        neg, pos, neu = [], [], []
+        for d in disclosures:
+            dt = d.get('dt', '')
+            if not (bgn <= dt <= end):
+                continue
+            if d['label'] == '악재':
+                neg.append(d)
+            elif d['label'] == '호재':
+                pos.append(d)
+            else:
+                neu.append(d)
+        lines = []
+        for d in neg:
+            lines.append(f"⚠️ [악재공시] {d['dt']} {d['nm']}")
+        for d in pos:
+            lines.append(f"✅ [호재공시] {d['dt']} {d['nm']}")
+        for d in neu[:2]:
+            lines.append(f"📋 [공시] {d['dt']} {d['nm']}")
+        return "\n".join(lines) if lines else ""
+
+    # ══════════════════════════════════════════════════════════════════
     # 실적 발표 예정일 추정 (DART 분기보고서 패턴 기반)
     # ══════════════════════════════════════════════════════════════════
 

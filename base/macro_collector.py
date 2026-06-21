@@ -6,8 +6,33 @@ from base.database import save_macro_snapshot, get_macro_snapshot
 logger = logging.getLogger('lassi_bot')
 
 _fred_cache: dict = {}
+_yf_series_cache: dict = {}   # ticker → 전체 Close 시계열 (1회 다운로드 후 메모리 슬라이싱)
 
 _FRED_BASE = "https://api.stlouisfed.org/fred/series/observations"
+
+
+def _get_yf_series(ticker: str) -> pd.Series:
+    """지표용 전체 Close 시계열을 1회만 다운로드해 캐싱.
+
+    매크로 계산 시 날짜·필드마다 yfinance 를 호출하던 병목 제거.
+    """
+    if ticker in _yf_series_cache:
+        return _yf_series_cache[ticker]
+    s = pd.Series(dtype=float)
+    try:
+        import yfinance as yf
+        df = yf.download(ticker, period='max', interval='1d',
+                         progress=False, auto_adjust=True)
+        if df is not None and not df.empty:
+            if hasattr(df.columns, 'get_level_values'):
+                df.columns = df.columns.get_level_values(0)
+            if 'Close' in df.columns:
+                s = pd.to_numeric(df['Close'], errors='coerce').dropna()
+                s.index = pd.to_datetime(s.index)
+    except Exception as e:
+        logger.debug(f"[macro] {ticker} 전체 시계열 로드 실패: {e}")
+    _yf_series_cache[ticker] = s
+    return s
 
 
 def _fred_get(series_id: str, fred_key: str,
@@ -46,21 +71,8 @@ def _get_us_rate(date_str: str, fred_key: str = '') -> float | None:
             idx = s.index.searchsorted(target, side='right') - 1
             if 0 <= idx < len(s):
                 return round(float(s.iloc[idx]), 4)
-    try:
-        import yfinance as yf
-        end   = datetime.strptime(date_str, '%Y-%m-%d') + timedelta(days=5)
-        start = datetime.strptime(date_str, '%Y-%m-%d') - timedelta(days=5)
-        df = yf.download('^IRX', start=start.strftime('%Y-%m-%d'),
-                         end=end.strftime('%Y-%m-%d'), progress=False, auto_adjust=True)
-        if not df.empty:
-            target = pd.Timestamp(date_str)
-            idx = df.index.searchsorted(target, side='left')
-            if idx >= len(df):
-                idx = len(df) - 1
-            return round(float(df['Close'].iloc[idx]), 4)
-    except Exception:
-        pass
-    return None
+    v = _yf_close('^IRX', date_str)
+    return round(v, 4) if v is not None else None
 
 
 def _get_kr_rate(date_str: str) -> float | None:
@@ -116,33 +128,32 @@ def _yf_download_safe(ticker: str, start: str, end: str, timeout: int = 10):
 
 def _yf_close(ticker: str, date_str: str) -> float | None:
     try:
-        end   = datetime.strptime(date_str, '%Y-%m-%d') + timedelta(days=5)
-        start = datetime.strptime(date_str, '%Y-%m-%d') - timedelta(days=5)
-        df = _yf_download_safe(ticker, start.strftime('%Y-%m-%d'), end.strftime('%Y-%m-%d'))
-        if df is None or df.empty:
+        s = _get_yf_series(ticker)
+        if s.empty:
             return None
         target = pd.Timestamp(date_str)
-        idx = df.index.searchsorted(target, side='left')
-        if idx >= len(df):
-            idx = len(df) - 1
-        return float(df['Close'].iloc[idx])
+        idx = s.index.searchsorted(target, side='right') - 1
+        if idx < 0:
+            return None
+        if idx >= len(s):
+            idx = len(s) - 1
+        return float(s.iloc[idx])
     except Exception:
         return None
 
 
 def _yf_chg(ticker: str, date_str: str) -> float | None:
     try:
-        end   = datetime.strptime(date_str, '%Y-%m-%d') + timedelta(days=5)
-        start = datetime.strptime(date_str, '%Y-%m-%d') - timedelta(days=5)
-        df = _yf_download_safe(ticker, start.strftime('%Y-%m-%d'), end.strftime('%Y-%m-%d'))
-        if df is None or df.empty or len(df) < 2:
+        s = _get_yf_series(ticker)
+        if s.empty or len(s) < 2:
             return None
         target = pd.Timestamp(date_str)
-        idx = df.index.searchsorted(target, side='left')
-        if idx >= len(df): idx = len(df) - 1
-        if idx == 0: return 0.0
-        c = float(df['Close'].iloc[idx])
-        p = float(df['Close'].iloc[idx - 1])
+        idx = s.index.searchsorted(target, side='right') - 1
+        if idx <= 0:
+            return 0.0 if idx == 0 else None
+        if idx >= len(s):
+            idx = len(s) - 1
+        c = float(s.iloc[idx]); p = float(s.iloc[idx - 1])
         return round((c / p - 1) * 100, 2) if p else None
     except Exception:
         return None
@@ -177,23 +188,18 @@ def get_macro_for_date(date_str: str, fred_key: str = '') -> dict:
     data['yield_spread'] = round(us_10y - (us_2y or 0), 3) if us_10y and us_2y else None
 
     try:
-        import yfinance as yf
-        end_dt   = datetime.strptime(date_str, '%Y-%m-%d')
-        start_dt = end_dt - timedelta(days=400)
-        hist = yf.download('^KS11', start=start_dt.strftime('%Y-%m-%d'),
-                           end=(end_dt + timedelta(days=1)).strftime('%Y-%m-%d'),
-                           progress=False, auto_adjust=True)
-        if not hist.empty:
-            close = hist['Close'].squeeze()
-            idx = close.index.get_indexer([end_dt], method='ffill')
-            if idx[0] >= 0:
-                data['kospi_close'] = round(float(close.iloc[idx[0]]), 2)
-                if len(close) >= 200:
-                    ma200 = float(close.rolling(200).mean().iloc[idx[0]])
+        end_dt = datetime.strptime(date_str, '%Y-%m-%d')
+        close  = _get_yf_series('^KS11')  # 전체 시계열 캐시 후 슬라이싱
+        if not close.empty:
+            pos = close.index.searchsorted(pd.Timestamp(date_str), side='right') - 1
+            if pos >= 0:
+                data['kospi_close'] = round(float(close.iloc[pos]), 2)
+                window = close.iloc[max(0, pos - 251): pos + 1]
+                if len(window) >= 200:
+                    ma200 = float(window.tail(200).mean())
                     data['kospi_vs_ma200'] = round((data['kospi_close'] / ma200 - 1) * 100, 2)
-                if len(close) >= 252:
-                    high52 = float(close.rolling(252).max().iloc[idx[0]])
-                    low52  = float(close.rolling(252).min().iloc[idx[0]])
+                if len(window) >= 252:
+                    high52 = float(window.max()); low52 = float(window.min())
                     rng = high52 - low52
                     data['kospi_52w_pct'] = round((data['kospi_close'] - low52) / rng * 100, 1) if rng else 50
     except Exception:

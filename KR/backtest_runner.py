@@ -66,40 +66,18 @@ def _get_all_kr_tickers() -> list[dict]:
 
 
 def _get_full_history(ticker: str, toss_api=None) -> Optional[pd.DataFrame]:
-    if toss_api:
-        try:
-            df = toss_api.get_full_history(ticker)
-            if df is not None and not df.empty:
-                return df
-        except Exception:
-            pass
-    # pykrx로 KRX 직접 조회 (yfinance보다 안정적)
+    """KR 종목 일봉 전체 이력.
+
+    1순위 yfinance(.KS/.KQ): 2000년부터 제공 — 2008 금융위기 등 충격 구간 포함.
+    pykrx는 최근 3000거래일(~2014년)만 반환하므로 fallback 으로만 사용.
+    """
+    # 1순위: yfinance (가장 긴 이력)
     try:
-        from pykrx import stock as pykrx_stock
-        from datetime import datetime
-        from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeout
-        start = '19900101'
-        end = datetime.now().strftime('%Y%m%d')
-        raw = pykrx_stock.get_market_ohlcv_by_date(start, end, ticker)
-        if raw is not None and not raw.empty:
-            raw.columns = [c.lower() for c in raw.columns]
-            # pykrx 컬럼: 시가/고가/저가/종가/거래량
-            col_map = {'시가': 'open', '고가': 'high', '저가': 'low', '종가': 'close', '거래량': 'volume'}
-            raw = raw.rename(columns=col_map)
-            raw.index = pd.to_datetime(raw.index)
-            if 'close' in raw.columns:
-                return raw.dropna(subset=['close'])
-    except Exception as e:
-        logger.debug(f"[KR 백테스트] {ticker} pykrx 실패: {e}")
-    # fallback: yfinance
-    try:
-        import requests, yfinance as yf
-        session = requests.Session()
+        import yfinance as yf
         for suffix in ['.KS', '.KQ']:
             try:
                 df = yf.download(ticker + suffix, period='max', interval='1d',
-                                 progress=False, auto_adjust=True,
-                                 session=session, timeout=30)
+                                 progress=False, auto_adjust=True)
             except Exception:
                 continue
             if df is not None and not df.empty:
@@ -107,9 +85,30 @@ def _get_full_history(ticker: str, toss_api=None) -> Optional[pd.DataFrame]:
                     df.columns = df.columns.get_level_values(0)
                 df.columns = [c.lower() for c in df.columns]
                 df.index = pd.to_datetime(df.index)
-                return df.dropna(subset=['close'])
+                for c in ('open', 'high', 'low', 'close', 'volume'):
+                    if c in df.columns:
+                        df[c] = pd.to_numeric(df[c], errors='coerce')
+                df = df.dropna(subset=['close'])
+                if len(df) >= 60:
+                    return df
     except Exception as e:
         logger.debug(f"[KR 백테스트] {ticker} yfinance 실패: {e}")
+
+    # fallback: pykrx (최근 3000거래일 한정)
+    try:
+        from pykrx import stock as pykrx_stock
+        start = '19900101'
+        end = datetime.now().strftime('%Y%m%d')
+        raw = pykrx_stock.get_market_ohlcv_by_date(start, end, ticker)
+        if raw is not None and not raw.empty:
+            raw.columns = [c.lower() for c in raw.columns]
+            col_map = {'시가': 'open', '고가': 'high', '저가': 'low', '종가': 'close', '거래량': 'volume'}
+            raw = raw.rename(columns=col_map)
+            raw.index = pd.to_datetime(raw.index)
+            if 'close' in raw.columns:
+                return raw.dropna(subset=['close'])
+    except Exception as e:
+        logger.debug(f"[KR 백테스트] {ticker} pykrx 실패: {e}")
     return None
 
 
@@ -391,6 +390,18 @@ def run_full_backtest_ticker(ticker: str, stock_name: str, user_id: int,
         logger.debug(f"[KR 백테스트] {ticker} 거래량 부족 ({avg_vol:.0f}주) 스킵")
         return 0
 
+    # DART 공시 일괄 수집 (종목당 1회 — 신호별 호출 제거로 속도 대폭 개선)
+    all_disclosures = []
+    if news_monitor:
+        try:
+            all_disclosures = news_monitor.get_all_disclosures(
+                ticker,
+                df.index.min().strftime('%Y-%m-%d'),
+                df.index.max().strftime('%Y-%m-%d'),
+            )
+        except Exception as e:
+            logger.debug(f"[KR 백테스트] {ticker} 공시 일괄조회 실패: {e}")
+
     records = []
     last_buy_idx  = -_SIGNAL_GAP
     last_sell_idx = -_SIGNAL_GAP
@@ -432,12 +443,12 @@ def run_full_backtest_ticker(ticker: str, stock_name: str, user_id: int,
             support, resistance = _support_resistance(df, i)
             timing = _timing_stats(df, i)
 
-            # DART 공시: 신호일 기준 ±5일 범위
+            # DART 공시: 일괄 수집분에서 신호일 ±5일 메모리 추출
             news_summary = ''
-            if news_monitor:
+            if all_disclosures:
                 try:
-                    news_summary = news_monitor.get_disclosure_summary_for_date(
-                        ticker, date, days=5)
+                    from ai.news_monitor import NewsMonitor as _NM
+                    news_summary = _NM.format_disclosures_around(all_disclosures, date, days=5)
                 except Exception:
                     pass
 

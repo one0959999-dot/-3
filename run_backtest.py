@@ -64,7 +64,12 @@ def run_kr(user: dict, once: bool = False):
     ai   = _build_ai(user)
     toss = _build_toss(user)
     fred = user.get('fred_api_key') or ''
-    runner = BacktestRunner(user['id'], ai, toss_api=toss, fred_key=fred)
+    runner = BacktestRunner(
+        user['id'], ai, toss_api=toss, fred_key=fred,
+        dart_key=user.get('dart_api_key') or '',
+        naver_id=user.get('naver_client_id') or '',
+        naver_secret=user.get('naver_client_secret') or '',
+    )
 
     batch = BATCH_SIZE_WEEKEND
     logger.info(f"[KR 백테스트] 배치 크기: {batch}종목")

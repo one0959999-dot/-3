@@ -34,6 +34,52 @@ _US_UNIVERSE = [
 ]
 
 
+def _get_all_us_tickers() -> list[str]:
+    """SEC EDGAR company_tickers.json → 전체 미국 상장 티커.
+
+    실패 시 하드코딩 유니버스로 폴백. 거래량/데이터 없는 종목은 백테스트 단계에서 자동 스킵.
+    """
+    import requests
+    from base.database import get_db_connection
+    try:
+        res = requests.get(
+            "https://www.sec.gov/files/company_tickers.json",
+            headers={"User-Agent": "lassi-bot backtest contact@example.com"},
+            timeout=30,
+        )
+        data = res.json()
+        tickers = []
+        seen = set()
+        for v in data.values():
+            t = str(v.get('ticker', '')).upper().strip()
+            # 보통주 위주: '.'/'-' 포함 우선주·워런트 제외
+            if t and t not in seen and '.' not in t and '-' not in t:
+                seen.add(t)
+                tickers.append(t)
+        if tickers:
+            try:
+                with get_db_connection() as conn:
+                    conn.execute('CREATE TABLE IF NOT EXISTS us_ticker_cache (ticker TEXT PRIMARY KEY)')
+                    conn.executemany('INSERT OR REPLACE INTO us_ticker_cache VALUES (?)',
+                                     [(t,) for t in tickers])
+                    conn.commit()
+            except Exception:
+                pass
+            logger.info(f"[US 백테스트] EDGAR 전체 티커 {len(tickers)}개 로드")
+            return tickers
+    except Exception as e:
+        logger.warning(f"[US 백테스트] EDGAR 티커 로드 실패: {e}")
+    # 폴백: DB 캐시
+    try:
+        with get_db_connection() as conn:
+            rows = conn.execute('SELECT ticker FROM us_ticker_cache').fetchall()
+        if rows:
+            return [r[0] for r in rows]
+    except Exception:
+        pass
+    return list(_US_UNIVERSE)
+
+
 def _get_full_history_us(ticker: str, toss_api=None) -> Optional[pd.DataFrame]:
     if toss_api:
         try:
@@ -315,7 +361,8 @@ def _buyhold_simulation(df: pd.DataFrame, first_signal_idx: int,
 
 
 def run_full_backtest_ticker_us(ticker: str, user_id: int, ai_client,
-                                 toss_api=None, skip_ai: bool = False) -> int:
+                                 toss_api=None, skip_ai: bool = False,
+                                 news_monitor=None) -> int:
     from base.database import (log_trade_signal_backtest, update_backtest_full_progress,
                                 rebuild_sector_phase_stats, rebuild_seasonality_stats)
     from base.macro_collector import get_macro_for_date, build_macro_context_str
@@ -333,6 +380,18 @@ def run_full_backtest_ticker_us(ticker: str, user_id: int, ai_client,
     if avg_vol < _MIN_VOL_US:
         logger.debug(f"[US 백테스트] {ticker} 거래량 부족 ({avg_vol:.0f}주) 스킵")
         return 0
+
+    # SEC EDGAR 공시 일괄 수집 (종목당 1회)
+    all_disclosures = []
+    if news_monitor:
+        try:
+            all_disclosures = news_monitor.get_all_edgar_disclosures(
+                ticker,
+                df.index.min().strftime('%Y-%m-%d'),
+                df.index.max().strftime('%Y-%m-%d'),
+            )
+        except Exception as e:
+            logger.debug(f"[US 백테스트] {ticker} EDGAR 일괄조회 실패: {e}")
 
     records = []
     last_buy_idx  = -_SIGNAL_GAP
@@ -372,6 +431,14 @@ def run_full_backtest_ticker_us(ticker: str, user_id: int, ai_client,
             support, resistance = _support_resistance(df, i)
             timing = _timing_stats(df, i)
 
+            news_summary = ''
+            if all_disclosures:
+                try:
+                    from ai.news_monitor import NewsMonitor as _NM
+                    news_summary = _NM.format_disclosures_around(all_disclosures, date, days=5)
+                except Exception:
+                    pass
+
             rec = {
                 'user_id': user_id, 'mode': 'US',
                 'ticker': ticker, 'stock_name': ticker,
@@ -396,6 +463,7 @@ def run_full_backtest_ticker_us(ticker: str, user_id: int, ai_client,
                 'market_phase_kr': phase_info.get('phase_kr'),
                 'phase_confidence':phase_info.get('confidence'),
                 'macro_str': macro_str,
+                'news_summary': news_summary,
                 'vix':     macro.get('vix'),
                 'usd_krw': macro.get('usd_krw'),
                 'us_10y':  macro.get('us_10y'),
@@ -454,21 +522,32 @@ def run_full_backtest_ticker_us(ticker: str, user_id: int, ai_client,
 
 class USBacktestRunner:
 
-    def __init__(self, user_id: int, ai_client, toss_api=None, skip_ai: bool = False):
+    def __init__(self, user_id: int, ai_client, toss_api=None, skip_ai: bool = False,
+                 use_full_universe: bool = True):
         self.user_id  = user_id
         self.ai       = ai_client
         self.toss     = toss_api
         self.skip_ai  = skip_ai
+        self.use_full_universe = use_full_universe
+        # EDGAR 공시는 API 키 불필요 (CIK 기반) — dart_key 없이 NewsMonitor 생성
+        self.news_monitor = None
+        try:
+            from ai.news_monitor import NewsMonitor
+            self.news_monitor = NewsMonitor('', '', '')
+            logger.info("[US 백테스트] NewsMonitor 초기화 완료 (SEC EDGAR 공시 활성)")
+        except Exception as e:
+            logger.warning(f"[US 백테스트] NewsMonitor 초기화 실패: {e}")
 
     def run_batch(self, batch_size: int = BATCH_SIZE_WEEKDAY,
                   progress_cb=None) -> int:
         from base.database import get_backtest_full_done
 
+        universe = _get_all_us_tickers() if self.use_full_universe else list(_US_UNIVERSE)
         done    = get_backtest_full_done('US')
-        pending = [t for t in _US_UNIVERSE if t not in done]
+        pending = [t for t in universe if t not in done]
         if not pending:
             logger.info("[US 백테스트] 전체 완료 — 처음부터 재시작")
-            pending = _US_UNIVERSE
+            pending = universe
 
         total = 0
         for i, ticker in enumerate(pending[:batch_size]):
@@ -476,7 +555,8 @@ class USBacktestRunner:
                 progress_cb(f"US:{ticker}", i)
             try:
                 n = run_full_backtest_ticker_us(ticker, self.user_id, self.ai, self.toss,
-                                                skip_ai=self.skip_ai)
+                                                skip_ai=self.skip_ai,
+                                                news_monitor=self.news_monitor)
                 total += n
             except Exception as e:
                 logger.warning(f"[US 백테스트] {ticker} 오류: {e}", exc_info=True)

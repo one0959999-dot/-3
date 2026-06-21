@@ -67,24 +67,43 @@ def _adx(high: pd.Series, low: pd.Series, close: pd.Series, period: int = 14) ->
     return dx.ewm(span=period, adjust=False).mean()
 
 
-def _get_index_data(mode: str, date_str: str) -> pd.DataFrame | None:
+_index_full_cache: dict = {}   # symbol → 전체 OHLC (1회 다운로드 후 슬라이싱)
+
+
+def _get_index_full(symbol: str) -> pd.DataFrame | None:
+    """지수 전체 OHLC를 1회만 다운로드해 캐싱."""
+    if symbol in _index_full_cache:
+        return _index_full_cache[symbol]
+    df = None
     try:
         import yfinance as yf
-        symbol = '^KS11' if mode == 'KR' else '^GSPC'
-        end   = datetime.strptime(date_str, '%Y-%m-%d') + timedelta(days=3)
-        start = end - timedelta(days=500)
-        df = yf.download(symbol, start=start.strftime('%Y-%m-%d'),
-                         end=end.strftime('%Y-%m-%d'),
-                         interval='1d', progress=False, auto_adjust=True)
-        if df.empty:
-            return None
-        if hasattr(df.columns, 'get_level_values'):
-            df.columns = df.columns.get_level_values(0)
-        df.columns = [c.lower() for c in df.columns]
-        df.index = pd.to_datetime(df.index)
-        return df.dropna(subset=['close'])
+        raw = yf.download(symbol, period='max', interval='1d',
+                          progress=False, auto_adjust=True)
+        if raw is not None and not raw.empty:
+            if hasattr(raw.columns, 'get_level_values'):
+                raw.columns = raw.columns.get_level_values(0)
+            raw.columns = [c.lower() for c in raw.columns]
+            raw.index = pd.to_datetime(raw.index)
+            df = raw.dropna(subset=['close'])
     except Exception as e:
-        logger.debug(f"[국면] 지수 데이터 조회 실패: {e}")
+        logger.debug(f"[국면] {symbol} 전체 지수 로드 실패: {e}")
+    _index_full_cache[symbol] = df
+    return df
+
+
+def _get_index_data(mode: str, date_str: str) -> pd.DataFrame | None:
+    """target 날짜 이전 500거래일 구간을 캐시된 전체 지수에서 슬라이싱."""
+    symbol = '^KS11' if mode == 'KR' else '^GSPC'
+    full = _get_index_full(symbol)
+    if full is None or full.empty:
+        return None
+    try:
+        target = pd.Timestamp(date_str) + timedelta(days=3)
+        avail = full[full.index <= target]
+        if avail.empty:
+            return None
+        return avail.tail(500)
+    except Exception:
         return None
 
 
