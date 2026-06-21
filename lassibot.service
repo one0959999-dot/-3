@@ -7,9 +7,19 @@ User=ubuntu
 Group=ubuntu
 WorkingDirectory=/home/ubuntu/lassi_bot
 Environment="PATH=/home/ubuntu/lassi_bot/venv/bin"
-ExecStart=/home/ubuntu/lassi_bot/venv/bin/python base/app.py
+Environment="LASSI_LOG_FILE=/home/ubuntu/lassi_bot/lassi_bot.log"
+ExecStart=/home/ubuntu/lassi_bot/venv/bin/gunicorn \
+    --workers 2 \
+    --threads 4 \
+    --worker-class gthread \
+    --bind 0.0.0.0:5000 \
+    --timeout 120 \
+    --chdir /home/ubuntu/lassi_bot \
+    "base.app:app"
 Restart=always
 RestartSec=5
+StandardOutput=append:/home/ubuntu/lassi_bot/lassi_bot.log
+StandardError=append:/home/ubuntu/lassi_bot/lassi_bot.log
 
 [Install]
 WantedBy=multi-user.target

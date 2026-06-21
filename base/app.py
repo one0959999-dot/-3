@@ -7,6 +7,8 @@ import logging
 import json
 import re
 import threading
+import pathlib
+import time as _time
 from datetime import datetime, timedelta, timezone
 
 from flask import Flask, render_template, jsonify, request, redirect, url_for, flash, session
@@ -16,18 +18,18 @@ from base.bot_manager import manager
 from base.database import get_db_connection, verify_user, add_user, init_db, update_user_keys, init_default_ai_rules, set_user_initial_cash, get_news_api_keys, set_news_api_keys, get_sector_guide, set_sector_guide, load_chat_history, save_chat_history, clear_chat_history, set_user_core_stocks, set_user_satellite_stocks, set_us_core_stocks
 
 # ── 통합 로깅 설정 (파일 + 콘솔) ──
+_BASE_DIR = pathlib.Path(__file__).parent.parent  # lassi_bot/
+_LOG_FILE = os.environ.get('LASSI_LOG_FILE', str(_BASE_DIR / 'lassi_bot.log'))
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s %(levelname)s %(name)s: %(message)s',
     handlers=[
-        logging.FileHandler('lassi_bot.log', encoding='utf-8'),
+        logging.FileHandler(_LOG_FILE, encoding='utf-8'),
         logging.StreamHandler()
     ]
 )
 logger = logging.getLogger('lassi_bot')
 
-import pathlib, time as _time
-_BASE_DIR = pathlib.Path(__file__).parent.parent  # lassi_bot/
 _STATIC_VER = str(int(_time.time()))  # 서버 시작 시 고정 — 재시작마다 갱신
 
 app = Flask(
@@ -1845,6 +1847,7 @@ def backtest_stats():
     })
 
 
+init_db()
+
 if __name__ == '__main__':
-    init_db()
     app.run(host='0.0.0.0', port=5000, debug=False, use_reloader=False, threaded=True)
