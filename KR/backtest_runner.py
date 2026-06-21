@@ -4,7 +4,7 @@ import time
 import logging
 import pandas as pd
 import numpy as np
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Optional
 
 logger = logging.getLogger('lassi_bot')
@@ -23,11 +23,8 @@ def _get_all_kr_tickers() -> list[dict]:
     try:
         from pykrx import stock as pykrx_stock
         dt = datetime.now()
-        weekday = dt.weekday()
-        if weekday == 5:
-            dt = dt.replace(day=dt.day - 1)
-        elif weekday == 6:
-            dt = dt.replace(day=dt.day - 2)
+        while dt.weekday() >= 5:   # 토(5)/일(6) → 이전 금요일로
+            dt -= timedelta(days=1)
         date_str = dt.strftime('%Y%m%d')
         kospi  = pykrx_stock.get_market_ticker_list(date_str, market='KOSPI')
         kosdaq = pykrx_stock.get_market_ticker_list(date_str, market='KOSDAQ')
@@ -202,15 +199,23 @@ def _simulate_portfolio(df: pd.DataFrame, signal_records: list[dict],
     entry_idx   = None
     days_to_pk  = None
 
-    all_signals = sorted(signal_records, key=lambda r: r['trade_date'])
-
-    for rec in all_signals:
+    for rec in sorted(signal_records, key=lambda r: r['trade_date']):
         idx = date_to_idx.get(rec['trade_date'])
         if idx is None:
             continue
         price = float(df.iloc[idx]['close'])
         if not price:
             continue
+
+        # days_to_peak 도달 먼저 체크 (SELL 신호 전에 청산)
+        if shares > 0 and entry_idx is not None and days_to_pk:
+            if idx >= entry_idx + days_to_pk:
+                exit_idx   = min(entry_idx + days_to_pk, len(df) - 1)
+                exit_price = float(df.iloc[exit_idx]['close'])
+                cash   = shares * exit_price
+                shares = 0.0
+                entry_idx = None
+                trade_count += 1
 
         if rec['signal_direction'] == 'BUY' and shares == 0:
             shares      = cash / price
@@ -220,24 +225,10 @@ def _simulate_portfolio(df: pd.DataFrame, signal_records: list[dict],
             trade_count += 1
 
         elif rec['signal_direction'] == 'SELL' and shares > 0:
-            # SELL 신호 도달 또는 days_to_peak 이미 지난 경우
-            peak_exit_idx = (entry_idx + days_to_pk) if entry_idx is not None else idx
-            exit_idx = min(idx, peak_exit_idx, len(df) - 1)
-            exit_price = float(df.iloc[exit_idx]['close'])
-            cash   = shares * exit_price
+            cash   = shares * price
             shares = 0.0
             entry_idx = None
             trade_count += 1
-
-        # days_to_peak 도달 체크 (SELL 신호 없어도 청산)
-        if shares > 0 and entry_idx is not None and days_to_pk:
-            if idx >= entry_idx + days_to_pk:
-                exit_idx   = min(entry_idx + days_to_pk, len(df) - 1)
-                exit_price = float(df.iloc[exit_idx]['close'])
-                cash   = shares * exit_price
-                shares = 0.0
-                entry_idx = None
-                trade_count += 1
 
     # 마지막 보유 포지션은 최종 종가로 평가
     last_price = float(df.iloc[-1]['close'])
@@ -370,7 +361,7 @@ def run_full_backtest_ticker(ticker: str, stock_name: str, user_id: int,
             if not price:
                 continue
 
-            if first_sig_idx is None:
+            if first_sig_idx is None and direction == 'BUY':
                 first_sig_idx = i
 
             try:
