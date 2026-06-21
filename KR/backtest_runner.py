@@ -377,19 +377,27 @@ def run_full_backtest_ticker(ticker: str, stock_name: str, user_id: int,
     from base.macro_collector import get_macro_for_date, build_macro_context_str
     from base.market_phase import get_phase_for_date
 
+    def _mark_skipped():
+        # 데이터 없음/부족 종목도 완료로 기록 → 무한 재시도 방지(pending에서 제외)
+        try:
+            update_backtest_full_progress('KR', ticker, datetime.now().strftime('%Y-%m-%d'), 0)
+        except Exception:
+            pass
+        return 0
+
     df = _get_full_history(ticker, toss_api)
     if df is None or len(df) < 60:
-        return 0
+        return _mark_skipped()
 
     df = _calc_indicators(df).dropna(subset=['rsi', 'macd', 'bb_mid'])
     if len(df) < 60:
-        return 0
+        return _mark_skipped()
 
     # 거래량 필터 — 일평균 거래량 미달 종목 스킵
     avg_vol = df['volume'].tail(60).mean()
     if avg_vol < _MIN_VOL_KR:
         logger.debug(f"[KR 백테스트] {ticker} 거래량 부족 ({avg_vol:.0f}주) 스킵")
-        return 0
+        return _mark_skipped()
 
     # DART 공시 일괄 수집 (종목당 1회 — 신호별 호출 제거로 속도 대폭 개선)
     all_disclosures = []

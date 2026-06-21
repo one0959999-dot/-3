@@ -369,18 +369,26 @@ def run_full_backtest_ticker_us(ticker: str, user_id: int, ai_client,
     from base.macro_collector import get_macro_for_date, build_macro_context_str
     from base.market_phase import get_phase_for_date
 
+    def _mark_skipped():
+        # 상장폐지/데이터 없음/거래량 부족 종목도 완료로 기록 → 무한 재시도 방지
+        try:
+            update_backtest_full_progress('US', ticker, datetime.now().strftime('%Y-%m-%d'), 0)
+        except Exception:
+            pass
+        return 0
+
     df = _get_full_history_us(ticker, toss_api)
     if df is None or len(df) < 60:
-        return 0
+        return _mark_skipped()
 
     df = _calc_indicators(df).dropna(subset=['rsi', 'macd', 'bb_mid'])
     if len(df) < 60:
-        return 0
+        return _mark_skipped()
 
     avg_vol = df['volume'].tail(60).mean()
     if avg_vol < _MIN_VOL_US:
         logger.debug(f"[US 백테스트] {ticker} 거래량 부족 ({avg_vol:.0f}주) 스킵")
-        return 0
+        return _mark_skipped()
 
     # SEC EDGAR 공시 일괄 수집 (종목당 1회)
     all_disclosures = []
