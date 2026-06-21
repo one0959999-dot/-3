@@ -1781,7 +1781,7 @@ def backtest_run():
                 runner.run_batch(BATCH_SIZE_WEEKEND, progress_cb=_progress)
             if mode in ('US', 'ALL'):
                 from US.backtest_runner import USBacktestRunner, BATCH_SIZE_WEEKEND
-                runner = USBacktestRunner(user_id, ai, toss_api=toss, skip_ai=skip_ai)
+                runner = USBacktestRunner(user_id, ai, toss_api=None, skip_ai=skip_ai)
                 runner.run_batch(BATCH_SIZE_WEEKEND, progress_cb=_progress)
         except Exception as e:
             logger.warning(f"[백테스트 실행] 오류: {e}", exc_info=True)
