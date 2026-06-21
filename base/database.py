@@ -425,6 +425,7 @@ def update_user_keys(user_id, keys_dict):
                     openai_api_key = ?, grok_api_key = ?,
                     trade_ai_provider = ?, trade_ai_key = ?,
                     backtest_ai_provider = ?, backtest_ai_key = ?,
+                    fred_api_key = ?,
                     core_stocks = ?, us_core_stocks = ?, is_mock = ? WHERE id = ?
             ''', (
                 _pick('toss_client_id'), _pick('toss_client_secret'), _pick('toss_account_seq'),
@@ -435,6 +436,7 @@ def update_user_keys(user_id, keys_dict):
                 _pick('openai_api_key'), _pick('grok_api_key'),
                 _pick('trade_ai_provider'), _pick('trade_ai_key'),
                 _pick('backtest_ai_provider'), _pick('backtest_ai_key'),
+                _pick('fred_api_key'),
                 _pick('core_stocks'), _pick('us_core_stocks'), is_mock,
                 user_id
             ))
