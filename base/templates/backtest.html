@@ -248,7 +248,7 @@ function renderTable() {
   </tr></thead><tbody>`;
 
   for (const r of rows) {
-    const date = (r.completed_at||r.last_processed_date||'').slice(0,10);
+    const date = String(r.completed_at||r.last_processed_date||'').slice(0,10);
     const finalVal = r.final_value_10m ? Math.round(r.final_value_10m).toLocaleString()+'원' : '—';
     html += `<tr>
       <td>${r.stock_name||r.ticker}</td>
