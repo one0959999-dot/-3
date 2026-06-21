@@ -12,11 +12,10 @@ logger = logging.getLogger('lassi_bot')
 BATCH_SIZE_WEEKDAY = 50
 BATCH_SIZE_WEEKEND = 150
 
-_MIN_MOVE_PCT   = 10.0
-_WINDOW         = 20
-_MIN_GAP_DAYS   = 15
 _AI_BATCH       = 5
 _RATE_LIMIT_SEC = 4
+_SIGNAL_GAP     = 10
+_PATH_DAYS      = 120
 
 _US_UNIVERSE = [
     'AAPL','MSFT','NVDA','AMZN','GOOGL','META','TSLA','AVGO','JPM','UNH',
@@ -94,84 +93,84 @@ def _calc_indicators(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
-def _find_optimal_points(df: pd.DataFrame) -> list[dict]:
-    close = df['close'].values
-    n     = len(close)
-    raw   = []
-
-    for i in range(_WINDOW, n - _WINDOW):
-        window_slice = close[i - _WINDOW: i + _WINDOW + 1]
-
-        if close[i] == window_slice.min():
-            recent_peak = close[max(0, i - 60): i + 1].max()
-            drawdown = (recent_peak - close[i]) / recent_peak * 100
-            if drawdown >= _MIN_MOVE_PCT:
-                raw.append({'idx': i, 'type': 'BOTTOM', 'magnitude': round(drawdown, 2)})
-
-        if close[i] == window_slice.max():
-            recent_trough = close[max(0, i - 60): i + 1].min()
-            rally = (close[i] - recent_trough) / recent_trough * 100
-            if rally >= _MIN_MOVE_PCT:
-                raw.append({'idx': i, 'type': 'TOP', 'magnitude': round(rally, 2)})
-
-    raw.sort(key=lambda x: x['idx'])
-    filtered, last_idx = [], -_MIN_GAP_DAYS
-    for p in raw:
-        if p['idx'] - last_idx >= _MIN_GAP_DAYS:
-            filtered.append(p)
-            last_idx = p['idx']
-    return filtered
-
-
-def _active_signals(row: pd.Series, prev_row: pd.Series) -> list[str]:
+def _detect_signals(row: pd.Series, prev_row: pd.Series) -> list[str]:
     sigs = []
-    rsi = row.get('rsi')
-    if pd.notna(rsi):
-        if rsi <= 30: sigs.append('RSI_BUY')
-        elif rsi >= 70: sigs.append('RSI_SELL')
+    rsi, prev_rsi = row.get('rsi'), prev_row.get('rsi')
+    if pd.notna(rsi) and pd.notna(prev_rsi):
+        if prev_rsi > 30 and rsi <= 30:
+            sigs.append('RSI_BUY')
+        elif prev_rsi < 70 and rsi >= 70:
+            sigs.append('RSI_SELL')
 
     m, ms = row.get('macd'), row.get('macd_signal')
     pm, ps = prev_row.get('macd'), prev_row.get('macd_signal')
     if all(pd.notna(x) for x in [m, ms, pm, ps]):
-        if pm <= ps and m > ms: sigs.append('MACD_BUY')
-        elif pm >= ps and m < ms: sigs.append('MACD_SELL')
+        if pm <= ps and m > ms:
+            sigs.append('MACD_BUY')
+        elif pm >= ps and m < ms:
+            sigs.append('MACD_SELL')
 
     close, bl, bu = row.get('close'), row.get('bb_lower'), row.get('bb_upper')
-    if all(pd.notna(x) for x in [close, bl, bu]):
-        if close <= bl: sigs.append('BB_BUY')
-        elif close >= bu: sigs.append('BB_SELL')
+    pc = prev_row.get('close')
+    pbl, pbu = prev_row.get('bb_lower'), prev_row.get('bb_upper')
+    if all(pd.notna(x) for x in [close, bl, bu, pc, pbl, pbu]):
+        if pc > pbl and close <= bl:
+            sigs.append('BB_BUY')
+        elif pc < pbu and close >= bu:
+            sigs.append('BB_SELL')
 
-    vr, s20, pc = row.get('vol_ratio'), row.get('sma20'), prev_row.get('close')
-    if all(pd.notna(x) for x in [vr, close, s20, pc]):
-        if vr >= 200 and close > s20:
-            sigs.append('VOL_BUY' if close > pc else 'VOL_SELL')
+    vr, sma20 = row.get('vol_ratio'), row.get('sma20')
+    if all(pd.notna(x) for x in [vr, close, sma20, pc]) and vr >= 200:
+        sigs.append('VOL_BUY' if close > sma20 else 'VOL_SELL')
 
-    s5, s20v, ps5, ps20 = (row.get('sma5'), row.get('sma20'),
-                            prev_row.get('sma5'), prev_row.get('sma20'))
+    s5, s20v = row.get('sma5'), row.get('sma20')
+    ps5, ps20 = prev_row.get('sma5'), prev_row.get('sma20')
     if all(pd.notna(x) for x in [s5, s20v, ps5, ps20]):
-        if ps5 <= ps20 and s5 > s20v: sigs.append('MA_BUY')
-        elif ps5 >= ps20 and s5 < s20v: sigs.append('MA_SELL')
+        if ps5 <= ps20 and s5 > s20v:
+            sigs.append('MA_BUY')
+        elif ps5 >= ps20 and s5 < s20v:
+            sigs.append('MA_SELL')
 
     h20, l20 = row.get('high_20'), row.get('low_20')
     ph20, pl20 = prev_row.get('high_20'), prev_row.get('low_20')
     if all(pd.notna(x) for x in [close, h20, l20, ph20, pl20, pc]):
-        if pc < ph20 and close >= h20: sigs.append('BREAK_BUY')
-        elif pc > pl20 and close <= l20: sigs.append('BREAK_SELL')
+        if pc < ph20 and close >= h20:
+            sigs.append('BREAK_BUY')
+        elif pc > pl20 and close <= l20:
+            sigs.append('BREAK_SELL')
+
     return sigs
 
 
-def _future_stats(df: pd.DataFrame, idx: int) -> dict:
-    price = df.iloc[idx]['close']
-    result = {}
-    for days in [5, 20, 60]:
-        end = min(idx + days, len(df) - 1)
-        future = df.iloc[idx + 1: end + 1]
-        if future.empty:
-            continue
-        result[f'pnl_{days}d']      = round((df.iloc[end]['close'] / price - 1) * 100, 2)
-        result[f'max_gain_{days}d'] = round((future['close'].max() / price - 1) * 100, 2)
-        result[f'max_loss_{days}d'] = round((future['close'].min() / price - 1) * 100, 2)
-    return result
+def _timing_stats(df: pd.DataFrame, idx: int) -> dict:
+    price  = float(df.iloc[idx]['close'])
+    future = df.iloc[idx + 1: idx + 1 + _PATH_DAYS]
+    if future.empty or not price:
+        return {}
+
+    closes      = future['close'].values
+    pct_changes = [(c / price - 1) * 100 for c in closes]
+
+    peak_idx   = int(np.argmax(closes))
+    trough_idx = int(np.argmin(closes))
+    max_gain   = round((closes[peak_idx] / price - 1) * 100, 2)
+    max_dd     = round((closes[trough_idx] / price - 1) * 100, 2)
+
+    recovery = None
+    if closes[trough_idx] < price:
+        for j, c in enumerate(closes[trough_idx:], start=trough_idx):
+            if c >= price:
+                recovery = j
+                break
+
+    return {
+        'days_to_peak':         peak_idx + 1,
+        'max_gain_pct':         max_gain,
+        'days_to_max_drawdown': trough_idx + 1,
+        'max_drawdown_pct':     max_dd,
+        'days_to_recovery':     recovery,
+        'price_path_json':      json.dumps([round(p, 2) for p in pct_changes]),
+    }
 
 
 def _support_resistance(df: pd.DataFrame, idx: int):
@@ -181,57 +180,56 @@ def _support_resistance(df: pd.DataFrame, idx: int):
     return support, resistance
 
 
-def _fibonacci(support: float, resistance: float):
-    if not support or not resistance or resistance <= support:
-        return 0, 0, 0
-    rng = resistance - support
-    return (round(resistance - rng * 0.382, 2),
-            round(resistance - rng * 0.500, 2),
-            round(resistance - rng * 0.618, 2))
-
-
-def _batch_ai_analysis(points: list[dict], ticker: str, stock_name: str, ai_client) -> list[str]:
+def _batch_ai_analysis(records: list[dict], ticker: str,
+                        ai_client) -> list[tuple[str, str]]:
     sections = []
-    for i, p in enumerate(points):
-        ptype_en = 'BOTTOM' if p['point_type'] == 'BOTTOM' else 'TOP'
+    for i, r in enumerate(records):
+        direction = '매수' if r['signal_direction'] == 'BUY' else '매도'
         sections.append(
-            f"[{i+1}] {ptype_en} — {p['date']} — ${p['price']:.2f} (move {p['magnitude_pct']:.1f}%)\n"
-            f"RSI {p['rsi']:.1f} | MACD {p['macd']:.4f} | "
-            f"BB ${p['bb_lower']:.2f}~${p['bb_upper']:.2f} | Vol {p['vol_ratio']:.0f}%\n"
-            f"SMA5:${p['sma5']:.2f} SMA20:${p['sma20']:.2f} SMA60:${p['sma60']:.2f} SMA120:${p['sma120']:.2f}\n"
-            f"Active signals: {', '.join(p['signals_active']) or 'none'}\n"
-            f"Macro: {p.get('macro_str','N/A')}\n"
-            f"Outcome: 5d {p.get('pnl_5d',0):+.1f}% | 20d {p.get('pnl_20d',0):+.1f}% | "
-            f"60d {p.get('pnl_60d',0):+.1f}% | 60d max gain {p.get('max_gain_60d',0):+.1f}%\n"
+            f"[{i+1}] {r['trade_date']} | {direction} 신호: {r['signal_types']}\n"
+            f"Market phase: {r.get('market_phase_kr','?')} | Macro: {r.get('macro_str','N/A')[:200]}\n"
+            f"RSI {r.get('rsi',0):.1f} | MACD {r.get('macd',0):.4f} | "
+            f"BB ${r.get('bb_lower',0):.2f}~${r.get('bb_upper',0):.2f} | Vol {r.get('vol_ratio',0):.0f}%\n"
+            f"SMA5:${r.get('sma5',0):.2f} SMA20:${r.get('sma20',0):.2f} "
+            f"SMA60:${r.get('sma60',0):.2f} SMA120:${r.get('sma120',0):.2f}\n"
+            f"Outcome: max gain {r.get('max_gain_pct',0):+.1f}% in {r.get('days_to_peak','?')}d | "
+            f"max drawdown {r.get('max_drawdown_pct',0):+.1f}% in {r.get('days_to_max_drawdown','?')}d | "
+            f"recovery: {r.get('days_to_recovery') or 'N/A'}d\n"
         )
 
     prompt = (
-        f"[{stock_name}({ticker})] Historical optimal trading points analysis\n\n"
+        f"[{ticker}] Past {len(records)} trade signals analysis\n\n"
         + '\n'.join(sections)
-        + "\nFor each point, labeled [1][2]... analyze:\n"
-        "① Why this was a bottom/top (which indicator combination was the key signal)\n"
-        "② Market/macro environment at that time\n"
-        "③ How to respond when this combination appears again\n"
-        "Keep each point to 3-5 lines."
+        + "\nFor each signal labeled [1][2]...:\n"
+        "Line 1: Sector (e.g. Semiconductors, Biotech, Finance, Energy, Consumer, Cloud, EV, Defense, etc.)\n"
+        "Lines 2-4: ① Why this signal worked/failed in this market phase "
+        "② Optimal entry/exit timing pattern ③ Strategy when this combination repeats\n"
+        "Be concise."
     )
 
     try:
         res = ai_client.generate_content(prompt, temperature=0.2)
-        analyses = [''] * len(points)
+        results = [('Other', '')] * len(records)
         parts = re.split(r'\[(\d+)\]', res)
         for j in range(1, len(parts), 2):
             idx = int(parts[j]) - 1
-            if 0 <= idx < len(analyses) and j + 1 < len(parts):
-                analyses[idx] = parts[j + 1].strip()[:600]
-        return analyses
+            if 0 <= idx < len(results) and j + 1 < len(parts):
+                text  = parts[j + 1].strip()
+                lines = text.split('\n', 1)
+                sector   = lines[0].strip()[:30] if lines else 'Other'
+                analysis = lines[1].strip()[:600] if len(lines) > 1 else text[:600]
+                results[idx] = (sector, analysis)
+        return results
     except Exception as e:
         logger.warning(f"[US 백테스트] AI 분석 오류: {e}")
-        return [''] * len(points)
+        return [('Other', '')] * len(records)
 
 
-def run_full_backtest_ticker_us(ticker: str, user_id: int, ai_client, toss_api=None) -> int:
-    from base.database import log_optimal_point, update_backtest_full_progress
+def run_full_backtest_ticker_us(ticker: str, user_id: int, ai_client,
+                                 toss_api=None) -> int:
+    from base.database import log_trade_signal_backtest, update_backtest_full_progress
     from base.macro_collector import get_macro_for_date, build_macro_context_str
+    from base.market_phase import get_phase_for_date
 
     df = _get_full_history_us(ticker, toss_api)
     if df is None or len(df) < 60:
@@ -241,69 +239,90 @@ def run_full_backtest_ticker_us(ticker: str, user_id: int, ai_client, toss_api=N
     if len(df) < 60:
         return 0
 
-    optimal = _find_optimal_points(df)
-    if not optimal:
-        return 0
-
     records = []
-    for p in optimal:
-        i     = p['idx']
-        row   = df.iloc[i]
-        prev  = df.iloc[i - 1]
-        date  = df.index[i].strftime('%Y-%m-%d')
-        price = float(row['close'] or 0)
-        if not price:
+    last_buy_idx  = -_SIGNAL_GAP
+    last_sell_idx = -_SIGNAL_GAP
+
+    for i in range(1, len(df) - _PATH_DAYS):
+        row  = df.iloc[i]
+        prev = df.iloc[i - 1]
+        sigs = _detect_signals(row, prev)
+        if not sigs:
             continue
 
-        try:
-            macro = get_macro_for_date(date)
-        except Exception:
-            macro = {}
-        macro_str = build_macro_context_str(macro)
-        from base.market_phase import get_phase_for_date, build_phase_context_str
-        phase_info = get_phase_for_date('US', date, macro)
-        signals   = _active_signals(row, prev)
-        support, resistance = _support_resistance(df, i)
-        fib_382, fib_500, fib_618 = _fibonacci(support, resistance)
-        stats = _future_stats(df, i)
+        buy_sigs  = [s for s in sigs if 'BUY'  in s]
+        sell_sigs = [s for s in sigs if 'SELL' in s]
 
-        records.append({
-            'user_id': user_id, 'mode': 'US',
-            'ticker': ticker, 'stock_name': ticker,
-            'date': date, 'point_type': p['type'],
-            'price': price, 'magnitude_pct': p['magnitude'],
-            'market_phase':    phase_info.get('phase'),
-            'market_phase_kr': phase_info.get('phase_kr'),
-            'phase_confidence':phase_info.get('confidence'),
-            'rsi':        round(float(row.get('rsi', 0)), 2),
-            'macd':       round(float(row.get('macd', 0)), 6),
-            'macd_signal':round(float(row.get('macd_signal', 0)), 6),
-            'bb_upper':   round(float(row.get('bb_upper', 0)), 4),
-            'bb_mid':     round(float(row.get('bb_mid', 0)), 4),
-            'bb_lower':   round(float(row.get('bb_lower', 0)), 4),
-            'sma5':   round(float(row.get('sma5', 0)), 4),
-            'sma20':  round(float(row.get('sma20', 0)), 4),
-            'sma60':  round(float(row.get('sma60', 0)), 4),
-            'sma120': round(float(row.get('sma120', 0)), 4),
-            'vol_ratio':   float(row.get('vol_ratio', 0)),
-            'support': support, 'resistance': resistance,
-            'fib_382': fib_382, 'fib_500': fib_500, 'fib_618': fib_618,
-            'signals_active': json.dumps(signals, ensure_ascii=False),
-            'signal_count':   len(signals),
-            'macro_date': date,
-            'macro_str':  macro_str + '\n' + build_phase_context_str(phase_info),
-            **stats,
-        })
+        for direction, sig_list, last_idx_ref in [
+            ('BUY',  buy_sigs,  last_buy_idx),
+            ('SELL', sell_sigs, last_sell_idx),
+        ]:
+            if not sig_list:
+                continue
+            if i - last_idx_ref < _SIGNAL_GAP:
+                continue
+
+            date  = df.index[i].strftime('%Y-%m-%d')
+            price = float(row['close'])
+            if not price:
+                continue
+
+            try:
+                macro = get_macro_for_date(date)
+            except Exception:
+                macro = {}
+            macro_str  = build_macro_context_str(macro)
+            phase_info = get_phase_for_date('US', date, macro)
+            support, resistance = _support_resistance(df, i)
+            timing = _timing_stats(df, i)
+
+            rec = {
+                'user_id': user_id, 'mode': 'US',
+                'ticker': ticker, 'stock_name': ticker,
+                'trade_date': date,
+                'signal_types':     json.dumps(sig_list, ensure_ascii=False),
+                'signal_direction': direction,
+                'price': price,
+                'rsi':        round(float(row.get('rsi', 0) or 0), 2),
+                'macd':       round(float(row.get('macd', 0) or 0), 6),
+                'macd_signal':round(float(row.get('macd_signal', 0) or 0), 6),
+                'bb_upper':   round(float(row.get('bb_upper', 0) or 0), 4),
+                'bb_mid':     round(float(row.get('bb_mid', 0) or 0), 4),
+                'bb_lower':   round(float(row.get('bb_lower', 0) or 0), 4),
+                'sma5':   round(float(row.get('sma5', 0) or 0), 4),
+                'sma20':  round(float(row.get('sma20', 0) or 0), 4),
+                'sma60':  round(float(row.get('sma60', 0) or 0), 4),
+                'sma120': round(float(row.get('sma120', 0) or 0), 4),
+                'vol_ratio': float(row.get('vol_ratio', 0) or 0),
+                'support': support, 'resistance': resistance,
+                'market_phase':    phase_info.get('phase'),
+                'market_phase_kr': phase_info.get('phase_kr'),
+                'phase_confidence':phase_info.get('confidence'),
+                'macro_str': macro_str,
+                'vix':     macro.get('vix'),
+                'usd_krw': macro.get('usd_krw'),
+                'us_10y':  macro.get('us_10y'),
+                'kr_rate': macro.get('kr_rate'),
+                **timing,
+            }
+            records.append(rec)
+
+            if direction == 'BUY':
+                last_buy_idx = i
+            else:
+                last_sell_idx = i
 
     for batch_start in range(0, len(records), _AI_BATCH):
-        batch = records[batch_start: batch_start + _AI_BATCH]
-        analyses = _batch_ai_analysis(batch, ticker, ticker, ai_client)
-        for rec, analysis in zip(batch, analyses):
+        batch    = records[batch_start: batch_start + _AI_BATCH]
+        analyses = _batch_ai_analysis(batch, ticker, ai_client)
+        for rec, (sector, analysis) in zip(batch, analyses):
+            rec['sector']      = sector
             rec['ai_analysis'] = analysis
-            log_optimal_point(rec)
+            log_trade_signal_backtest(rec)
         time.sleep(_RATE_LIMIT_SEC)
 
     update_backtest_full_progress('US', ticker, datetime.now().strftime('%Y-%m-%d'), len(records))
+    logger.info(f"[US 백테스트] {ticker}: {len(records)}개 신호")
     return len(records)
 
 
@@ -327,9 +346,7 @@ class USBacktestRunner:
         for ticker in pending[:batch_size]:
             try:
                 n = run_full_backtest_ticker_us(ticker, self.user_id, self.ai, self.toss)
-                if n:
-                    logger.info(f"[US 백테스트] {ticker}: {n}개 포인트")
-                    total += n
+                total += n
             except Exception as e:
                 logger.warning(f"[US 백테스트] {ticker} 오류: {e}")
             time.sleep(1)

@@ -264,6 +264,44 @@ def init_db():
         )
         ''')
 
+            cursor.execute('''
+        CREATE TABLE IF NOT EXISTS backtest_trade_signals (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER,
+            mode TEXT,
+            ticker TEXT,
+            stock_name TEXT,
+            trade_date TEXT,
+            signal_types TEXT,
+            signal_direction TEXT,
+            price REAL,
+            rsi REAL, macd REAL, macd_signal REAL,
+            bb_upper REAL, bb_mid REAL, bb_lower REAL,
+            sma5 REAL, sma20 REAL, sma60 REAL, sma120 REAL,
+            vol_ratio REAL,
+            support REAL, resistance REAL,
+            market_phase TEXT,
+            market_phase_kr TEXT,
+            phase_confidence REAL,
+            macro_str TEXT,
+            vix REAL, usd_krw REAL, us_10y REAL, kr_rate REAL,
+            days_to_peak INTEGER,
+            max_gain_pct REAL,
+            days_to_max_drawdown INTEGER,
+            max_drawdown_pct REAL,
+            days_to_recovery INTEGER,
+            price_path_json TEXT,
+            sector TEXT,
+            ai_analysis TEXT,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+        ''')
+
+            cursor.execute('''
+        CREATE INDEX IF NOT EXISTS idx_bts_mode_phase
+            ON backtest_trade_signals(mode, market_phase, signal_direction)
+        ''')
+
             cursor.execute('UPDATE users SET is_running = 0')
             conn.commit()
         finally:
@@ -838,6 +876,71 @@ def log_backtest_signal(data: dict) -> int:
             conn.close()
 
 
+def log_trade_signal_backtest(data: dict) -> int:
+    with db_lock:
+        conn = get_db_connection()
+        try:
+            cur = conn.execute('''
+                INSERT INTO backtest_trade_signals
+                (user_id, mode, ticker, stock_name, trade_date,
+                 signal_types, signal_direction, price,
+                 rsi, macd, macd_signal, bb_upper, bb_mid, bb_lower,
+                 sma5, sma20, sma60, sma120, vol_ratio,
+                 support, resistance,
+                 market_phase, market_phase_kr, phase_confidence,
+                 macro_str, vix, usd_krw, us_10y, kr_rate,
+                 days_to_peak, max_gain_pct,
+                 days_to_max_drawdown, max_drawdown_pct,
+                 days_to_recovery, price_path_json,
+                 sector, ai_analysis)
+                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+            ''', (
+                data.get('user_id'), data.get('mode'), data.get('ticker'), data.get('stock_name'),
+                data.get('trade_date'), data.get('signal_types'), data.get('signal_direction'), data.get('price'),
+                data.get('rsi'), data.get('macd'), data.get('macd_signal'),
+                data.get('bb_upper'), data.get('bb_mid'), data.get('bb_lower'),
+                data.get('sma5'), data.get('sma20'), data.get('sma60'), data.get('sma120'),
+                data.get('vol_ratio'), data.get('support'), data.get('resistance'),
+                data.get('market_phase'), data.get('market_phase_kr'), data.get('phase_confidence'),
+                data.get('macro_str'), data.get('vix'), data.get('usd_krw'),
+                data.get('us_10y'), data.get('kr_rate'),
+                data.get('days_to_peak'), data.get('max_gain_pct'),
+                data.get('days_to_max_drawdown'), data.get('max_drawdown_pct'),
+                data.get('days_to_recovery'), data.get('price_path_json'),
+                data.get('sector'), data.get('ai_analysis'),
+            ))
+            conn.commit()
+            return cur.lastrowid
+        finally:
+            conn.close()
+
+
+def get_backtest_context(mode: str, market_phase: str, signal_direction: str,
+                         ticker: str = None, limit: int = 20) -> list:
+    """실전 매매 시 백테스트 DB에서 유사 국면+신호 과거 사례 조회."""
+    conn = get_db_connection()
+    try:
+        params = [mode, market_phase, signal_direction]
+        ticker_clause = ''
+        if ticker:
+            ticker_clause = 'AND (ticker=? OR sector=(SELECT sector FROM backtest_trade_signals WHERE ticker=? LIMIT 1))'
+            params += [ticker, ticker]
+        rows = conn.execute(f'''
+            SELECT trade_date, ticker, stock_name, sector, signal_types,
+                   days_to_peak, max_gain_pct, max_drawdown_pct,
+                   days_to_recovery, ai_analysis, macro_str
+            FROM backtest_trade_signals
+            WHERE mode=? AND market_phase=? AND signal_direction=?
+              AND max_gain_pct IS NOT NULL
+              {ticker_clause}
+            ORDER BY created_at DESC
+            LIMIT ?
+        ''', params + [limit]).fetchall()
+        return [dict(r) for r in rows]
+    finally:
+        conn.close()
+
+
 def get_backtest_full_done(mode: str) -> set:
     conn = get_db_connection()
     try:
@@ -965,6 +1068,45 @@ def get_phase_strategy_stats(mode: str, phase: str) -> list[dict]:
             ORDER BY win_rate DESC
         ''', (mode, phase)).fetchall()
         return [dict(r) for r in rows]
+    finally:
+        conn.close()
+
+
+def get_trade_signals_summary(user_id: int):
+    conn = get_db_connection()
+    try:
+        return conn.execute('''
+            SELECT s.mode, s.ticker, s.stock_name, s.sector,
+                   prog.last_processed_date, prog.completed_at,
+                   COUNT(s.id) AS total_signals,
+                   SUM(CASE WHEN s.signal_direction='BUY'  THEN 1 ELSE 0 END) AS buy_signals,
+                   SUM(CASE WHEN s.signal_direction='SELL' THEN 1 ELSE 0 END) AS sell_signals,
+                   ROUND(AVG(CASE WHEN s.signal_direction='BUY' THEN s.max_gain_pct END), 2) AS avg_max_gain,
+                   ROUND(AVG(CASE WHEN s.signal_direction='BUY' THEN s.days_to_peak END), 1) AS avg_days_to_peak
+            FROM backtest_trade_signals s
+            LEFT JOIN backtest_full_progress prog ON prog.ticker=s.ticker AND prog.mode=s.mode
+            WHERE s.user_id=?
+            GROUP BY s.mode, s.ticker
+            ORDER BY prog.completed_at DESC
+        ''', (user_id,)).fetchall()
+    finally:
+        conn.close()
+
+
+def get_trade_signals_detail(user_id: int, mode: str, ticker: str):
+    conn = get_db_connection()
+    try:
+        return conn.execute('''
+            SELECT trade_date, signal_direction, signal_types, price,
+                   market_phase_kr, sector,
+                   rsi, macd, bb_lower, bb_upper, vol_ratio,
+                   days_to_peak, max_gain_pct,
+                   days_to_max_drawdown, max_drawdown_pct, days_to_recovery,
+                   ai_analysis
+            FROM backtest_trade_signals
+            WHERE user_id=? AND mode=? AND ticker=?
+            ORDER BY trade_date ASC
+        ''', (user_id, mode, ticker)).fetchall()
     finally:
         conn.close()
 

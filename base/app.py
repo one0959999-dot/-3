@@ -1801,16 +1801,16 @@ def backtest_status():
 @app.route('/api/backtest/history')
 @login_required
 def backtest_history():
-    from base.database import get_optimal_points_summary
-    rows = get_optimal_points_summary(current_user.id)
+    from base.database import get_trade_signals_summary
+    rows = get_trade_signals_summary(current_user.id)
     return jsonify([dict(r) for r in rows])
 
 
 @app.route('/api/backtest/ticker/<mode>/<ticker>')
 @login_required
 def backtest_ticker_detail(mode, ticker):
-    from base.database import get_optimal_points_detail
-    rows = get_optimal_points_detail(current_user.id, mode.upper(), ticker)
+    from base.database import get_trade_signals_detail
+    rows = get_trade_signals_detail(current_user.id, mode.upper(), ticker)
     return jsonify([dict(r) for r in rows])
 
 
@@ -1826,14 +1826,14 @@ def backtest_stats():
             'SELECT COUNT(DISTINCT ticker) FROM backtest_full_progress WHERE mode="US"'
         ).fetchone()[0]
         total = conn.execute(
-            'SELECT COUNT(*) FROM backtest_optimal_points WHERE user_id=?', (current_user.id,)
+            'SELECT COUNT(*) FROM backtest_trade_signals WHERE user_id=?', (current_user.id,)
         ).fetchone()[0]
         today = conn.execute(
-            'SELECT COUNT(*) FROM backtest_optimal_points WHERE user_id=? AND date(created_at)=date("now")',
+            'SELECT COUNT(*) FROM backtest_trade_signals WHERE user_id=? AND date(created_at)=date("now")',
             (current_user.id,)
         ).fetchone()[0]
         avg_gain = conn.execute(
-            'SELECT ROUND(AVG(max_gain_60d), 1) FROM backtest_optimal_points WHERE user_id=? AND point_type="BOTTOM" AND max_gain_60d IS NOT NULL',
+            'SELECT ROUND(AVG(max_gain_pct), 1) FROM backtest_trade_signals WHERE user_id=? AND signal_direction="BUY" AND max_gain_pct IS NOT NULL',
             (current_user.id,)
         ).fetchone()[0]
     finally:
@@ -1841,7 +1841,7 @@ def backtest_stats():
     return jsonify({
         'kr_tickers': kr, 'us_tickers': us,
         'total_points': total, 'today_points': today,
-        'avg_max_gain_bottom': avg_gain or 0,
+        'avg_max_gain_buy': avg_gain or 0,
     })
 
 
