@@ -535,7 +535,7 @@ class BacktestRunner:
             logger.info("[KR 백테스트] 전체 완료 — 처음부터 재시작")
             pending = all_tickers
 
-        PARALLEL_WORKERS = 2
+        PARALLEL_WORKERS = 1
         batch = pending[:batch_size]
         total = 0
 
