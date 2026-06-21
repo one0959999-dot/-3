@@ -9,8 +9,8 @@ WorkingDirectory=/home/ubuntu/lassi_bot
 Environment="PATH=/home/ubuntu/lassi_bot/venv/bin"
 Environment="LASSI_LOG_FILE=/home/ubuntu/lassi_bot/lassi_bot.log"
 ExecStart=/home/ubuntu/lassi_bot/venv/bin/gunicorn \
-    --workers 2 \
-    --threads 4 \
+    --workers 1 \
+    --threads 8 \
     --worker-class gthread \
     --bind 0.0.0.0:5000 \
     --timeout 120 \
