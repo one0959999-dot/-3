@@ -144,13 +144,18 @@ def _detect_signals(row: pd.Series, prev_row: pd.Series) -> list[str]:
 
 
 def _timing_stats(df: pd.DataFrame, idx: int) -> dict:
-    price  = float(df.iloc[idx]['close'])
+    raw = df.iloc[idx]['close']
+    if raw is None or (isinstance(raw, float) and np.isnan(raw)):
+        return {}
+    price  = float(raw)
     future = df.iloc[idx + 1: idx + 1 + _PATH_DAYS]
     if future.empty or not price:
         return {}
 
-    closes      = future['close'].values
-    pct_changes = [(c / price - 1) * 100 for c in closes]
+    closes      = future['close'].dropna().values
+    if len(closes) == 0:
+        return {}
+    pct_changes = [(float(c) / price - 1) * 100 for c in closes]
 
     peak_idx   = int(np.argmax(closes))
     trough_idx = int(np.argmin(closes))
