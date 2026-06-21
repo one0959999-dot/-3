@@ -3,6 +3,16 @@ import os
 # 프로젝트 루트(lassi_bot/)를 sys.path에 추가 — base/ 하위에서 실행 시 KR/US/ai/ 모듈 탐색 가능
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+# .env 파일 자동 로드 (KRX_ID, KRX_PW 등)
+_env_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), '.env')
+if os.path.exists(_env_path):
+    with open(_env_path) as _f:
+        for _line in _f:
+            _line = _line.strip()
+            if _line and not _line.startswith('#') and '=' in _line:
+                _k, _v = _line.split('=', 1)
+                os.environ.setdefault(_k.strip(), _v.strip())
+
 import logging
 import json
 import re
