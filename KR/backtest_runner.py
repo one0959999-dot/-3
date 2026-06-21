@@ -23,15 +23,17 @@ def _get_all_kr_tickers() -> list[dict]:
     try:
         from pykrx import stock as pykrx_stock
         dt = datetime.now()
-        while dt.weekday() >= 5:   # 토(5)/일(6) → 이전 금요일로
+        while dt.weekday() >= 5:
             dt -= timedelta(days=1)
         date_str = dt.strftime('%Y%m%d')
         kospi  = pykrx_stock.get_market_ticker_list(date_str, market='KOSPI')
         kosdaq = pykrx_stock.get_market_ticker_list(date_str, market='KOSDAQ')
-        tickers = []
-        for t in kospi + kosdaq:
-            name = pykrx_stock.get_market_ticker_name(t)
-            tickers.append({'ticker': t, 'name': name})
+        # 종목명 일괄 조회 (개별 호출 대신 DataFrame으로 한 번에)
+        try:
+            name_map = pykrx_stock.get_market_ticker_name
+            tickers = [{'ticker': t, 'name': name_map(t)} for t in (kospi + kosdaq)]
+        except Exception:
+            tickers = [{'ticker': t, 'name': t} for t in (kospi + kosdaq)]
         return tickers
     except Exception as e:
         logger.warning(f"[KR 백테스트] 종목 리스트 조회 실패: {e}")
