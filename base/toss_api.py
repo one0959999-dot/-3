@@ -131,6 +131,11 @@ class TossInvestApi:
                 data = r.json()
                 # 토스 API는 모든 응답을 {"result": ...} 로 래핑
                 return data.get("result", data) if isinstance(data, dict) and "result" in data else data
+            if r.status_code == 401:
+                # 토큰 만료 → 강제 무효화하여 다음 호출 시 재발급
+                with self._lock:
+                    self._token = ""
+                    self._token_exp = 0.0
             logger.warning(f"[Toss] GET {path} → {r.status_code}: {r.text[:300]}")
         except Exception as e:
             logger.error(f"[Toss] GET {path} 오류: {e}")
@@ -147,6 +152,10 @@ class TossInvestApi:
             if r.status_code in (200, 201):
                 data = r.json()
                 return data.get("result", data) if isinstance(data, dict) and "result" in data else data
+            if r.status_code == 401:
+                with self._lock:
+                    self._token = ""
+                    self._token_exp = 0.0
             logger.warning(f"[Toss] POST {path} → {r.status_code}: {r.text[:300]}")
         except Exception as e:
             logger.error(f"[Toss] POST {path} 오류: {e}")
