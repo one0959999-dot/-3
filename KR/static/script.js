@@ -600,6 +600,15 @@ window.openSettingsModal = async function () {
             if (data.sector_guide) document.getElementById('sectorGuideText').value = data.sector_guide;
         }
     } catch (e) { /* 무시 */ }
+    // 저장된 FRED API 키 불러오기 (마스킹된 값 표시)
+    try {
+        const resFred = await fetch('/api/settings/kr_keys');
+        if (resFred.ok) {
+            const kr = await resFred.json();
+            const fredEl = document.getElementById('fredApiKey');
+            if (fredEl && kr.fred_api_key) fredEl.placeholder = kr.fred_api_key + ' (저장됨)';
+        }
+    } catch (e) { /* 무시 */ }
 }
 window.closeSettingsModal = function () {
     document.getElementById('settingsModal').style.display = 'none';

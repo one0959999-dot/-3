@@ -1532,6 +1532,19 @@ def set_keys():
     return _save_keys_common(data, is_mock)
 
 
+@app.route('/api/settings/kr_keys', methods=['GET'])
+@login_required
+def get_kr_keys():
+    with get_db_connection() as conn:
+        row = conn.execute(
+            'SELECT fred_api_key FROM users WHERE id=?', (current_user.id,)
+        ).fetchone()
+    fred = (row['fred_api_key'] or '') if row else ''
+    return jsonify({
+        'fred_api_key': fred[:8] + '****' if fred else '',
+    })
+
+
 @app.route('/api/settings/kr_keys', methods=['POST'])
 @login_required
 def set_kr_keys():
