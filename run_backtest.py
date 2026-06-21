@@ -59,13 +59,13 @@ def _build_toss(user: dict):
         return None
 
 
-def run_kr(user: dict, once: bool = False):
+def run_kr(user: dict, once: bool = False, skip_ai: bool = True):
     from KR.backtest_runner import BacktestRunner, BATCH_SIZE_WEEKEND
-    ai   = _build_ai(user)
+    ai   = None if skip_ai else _build_ai(user)
     toss = _build_toss(user)
     fred = user.get('fred_api_key') or ''
     runner = BacktestRunner(
-        user['id'], ai, toss_api=toss, fred_key=fred,
+        user['id'], ai, toss_api=toss, fred_key=fred, skip_ai=skip_ai,
         dart_key=user.get('dart_api_key') or '',
         naver_id=user.get('naver_client_id') or '',
         naver_secret=user.get('naver_client_secret') or '',
@@ -86,11 +86,10 @@ def run_kr(user: dict, once: bool = False):
         time.sleep(300)
 
 
-def run_us(user: dict, once: bool = False):
+def run_us(user: dict, once: bool = False, skip_ai: bool = True):
     from US.backtest_runner import USBacktestRunner, BATCH_SIZE_WEEKEND
-    ai   = _build_ai(user)
-    toss = _build_toss(user)
-    runner = USBacktestRunner(user['id'], ai, toss_api=toss)
+    ai   = None if skip_ai else _build_ai(user)
+    runner = USBacktestRunner(user['id'], ai, toss_api=None, skip_ai=skip_ai)
 
     batch = BATCH_SIZE_WEEKEND
     logger.info(f"[US 백테스트] 배치 크기: {batch}종목")
@@ -113,7 +112,10 @@ def main():
                         help='실행 대상 (기본: ALL)')
     parser.add_argument('--once', action='store_true',
                         help='배치 1회만 실행 후 종료')
+    parser.add_argument('--with-ai', action='store_true',
+                        help='AI 섹터/분석 호출 활성 (기본: 비활성 — 빠르고 무료)')
     args = parser.parse_args()
+    skip_ai = not args.with_ai
 
     from base.database import init_db, get_db_connection
     init_db()
@@ -122,23 +124,23 @@ def main():
     user = _load_user(conn)
     conn.close()
 
-    if not (user.get('trade_ai_key') or user.get('backtest_ai_key') or
+    if not skip_ai and not (user.get('trade_ai_key') or user.get('backtest_ai_key') or
             user.get('claude_api_key') or user.get('gemini_api_key')):
         logger.error("AI API 키가 없습니다. 웹 설정 → AI 설정에서 키를 먼저 입력하세요.")
         sys.exit(1)
 
-    logger.info(f"=== 백테스트 단독 모드 시작 (mode={args.mode}, once={args.once}) ===")
+    logger.info(f"=== 백테스트 단독 모드 시작 (mode={args.mode}, once={args.once}, skip_ai={skip_ai}) ===")
 
     if args.mode == 'KR':
-        run_kr(user, args.once)
+        run_kr(user, args.once, skip_ai)
 
     elif args.mode == 'US':
-        run_us(user, args.once)
+        run_us(user, args.once, skip_ai)
 
     else:
         import threading
-        t_kr = threading.Thread(target=run_kr, args=(user, args.once), daemon=True, name='KR-backtest')
-        t_us = threading.Thread(target=run_us, args=(user, args.once), daemon=True, name='US-backtest')
+        t_kr = threading.Thread(target=run_kr, args=(user, args.once, skip_ai), daemon=True, name='KR-backtest')
+        t_us = threading.Thread(target=run_us, args=(user, args.once, skip_ai), daemon=True, name='US-backtest')
         t_kr.start()
         time.sleep(10)
         t_us.start()
