@@ -218,6 +218,9 @@ def init_db():
             mode TEXT, ticker TEXT,
             last_processed_date TEXT,
             total_signals INTEGER DEFAULT 0,
+            final_value_10m REAL,
+            return_pct REAL,
+            trade_count INTEGER DEFAULT 0,
             completed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             PRIMARY KEY (mode, ticker)
         )
@@ -951,18 +954,26 @@ def get_backtest_full_done(mode: str) -> set:
         conn.close()
 
 
-def update_backtest_full_progress(mode: str, ticker: str, last_date: str, total_signals: int):
+def update_backtest_full_progress(mode: str, ticker: str, last_date: str,
+                                   total_signals: int, final_value_10m: float = None,
+                                   return_pct: float = None, trade_count: int = 0):
     with db_lock:
         conn = get_db_connection()
         try:
             conn.execute('''
-                INSERT INTO backtest_full_progress (mode, ticker, last_processed_date, total_signals)
-                VALUES (?,?,?,?)
+                INSERT INTO backtest_full_progress
+                    (mode, ticker, last_processed_date, total_signals,
+                     final_value_10m, return_pct, trade_count)
+                VALUES (?,?,?,?,?,?,?)
                 ON CONFLICT(mode, ticker) DO UPDATE SET
                     last_processed_date=excluded.last_processed_date,
-                    total_signals=total_signals + excluded.total_signals,
+                    total_signals=excluded.total_signals,
+                    final_value_10m=excluded.final_value_10m,
+                    return_pct=excluded.return_pct,
+                    trade_count=excluded.trade_count,
                     completed_at=CURRENT_TIMESTAMP
-            ''', (mode, ticker, last_date, total_signals))
+            ''', (mode, ticker, last_date, total_signals,
+                  final_value_10m, return_pct, trade_count))
             conn.commit()
         finally:
             conn.close()
@@ -1078,6 +1089,7 @@ def get_trade_signals_summary(user_id: int):
         return conn.execute('''
             SELECT s.mode, s.ticker, s.stock_name, s.sector,
                    prog.last_processed_date, prog.completed_at,
+                   prog.final_value_10m, prog.return_pct, prog.trade_count,
                    COUNT(s.id) AS total_signals,
                    SUM(CASE WHEN s.signal_direction='BUY'  THEN 1 ELSE 0 END) AS buy_signals,
                    SUM(CASE WHEN s.signal_direction='SELL' THEN 1 ELSE 0 END) AS sell_signals,
@@ -1087,7 +1099,7 @@ def get_trade_signals_summary(user_id: int):
             LEFT JOIN backtest_full_progress prog ON prog.ticker=s.ticker AND prog.mode=s.mode
             WHERE s.user_id=?
             GROUP BY s.mode, s.ticker
-            ORDER BY prog.completed_at DESC
+            ORDER BY prog.return_pct DESC
         ''', (user_id,)).fetchall()
     finally:
         conn.close()

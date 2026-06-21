@@ -173,6 +173,61 @@ def _timing_stats(df: pd.DataFrame, idx: int) -> dict:
     }
 
 
+def _simulate_portfolio(df: pd.DataFrame, signal_records: list[dict],
+                         initial_cash: float = 10_000_000) -> dict:
+    if not signal_records:
+        return {}
+
+    date_to_idx = {df.index[i].strftime('%Y-%m-%d'): i for i in range(len(df))}
+
+    cash        = initial_cash
+    shares      = 0.0
+    trade_count = 0
+    entry_idx   = None
+    days_to_pk  = None
+
+    for rec in sorted(signal_records, key=lambda r: r['trade_date']):
+        idx = date_to_idx.get(rec['trade_date'])
+        if idx is None:
+            continue
+        price = float(df.iloc[idx]['close'])
+        if not price:
+            continue
+
+        # days_to_peak 도달 먼저 체크
+        if shares > 0 and entry_idx is not None and days_to_pk:
+            if idx >= entry_idx + days_to_pk:
+                exit_idx   = min(entry_idx + days_to_pk, len(df) - 1)
+                exit_price = float(df.iloc[exit_idx]['close'])
+                cash   = shares * exit_price
+                shares = 0.0
+                entry_idx = None
+                trade_count += 1
+
+        if rec['signal_direction'] == 'BUY' and shares == 0:
+            shares      = cash / price
+            cash        = 0.0
+            entry_idx   = idx
+            days_to_pk  = rec.get('days_to_peak') or 60
+            trade_count += 1
+
+        elif rec['signal_direction'] == 'SELL' and shares > 0:
+            cash   = shares * price
+            shares = 0.0
+            entry_idx = None
+            trade_count += 1
+
+    last_price  = float(df.iloc[-1]['close'])
+    final_value = cash + (shares * last_price if shares > 0 else 0)
+    return_pct  = round((final_value / initial_cash - 1) * 100, 2)
+
+    return {
+        'final_value_10m': round(final_value),
+        'return_pct':      return_pct,
+        'trade_count':     trade_count,
+    }
+
+
 def _support_resistance(df: pd.DataFrame, idx: int):
     hist = df.iloc[max(0, idx - 60): idx + 1]
     support    = float(hist['low'].rolling(20).min().dropna().iloc[-1])  if len(hist) >= 20 else 0
@@ -321,8 +376,17 @@ def run_full_backtest_ticker_us(ticker: str, user_id: int, ai_client,
             log_trade_signal_backtest(rec)
         time.sleep(_RATE_LIMIT_SEC)
 
-    update_backtest_full_progress('US', ticker, datetime.now().strftime('%Y-%m-%d'), len(records))
-    logger.info(f"[US 백테스트] {ticker}: {len(records)}개 신호")
+    sim = _simulate_portfolio(df, records)
+    update_backtest_full_progress(
+        'US', ticker, datetime.now().strftime('%Y-%m-%d'), len(records),
+        final_value_10m=sim.get('final_value_10m'),
+        return_pct=sim.get('return_pct'),
+        trade_count=sim.get('trade_count', 0),
+    )
+    logger.info(
+        f"[US 백테스트] {ticker}: {len(records)}개 신호 | "
+        f"$100k→${sim.get('final_value_10m',0):,} ({sim.get('return_pct',0):+.1f}%)"
+    )
     return len(records)
 
 

@@ -182,6 +182,74 @@ def _timing_stats(df: pd.DataFrame, idx: int) -> dict:
     }
 
 
+def _simulate_portfolio(df: pd.DataFrame, signal_records: list[dict],
+                         initial_cash: float = 10_000_000) -> dict:
+    """신호 기반 + days_to_peak 병합 기준 포트폴리오 시뮬레이션."""
+    if not signal_records:
+        return {}
+
+    date_to_idx = {df.index[i].strftime('%Y-%m-%d'): i for i in range(len(df))}
+
+    buy_signals  = sorted([r for r in signal_records if r['signal_direction'] == 'BUY'],
+                           key=lambda r: r['trade_date'])
+    sell_signals = sorted([r for r in signal_records if r['signal_direction'] == 'SELL'],
+                           key=lambda r: r['trade_date'])
+
+    cash        = initial_cash
+    shares      = 0.0
+    trade_count = 0
+    entry_idx   = None
+    days_to_pk  = None
+
+    all_signals = sorted(signal_records, key=lambda r: r['trade_date'])
+
+    for rec in all_signals:
+        idx = date_to_idx.get(rec['trade_date'])
+        if idx is None:
+            continue
+        price = float(df.iloc[idx]['close'])
+        if not price:
+            continue
+
+        if rec['signal_direction'] == 'BUY' and shares == 0:
+            shares      = cash / price
+            cash        = 0.0
+            entry_idx   = idx
+            days_to_pk  = rec.get('days_to_peak') or 60
+            trade_count += 1
+
+        elif rec['signal_direction'] == 'SELL' and shares > 0:
+            # SELL 신호 도달 또는 days_to_peak 이미 지난 경우
+            peak_exit_idx = (entry_idx + days_to_pk) if entry_idx is not None else idx
+            exit_idx = min(idx, peak_exit_idx, len(df) - 1)
+            exit_price = float(df.iloc[exit_idx]['close'])
+            cash   = shares * exit_price
+            shares = 0.0
+            entry_idx = None
+            trade_count += 1
+
+        # days_to_peak 도달 체크 (SELL 신호 없어도 청산)
+        if shares > 0 and entry_idx is not None and days_to_pk:
+            if idx >= entry_idx + days_to_pk:
+                exit_idx   = min(entry_idx + days_to_pk, len(df) - 1)
+                exit_price = float(df.iloc[exit_idx]['close'])
+                cash   = shares * exit_price
+                shares = 0.0
+                entry_idx = None
+                trade_count += 1
+
+    # 마지막 보유 포지션은 최종 종가로 평가
+    last_price = float(df.iloc[-1]['close'])
+    final_value = cash + (shares * last_price if shares > 0 else 0)
+    return_pct  = round((final_value / initial_cash - 1) * 100, 2)
+
+    return {
+        'final_value_10m': round(final_value),
+        'return_pct':      return_pct,
+        'trade_count':     trade_count,
+    }
+
+
 def _support_resistance(df: pd.DataFrame, idx: int):
     hist = df.iloc[max(0, idx - 60): idx + 1]
     support    = float(hist['low'].rolling(20).min().dropna().iloc[-1])  if len(hist) >= 20 else 0
@@ -332,8 +400,17 @@ def run_full_backtest_ticker(ticker: str, stock_name: str, user_id: int,
             log_trade_signal_backtest(rec)
         time.sleep(_RATE_LIMIT_SEC)
 
-    update_backtest_full_progress('KR', ticker, datetime.now().strftime('%Y-%m-%d'), len(records))
-    logger.info(f"[KR 백테스트] {stock_name}({ticker}): {len(records)}개 신호")
+    sim = _simulate_portfolio(df, records)
+    update_backtest_full_progress(
+        'KR', ticker, datetime.now().strftime('%Y-%m-%d'), len(records),
+        final_value_10m=sim.get('final_value_10m'),
+        return_pct=sim.get('return_pct'),
+        trade_count=sim.get('trade_count', 0),
+    )
+    logger.info(
+        f"[KR 백테스트] {stock_name}({ticker}): {len(records)}개 신호 | "
+        f"1000만→{sim.get('final_value_10m',0):,}원 ({sim.get('return_pct',0):+.1f}%)"
+    )
     return len(records)
 
 
