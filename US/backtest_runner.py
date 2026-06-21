@@ -439,7 +439,8 @@ class USBacktestRunner:
         self.ai      = ai_client
         self.toss    = toss_api
 
-    def run_batch(self, batch_size: int = BATCH_SIZE_WEEKDAY) -> int:
+    def run_batch(self, batch_size: int = BATCH_SIZE_WEEKDAY,
+                  progress_cb=None) -> int:
         from base.database import get_backtest_full_done
 
         done    = get_backtest_full_done('US')
@@ -449,7 +450,9 @@ class USBacktestRunner:
             pending = _US_UNIVERSE
 
         total = 0
-        for ticker in pending[:batch_size]:
+        for i, ticker in enumerate(pending[:batch_size]):
+            if progress_cb:
+                progress_cb(f"US:{ticker}", i)
             try:
                 n = run_full_backtest_ticker_us(ticker, self.user_id, self.ai, self.toss)
                 total += n

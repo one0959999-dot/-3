@@ -459,7 +459,8 @@ class BacktestRunner:
         self.toss     = toss_api
         self.fred_key = fred_key
 
-    def run_batch(self, batch_size: int = BATCH_SIZE_WEEKDAY) -> int:
+    def run_batch(self, batch_size: int = BATCH_SIZE_WEEKDAY,
+                  progress_cb=None) -> int:
         from base.database import get_backtest_full_done
 
         all_tickers = _get_all_kr_tickers()
@@ -473,7 +474,9 @@ class BacktestRunner:
             pending = all_tickers
 
         total = 0
-        for item in pending[:batch_size]:
+        for i, item in enumerate(pending[:batch_size]):
+            if progress_cb:
+                progress_cb(f"KR:{item['ticker']}({item['name']})", i)
             try:
                 n = run_full_backtest_ticker(
                     item['ticker'], item['name'],

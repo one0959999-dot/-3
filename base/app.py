@@ -1731,15 +1731,14 @@ def backtest_page():
     return render_template('backtest.html', user=current_user)
 
 
-_backtest_status = {'running': False, 'mode': '', 'started_at': '', 'current_ticker': '', 'done': 0}
-
-
 @app.route('/api/backtest/run', methods=['POST'])
 @login_required
 def backtest_run():
     import threading
-    global _backtest_status
-    if _backtest_status['running']:
+    from base.database import get_backtest_run_status, set_backtest_run_status
+
+    st = get_backtest_run_status()
+    if st.get('running'):
         return jsonify({'error': '이미 실행 중입니다.'}), 400
 
     data = request.json or {}
@@ -1761,27 +1760,33 @@ def backtest_run():
         except Exception:
             return None, u.get('fred_api_key','')
 
+    def _progress(current_ticker: str, done: int):
+        set_backtest_run_status(True, mode=mode,
+                                started_at=_started_at,
+                                current_ticker=current_ticker, done=done)
+
     def _worker():
-        global _backtest_status
-        _backtest_status.update({'running': True, 'mode': mode,
-                                  'started_at': datetime.now().strftime('%Y-%m-%d %H:%M'),
-                                  'current_ticker': '', 'done': 0})
+        nonlocal _started_at
+        _started_at = datetime.now().strftime('%Y-%m-%d %H:%M')
+        set_backtest_run_status(True, mode=mode, started_at=_started_at,
+                                current_ticker='', done=0)
         try:
             ai = _build_ai()
             toss, fred = _build_toss()
             if mode in ('KR', 'ALL'):
                 from KR.backtest_runner import BacktestRunner, BATCH_SIZE_WEEKEND
                 runner = BacktestRunner(user_id, ai, toss_api=toss, fred_key=fred)
-                runner.run_batch(BATCH_SIZE_WEEKEND)
+                runner.run_batch(BATCH_SIZE_WEEKEND, progress_cb=_progress)
             if mode in ('US', 'ALL'):
                 from US.backtest_runner import USBacktestRunner, BATCH_SIZE_WEEKEND
                 runner = USBacktestRunner(user_id, ai, toss_api=toss)
-                runner.run_batch(BATCH_SIZE_WEEKEND)
+                runner.run_batch(BATCH_SIZE_WEEKEND, progress_cb=_progress)
         except Exception as e:
             logger.warning(f"[백테스트 실행] 오류: {e}", exc_info=True)
         finally:
-            _backtest_status['running'] = False
+            set_backtest_run_status(False)
 
+    _started_at = ''
     threading.Thread(target=_worker, daemon=True, name='backtest-web').start()
     return jsonify({'ok': True, 'mode': mode})
 
@@ -1789,15 +1794,16 @@ def backtest_run():
 @app.route('/api/backtest/stop', methods=['POST'])
 @login_required
 def backtest_stop():
-    global _backtest_status
-    _backtest_status['running'] = False
+    from base.database import set_backtest_run_status
+    set_backtest_run_status(False)
     return jsonify({'ok': True})
 
 
 @app.route('/api/backtest/status')
 @login_required
 def backtest_status():
-    return jsonify(_backtest_status)
+    from base.database import get_backtest_run_status
+    return jsonify(get_backtest_run_status())
 
 
 @app.route('/api/backtest/history')

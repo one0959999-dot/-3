@@ -355,7 +355,22 @@ def init_db():
                     cursor.execute(
                         f'ALTER TABLE backtest_full_progress ADD COLUMN {col_name} {col_type}')
 
+            cursor.execute('''
+        CREATE TABLE IF NOT EXISTS backtest_run_status (
+            id INTEGER PRIMARY KEY CHECK (id = 1),
+            running INTEGER DEFAULT 0,
+            mode TEXT DEFAULT '',
+            started_at TEXT DEFAULT '',
+            current_ticker TEXT DEFAULT '',
+            done INTEGER DEFAULT 0,
+            updated_at TEXT DEFAULT ''
+        )
+        ''')
+            cursor.execute(
+                'INSERT OR IGNORE INTO backtest_run_status (id, running) VALUES (1, 0)')
+
             cursor.execute('UPDATE users SET is_running = 0')
+            cursor.execute('UPDATE backtest_run_status SET running=0 WHERE id=1')
             conn.commit()
         finally:
             conn.close()
@@ -1034,6 +1049,36 @@ def update_backtest_full_progress(mode: str, ticker: str, last_date: str,
             conn.commit()
         finally:
             conn.close()
+
+
+def set_backtest_run_status(running: bool, mode: str = '', started_at: str = '',
+                            current_ticker: str = '', done: int = 0):
+    from datetime import datetime as _dt
+    with db_lock:
+        conn = get_db_connection()
+        try:
+            conn.execute(
+                '''UPDATE backtest_run_status SET running=?, mode=?, started_at=?,
+                   current_ticker=?, done=?, updated_at=? WHERE id=1''',
+                (1 if running else 0, mode, started_at, current_ticker, done,
+                 _dt.now().strftime('%Y-%m-%d %H:%M:%S'))
+            )
+            conn.commit()
+        finally:
+            conn.close()
+
+
+def get_backtest_run_status() -> dict:
+    conn = get_db_connection()
+    try:
+        row = conn.execute('SELECT * FROM backtest_run_status WHERE id=1').fetchone()
+        if row:
+            d = dict(row)
+            d['running'] = bool(d.get('running', 0))
+            return d
+        return {'running': False, 'mode': '', 'started_at': '', 'current_ticker': '', 'done': 0}
+    finally:
+        conn.close()
 
 
 def rebuild_sector_phase_stats(mode: str):
