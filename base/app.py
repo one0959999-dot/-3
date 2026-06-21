@@ -1770,6 +1770,17 @@ def backtest_run():
         _started_at = datetime.now().strftime('%Y-%m-%d %H:%M')
         set_backtest_run_status(True, mode=mode, started_at=_started_at,
                                 current_ticker='', done=0)
+
+        def _notify(msg: str):
+            try:
+                from base.telegram_bot import TelegramNotifier
+                with get_db_connection() as _c:
+                    row = _c.execute('SELECT telegram_token, telegram_chat_id FROM users WHERE id=?', (user_id,)).fetchone()
+                if row and row['telegram_token'] and row['telegram_chat_id']:
+                    TelegramNotifier(row['telegram_token'], row['telegram_chat_id']).send_message(msg)
+            except Exception:
+                pass
+
         try:
             ai = _build_ai()
             toss, fred = _build_toss()
@@ -1779,10 +1790,16 @@ def backtest_run():
                 runner = BacktestRunner(user_id, ai, toss_api=toss, fred_key=fred,
                                         skip_ai=skip_ai)
                 runner.run_batch(BATCH_SIZE_WEEKEND, progress_cb=_progress)
+                from base.database import get_backtest_full_done
+                kr_done = len(get_backtest_full_done('KR'))
+                _notify(f'[라씨봇] KR 백테스트 배치 완료 — {kr_done}종목 처리됨')
             if mode in ('US', 'ALL'):
                 from US.backtest_runner import USBacktestRunner, BATCH_SIZE_WEEKEND
                 runner = USBacktestRunner(user_id, ai, toss_api=None, skip_ai=skip_ai)
                 runner.run_batch(BATCH_SIZE_WEEKEND, progress_cb=_progress)
+                from base.database import get_backtest_full_done
+                us_done = len(get_backtest_full_done('US'))
+                _notify(f'[라씨봇] US 백테스트 배치 완료 — {us_done}종목 처리됨')
         except Exception as e:
             logger.warning(f"[백테스트 실행] 오류: {e}", exc_info=True)
         finally:
