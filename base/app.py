@@ -1754,8 +1754,8 @@ def backtest_run():
                               (user_id,)).fetchone() or {})
         conn.close()
         try:
-            from base.toss_api import TossApi
-            return TossApi(u.get('toss_client_id',''), u.get('toss_client_secret',''), u.get('toss_account_seq','')), u.get('fred_api_key','')
+            from base.toss_api import TossInvestApi
+            return TossInvestApi(u.get('toss_client_id',''), u.get('toss_client_secret',''), u.get('toss_account_seq','')), u.get('fred_api_key','')
         except Exception:
             return None, u.get('fred_api_key','')
 
@@ -1766,14 +1766,14 @@ def backtest_run():
                                   'current_ticker': '', 'done': 0})
         try:
             ai = _build_ai()
+            toss, fred = _build_toss()
             if mode in ('KR', 'ALL'):
-                toss, fred = _build_toss()
                 from KR.backtest_runner import BacktestRunner, BATCH_SIZE_WEEKEND
                 runner = BacktestRunner(user_id, ai, toss_api=toss, fred_key=fred)
                 runner.run_batch(BATCH_SIZE_WEEKEND)
             if mode in ('US', 'ALL'):
                 from US.backtest_runner import USBacktestRunner, BATCH_SIZE_WEEKEND
-                runner = USBacktestRunner(user_id, ai)
+                runner = USBacktestRunner(user_id, ai, toss_api=toss)
                 runner.run_batch(BATCH_SIZE_WEEKEND)
         except Exception as e:
             logger.warning(f"[백테스트 실행] 오류: {e}", exc_info=True)
