@@ -2029,17 +2029,27 @@ class KRBotController:
                     ind['news_summary'] = '\n'.join(news_parts)
                 except Exception:
                     pass
+
+            # 오답노트: 최근 매매 이력
+            try:
+                ind['recent_trades'] = get_recent_trades(self.user_id, ticker, limit=5)
+            except Exception:
+                pass
         except Exception as e:
             logger.debug(f"[{self.mode_name}] indicators_dict 오류 ({ticker}): {e}")
         return ind
 
     def _build_market_info_dict(self) -> dict:
-        """파인튜닝 형식 판단에 필요한 시장 국면/매크로 dict 구성."""
+        """파인튜닝 형식 판단에 필요한 시장 국면/매크로 dict — 일별 캐시."""
+        today_str = _now_kst().strftime('%Y-%m-%d')
+        cache_key = f'_mkt_cache_{today_str}'
+        cached = getattr(self, cache_key, None)
+        if cached:
+            return cached
         mkt = {}
         try:
             from base.market_phase import get_phase_for_date
             from base.macro_collector import get_macro_for_date, build_macro_context_str
-            today_str = _now_kst().strftime('%Y-%m-%d')
             phase_info = get_phase_for_date('KR', today_str)
             mkt['market_phase']    = phase_info.get('phase')
             mkt['market_phase_kr'] = phase_info.get('phase_kr')
@@ -2048,6 +2058,7 @@ class KRBotController:
             mkt['macro_str'] = build_macro_context_str(macro)
         except Exception:
             pass
+        setattr(self, cache_key, mkt)
         return mkt
 
     def _fetch_fundamental(self, ticker: str, stock_name: str) -> str:
@@ -2689,7 +2700,7 @@ class KRBotController:
                                     _ma120 = _ma60 = 0
                                 _news_raw = fetch_recent_news(c_nm)
                                 _news = _news_raw if _news_raw and "조회 실패" not in _news_raw else ""
-                                _c_ind = self._build_indicators_dict(c_tk, cp, c_df if 'c_df' in dir() else None, signal_types=['CORE_BUY'])
+                                _c_ind = self._build_indicators_dict(c_tk, cp, ex_df, signal_types=['CORE_BUY'])
                                 _c_mkt = self._build_market_info_dict()
                                 approved, ai_reason = self.claude.ai_approve_core_trade(
                                     stock_name=c_nm, ticker=c_tk, price=cp,
@@ -3517,7 +3528,8 @@ class KRBotController:
                         _news = self.news_monitor.get_news_summary(name, display=3)
                     except Exception:
                         pass
-                _exit_ind = self._build_indicators_dict(ticker, price, getattr(pos, 'df', None), signal_types=['PARTIAL_EXIT'])
+                _exit_df  = self._get_extended_ohlcv(ticker, price) if self.toss else None
+                _exit_ind = self._build_indicators_dict(ticker, price, _exit_df, signal_types=['PARTIAL_EXIT'])
                 _exit_mkt = self._build_market_info_dict()
                 decision = self.claude.ai_partial_exit(
                     ticker=ticker, stock_name=name, price=price,

@@ -584,7 +584,8 @@ class USBotController:
         news         = self._fetch_us_news([ticker])
         fundamental  = self._fetch_fundamental(ticker)
 
-        _sw_ind = self._build_us_indicators_dict(ticker, price, signal_types=[reason])
+        _sw_df  = self._get_cached_ohlcv(ticker, period="60d")
+        _sw_ind = self._build_us_indicators_dict(ticker, price, df=_sw_df if not _sw_df.empty else None, signal_types=[reason])
         _sw_mkt = self._build_us_market_info_dict()
         decision = self.claude.ai_swing_trade_check(
             ticker         = ticker,
@@ -1310,7 +1311,7 @@ class USBotController:
                         _core_ai_reason = info.get("ai_reason", "")
                         if _core_fundamental:
                             _core_ai_reason = f"{_core_ai_reason} | [{_core_fundamental}]".strip(" |")
-                        _c_ind = self._build_us_indicators_dict(ticker, price, signal_types=['CORE_BUY'], sector=info.get("sector",""), rsi=info.get("rsi", 50.0))
+                        _c_ind = self._build_us_indicators_dict(ticker, price, df=df_raw, signal_types=['CORE_BUY'], sector=info.get("sector",""), rsi=info.get("rsi", 50.0))
                         _c_mkt = self._build_us_market_info_dict()
                         approved, ai_reason = self.claude.ai_approve_us_trade(
                             signal         = 'BUY',
@@ -2161,7 +2162,7 @@ class USBotController:
                         _full_ai_reason = f"{_full_ai_reason} | {_52w_note}".strip(" |")
                     if _fundamental:
                         _full_ai_reason = f"{_full_ai_reason} | [{_fundamental}]".strip(" |")
-                    _s_ind = self._build_us_indicators_dict(ticker, price, signal_types=['SAT_BUY'], sector=info.get("sector",""), rsi=info.get("rsi", 50.0))
+                    _s_ind = self._build_us_indicators_dict(ticker, price, df=df_raw, signal_types=['SAT_BUY'], sector=info.get("sector",""), rsi=info.get("rsi", 50.0))
                     _s_mkt = self._build_us_market_info_dict()
                     approved, ai_reason = self.claude.ai_approve_us_trade(
                         signal         = 'BUY',
@@ -2598,7 +2599,7 @@ class USBotController:
             approved, ai_reason = True, "AI 미설정"
             if self.claude:
                 news = self._fetch_us_news([ticker])
-                _rb_ind = self._build_us_indicators_dict(ticker, price, signal_types=['SWING_REBUY'])
+                _rb_ind = self._build_us_indicators_dict(ticker, price, df=df_raw if (df_raw is not None and not df_raw.empty) else None, signal_types=['SWING_REBUY'])
                 _rb_mkt = self._build_us_market_info_dict()
                 approved, ai_reason = self.claude.ai_approve_us_trade(
                     signal='BUY', stock_name=name, ticker=ticker,
@@ -3305,16 +3306,24 @@ class USBotController:
                 ind['vol_ratio'] = round(float(vol.iloc[-1]) / (vol_avg + 1) * 100, 1)
         except Exception:
             pass
+        try:
+            ind['recent_trades'] = get_recent_trades(self.user_id, ticker, limit=5)
+        except Exception:
+            pass
         return ind
 
     def _build_us_market_info_dict(self) -> dict:
-        """US 파인튜닝 형식 시장 국면/매크로 dict."""
+        """US 파인튜닝 형식 시장 국면/매크로 dict — 일별 캐시."""
+        import datetime as _dt
+        today_str = _dt.date.today().strftime('%Y-%m-%d')
+        cache_key = f'_us_mkt_cache_{today_str}'
+        cached = getattr(self, cache_key, None)
+        if cached:
+            return cached
         mkt = {}
         try:
             from base.market_phase import get_phase_for_date
             from base.macro_collector import get_macro_for_date, build_macro_context_str
-            import datetime as _dt
-            today_str = _dt.date.today().strftime('%Y-%m-%d')
             phase_info = get_phase_for_date('US', today_str)
             mkt['market_phase']    = phase_info.get('phase')
             mkt['market_phase_kr'] = phase_info.get('phase_kr')
@@ -3323,6 +3332,7 @@ class USBotController:
             mkt['macro_str'] = build_macro_context_str(macro)
         except Exception:
             pass
+        setattr(self, cache_key, mkt)
         return mkt
 
     def _fetch_fundamental(self, ticker: str) -> str:
