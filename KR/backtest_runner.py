@@ -450,7 +450,7 @@ def run_full_backtest_ticker(ticker: str, stock_name: str, user_id: int,
     logger.info(
         f"[KR 백테스트] {stock_name}({ticker}): {len(records)}개 신호 | "
         f"신호매매 1000만→{sim.get('final_value_10m',0):,}원 ({sim.get('return_pct',0):+.1f}%) | "
-        f"보유시 {buyhold.get('buyhold_return_pct',0):+.1f}%"
+        f"보유시 1000만→{buyhold.get('buyhold_value_10m',0):,}원 ({buyhold.get('buyhold_return_pct',0):+.1f}%)"
     )
     return len(records)
 

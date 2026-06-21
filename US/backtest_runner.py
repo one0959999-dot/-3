@@ -422,7 +422,7 @@ def run_full_backtest_ticker_us(ticker: str, user_id: int, ai_client,
     logger.info(
         f"[US 백테스트] {ticker}: {len(records)}개 신호 | "
         f"신호매매 1000만→{sim.get('final_value_10m',0):,} ({sim.get('return_pct',0):+.1f}%) | "
-        f"보유시 {buyhold.get('buyhold_return_pct',0):+.1f}%"
+        f"보유시 1000만→{buyhold.get('buyhold_value_10m',0):,} ({buyhold.get('buyhold_return_pct',0):+.1f}%)"
     )
     return len(records)
 
