@@ -77,9 +77,15 @@ def _get_full_history(ticker: str, toss_api=None) -> Optional[pd.DataFrame]:
     try:
         from pykrx import stock as pykrx_stock
         from datetime import datetime
+        from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeout
         start = '19900101'
         end = datetime.now().strftime('%Y%m%d')
-        raw = pykrx_stock.get_market_ohlcv_by_date(start, end, ticker)
+        with ThreadPoolExecutor(max_workers=1) as ex:
+            try:
+                raw = ex.submit(pykrx_stock.get_market_ohlcv_by_date, start, end, ticker).result(timeout=60)
+            except FuturesTimeout:
+                logger.debug(f"[KR 백테스트] {ticker} pykrx timeout")
+                raw = None
         if raw is not None and not raw.empty:
             raw.columns = [c.lower() for c in raw.columns]
             # pykrx 컬럼: 시가/고가/저가/종가/거래량
@@ -538,7 +544,7 @@ class BacktestRunner:
             logger.info("[KR 백테스트] 전체 완료 — 처음부터 재시작")
             pending = all_tickers
 
-        PARALLEL_WORKERS = 4
+        PARALLEL_WORKERS = 2
         batch = pending[:batch_size]
         total = 0
 
