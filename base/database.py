@@ -351,6 +351,8 @@ def init_db():
                 ('trade_count',        'INTEGER DEFAULT 0'),
                 ('buyhold_value_10m',  'REAL'),
                 ('buyhold_return_pct', 'REAL'),
+                ('mdd_pct',            'REAL'),
+                ('win_rate',           'REAL'),
             ]
             existing = {row[1] for row in cursor.execute(
                 "PRAGMA table_info(backtest_full_progress)")}
@@ -1052,7 +1054,8 @@ def update_backtest_full_progress(mode: str, ticker: str, last_date: str,
                                    total_signals: int, final_value_10m: float = None,
                                    return_pct: float = None, trade_count: int = 0,
                                    buyhold_value_10m: float = None,
-                                   buyhold_return_pct: float = None):
+                                   buyhold_return_pct: float = None,
+                                   mdd_pct: float = None, win_rate: float = None):
     with db_lock:
         conn = get_db_connection()
         try:
@@ -1060,8 +1063,8 @@ def update_backtest_full_progress(mode: str, ticker: str, last_date: str,
                 INSERT INTO backtest_full_progress
                     (mode, ticker, last_processed_date, total_signals,
                      final_value_10m, return_pct, trade_count,
-                     buyhold_value_10m, buyhold_return_pct)
-                VALUES (?,?,?,?,?,?,?,?,?)
+                     buyhold_value_10m, buyhold_return_pct, mdd_pct, win_rate)
+                VALUES (?,?,?,?,?,?,?,?,?,?,?)
                 ON CONFLICT(mode, ticker) DO UPDATE SET
                     last_processed_date=excluded.last_processed_date,
                     total_signals=excluded.total_signals,
@@ -1070,10 +1073,12 @@ def update_backtest_full_progress(mode: str, ticker: str, last_date: str,
                     trade_count=excluded.trade_count,
                     buyhold_value_10m=excluded.buyhold_value_10m,
                     buyhold_return_pct=excluded.buyhold_return_pct,
+                    mdd_pct=excluded.mdd_pct,
+                    win_rate=excluded.win_rate,
                     completed_at=CURRENT_TIMESTAMP
             ''', (mode, ticker, last_date, total_signals,
                   final_value_10m, return_pct, trade_count,
-                  buyhold_value_10m, buyhold_return_pct))
+                  buyhold_value_10m, buyhold_return_pct, mdd_pct, win_rate))
             conn.commit()
         finally:
             conn.close()

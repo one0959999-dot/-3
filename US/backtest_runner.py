@@ -253,17 +253,25 @@ def _timing_stats(df: pd.DataFrame, idx: int) -> dict:
 
 
 def _simulate_portfolio(df: pd.DataFrame, signal_records: list[dict],
-                         initial_cash: float = 10_000_000) -> dict:
+                         initial_cash: float = 10_000_000,
+                         cost_pct: float = 0.001) -> dict:
+    """정직한 포트폴리오 시뮬레이션 (룩어헤드 제거).
+    실제 SELL 신호로만 청산 + 거래비용(US 왕복 ~0.1%) + MDD/승률 계산.
+    """
     if not signal_records:
         return {}
 
     date_to_idx = {df.index[i].strftime('%Y-%m-%d'): i for i in range(len(df))}
+    closes = df['close'].values
 
-    cash        = initial_cash
-    shares      = 0.0
-    trade_count = 0
-    entry_idx   = None
-    days_to_pk  = None
+    cash = initial_cash; shares = 0.0; trade_count = 0; wins = 0
+    entry_value = None; last_event_idx = 0; equity_curve = []
+
+    def _mark_to_idx(upto_idx):
+        for j in range(last_event_idx, min(upto_idx + 1, len(closes))):
+            v = closes[j]
+            if v is not None and not pd.isna(v):
+                equity_curve.append(cash + shares * float(v))
 
     for rec in sorted(signal_records, key=lambda r: r['trade_date']):
         idx = date_to_idx.get(rec['trade_date'])
@@ -275,42 +283,41 @@ def _simulate_portfolio(df: pd.DataFrame, signal_records: list[dict],
         price = float(_raw)
         if not price:
             continue
-
-        # days_to_peak 도달 먼저 체크
-        if shares > 0 and entry_idx is not None and days_to_pk:
-            if idx >= entry_idx + days_to_pk:
-                exit_idx   = min(entry_idx + days_to_pk, len(df) - 1)
-                _ep = df.iloc[exit_idx]['close']
-                if _ep is None or pd.isna(_ep):
-                    continue
-                exit_price = float(_ep)
-                cash   = shares * exit_price
-                shares = 0.0
-                entry_idx = None
-                trade_count += 1
+        _mark_to_idx(idx); last_event_idx = idx
 
         if rec['signal_direction'] == 'BUY' and shares == 0:
-            shares      = cash / price
-            cash        = 0.0
-            entry_idx   = idx
-            days_to_pk  = rec.get('days_to_peak') or 60
+            invest = cash * (1 - cost_pct)
+            shares = invest / price; cash = 0.0; entry_value = invest
             trade_count += 1
-
         elif rec['signal_direction'] == 'SELL' and shares > 0:
-            cash   = shares * price
-            shares = 0.0
-            entry_idx = None
+            cash = shares * price * (1 - cost_pct); shares = 0.0
             trade_count += 1
+            if entry_value is not None and cash > entry_value:
+                wins += 1
+            entry_value = None
 
-    _lp = df.iloc[-1]['close']
+    _mark_to_idx(len(closes) - 1)
+    _lp = closes[-1]
     last_price  = float(_lp) if _lp is not None and not pd.isna(_lp) else 0.0
     final_value = cash + (shares * last_price if shares > 0 else 0)
     return_pct  = round((final_value / initial_cash - 1) * 100, 2)
+
+    mdd = 0.0; peak = initial_cash
+    for v in equity_curve:
+        if v > peak: peak = v
+        if peak > 0:
+            dd = (v / peak - 1) * 100
+            if dd < mdd: mdd = dd
+
+    sell_trades = sum(1 for r in signal_records if r['signal_direction'] == 'SELL')
+    win_rate = round(wins / sell_trades * 100, 1) if sell_trades else None
 
     return {
         'final_value_10m': round(final_value),
         'return_pct':      return_pct,
         'trade_count':     trade_count,
+        'mdd_pct':         round(mdd, 2),
+        'win_rate':        win_rate,
     }
 
 
@@ -555,6 +562,8 @@ def run_full_backtest_ticker_us(ticker: str, user_id: int, ai_client,
         trade_count=sim.get('trade_count', 0),
         buyhold_value_10m=buyhold.get('buyhold_value_10m'),
         buyhold_return_pct=buyhold.get('buyhold_return_pct'),
+        mdd_pct=sim.get('mdd_pct'),
+        win_rate=sim.get('win_rate'),
     )
 
     try:

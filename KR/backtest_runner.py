@@ -250,23 +250,32 @@ def _timing_stats(df: pd.DataFrame, idx: int) -> dict:
 
 
 def _simulate_portfolio(df: pd.DataFrame, signal_records: list[dict],
-                         initial_cash: float = 10_000_000) -> dict:
-    """신호 기반 + days_to_peak 병합 기준 포트폴리오 시뮬레이션."""
+                         initial_cash: float = 10_000_000,
+                         cost_pct: float = 0.0021) -> dict:
+    """정직한 포트폴리오 시뮬레이션 (룩어헤드 제거).
+
+    - 청산은 '실제 SELL 신호'로만 (미래 고점 days_to_peak 사용 안 함)
+    - 매수/매도마다 거래비용(cost_pct, KR 왕복 ~0.21%=세금+수수료) 차감
+    - 추가로 MDD(최대낙폭)·승률을 일별 평가금 기준으로 계산
+    """
     if not signal_records:
         return {}
 
     date_to_idx = {df.index[i].strftime('%Y-%m-%d'): i for i in range(len(df))}
-
-    buy_signals  = sorted([r for r in signal_records if r['signal_direction'] == 'BUY'],
-                           key=lambda r: r['trade_date'])
-    sell_signals = sorted([r for r in signal_records if r['signal_direction'] == 'SELL'],
-                           key=lambda r: r['trade_date'])
+    closes = df['close'].values
 
     cash        = initial_cash
     shares      = 0.0
     trade_count = 0
-    entry_idx   = None
-    days_to_pk  = None
+    wins        = 0
+    entry_value = None          # 진입 시 평가금(승패 판정용)
+    last_event_idx = 0
+    equity_curve = []
+
+    def _mark_to_idx(upto_idx):
+        # last_event_idx ~ upto_idx 구간 일별 평가금 기록 (MDD용)
+        for j in range(last_event_idx, min(upto_idx + 1, len(closes))):
+            equity_curve.append(cash + shares * float(closes[j]))
 
     for rec in sorted(signal_records, key=lambda r: r['trade_date']):
         idx = date_to_idx.get(rec['trade_date'])
@@ -275,39 +284,48 @@ def _simulate_portfolio(df: pd.DataFrame, signal_records: list[dict],
         price = float(df.iloc[idx]['close'])
         if not price:
             continue
-
-        # days_to_peak 도달 먼저 체크 (SELL 신호 전에 청산)
-        if shares > 0 and entry_idx is not None and days_to_pk:
-            if idx >= entry_idx + days_to_pk:
-                exit_idx   = min(entry_idx + days_to_pk, len(df) - 1)
-                exit_price = float(df.iloc[exit_idx]['close'])
-                cash   = shares * exit_price
-                shares = 0.0
-                entry_idx = None
-                trade_count += 1
+        _mark_to_idx(idx)
+        last_event_idx = idx
 
         if rec['signal_direction'] == 'BUY' and shares == 0:
-            shares      = cash / price
-            cash        = 0.0
-            entry_idx   = idx
-            days_to_pk  = rec.get('days_to_peak') or 60
+            invest = cash * (1 - cost_pct)      # 매수 수수료 차감
+            shares = invest / price
+            cash   = 0.0
+            entry_value = invest
             trade_count += 1
-
         elif rec['signal_direction'] == 'SELL' and shares > 0:
-            cash   = shares * price
+            cash   = shares * price * (1 - cost_pct)   # 매도 세금+수수료 차감
             shares = 0.0
-            entry_idx = None
             trade_count += 1
+            if entry_value is not None and cash > entry_value:
+                wins += 1
+            entry_value = None
 
-    # 마지막 보유 포지션은 최종 종가로 평가
-    last_price = float(df.iloc[-1]['close'])
+    _mark_to_idx(len(closes) - 1)
+    last_price = float(closes[-1])
     final_value = cash + (shares * last_price if shares > 0 else 0)
     return_pct  = round((final_value / initial_cash - 1) * 100, 2)
+
+    # MDD 계산
+    mdd = 0.0
+    peak = initial_cash
+    for v in equity_curve:
+        if v > peak:
+            peak = v
+        if peak > 0:
+            dd = (v / peak - 1) * 100
+            if dd < mdd:
+                mdd = dd
+
+    sell_trades = sum(1 for r in signal_records if r['signal_direction'] == 'SELL')
+    win_rate = round(wins / sell_trades * 100, 1) if sell_trades else None
 
     return {
         'final_value_10m': round(final_value),
         'return_pct':      return_pct,
         'trade_count':     trade_count,
+        'mdd_pct':         round(mdd, 2),
+        'win_rate':        win_rate,
     }
 
 
@@ -556,6 +574,8 @@ def run_full_backtest_ticker(ticker: str, stock_name: str, user_id: int,
         trade_count=sim.get('trade_count', 0),
         buyhold_value_10m=buyhold.get('buyhold_value_10m'),
         buyhold_return_pct=buyhold.get('buyhold_return_pct'),
+        mdd_pct=sim.get('mdd_pct'),
+        win_rate=sim.get('win_rate'),
     )
 
     # 섹터 로테이션 / 계절성 통계 갱신 (병렬 모드에서는 호출하지 않음)
