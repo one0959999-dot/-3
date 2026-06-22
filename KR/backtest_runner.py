@@ -423,6 +423,13 @@ def run_full_backtest_ticker(ticker: str, stock_name: str, user_id: int,
         logger.debug(f"[KR 백테스트] {ticker} 거래량 부족 ({avg_vol:.0f}주) 스킵")
         return _mark_skipped()
 
+    # 섹터 조회 (종목당 1회 — 강세 섹터 로테이션 분석용)
+    try:
+        from base.sector_lookup import get_sector
+        _sector, _ = get_sector(ticker, 'KR')
+    except Exception:
+        _sector = '기타'
+
     # DART 공시 일괄 수집 (종목당 1회 — 신호별 호출 제거로 속도 대폭 개선)
     all_disclosures = []
     if news_monitor:
@@ -534,7 +541,7 @@ def run_full_backtest_ticker(ticker: str, stock_name: str, user_id: int,
         batch = records[batch_start: batch_start + _AI_BATCH]
         if skip_ai:
             for rec in batch:
-                rec['sector']      = '기타'
+                rec['sector']      = _sector
                 rec['ai_analysis'] = ''
                 log_trade_signal_backtest(rec)
         else:

@@ -409,6 +409,13 @@ def run_full_backtest_ticker_us(ticker: str, user_id: int, ai_client,
         logger.debug(f"[US 백테스트] {ticker} 거래량 부족 ({avg_vol:.0f}주) 스킵")
         return _mark_skipped()
 
+    # 섹터 조회 (종목당 1회 — 강세 섹터 로테이션 분석용)
+    try:
+        from base.sector_lookup import get_sector
+        _sector, _ = get_sector(ticker, 'US')
+    except Exception:
+        _sector = '기타'
+
     # SEC EDGAR 공시 일괄 수집 (종목당 1회)
     all_disclosures = []
     if news_monitor:
@@ -518,7 +525,7 @@ def run_full_backtest_ticker_us(ticker: str, user_id: int, ai_client,
         batch = records[batch_start: batch_start + _AI_BATCH]
         if skip_ai:
             for rec in batch:
-                rec['sector']      = '기타'
+                rec['sector']      = _sector
                 rec['ai_analysis'] = ''
                 log_trade_signal_backtest(rec)
         else:
