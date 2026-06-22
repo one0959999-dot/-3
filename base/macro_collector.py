@@ -79,20 +79,17 @@ def _get_us_rate(date_str: str, fred_key: str = '') -> float | None:
     return round(v, 4) if v is not None else None
 
 
-def _get_kr_rate(date_str: str) -> float | None:
-    try:
-        from pykrx import bond as pykrx_bond
-        date_fmt = date_str.replace('-', '')
-        start_fmt = (datetime.strptime(date_str, '%Y-%m-%d') - timedelta(days=10)).strftime('%Y%m%d')
-        df = pykrx_bond.get_otc_treasury_yields_in_date_range(start_fmt, date_fmt)
-        if df is not None and not df.empty:
-            col = [c for c in df.columns if '3년' in c or '3Y' in c.upper()]
-            if col:
-                vals = df[col[0]].dropna()
-                if not vals.empty:
-                    return round(float(vals.iloc[-1]), 4)
-    except Exception:
-        pass
+def _get_kr_rate(date_str: str, fred_key: str = '') -> float | None:
+    """한국 단기금리(3개월 인터뱅크, FRED IR3TIB01KRM156N).
+    pykrx 채권 API가 KRX 차단으로 고장나 FRED로 대체. 월별 데이터라 해당월 값 사용.
+    """
+    if fred_key:
+        s = _fred_get('IR3TIB01KRM156N', fred_key)
+        if not s.empty:
+            target = pd.Timestamp(date_str)
+            idx = s.index.searchsorted(target, side='right') - 1
+            if 0 <= idx < len(s):
+                return round(float(s.iloc[idx]), 4)
     return None
 
 
@@ -185,7 +182,7 @@ def get_macro_for_date(date_str: str, fred_key: str = '') -> dict:
 
     us_10y = data.get('us_10y') or 0
     data['us_rate']      = _get_us_rate(date_str, fred_key)
-    data['kr_rate']      = _get_kr_rate(date_str)
+    data['kr_rate']      = _get_kr_rate(date_str, fred_key)
 
     us_2y = _yf_close('^IRX', date_str)
     data['us_2y']        = us_2y
