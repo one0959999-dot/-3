@@ -7,10 +7,25 @@ $ErrorActionPreference = 'Continue'
 Set-Location -Path $PSScriptRoot
 $log = Join-Path $PSScriptRoot 'backtest_forever.log'
 
+# 절전/화면잠금으로 인한 프로세스 종료 방지 (실행 중에만 깨어있게 요청, 종료 시 자동 해제)
+try {
+    Add-Type -Name Power -Namespace Win32 -MemberDefinition @'
+[System.Runtime.InteropServices.DllImport("kernel32.dll", CharSet=System.Runtime.InteropServices.CharSet.Auto, SetLastError=true)]
+public static extern uint SetThreadExecutionState(uint esFlags);
+'@
+    # ES_CONTINUOUS(0x80000000) | ES_SYSTEM_REQUIRED(0x1) | ES_AWAYMODE_REQUIRED(0x40)
+    [Win32.Power]::SetThreadExecutionState([uint32]'0x80000041') | Out-Null
+    "$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss') [wrapper] 절전 방지 활성" | Out-File -FilePath $log -Append -Encoding utf8
+} catch {
+    "$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss') [wrapper] 절전방지 설정 실패: $_" | Out-File -FilePath $log -Append -Encoding utf8
+}
+
 while ($true) {
     "$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss') [wrapper] 백테스트 시작" | Out-File -FilePath $log -Append -Encoding utf8
     try {
-        & python run_backtest.py --mode ALL *>> (Join-Path $PSScriptRoot 'backtest_standalone.log')
+        # run_backtest.py 가 backtest_standalone.log 를 FileHandler로 직접 사용하므로
+        # 콘솔/예외 출력만 별도 파일로 (동일 파일 동시 쓰기 충돌 방지)
+        & python run_backtest.py --mode ALL *>> (Join-Path $PSScriptRoot 'backtest_console.log')
     } catch {
         "$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss') [wrapper] 예외: $_" | Out-File -FilePath $log -Append -Encoding utf8
     }
