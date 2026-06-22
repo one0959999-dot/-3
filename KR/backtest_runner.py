@@ -68,16 +68,35 @@ def _get_all_kr_tickers() -> list[dict]:
 def _get_full_history(ticker: str, toss_api=None) -> Optional[pd.DataFrame]:
     """KR 종목 일봉 전체 이력.
 
-    1순위 yfinance(.KS/.KQ): 2000년부터 제공 — 2008 금융위기 등 충격 구간 포함.
-    pykrx는 최근 3000거래일(~2014년)만 반환하므로 fallback 으로만 사용.
+    1순위 pykrx(KRX 공식): 실제 정수 가격, 조정 없음 — 데이터 정확성 보장.
+    (yfinance .KS/.KQ 는 back-adjust 로 옛 가격 부풀림 + 소수점 왜곡 → KR엔 부적합)
+    pykrx는 최근 약 3000거래일(~2014년)만 제공하나 정확성이 우선.
     """
-    # 1순위: yfinance (가장 긴 이력)
+    # 1순위: pykrx (KRX 공식 정수 가격)
+    try:
+        from pykrx import stock as pykrx_stock
+        start = '19900101'
+        end = datetime.now().strftime('%Y%m%d')
+        raw = pykrx_stock.get_market_ohlcv_by_date(start, end, ticker)
+        if raw is not None and not raw.empty:
+            raw.columns = [c.lower() for c in raw.columns]
+            col_map = {'시가': 'open', '고가': 'high', '저가': 'low', '종가': 'close', '거래량': 'volume'}
+            raw = raw.rename(columns=col_map)
+            raw.index = pd.to_datetime(raw.index)
+            if 'close' in raw.columns:
+                raw = raw.dropna(subset=['close'])
+                if len(raw) >= 60:
+                    return raw
+    except Exception as e:
+        logger.debug(f"[KR 백테스트] {ticker} pykrx 실패: {e}")
+
+    # fallback: yfinance (pykrx 실패 시에만 — 조정 왜곡 가능성 있음)
     try:
         import yfinance as yf
         for suffix in ['.KS', '.KQ']:
             try:
                 df = yf.download(ticker + suffix, period='max', interval='1d',
-                                 progress=False, auto_adjust=True)
+                                 progress=False, auto_adjust=False)  # 조정 안 함(원가격)
             except Exception:
                 continue
             if df is not None and not df.empty:
@@ -93,22 +112,6 @@ def _get_full_history(ticker: str, toss_api=None) -> Optional[pd.DataFrame]:
                     return df
     except Exception as e:
         logger.debug(f"[KR 백테스트] {ticker} yfinance 실패: {e}")
-
-    # fallback: pykrx (최근 3000거래일 한정)
-    try:
-        from pykrx import stock as pykrx_stock
-        start = '19900101'
-        end = datetime.now().strftime('%Y%m%d')
-        raw = pykrx_stock.get_market_ohlcv_by_date(start, end, ticker)
-        if raw is not None and not raw.empty:
-            raw.columns = [c.lower() for c in raw.columns]
-            col_map = {'시가': 'open', '고가': 'high', '저가': 'low', '종가': 'close', '거래량': 'volume'}
-            raw = raw.rename(columns=col_map)
-            raw.index = pd.to_datetime(raw.index)
-            if 'close' in raw.columns:
-                return raw.dropna(subset=['close'])
-    except Exception as e:
-        logger.debug(f"[KR 백테스트] {ticker} pykrx 실패: {e}")
     return None
 
 
