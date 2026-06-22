@@ -85,6 +85,9 @@ def build_input_text(row: dict) -> str:
     lines.append("")
     lines.append("=== 시장 국면 ===")
     lines.append(f"국면: {row.get('market_phase_kr') or row.get('market_phase')} (확신도: {(row.get('phase_confidence') or 0)*100:.0f}%)")
+    if row.get('hot_sectors'):
+        in_hot = '✅ 강세섹터 포함' if (row.get('sector') and row.get('sector') in row['hot_sectors']) else ''
+        lines.append(f"당시 강세 섹터: {row['hot_sectors']} {in_hot}".rstrip())
 
     if row.get('macro_str'):
         lines.append("")

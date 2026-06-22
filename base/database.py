@@ -359,6 +359,13 @@ def init_db():
                     cursor.execute(
                         f'ALTER TABLE backtest_full_progress ADD COLUMN {col_name} {col_type}')
 
+            # 마이그레이션: backtest_trade_signals 에 강세섹터(날짜기준) 컬럼 추가
+            _bts_cols = {row[1] for row in cursor.execute(
+                "PRAGMA table_info(backtest_trade_signals)")}
+            if 'hot_sectors' not in _bts_cols:
+                cursor.execute(
+                    "ALTER TABLE backtest_trade_signals ADD COLUMN hot_sectors TEXT DEFAULT ''")
+
             cursor.execute('''
         CREATE TABLE IF NOT EXISTS backtest_run_status (
             id INTEGER PRIMARY KEY CHECK (id = 1),
