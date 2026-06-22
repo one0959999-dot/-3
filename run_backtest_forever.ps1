@@ -7,15 +7,13 @@ $ErrorActionPreference = 'Continue'
 Set-Location -Path $PSScriptRoot
 $log = Join-Path $PSScriptRoot 'backtest_forever.log'
 
-# 단일 인스턴스 가드: 다른 래퍼 또는 run_backtest.py 가 이미 돌면 중복 실행 방지
+# 단일 인스턴스 가드: run_backtest.py python 이 이미 돌면 중복 실행 방지
+# (powershell 명령은 체크 안 함 — 관리/모니터링 명령과 오탐 충돌 방지)
 try {
-    $me = $PID
-    $others = Get-CimInstance Win32_Process -Filter "Name='powershell.exe'" |
-        Where-Object { $_.ProcessId -ne $me -and $_.CommandLine -like '*run_backtest_forever*' }
     $pys = Get-CimInstance Win32_Process -Filter "Name='python.exe'" |
         Where-Object { $_.CommandLine -like '*run_backtest.py*' }
-    if ($others -or $pys) {
-        "$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss') [wrapper] 이미 실행 중 — 중복 방지로 종료" | Out-File -FilePath $log -Append -Encoding utf8
+    if ($pys) {
+        "$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss') [wrapper] run_backtest.py 이미 실행 중 — 중복 방지로 종료" | Out-File -FilePath $log -Append -Encoding utf8
         exit 0
     }
 } catch {}
