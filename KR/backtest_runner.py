@@ -122,12 +122,23 @@ def _sanitize_prices(df: pd.DataFrame) -> pd.DataFrame:
     if df is None or 'close' not in df.columns or len(df) < 2:
         return df
     try:
-        ret = df['close'].pct_change()
+        close = df['close']
+        # ① 소급조정 인플레이션 트림: 옛 조정가가 최근가 대비 10배 초과로 부풀려진
+        #    선행 구간 제거 (액면병합/증자 back-adjust 왜곡). 진짜 우상향주는
+        #    옛값<현재값이라 트림 안 됨.
+        recent_ref = float(close.tail(250).median())
+        if recent_ref > 0:
+            ok = close <= recent_ref * 10
+            if ok.any() and not bool(ok.iloc[0]):
+                df = df.loc[ok.idxmax():]
+                close = df['close']
+        # ② 비정상 일간 급변(±한국제한 초과) 이후 클린 구간만 사용
+        ret = close.pct_change()
         bad = ret[(ret > 0.8) | (ret < -0.45)]
-        if len(bad) == 0:
-            return df
-        last_bad_pos = df.index.get_loc(bad.index[-1])
-        return df.iloc[last_bad_pos + 1:]
+        if len(bad) > 0:
+            last_bad_pos = df.index.get_loc(bad.index[-1])
+            df = df.iloc[last_bad_pos + 1:]
+        return df
     except Exception:
         return df
 
@@ -484,7 +495,7 @@ def run_full_backtest_ticker(ticker: str, stock_name: str, user_id: int,
             timing = _timing_stats(df, i)
 
             # 분할/병합 artifact 2차 필터: 120일 내 비현실적 결과 신호 제외
-            if (timing.get('max_gain_pct', 0) or 0) > 900 or (timing.get('max_drawdown_pct', 0) or 0) < -95:
+            if (timing.get('max_gain_pct', 0) or 0) > 500 or (timing.get('max_drawdown_pct', 0) or 0) < -95:
                 continue
 
             # DART 공시: 일괄 수집분에서 신호일 ±5일 메모리 추출
