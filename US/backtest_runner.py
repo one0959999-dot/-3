@@ -35,40 +35,59 @@ _US_UNIVERSE = [
 
 
 def _get_all_us_tickers() -> list[str]:
-    """SEC EDGAR company_tickers.json → 전체 미국 상장 티커.
+    """S&P500 + 나스닥 보통주(ETF 제외) 유니버스.
 
-    실패 시 하드코딩 유니버스로 폴백. 거래량/데이터 없는 종목은 백테스트 단계에서 자동 스킵.
+    - S&P500: NYSE 대형주 포함 (constituents.csv)
+    - 나스닥: 공식 nasdaqlisted.txt 에서 ETF=N 만
+    ETF·비S&P NYSE 소형주·우선주는 제외. 데이터 없는 종목은 백테스트서 자동 스킵.
     """
     import requests
     from base.database import get_db_connection
+    tickers = set()
+
+    # 1) S&P 500
     try:
-        res = requests.get(
-            "https://www.sec.gov/files/company_tickers.json",
-            headers={"User-Agent": "lassi-bot backtest contact@example.com"},
-            timeout=30,
-        )
-        data = res.json()
-        tickers = []
-        seen = set()
-        for v in data.values():
-            t = str(v.get('ticker', '')).upper().strip()
-            # 보통주 위주: '.'/'-' 포함 우선주·워런트 제외
-            if t and t not in seen and '.' not in t and '-' not in t:
-                seen.add(t)
-                tickers.append(t)
-        if tickers:
-            try:
-                with get_db_connection() as conn:
-                    conn.execute('CREATE TABLE IF NOT EXISTS us_ticker_cache (ticker TEXT PRIMARY KEY)')
-                    conn.executemany('INSERT OR REPLACE INTO us_ticker_cache VALUES (?)',
-                                     [(t,) for t in tickers])
-                    conn.commit()
-            except Exception:
-                pass
-            logger.info(f"[US 백테스트] EDGAR 전체 티커 {len(tickers)}개 로드")
-            return tickers
+        r = requests.get(
+            "https://raw.githubusercontent.com/datasets/s-and-p-500-companies/main/data/constituents.csv",
+            timeout=20)
+        for line in r.text.strip().split('\n')[1:]:
+            sym = line.split(',')[0].strip().upper()
+            if sym and sym.isalpha():
+                tickers.add(sym)
     except Exception as e:
-        logger.warning(f"[US 백테스트] EDGAR 티커 로드 실패: {e}")
+        logger.warning(f"[US 백테스트] S&P500 로드 실패: {e}")
+
+    # 2) 나스닥 보통주 (ETF 제외)
+    try:
+        r = requests.get("https://www.nasdaqtrader.com/dynamic/SymDir/nasdaqlisted.txt", timeout=20)
+        lines = r.text.strip().split('\n')
+        hdr = lines[0].split('|')
+        i_sym, i_etf, i_test = hdr.index('Symbol'), hdr.index('ETF'), hdr.index('Test Issue')
+        for line in lines[1:]:
+            p = line.split('|')
+            if len(p) <= max(i_etf, i_test):
+                continue
+            sym = p[i_sym].strip().upper()
+            # 보통주만: ETF=N, Test=N, 순수 알파벳(우선주/워런트/유닛 R·U·W 접미 제외)
+            if p[i_etf] == 'N' and p[i_test] == 'N' and sym.isalpha() and len(sym) <= 5:
+                tickers.add(sym)
+    except Exception as e:
+        logger.warning(f"[US 백테스트] 나스닥 리스트 로드 실패: {e}")
+
+    tickers = sorted(tickers)
+    if tickers:
+        try:
+            with get_db_connection() as conn:
+                conn.execute('CREATE TABLE IF NOT EXISTS us_ticker_cache (ticker TEXT PRIMARY KEY)')
+                conn.execute('DELETE FROM us_ticker_cache')
+                conn.executemany('INSERT OR REPLACE INTO us_ticker_cache VALUES (?)',
+                                 [(t,) for t in tickers])
+                conn.commit()
+        except Exception:
+            pass
+        logger.info(f"[US 백테스트] S&P500+나스닥 보통주 {len(tickers)}개 로드")
+        return tickers
+
     # 폴백: DB 캐시
     try:
         with get_db_connection() as conn:
