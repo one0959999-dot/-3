@@ -112,6 +112,26 @@ def _get_full_history(ticker: str, toss_api=None) -> Optional[pd.DataFrame]:
     return None
 
 
+def _sanitize_prices(df: pd.DataFrame) -> pd.DataFrame:
+    """액면병합/분할/감자 미반영으로 인한 비정상 가격 급변 구간 제거.
+
+    한국 가격제한(±30%)을 크게 벗어나는 일간 변동(+80% 초과 / -45% 미만)은
+    데이터 보정 누락(예: 아센디오 주당 61억원)으로 판단, 마지막 급변 이후
+    클린 구간만 사용. 정상 종목은 그대로 통과.
+    """
+    if df is None or 'close' not in df.columns or len(df) < 2:
+        return df
+    try:
+        ret = df['close'].pct_change()
+        bad = ret[(ret > 0.8) | (ret < -0.45)]
+        if len(bad) == 0:
+            return df
+        last_bad_pos = df.index.get_loc(bad.index[-1])
+        return df.iloc[last_bad_pos + 1:]
+    except Exception:
+        return df
+
+
 def _calc_indicators(df: pd.DataFrame) -> pd.DataFrame:
     close = df['close']
     high  = df['high']
@@ -389,6 +409,10 @@ def run_full_backtest_ticker(ticker: str, stock_name: str, user_id: int,
     if df is None or len(df) < 60:
         return _mark_skipped()
 
+    df = _sanitize_prices(df)
+    if df is None or len(df) < 60:
+        return _mark_skipped()
+
     df = _calc_indicators(df).dropna(subset=['rsi', 'macd', 'bb_mid'])
     if len(df) < 60:
         return _mark_skipped()
@@ -451,6 +475,10 @@ def run_full_backtest_ticker(ticker: str, stock_name: str, user_id: int,
             phase_info = get_phase_for_date('KR', date, macro)
             support, resistance = _support_resistance(df, i)
             timing = _timing_stats(df, i)
+
+            # 분할/병합 artifact 2차 필터: 120일 내 비현실적 결과 신호 제외
+            if (timing.get('max_gain_pct', 0) or 0) > 900 or (timing.get('max_drawdown_pct', 0) or 0) < -95:
+                continue
 
             # DART 공시: 일괄 수집분에서 신호일 ±5일 메모리 추출
             news_summary = ''

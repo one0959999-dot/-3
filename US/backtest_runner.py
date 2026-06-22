@@ -107,6 +107,21 @@ def _get_full_history_us(ticker: str, toss_api=None) -> Optional[pd.DataFrame]:
         return None
 
 
+def _sanitize_prices(df: pd.DataFrame) -> pd.DataFrame:
+    """분할/병합 미반영 비정상 가격 급변 구간 제거 (마지막 급변 이후만 사용)."""
+    if df is None or 'close' not in df.columns or len(df) < 2:
+        return df
+    try:
+        ret = df['close'].pct_change()
+        bad = ret[(ret > 1.5) | (ret < -0.6)]  # 미국은 가격제한 없음 — 더 보수적
+        if len(bad) == 0:
+            return df
+        last_bad_pos = df.index.get_loc(bad.index[-1])
+        return df.iloc[last_bad_pos + 1:]
+    except Exception:
+        return df
+
+
 def _calc_indicators(df: pd.DataFrame) -> pd.DataFrame:
     close = df['close']
     high  = df['high']
@@ -381,6 +396,10 @@ def run_full_backtest_ticker_us(ticker: str, user_id: int, ai_client,
     if df is None or len(df) < 60:
         return _mark_skipped()
 
+    df = _sanitize_prices(df)
+    if df is None or len(df) < 60:
+        return _mark_skipped()
+
     df = _calc_indicators(df).dropna(subset=['rsi', 'macd', 'bb_mid'])
     if len(df) < 60:
         return _mark_skipped()
@@ -439,6 +458,10 @@ def run_full_backtest_ticker_us(ticker: str, user_id: int, ai_client,
             phase_info = get_phase_for_date('US', date, macro)
             support, resistance = _support_resistance(df, i)
             timing = _timing_stats(df, i)
+
+            # 분할/병합 artifact 2차 필터: 120일 내 비현실적 결과 신호 제외
+            if (timing.get('max_gain_pct', 0) or 0) > 900 or (timing.get('max_drawdown_pct', 0) or 0) < -95:
+                continue
 
             news_summary = ''
             if all_disclosures:
