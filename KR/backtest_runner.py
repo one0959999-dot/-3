@@ -90,28 +90,8 @@ def _get_full_history(ticker: str, toss_api=None) -> Optional[pd.DataFrame]:
     except Exception as e:
         logger.debug(f"[KR 백테스트] {ticker} pykrx 실패: {e}")
 
-    # fallback: yfinance (pykrx 실패 시에만 — 조정 왜곡 가능성 있음)
-    try:
-        import yfinance as yf
-        for suffix in ['.KS', '.KQ']:
-            try:
-                df = yf.download(ticker + suffix, period='max', interval='1d',
-                                 progress=False, auto_adjust=False)  # 조정 안 함(원가격)
-            except Exception:
-                continue
-            if df is not None and not df.empty:
-                if hasattr(df.columns, 'get_level_values'):
-                    df.columns = df.columns.get_level_values(0)
-                df.columns = [c.lower() for c in df.columns]
-                df.index = pd.to_datetime(df.index)
-                for c in ('open', 'high', 'low', 'close', 'volume'):
-                    if c in df.columns:
-                        df[c] = pd.to_numeric(df[c], errors='coerce')
-                df = df.dropna(subset=['close'])
-                if len(df) >= 60:
-                    return df
-    except Exception as e:
-        logger.debug(f"[KR 백테스트] {ticker} yfinance 실패: {e}")
+    # yfinance 폴백 제거: KR은 yfinance가 조정왜곡/소수점으로 오염되므로
+    # pykrx 실패 시 차라리 스킵(오염 데이터 유입 방지).
     return None
 
 
