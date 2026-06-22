@@ -748,13 +748,7 @@ class USBotController:
         portfolio_context = self._build_portfolio_context_us()
         alert_icon = getattr(self, 'alert_icon', '🇺🇸')
         mode_name = getattr(self, 'mode_name', 'US')
-        if self.telegram:
-            self.telegram.send_message(
-                f"🤔 <b>AI 심사 중</b>  {alert_icon} {mode_name}\n"
-                f"📌 <b>{name}</b>({ticker})  |  {action}\n"
-                f"🔍 전략: {strategy or 'N/A'}",
-                'info'
-            )
+        # AI 심사 중 텔레그램 알림 제거 — 승인/거절로 어차피 통지됨 (노이즈 정리)
         self.add_log(f"🤔 AI 심사 중: {name}({ticker}) {action}")
         try:
             result = self.claude.ai_approve_trade(

@@ -658,9 +658,14 @@ class KRBotController:
         self.logs.append({"time": t, "message": msg})                              
         print(f"[{t}] {msg}")
 
+    # 노이즈 차단: 자주 오지만 정보가치 낮은 알림 유형은 발송 안 함
+    # ('news' 태그는 실제론 보유종목 악재공시/실적 축소 등 매매 알림이라 제외 안 함)
+    _MUTED_TG_TYPES = {'ai_pending', 'backtest'}
+
     def _send_telegram(self, message, msg_type: str = 'misc'):
         if not self.telegram: return
-                                         
+        if msg_type in self._MUTED_TG_TYPES:
+            return
         threading.Thread(target=self.telegram.send_message, args=(message,), daemon=True).start()
 
     def _send_trade_telegram(self, message):
@@ -734,7 +739,7 @@ class KRBotController:
             f"🤔 <b>AI 심사 중</b>  {self.alert_icon} {self.mode_name}\n"
             f"📌 <b>{name}</b>({ticker})  |  {action}\n"
             f"🔍 전략: {strategy or 'N/A'}",
-            'info'
+            'ai_pending'
         )
         self.add_log(f"🤔 AI 심사 중: {name}({ticker}) {action}")
         try:
@@ -4238,7 +4243,7 @@ class KRBotController:
                     self._send_telegram(
                         f"📊 <b>[KR/{label}] 백테스트 완료</b>  {self.alert_icon}\n"
                         f"{n}개 신호 AI 학습 데이터 누적",
-                        'info'
+                        'backtest'
                     )
                 except Exception as e:
                     logger.warning(f"[{self.mode_name}] KR 백테스트 오류: {e}")
@@ -4255,7 +4260,7 @@ class KRBotController:
                     self._send_telegram(
                         f"📊 <b>[US/{label}] 백테스트 완료</b>  {self.alert_icon}\n"
                         f"{n}개 신호 AI 학습 데이터 누적",
-                        'info'
+                        'backtest'
                     )
                 except Exception as e:
                     logger.warning(f"[{self.mode_name}] US 백테스트 오류: {e}")
