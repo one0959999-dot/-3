@@ -31,12 +31,15 @@ public static extern uint SetThreadExecutionState(uint esFlags);
     "$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss') [wrapper] 절전방지 설정 실패: $_" | Out-File -FilePath $log -Append -Encoding utf8
 }
 
+# stale .pyc(옛 바이트코드)로 옛 코드가 살아나는 문제 원천 차단 — 캐시 안 만듦
+$env:PYTHONDONTWRITEBYTECODE = '1'
+
 while ($true) {
     "$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss') [wrapper] 백테스트 시작" | Out-File -FilePath $log -Append -Encoding utf8
     try {
         # run_backtest.py 가 backtest_standalone.log 를 FileHandler로 직접 사용하므로
         # 콘솔/예외 출력만 별도 파일로 (동일 파일 동시 쓰기 충돌 방지)
-        & python run_backtest.py --mode ALL *>> (Join-Path $PSScriptRoot 'backtest_console.log')
+        & python -B run_backtest.py --mode ALL *>> (Join-Path $PSScriptRoot 'backtest_console.log')
     } catch {
         "$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss') [wrapper] 예외: $_" | Out-File -FilePath $log -Append -Encoding utf8
     }
