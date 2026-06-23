@@ -13,7 +13,9 @@
       "mcp__Claude_in_Chrome__tabs_context_mcp",
       "mcp__Claude_in_Chrome__navigate",
       "mcp__Claude_in_Chrome__get_page_text",
-      "mcp__Claude_in_Chrome__read_page"
+      "mcp__Claude_in_Chrome__read_page",
+      "PowerShell(Stop-Process -Id 23784 -Force)",
+      "PowerShell(Select-String \"try:\" \"C:\\\\Users\\\\신동호\\\\.gemini\\\\antigravity\\\\scratch\\\\lassi_bot\\\\US\\\\backtest_runner.py\" | Where-Object {$_.LineNumber -gt 248 -and $_.LineNumber -lt 260})"
     ]
   }
 }

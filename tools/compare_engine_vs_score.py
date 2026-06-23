@@ -32,7 +32,22 @@ def run(n_tickers=20, fwd=60, step=3, min_win=55):
         "SELECT ticker FROM kr_ticker_cache LIMIT ?", (n_tickers*3,)).fetchall()]
     c.close()
 
-    eng_rets, scr_rets = [], []
+    # 승률맵 미리계산: (국면, 신호) → 10%달성률 (필터 게이트용, 빠른 조회)
+    import sqlite3 as _sq
+    _c = _sq.connect('lassi.db', timeout=60)
+    win_map = {}
+    SIGS = ['RSI_BUY','MACD_BUY','BB_BUY','MA_BUY','VOL_BUY','BREAK_BUY']
+    PHASES = ['PANIC','BEAR_EARLY','BEAR_MID','BEAR_LATE','SIDEWAYS','BULL_EARLY','BULL_MID','BULL_LATE']
+    for ph in PHASES:
+        for sg in SIGS:
+            r = _c.execute('''SELECT 100.0*SUM(CASE WHEN max_gain_pct>=10 THEN 1 ELSE 0 END)/COUNT(*) w, COUNT(*) n
+                FROM backtest_trade_signals WHERE mode='KR' AND signal_direction='BUY'
+                AND market_phase=? AND signal_types LIKE ? AND max_gain_pct<=300''', (ph, f'%{sg}%')).fetchone()
+            if r and r[1] and r[1] >= 30:
+                win_map[(ph, sg)] = r[0]
+    _c.close()
+
+    eng_rets, scr_rets, engf_rets, ens_rets = [], [], [], []
     done = 0
     for tk in tickers:
         if done >= n_tickers:
@@ -50,21 +65,29 @@ def run(n_tickers=20, fwd=60, step=3, min_win=55):
             if price <= 0:
                 continue
             fwd_ret = (closes[i+fwd] / price - 1) * 100
-            # 엔진: 매수신호 + 승률 게이트
+            ph = _phase('KR', dates[i].strftime('%Y-%m-%d'))
+            # 엔진(날것): 백테스트 매수신호 발생
             sigs = [s for s in detect_signals(df.iloc[i], df.iloc[i-1]) if 'BUY' in s]
-            if sigs:
-                ph = _phase('KR', dates[i].strftime('%Y-%m-%d'))
-                fc = get_forecast('KR', ph, sigs)
-                if (fc and fc['win10'] >= min_win) or (not fc):
-                    eng_rets.append(fwd_ret)
+            eng_hit = bool(sigs)
+            if eng_hit:
+                eng_rets.append(fwd_ret)
+            # 엔진(필터): 신호 중 현재국면 승률 min_win 이상인 게 있을 때만
+            engf_hit = eng_hit and any(win_map.get((ph, s), 0) >= min_win for s in sigs)
+            if engf_hit:
+                engf_rets.append(fwd_ret)
             # 점수제
+            scr_hit = False
             try:
                 regime = get_market_regime(sub)
                 score, _ = calculate_entry_score(sub, price, regime)
-                if score >= get_entry_threshold(regime, 'satellite'):
+                scr_hit = score >= get_entry_threshold(regime, 'satellite')
+                if scr_hit:
                     scr_rets.append(fwd_ret)
             except Exception:
                 pass
+            # 앙상블: 필터엔진 + 점수제 둘 다 동의
+            if engf_hit and scr_hit:
+                ens_rets.append(fwd_ret)
 
     def stat(name, rs):
         if not rs:
@@ -74,9 +97,11 @@ def run(n_tickers=20, fwd=60, step=3, min_win=55):
         return (f"{name}: 진입 {len(rs):,}건 | 평균 {statistics.mean(rs):+.1f}% | "
                 f"승률 {win:.0f}% | 중앙값 {statistics.median(rs):+.1f}%")
 
-    print(f"=== 엔진 vs 점수제 ({done}종목, forward {fwd}일) ===")
-    print(stat('엔진(신호기반)', eng_rets))
-    print(stat('점수제      ', scr_rets))
+    print(f"=== 엔진 vs 점수제 vs 앙상블 ({done}종목, forward {fwd}일, 승률게이트 {min_win}%) ===")
+    print(stat('엔진(날것신호) ', eng_rets))
+    print(stat('엔진(필터)    ', engf_rets))
+    print(stat('점수제       ', scr_rets))
+    print(stat('앙상블(필터+점수)', ens_rets))
 
 
 if __name__ == '__main__':

@@ -1,0 +1,569 @@
+2026-06-21 20:15:06 [INFO] === 백테스트 단독 모드 시작 (mode=ALL, once=False, skip_ai=True) ===
+2026-06-21 20:15:08 [ERROR] [Toss] 토큰 발급 실패: {'error': 'invalid_client', 'error_description': 'Client authentication failed: client_id'}
+2026-06-21 20:15:08 [WARNING] [Toss] GET /api/v1/accounts → 401: {"error":{"requestId":"leD0Ob7kOmfieIWf","code":"invalid-token","message":"유효하지 않은 토큰입니다."}}
+2026-06-21 20:15:08 [WARNING] [Toss] 계좌 목록이 비어있습니다.
+2026-06-21 20:15:08 [INFO] [Toss] API 초기화 완료 (계좌seq: 미설정)
+2026-06-21 20:15:08 [INFO] [KR 백테스트] NewsMonitor 초기화 완료 (DART 공시 수집 활성)
+2026-06-21 20:15:08 [INFO] [KR 백테스트] 배치 크기: 200종목
+--- Logging error ---
+Traceback (most recent call last):
+  File "C:\Users\신동호\AppData\Local\Programs\Python\Python312\Lib\site-packages\requests\models.py", line 1116, in json
+    return complexjson.loads(self.text, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\신동호\AppData\Local\Programs\Python\Python312\Lib\json\__init__.py", line 346, in loads
+    return _default_decoder.decode(s)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\신동호\AppData\Local\Programs\Python\Python312\Lib\json\decoder.py", line 338, in decode
+    obj, end = self.raw_decode(s, idx=_w(s, 0).end())
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\신동호\AppData\Local\Programs\Python\Python312\Lib\json\decoder.py", line 356, in raw_decode
+    raise JSONDecodeError("Expecting value", s, err.value) from None
+json.decoder.JSONDecodeError: Expecting value: line 1 column 1 (char 0)
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "C:\Users\신동호\AppData\Local\Programs\Python\Python312\Lib\site-packages\pykrx\website\comm\util.py", line 10, in wrapper
+    return func(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\신동호\AppData\Local\Programs\Python\Python312\Lib\site-packages\pykrx\website\krx\market\wrap.py", line 367, in get_market_ticker_and_name
+    df = 전종목시세().fetch(date, market2code[market])
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\신동호\AppData\Local\Programs\Python\Python312\Lib\site-packages\pykrx\website\krx\market\core.py", line 155, in fetch
+    result = self.read(mktId=mktId, trdDd=trdDd)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\신동호\AppData\Local\Programs\Python\Python312\Lib\site-packages\pykrx\website\krx\krxio.py", line 59, in read
+    return resp.json()
+           ^^^^^^^^^^^
+  File "C:\Users\신동호\AppData\Local\Programs\Python\Python312\Lib\site-packages\requests\models.py", line 1120, in json
+    raise RequestsJSONDecodeError(e.msg, e.doc, e.pos)
+requests.exceptions.JSONDecodeError: Expecting value: line 1 column 1 (char 0)
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "C:\Users\신동호\AppData\Local\Programs\Python\Python312\Lib\logging\__init__.py", line 1160, in emit
+    msg = self.format(record)
+          ^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\신동호\AppData\Local\Programs\Python\Python312\Lib\logging\__init__.py", line 999, in format
+    return fmt.format(record)
+           ^^^^^^^^^^^^^^^^^^
+  File "C:\Users\신동호\AppData\Local\Programs\Python\Python312\Lib\logging\__init__.py", line 703, in format
+    record.message = record.getMessage()
+                     ^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\신동호\AppData\Local\Programs\Python\Python312\Lib\logging\__init__.py", line 392, in getMessage
+    msg = msg % self.args
+          ~~~~^~~~~~~~~~~
+TypeError: not all arguments converted during string formatting
+Call stack:
+  File "C:\Users\신동호\AppData\Local\Programs\Python\Python312\Lib\threading.py", line 1032, in _bootstrap
+    self._bootstrap_inner()
+  File "C:\Users\신동호\AppData\Local\Programs\Python\Python312\Lib\threading.py", line 1075, in _bootstrap_inner
+    self.run()
+  File "C:\Users\신동호\AppData\Local\Programs\Python\Python312\Lib\threading.py", line 1012, in run
+    self._target(*self._args, **self._kwargs)
+  File "C:\Users\신동호\.gemini\antigravity\scratch\lassi_bot\run_backtest.py", line 79, in run_kr
+    n = runner.run_batch(batch)
+  File "C:\Users\신동호\.gemini\antigravity\scratch\lassi_bot\KR\backtest_runner.py", line 559, in run_batch
+    all_tickers = _get_all_kr_tickers()
+  File "C:\Users\신동호\.gemini\antigravity\scratch\lassi_bot\KR\backtest_runner.py", line 31, in _get_all_kr_tickers
+    kospi  = pykrx_stock.get_market_ticker_list(date_str, market='KOSPI')
+  File "C:\Users\신동호\AppData\Local\Programs\Python\Python312\Lib\site-packages\pykrx\stock\stock_api.py", line 85, in get_market_ticker_list
+    s = krx.get_market_ticker_and_name(date, market)
+  File "C:\Users\신동호\AppData\Local\Programs\Python\Python312\Lib\site-packages\pykrx\website\comm\util.py", line 19, in wrapper
+    logging.info(args, kwargs)
+Message: ('20260619', 'KOSPI')
+Arguments: ({},)
+--- Logging error ---
+Traceback (most recent call last):
+  File "C:\Users\신동호\AppData\Local\Programs\Python\Python312\Lib\site-packages\requests\models.py", line 1116, in json
+    return complexjson.loads(self.text, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\신동호\AppData\Local\Programs\Python\Python312\Lib\json\__init__.py", line 346, in loads
+    return _default_decoder.decode(s)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\신동호\AppData\Local\Programs\Python\Python312\Lib\json\decoder.py", line 338, in decode
+    obj, end = self.raw_decode(s, idx=_w(s, 0).end())
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\신동호\AppData\Local\Programs\Python\Python312\Lib\json\decoder.py", line 356, in raw_decode
+    raise JSONDecodeError("Expecting value", s, err.value) from None
+json.decoder.JSONDecodeError: Expecting value: line 1 column 1 (char 0)
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "C:\Users\신동호\AppData\Local\Programs\Python\Python312\Lib\site-packages\pykrx\website\comm\util.py", line 10, in wrapper
+    return func(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\신동호\AppData\Local\Programs\Python\Python312\Lib\site-packages\pykrx\website\krx\market\wrap.py", line 367, in get_market_ticker_and_name
+    df = 전종목시세().fetch(date, market2code[market])
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\신동호\AppData\Local\Programs\Python\Python312\Lib\site-packages\pykrx\website\krx\market\core.py", line 155, in fetch
+    result = self.read(mktId=mktId, trdDd=trdDd)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\신동호\AppData\Local\Programs\Python\Python312\Lib\site-packages\pykrx\website\krx\krxio.py", line 59, in read
+    return resp.json()
+           ^^^^^^^^^^^
+  File "C:\Users\신동호\AppData\Local\Programs\Python\Python312\Lib\site-packages\requests\models.py", line 1120, in json
+    raise RequestsJSONDecodeError(e.msg, e.doc, e.pos)
+requests.exceptions.JSONDecodeError: Expecting value: line 1 column 1 (char 0)
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "C:\Users\신동호\AppData\Local\Programs\Python\Python312\Lib\logging\__init__.py", line 1160, in emit
+    msg = self.format(record)
+          ^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\신동호\AppData\Local\Programs\Python\Python312\Lib\logging\__init__.py", line 999, in format
+    return fmt.format(record)
+           ^^^^^^^^^^^^^^^^^^
+  File "C:\Users\신동호\AppData\Local\Programs\Python\Python312\Lib\logging\__init__.py", line 703, in format
+    record.message = record.getMessage()
+                     ^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\신동호\AppData\Local\Programs\Python\Python312\Lib\logging\__init__.py", line 392, in getMessage
+    msg = msg % self.args
+          ~~~~^~~~~~~~~~~
+TypeError: not all arguments converted during string formatting
+Call stack:
+  File "C:\Users\신동호\AppData\Local\Programs\Python\Python312\Lib\threading.py", line 1032, in _bootstrap
+    self._bootstrap_inner()
+  File "C:\Users\신동호\AppData\Local\Programs\Python\Python312\Lib\threading.py", line 1075, in _bootstrap_inner
+    self.run()
+  File "C:\Users\신동호\AppData\Local\Programs\Python\Python312\Lib\threading.py", line 1012, in run
+    self._target(*self._args, **self._kwargs)
+  File "C:\Users\신동호\.gemini\antigravity\scratch\lassi_bot\run_backtest.py", line 79, in run_kr
+    n = runner.run_batch(batch)
+  File "C:\Users\신동호\.gemini\antigravity\scratch\lassi_bot\KR\backtest_runner.py", line 559, in run_batch
+    all_tickers = _get_all_kr_tickers()
+  File "C:\Users\신동호\.gemini\antigravity\scratch\lassi_bot\KR\backtest_runner.py", line 31, in _get_all_kr_tickers
+    kospi  = pykrx_stock.get_market_ticker_list(date_str, market='KOSPI')
+  File "C:\Users\신동호\AppData\Local\Programs\Python\Python312\Lib\site-packages\pykrx\stock\stock_api.py", line 85, in get_market_ticker_list
+    s = krx.get_market_ticker_and_name(date, market)
+  File "C:\Users\신동호\AppData\Local\Programs\Python\Python312\Lib\site-packages\pykrx\website\comm\util.py", line 19, in wrapper
+    logging.info(args, kwargs)
+Message: ('20260619', 'KOSPI')
+Arguments: ({},)
+2026-06-21 20:15:10 [INFO] Expecting value: line 1 column 1 (char 0)
+--- Logging error ---
+Traceback (most recent call last):
+  File "C:\Users\신동호\AppData\Local\Programs\Python\Python312\Lib\site-packages\requests\models.py", line 1116, in json
+    return complexjson.loads(self.text, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\신동호\AppData\Local\Programs\Python\Python312\Lib\json\__init__.py", line 346, in loads
+    return _default_decoder.decode(s)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\신동호\AppData\Local\Programs\Python\Python312\Lib\json\decoder.py", line 338, in decode
+    obj, end = self.raw_decode(s, idx=_w(s, 0).end())
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\신동호\AppData\Local\Programs\Python\Python312\Lib\json\decoder.py", line 356, in raw_decode
+    raise JSONDecodeError("Expecting value", s, err.value) from None
+json.decoder.JSONDecodeError: Expecting value: line 1 column 1 (char 0)
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "C:\Users\신동호\AppData\Local\Programs\Python\Python312\Lib\site-packages\pykrx\website\comm\util.py", line 10, in wrapper
+    return func(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\신동호\AppData\Local\Programs\Python\Python312\Lib\site-packages\pykrx\website\krx\market\wrap.py", line 367, in get_market_ticker_and_name
+    df = 전종목시세().fetch(date, market2code[market])
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\신동호\AppData\Local\Programs\Python\Python312\Lib\site-packages\pykrx\website\krx\market\core.py", line 155, in fetch
+    result = self.read(mktId=mktId, trdDd=trdDd)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\신동호\AppData\Local\Programs\Python\Python312\Lib\site-packages\pykrx\website\krx\krxio.py", line 59, in read
+    return resp.json()
+           ^^^^^^^^^^^
+  File "C:\Users\신동호\AppData\Local\Programs\Python\Python312\Lib\site-packages\requests\models.py", line 1120, in json
+    raise RequestsJSONDecodeError(e.msg, e.doc, e.pos)
+requests.exceptions.JSONDecodeError: Expecting value: line 1 column 1 (char 0)
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "C:\Users\신동호\AppData\Local\Programs\Python\Python312\Lib\logging\__init__.py", line 1160, in emit
+    msg = self.format(record)
+          ^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\신동호\AppData\Local\Programs\Python\Python312\Lib\logging\__init__.py", line 999, in format
+    return fmt.format(record)
+           ^^^^^^^^^^^^^^^^^^
+  File "C:\Users\신동호\AppData\Local\Programs\Python\Python312\Lib\logging\__init__.py", line 703, in format
+    record.message = record.getMessage()
+                     ^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\신동호\AppData\Local\Programs\Python\Python312\Lib\logging\__init__.py", line 392, in getMessage
+    msg = msg % self.args
+          ~~~~^~~~~~~~~~~
+TypeError: not all arguments converted during string formatting
+Call stack:
+  File "C:\Users\신동호\AppData\Local\Programs\Python\Python312\Lib\threading.py", line 1032, in _bootstrap
+    self._bootstrap_inner()
+  File "C:\Users\신동호\AppData\Local\Programs\Python\Python312\Lib\threading.py", line 1075, in _bootstrap_inner
+    self.run()
+  File "C:\Users\신동호\AppData\Local\Programs\Python\Python312\Lib\threading.py", line 1012, in run
+    self._target(*self._args, **self._kwargs)
+  File "C:\Users\신동호\.gemini\antigravity\scratch\lassi_bot\run_backtest.py", line 79, in run_kr
+    n = runner.run_batch(batch)
+  File "C:\Users\신동호\.gemini\antigravity\scratch\lassi_bot\KR\backtest_runner.py", line 559, in run_batch
+    all_tickers = _get_all_kr_tickers()
+  File "C:\Users\신동호\.gemini\antigravity\scratch\lassi_bot\KR\backtest_runner.py", line 32, in _get_all_kr_tickers
+    kosdaq = pykrx_stock.get_market_ticker_list(date_str, market='KOSDAQ')
+  File "C:\Users\신동호\AppData\Local\Programs\Python\Python312\Lib\site-packages\pykrx\stock\stock_api.py", line 85, in get_market_ticker_list
+    s = krx.get_market_ticker_and_name(date, market)
+  File "C:\Users\신동호\AppData\Local\Programs\Python\Python312\Lib\site-packages\pykrx\website\comm\util.py", line 19, in wrapper
+    logging.info(args, kwargs)
+Message: ('20260619', 'KOSDAQ')
+Arguments: ({},)
+--- Logging error ---
+Traceback (most recent call last):
+  File "C:\Users\신동호\AppData\Local\Programs\Python\Python312\Lib\site-packages\requests\models.py", line 1116, in json
+    return complexjson.loads(self.text, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\신동호\AppData\Local\Programs\Python\Python312\Lib\json\__init__.py", line 346, in loads
+    return _default_decoder.decode(s)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\신동호\AppData\Local\Programs\Python\Python312\Lib\json\decoder.py", line 338, in decode
+    obj, end = self.raw_decode(s, idx=_w(s, 0).end())
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\신동호\AppData\Local\Programs\Python\Python312\Lib\json\decoder.py", line 356, in raw_decode
+    raise JSONDecodeError("Expecting value", s, err.value) from None
+json.decoder.JSONDecodeError: Expecting value: line 1 column 1 (char 0)
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "C:\Users\신동호\AppData\Local\Programs\Python\Python312\Lib\site-packages\pykrx\website\comm\util.py", line 10, in wrapper
+    return func(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\신동호\AppData\Local\Programs\Python\Python312\Lib\site-packages\pykrx\website\krx\market\wrap.py", line 367, in get_market_ticker_and_name
+    df = 전종목시세().fetch(date, market2code[market])
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\신동호\AppData\Local\Programs\Python\Python312\Lib\site-packages\pykrx\website\krx\market\core.py", line 155, in fetch
+    result = self.read(mktId=mktId, trdDd=trdDd)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\신동호\AppData\Local\Programs\Python\Python312\Lib\site-packages\pykrx\website\krx\krxio.py", line 59, in read
+    return resp.json()
+           ^^^^^^^^^^^
+  File "C:\Users\신동호\AppData\Local\Programs\Python\Python312\Lib\site-packages\requests\models.py", line 1120, in json
+    raise RequestsJSONDecodeError(e.msg, e.doc, e.pos)
+requests.exceptions.JSONDecodeError: Expecting value: line 1 column 1 (char 0)
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "C:\Users\신동호\AppData\Local\Programs\Python\Python312\Lib\logging\__init__.py", line 1160, in emit
+    msg = self.format(record)
+          ^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\신동호\AppData\Local\Programs\Python\Python312\Lib\logging\__init__.py", line 999, in format
+    return fmt.format(record)
+           ^^^^^^^^^^^^^^^^^^
+  File "C:\Users\신동호\AppData\Local\Programs\Python\Python312\Lib\logging\__init__.py", line 703, in format
+    record.message = record.getMessage()
+                     ^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\신동호\AppData\Local\Programs\Python\Python312\Lib\logging\__init__.py", line 392, in getMessage
+    msg = msg % self.args
+          ~~~~^~~~~~~~~~~
+TypeError: not all arguments converted during string formatting
+Call stack:
+  File "C:\Users\신동호\AppData\Local\Programs\Python\Python312\Lib\threading.py", line 1032, in _bootstrap
+    self._bootstrap_inner()
+  File "C:\Users\신동호\AppData\Local\Programs\Python\Python312\Lib\threading.py", line 1075, in _bootstrap_inner
+    self.run()
+  File "C:\Users\신동호\AppData\Local\Programs\Python\Python312\Lib\threading.py", line 1012, in run
+    self._target(*self._args, **self._kwargs)
+  File "C:\Users\신동호\.gemini\antigravity\scratch\lassi_bot\run_backtest.py", line 79, in run_kr
+    n = runner.run_batch(batch)
+  File "C:\Users\신동호\.gemini\antigravity\scratch\lassi_bot\KR\backtest_runner.py", line 559, in run_batch
+    all_tickers = _get_all_kr_tickers()
+  File "C:\Users\신동호\.gemini\antigravity\scratch\lassi_bot\KR\backtest_runner.py", line 32, in _get_all_kr_tickers
+    kosdaq = pykrx_stock.get_market_ticker_list(date_str, market='KOSDAQ')
+  File "C:\Users\신동호\AppData\Local\Programs\Python\Python312\Lib\site-packages\pykrx\stock\stock_api.py", line 85, in get_market_ticker_list
+    s = krx.get_market_ticker_and_name(date, market)
+  File "C:\Users\신동호\AppData\Local\Programs\Python\Python312\Lib\site-packages\pykrx\website\comm\util.py", line 19, in wrapper
+    logging.info(args, kwargs)
+Message: ('20260619', 'KOSDAQ')
+Arguments: ({},)
+2026-06-21 20:15:10 [INFO] Expecting value: line 1 column 1 (char 0)
+2026-06-21 20:15:10 [INFO] [KR 백테스트] DB 캐시에서 종목 2768개 로드
+2026-06-21 20:15:13 [INFO] [NewsMonitor] DART 종목 매핑 로드 완료: 3971개
+2026-06-21 20:15:16 [INFO] [US 백테스트] NewsMonitor 초기화 완료 (SEC EDGAR 공시 활성)
+2026-06-21 20:15:16 [INFO] [US 백테스트] 배치 크기: 150종목
+2026-06-21 20:15:17 [INFO] [US 백테스트] EDGAR 전체 티커 9863개 로드
+2026-06-21 20:15:18 [INFO] [NewsMonitor] EDGAR CIK 매핑 로드: 10400개
+2026-06-21 20:15:52 [INFO] [KR 백테스트] AJ네트웍스(095570): 347개 신호 | 신호매매 1000만→38,418,302원 (+284.2%) | 보유시 1000만→6,765,194원 (-32.4%)
+2026-06-21 20:16:08 [INFO] [US 백테스트] NVDA: 829개 신호 | 신호매매 1000만→145,820,169,263 (+1458101.7%) | 보유시 1000만→46,500,902,513 (+464909.0%)
+2026-06-21 20:16:12 [INFO] [KR 백테스트] BGF(027410): 373개 신호 | 신호매매 1000만→161,410,482원 (+1514.1%) | 보유시 1000만→3,331,818원 (-66.7%)
+2026-06-21 20:16:28 [INFO] [KR 백테스트] BGF리테일(282330): 270개 신호 | 신호매매 1000만→22,024,408원 (+120.2%) | 보유시 1000만→6,720,549원 (-32.8%)
+2026-06-21 20:16:48 [INFO] [US 백테스트] AAPL: 1375개 신호 | 신호매매 1000만→694,455,239,135 (+6944452.4%) | 보유시 1000만→28,142,537,884 (+281325.4%)
+2026-06-21 20:17:00 [INFO] [KR 백테스트] BNK금융지주(138930): 461개 신호 | 신호매매 1000만→242,698,166원 (+2327.0%) | 보유시 1000만→24,308,544원 (+143.1%)
+2026-06-21 20:17:10 [INFO] [US 백테스트] GOOGL: 671개 신호 | 신호매매 1000만→459,389,741 (+4493.9%) | 보유시 1000만→1,262,821,198 (+12528.2%)
+2026-06-21 20:17:53 [INFO] [KR 백테스트] CJ(001040): 842개 신호 | 신호매매 1000만→7,603,270,197원 (+75932.7%) | 보유시 1000만→843,979,562원 (+8339.8%)
+2026-06-21 20:17:56 [INFO] [US 백테스트] MSFT: 1215개 신호 | 신호매매 1000만→21,214,460,676 (+212044.6%) | 보유시 1000만→56,589,659,592 (+565796.6%)
+2026-06-21 20:18:29 [INFO] [US 백테스트] AMZN: 881개 신호 | 신호매매 1000만→139,535,815,730 (+1395258.2%) | 보유시 1000만→32,813,276,681 (+328032.8%)
+2026-06-21 20:18:31 [INFO] [KR 백테스트] CJ CGV(079160): 677개 신호 | 신호매매 1000만→242,925,032원 (+2329.2%) | 보유시 1000만→2,695,027원 (-73.0%)
+2026-06-21 20:18:42 [INFO] [US 백테스트] AVGO: 526개 신호 | 신호매매 1000만→216,332,596 (+2063.3%) | 보유시 1000만→3,353,403,246 (+33434.0%)
+2026-06-21 20:19:00 [INFO] [US 백테스트] META: 442개 신호 | 신호매매 1000만→67,491,754 (+574.9%) | 보유시 1000만→182,478,504 (+1724.8%)
+2026-06-21 20:19:19 [INFO] [KR 백테스트] CJ대한통운(000120): 846개 신호 | 신호매매 1000만→990,017,075원 (+9800.2%) | 보유시 1000만→12,952,163원 (+29.5%)
+2026-06-21 20:19:25 [INFO] [US 백테스트] TSLA: 468개 신호 | 신호매매 1000만→1,145,406,673 (+11354.1%) | 보유시 1000만→3,356,062,224 (+33460.6%)
+2026-06-21 20:20:05 [INFO] [KR 백테스트] CJ씨푸드(011150): 870개 신호 | 신호매매 1000만→14,929,479,499원 (+149194.8%) | 보유시 1000만→21,000,000원 (+110.0%)
+2026-06-21 20:20:13 [INFO] [US 백테스트] MU: 1300개 신호 | 신호매매 1000만→1,528,720,895,847 (+15287109.0%) | 보유시 1000만→6,240,269,464 (+62302.7%)
+2026-06-21 20:20:42 [INFO] [KR 백테스트] CJ제일제당(097950): 586개 신호 | 신호매매 1000만→94,576,593원 (+845.8%) | 보유시 1000만→9,525,253원 (-4.8%)
+2026-06-21 20:21:15 [INFO] [US 백테스트] LLY: 1690개 신호 | 신호매매 1000만→2,695,409,417 (+26854.1%) | 보유시 1000만→11,853,954,220 (+118439.5%)
+2026-06-21 20:21:30 [INFO] [KR 백테스트] DB(012030): 874개 신호 | 신호매매 1000만→713,943,058원 (+7039.4%) | 보유시 1000만→101,083,646원 (+910.8%)
+2026-06-21 20:22:18 [INFO] [US 백테스트] WMT: 1685개 신호 | 신호매매 1000만→17,127,681,959 (+171176.8%) | 보유시 1000만→106,484,341,437 (+1064743.4%)
+2026-06-21 20:22:20 [INFO] [KR 백테스트] DB손해보험(005830): 848개 신호 | 신호매매 1000만→3,217,025,006원 (+32070.2%) | 보유시 1000만→1,012,951,817원 (+10029.5%)
+2026-06-21 20:22:56 [INFO] [US 백테스트] AMD: 1443개 신호 | 신호매매 1000만→7,469,982,506,069 (+74699725.1%) | 보유시 1000만→2,055,279,912 (+20452.8%)
+2026-06-21 20:23:54 [INFO] [KR 백테스트] DB증권(016610): 859개 신호 | 신호매매 1000만→3,525,324,421원 (+35153.2%) | 보유시 1000만→61,251,082원 (+512.5%)
+2026-06-21 20:24:37 [INFO] [US 백테스트] JPM: 1442개 신호 | 신호매매 1000만→8,551,554,339 (+85415.5%) | 보유시 1000만→2,883,510,697 (+28735.1%)
+2026-06-21 20:24:41 [INFO] [KR 백테스트] DB하이텍(000990): 837개 신호 | 신호매매 1000만→6,049,499,692원 (+60395.0%) | 보유시 1000만→263,336,498원 (+2533.4%)
+2026-06-21 20:25:05 [INFO] [US 백테스트] ASML: 982개 신호 | 신호매매 1000만→59,377,063,099 (+593670.6%) | 보유시 1000만→9,905,821,365 (+98958.2%)
+2026-06-21 20:25:21 [INFO] [KR 백테스트] DH오토넥스(000300): 798개 신호 | 신호매매 1000만→0원 (-100.0%) | 보유시 1000만→274원 (-100.0%)
+2026-06-21 20:25:45 [INFO] [US 백테스트] ORCL: 1248개 신호 | 신호매매 1000만→18,689,258,594 (+186792.6%) | 보유시 1000만→36,116,388,721 (+361063.9%)
+2026-06-21 20:25:55 [INFO] [KR 백테스트] DI동일(001530): 652개 신호 | 신호매매 1000만→359,562,489원 (+3495.6%) | 보유시 1000만→92,013,091원 (+820.1%)
+2026-06-21 20:26:45 [INFO] [KR 백테스트] DKME(015590): 802개 신호 | 신호매매 1000만→9,977,701,080원 (+99677.0%) | 보유시 1000만→1,774,246원 (-82.3%)
+2026-06-21 20:26:55 [INFO] [US 백테스트] XOM: 1985개 신호 | 신호매매 1000만→803,532,873 (+7935.3%) | 보유시 1000만→15,109,050,352 (+150990.5%)
+2026-06-21 20:27:11 [INFO] [US 백테스트] V: 565개 신호 | 신호매매 1000만→176,111,159 (+1661.1%) | 보유시 1000만→215,813,203 (+2058.1%)
+2026-06-21 20:27:33 [INFO] [KR 백테스트] DL(000210): 845개 신호 | 신호매매 1000만→7,346,322,321원 (+73363.2%) | 보유시 1000만→67,668,110원 (+576.7%)
+2026-06-21 20:27:47 [INFO] [KR 백테스트] DL이앤씨(375500): 163개 신호 | 신호매매 1000만→40,793,372원 (+307.9%) | 보유시 1000만→15,609,979원 (+56.1%)
+2026-06-21 20:27:57 [INFO] [US 백테스트] INTC: 1429개 신호 | 신호매매 1000만→93,507,392,455 (+934973.9%) | 보유시 1000만→8,239,254,560 (+82292.6%)
+2026-06-21 20:28:33 [INFO] [KR 백테스트] DN오토모티브(007340): 867개 신호 | 신호매매 1000만→125,230,216원 (+1152.3%) | 보유시 1000만→623,236,903원 (+6132.4%)
+2026-06-21 20:29:16 [INFO] [US 백테스트] JNJ: 2036개 신호 | 신호매매 1000만→4,765,349,819 (+47553.5%) | 보유시 1000만→39,500,053,400 (+394900.5%)
+2026-06-21 20:29:20 [INFO] [KR 백테스트] DSR제강(069730): 735개 신호 | 신호매매 1000만→1,931,540,191원 (+19215.4%) | 보유시 1000만→70,680,470원 (+606.8%)
+2026-06-21 20:29:25 [INFO] [KR 백테스트] DS단석(017860): 75개 신호 | 신호매매 1000만→13,856,413원 (+38.6%) | 보유시 1000만→1,962,436원 (-80.4%)
+2026-06-21 20:29:40 [INFO] [KR 백테스트] DYP(092780): 262개 신호 | 신호매매 1000만→23,277,626원 (+132.8%) | 보유시 1000만→10,165,475원 (+1.6%)
+2026-06-21 20:29:52 [INFO] [KR 백테스트] ESR켄달스퀘어리츠(365550): 170개 신호 | 신호매매 1000만→23,379,442원 (+133.8%) | 보유시 1000만→8,765,533원 (-12.3%)
+2026-06-21 20:29:53 [INFO] [US 백테스트] CSCO: 1083개 신호 | 신호매매 1000만→12,358,636,725 (+123486.4%) | 보유시 1000만→21,614,041,632 (+216040.4%)
+2026-06-21 20:30:00 [INFO] [KR 백테스트] F&F(383220): 148개 신호 | 신호매매 1000만→88,652,344원 (+786.5%) | 보유시 1000만→8,292,057원 (-17.1%)
+2026-06-21 20:30:30 [INFO] [KR 백테스트] GKL(114090): 521개 신호 | 신호매매 1000만→119,407,028원 (+1094.1%) | 보유시 1000만→7,645,917원 (-23.5%)
+2026-06-21 20:30:58 [INFO] [US 백테스트] CAT: 2026개 신호 | 신호매매 1000만→60,411,292,327 (+604012.9%) | 보유시 1000만→20,398,368,260 (+203883.7%)
+2026-06-21 20:31:06 [INFO] [KR 백테스트] GS(078930): 683개 신호 | 신호매매 1000만→427,986,512원 (+4179.9%) | 보유시 1000만→67,015,281원 (+570.1%)
+2026-06-21 20:31:29 [INFO] [US 백테스트] COST: 1233개 신호 | 신호매매 1000만→376,690,788 (+3666.9%) | 보유시 1000만→1,565,121,689 (+15551.2%)
+2026-06-21 20:31:53 [INFO] [US 백테스트] MA: 611개 신호 | 신호매매 1000만→167,292,516 (+1572.9%) | 보유시 1000만→1,138,359,382 (+11283.6%)
+2026-06-21 20:32:03 [INFO] [KR 백테스트] GS건설(006360): 843개 신호 | 신호매매 1000만→1,076,557,481원 (+10665.6%) | 보유시 1000만→88,269,421원 (+782.7%)
+2026-06-21 20:32:35 [INFO] [US 백테스트] LRCX: 1356개 신호 | 신호매매 1000만→113,554,537,005 (+1135445.4%) | 보유시 1000만→22,928,007,766 (+229180.1%)
+2026-06-21 20:32:40 [INFO] [US 백테스트] ARM: 85개 신호 | 신호매매 1000만→49,278,075 (+392.8%) | 보유시 1000만→84,756,028 (+747.6%)
+2026-06-21 20:32:46 [INFO] [KR 백테스트] GS글로벌(001250): 864개 신호 | 신호매매 1000만→204,197,105,500원 (+2041871.1%) | 보유시 1000만→10,247,914원 (+2.5%)
+2026-06-21 20:33:15 [INFO] [KR 백테스트] GS리테일(007070): 438개 신호 | 신호매매 1000만→25,091,811원 (+150.9%) | 보유시 1000만→12,312,842원 (+23.1%)
+2026-06-21 20:33:19 [INFO] [KR 백테스트] GS피앤엘(499790): 44개 신호 | 신호매매 1000만→14,585,667원 (+45.9%) | 보유시 1000만→21,518,679원 (+115.2%)
+2026-06-21 20:33:26 [INFO] [US 백테스트] AMAT: 1443개 신호 | 신호매매 1000만→499,316,772,903 (+4993067.7%) | 보유시 1000만→97,894,433,839 (+978844.3%)
+2026-06-21 20:33:37 [INFO] [US 백테스트] ABBV: 388개 신호 | 신호매매 1000만→29,895,835 (+199.0%) | 보유시 1000만→103,171,188 (+931.7%)
+2026-06-21 20:33:58 [INFO] [KR 백테스트] HDC(012630): 866개 신호 | 신호매매 1000만→531,188,789원 (+5211.9%) | 보유시 1000만→256,199,729원 (+2462.0%)
+2026-06-21 20:34:32 [INFO] [KR 백테스트] HDC현대EP(089470): 608개 신호 | 신호매매 1000만→2,599,378,978원 (+25893.8%) | 보유시 1000만→26,716,801원 (+167.2%)
+2026-06-21 20:34:46 [INFO] [US 백테스트] BAC: 1677개 신호 | 신호매매 1000만→24,672,793,590 (+246627.9%) | 보유시 1000만→379,386,468 (+3693.9%)
+2026-06-21 20:34:48 [INFO] [KR 백테스트] HD건설기계(267270): 278개 신호 | 신호매매 1000만→69,305,338원 (+593.0%) | 보유시 1000만→19,117,801원 (+91.2%)
+2026-06-21 20:35:38 [INFO] [US 백테스트] CVX: 1998개 신호 | 신호매매 1000만→12,464,155,329 (+124541.6%) | 보유시 1000만→5,767,520,473 (+57575.2%)
+2026-06-21 20:35:50 [INFO] [KR 백테스트] HD한국조선해양(009540): 822개 신호 | 신호매매 1000만→4,819,076,337원 (+48090.8%) | 보유시 1000만→303,711,780원 (+2937.1%)
+2026-06-21 20:36:10 [INFO] [KR 백테스트] HD현대(267250): 274개 신호 | 신호매매 1000만→37,250,793원 (+272.5%) | 보유시 1000만→43,794,692원 (+337.9%)
+2026-06-21 20:36:15 [INFO] [KR 백테스트] HD현대마린솔루션(443060): 62개 신호 | 신호매매 1000만→30,962,522원 (+209.6%) | 보유시 1000만→16,278,531원 (+62.8%)
+2026-06-21 20:36:18 [INFO] [US 백테스트] UNH: 1308개 신호 | 신호매매 1000만→14,454,698,768 (+144447.0%) | 보유시 1000만→42,083,471,280 (+420734.7%)
+2026-06-21 20:36:35 [INFO] [KR 백테스트] HD현대마린엔진(071970): 493개 신호 | 신호매매 1000만→665,554,833원 (+6555.6%) | 보유시 1000만→27,180원 (-99.7%)
+2026-06-21 20:36:44 [INFO] [KR 백테스트] HD현대에너지솔루션(322000): 207개 신호 | 신호매매 1000만→277,059,577원 (+2670.6%) | 보유시 1000만→96,565,219원 (+865.6%)
+2026-06-21 20:36:59 [INFO] [KR 백테스트] HD현대일렉트릭(267260): 278개 신호 | 신호매매 1000만→222,660,954원 (+2126.6%) | 보유시 1000만→182,712,179원 (+1727.1%)
+2026-06-21 20:37:09 [INFO] [KR 백테스트] HD현대중공업(329180): 143개 신호 | 신호매매 1000만→32,033,246원 (+220.3%) | 보유시 1000만→67,227,484원 (+572.3%)
+2026-06-21 20:37:21 [INFO] [US 백테스트] MS: 1006개 신호 | 신호매매 1000만→3,755,419,696 (+37454.2%) | 보유시 1000만→551,209,376 (+5412.1%)
+2026-06-21 20:37:47 [INFO] [KR 백테스트] HJ중공업(097230): 570개 신호 | 신호매매 1000만→758,549,610원 (+7485.5%) | 보유시 1000만→617,515원 (-93.8%)
+2026-06-21 20:37:50 [INFO] [US 백테스트] NFLX: 730개 신호 | 신호매매 1000만→7,544,012,916 (+75340.1%) | 보유시 1000만→7,827,467,644 (+78174.7%)
+2026-06-21 20:38:36 [INFO] [KR 백테스트] HL D&I(014790): 857개 신호 | 신호매매 1000만→3,659,256,254원 (+36492.6%) | 보유시 1000만→20,931,574원 (+109.3%)
+2026-06-21 20:38:49 [INFO] [US 백테스트] GE: 2005개 신호 | 신호매매 1000만→12,297,039,496 (+122870.4%) | 보유시 1000만→5,953,427,104 (+59434.3%)
+2026-06-21 20:39:00 [INFO] [US 백테스트] PLTR: 168개 신호 | 신호매매 1000만→163,522,277 (+1535.2%) | 보유시 1000만→108,139,731 (+981.4%)
+2026-06-21 20:39:15 [INFO] [KR 백테스트] HLB글로벌(003580): 851개 신호 | 신호매매 1000만→1,274,622,040원 (+12646.2%) | 보유시 1000만→894,428원 (-91.1%)
+2026-06-21 20:39:36 [INFO] [KR 백테스트] HL만도(204320): 358개 신호 | 신호매매 1000만→169,601,247원 (+1596.0%) | 보유시 1000만→20,152,843원 (+101.5%)
+2026-06-21 20:40:03 [INFO] [US 백테스트] KO: 2016개 신호 | 신호매매 1000만→14,935,038,857 (+149250.4%) | 보유시 1000만→19,187,376,242 (+191773.8%)
+2026-06-21 20:40:26 [INFO] [KR 백테스트] HMM(011200): 867개 신호 | 신호매매 1000만→8,833,492,828원 (+88234.9%) | 보유시 1000만→6,351,675원 (-36.5%)
+2026-06-21 20:40:47 [INFO] [KR 백테스트] IPARK현대산업개발(294870): 248개 신호 | 신호매매 1000만→19,627,030원 (+96.3%) | 보유시 1000만→5,238,821원 (-47.6%)
+2026-06-21 20:41:04 [INFO] [US 백테스트] PG: 2040개 신호 | 신호매매 1000만→851,716,894 (+8417.2%) | 보유시 1000만→6,751,926,640 (+67419.3%)
+2026-06-21 20:41:20 [INFO] [KR 백테스트] JB금융지주(175330): 842개 신호 | 신호매매 1000만→476,564,405원 (+4665.6%) | 보유시 1000만→193,967,562원 (+1839.7%)
+2026-06-21 20:41:52 [INFO] [KR 백테스트] JW중외제약(001060): 654개 신호 | 신호매매 1000만→2,249,157,701원 (+22391.6%) | 보유시 1000만→27,284,117원 (+172.8%)
+2026-06-21 20:42:02 [INFO] [US 백테스트] GS: 814개 신호 | 신호매매 1000만→396,001,171 (+3860.0%) | 보유시 1000만→252,977,234 (+2429.8%)
+2026-06-21 20:42:23 [INFO] [KR 백테스트] JW홀딩스(096760): 605개 신호 | 신호매매 1000만→1,100,135,035원 (+10901.4%) | 보유시 1000만→20,475,216원 (+104.8%)
+2026-06-21 20:42:32 [INFO] [US 백테스트] HSBC: 824개 신호 | 신호매매 1000만→170,041,482 (+1600.4%) | 보유시 1000만→59,820,672 (+498.2%)
+2026-06-21 20:43:05 [INFO] [KR 백테스트] KBI동양철관(008970): 864개 신호 | 신호매매 1000만→532,681,297원 (+5226.8%) | 보유시 1000만→5,515,786원 (-44.8%)
+2026-06-21 20:43:16 [INFO] [US 백테스트] HD: 1382개 신호 | 신호매매 1000만→29,093,886,130 (+290838.9%) | 보유시 1000만→121,199,192,791 (+1211891.9%)
+2026-06-21 20:43:26 [INFO] [US 백테스트] BABA: 367개 신호 | 신호매매 1000만→22,624,113 (+126.2%) | 보유시 1000만→12,520,215 (+25.2%)
+2026-06-21 20:43:45 [INFO] [KR 백테스트] KB금융(105560): 607개 신호 | 신호매매 1000만→106,995,635원 (+970.0%) | 보유시 1000만→50,013,437원 (+400.1%)
+2026-06-21 20:43:49 [INFO] [KR 백테스트] KB발해인프라(415640): 45개 신호 | 신호매매 1000만→10,773,540원 (+7.7%) | 보유시 1000만→14,250,361원 (+42.5%)
+2026-06-21 20:43:56 [INFO] [KR 백테스트] KB스타리츠(432320): 117개 신호 | 신호매매 1000만→8,926,123원 (-10.7%) | 보유시 1000만→4,336,657원 (-56.6%)
+2026-06-21 20:44:28 [INFO] [US 백테스트] MRK: 2023개 신호 | 신호매매 1000만→11,674,232,538 (+116642.3%) | 보유시 1000만→19,285,469,601 (+192754.7%)
+2026-06-21 20:44:36 [INFO] [KR 백테스트] KCTC(009070): 872개 신호 | 신호매매 1000만→30,506,125,895원 (+304961.3%) | 보유시 1000만→139,932,240원 (+1299.3%)
+2026-06-21 20:45:23 [INFO] [KR 백테스트] KC그린홀딩스(009440): 820개 신호 | 신호매매 1000만→4,260,646,367원 (+42506.5%) | 보유시 1000만→9,452,322원 (-5.5%)
+2026-06-21 20:45:33 [INFO] [US 백테스트] IBM: 1962개 신호 | 신호매매 1000만→2,438,271,880 (+24282.7%) | 보유시 1000만→1,767,444,982 (+17574.5%)
+2026-06-21 20:45:46 [INFO] [KR 백테스트] KC코트렐(119650): 486개 신호 | 신호매매 1000만→73,863,115원 (+638.6%) | 보유시 1000만→1,353,143원 (-86.5%)
+2026-06-21 20:46:02 [INFO] [US 백테스트] NVS: 904개 신호 | 신호매매 1000만→131,597,082 (+1216.0%) | 보유시 1000만→130,835,902 (+1208.4%)
+2026-06-21 20:46:14 [INFO] [KR 백테스트] KEC(092220): 627개 신호 | 신호매매 1000만→2,506,200,546원 (+24962.0%) | 보유시 1000만→1,199,554원 (-88.0%)
+2026-06-21 20:46:34 [INFO] [US 백테스트] AZN: 1045개 신호 | 신호매매 1000만→390,247,781 (+3802.5%) | 보유시 1000만→574,018,621 (+5640.2%)
+2026-06-21 20:46:52 [INFO] [KR 백테스트] KG모빌리티(003620): 752개 신호 | 신호매매 1000만→3,253,546,919원 (+32435.5%) | 보유시 1000만→14,034원 (-99.9%)
+2026-06-21 20:47:17 [INFO] [US 백테스트] KLAC: 1459개 신호 | 신호매매 1000만→488,793,241,644 (+4887832.4%) | 보유시 1000만→42,022,973,069 (+420129.7%)
+2026-06-21 20:47:31 [INFO] [KR 백테스트] KG스틸(016380): 821개 신호 | 신호매매 1000만→4,444,771,832원 (+44347.7%) | 보유시 1000만→329,249원 (-96.7%)
+2026-06-21 20:48:09 [INFO] [US 백테스트] TXN: 1701개 신호 | 신호매매 1000만→89,330,503,983 (+893205.0%) | 보유시 1000만→4,422,465,700 (+44124.7%)
+2026-06-21 20:48:19 [INFO] [KR 백테스트] KG케미칼(001390): 844개 신호 | 신호매매 1000만→32,631,241,971원 (+326212.4%) | 보유시 1000만→26,509,305원 (+165.1%)
+2026-06-21 20:48:31 [INFO] [US 백테스트] MRVL: 788개 신호 | 신호매매 1000만→2,776,762,915 (+27667.6%) | 보유시 1000만→265,303,274 (+2553.0%)
+2026-06-21 20:48:45 [INFO] [US 백테스트] DELL: 299개 신호 | 신호매매 1000만→97,902,670 (+879.0%) | 보유시 1000만→335,062,890 (+3250.6%)
+2026-06-21 20:48:59 [INFO] [KR 백테스트] KR모터스(000040): 833개 신호 | 신호매매 1000만→23,038,871,593원 (+230288.7%) | 보유시 1000만→79,948원 (-99.2%)
+2026-06-21 20:49:05 [INFO] [US 백테스트] PM: 539개 신호 | 신호매매 1000만→56,339,677 (+463.4%) | 보유시 1000만→81,618,631 (+716.2%)
+2026-06-21 20:49:22 [INFO] [KR 백테스트] KSS해운(044450): 605개 신호 | 신호매매 1000만→107,816,121원 (+978.2%) | 보유시 1000만→34,205,279원 (+242.1%)
+2026-06-21 20:49:41 [INFO] [US 백테스트] RY: 959개 신호 | 신호매매 1000만→678,327,947 (+6683.3%) | 보유시 1000만→1,104,630,029 (+10946.3%)
+2026-06-21 20:49:44 [INFO] [US 백테스트] KXIAY: 23개 신호 | 신호매매 1000만→30,818,879 (+208.2%) | 보유시 1000만→110,984,386 (+1009.8%)
+2026-06-21 20:49:48 [INFO] [US 백테스트] SNDK: 40개 신호 | 신호매매 1000만→99,741,715 (+897.4%) | 보유시 1000만→398,531,560 (+3885.3%)
+2026-06-21 20:49:53 [INFO] [US 백테스트] GEV: 58개 신호 | 신호매매 1000만→16,516,750 (+65.2%) | 보유시 1000만→62,576,197 (+525.8%)
+2026-06-21 20:50:23 [INFO] [KR 백테스트] KT(030200): 822개 신호 | 신호매매 1000만→113,905,457원 (+1039.0%) | 보유시 1000만→12,421,316원 (+24.2%)
+2026-06-21 20:50:30 [INFO] [US 백테스트] QCOM: 1047개 신호 | 신호매매 1000만→3,116,269,167 (+31062.7%) | 보유시 1000만→4,974,588,816 (+49645.9%)
+2026-06-21 20:51:15 [INFO] [KR 백테스트] KT&G(033780): 845개 신호 | 신호매매 1000만→94,660,385원 (+846.6%) | 보유시 1000만→284,929,991원 (+2749.3%)
+2026-06-21 20:51:35 [INFO] [US 백테스트] WFC: 1748개 신호 | 신호매매 1000만→3,331,564,632 (+33215.7%) | 보유시 1000만→5,522,318,595 (+55123.2%)
+2026-06-21 20:51:39 [INFO] [KR 백테스트] KTcs(058850): 495개 신호 | 신호매매 1000만→261,917,213원 (+2519.2%) | 보유시 1000만→17,766,490원 (+77.7%)
+2026-06-21 20:52:04 [INFO] [KR 백테스트] KTis(058860): 496개 신호 | 신호매매 1000만→84,992,481원 (+749.9%) | 보유시 1000만→12,443,327원 (+24.4%)
+2026-06-21 20:52:37 [INFO] [US 백테스트] RTX: 2028개 신호 | 신호매매 1000만→40,997,036,678 (+409870.4%) | 보유시 1000만→21,190,679,311 (+211806.8%)
+2026-06-21 20:52:38 [INFO] [KR 백테스트] LF(093050): 614개 신호 | 신호매매 1000만→329,734,082원 (+3197.3%) | 보유시 1000만→16,583,368원 (+65.8%)
+2026-06-21 20:53:13 [INFO] [US 백테스트] SHEL: 1274개 신호 | 신호매매 1000만→5,638,690,138 (+56286.9%) | 보유시 1000만→2,074,448,425 (+20644.5%)
+2026-06-21 20:53:20 [INFO] [KR 백테스트] LG(003550): 657개 신호 | 신호매매 1000만→184,390,175원 (+1743.9%) | 보유시 1000만→103,871,658원 (+938.7%)
+2026-06-21 20:53:42 [INFO] [US 백테스트] LIN: 1034개 신호 | 신호매매 1000만→535,382,035 (+5253.8%) | 보유시 1000만→1,235,097,757 (+12251.0%)
+2026-06-21 20:53:50 [INFO] [KR 백테스트] LG디스플레이(034220): 672개 신호 | 신호매매 1000만→77,057,452원 (+670.6%) | 보유시 1000만→5,130,197원 (-48.7%)
+2026-06-21 20:54:21 [INFO] [KR 백테스트] LG생활건강(051900): 793개 신호 | 신호매매 1000만→68,981,954원 (+589.8%) | 보유시 1000만→120,063,353원 (+1100.6%)
+2026-06-21 20:54:25 [INFO] [KR 백테스트] LG씨엔에스(064400): 40개 신호 | 신호매매 1000만→15,118,853원 (+51.2%) | 보유시 1000만→17,486,298원 (+74.9%)
+2026-06-21 20:54:33 [INFO] [KR 백테스트] LG에너지솔루션(373220): 131개 신호 | 신호매매 1000만→18,025,685원 (+80.3%) | 보유시 1000만→9,439,907원 (-5.6%)
+2026-06-21 20:55:00 [INFO] [US 백테스트] C: 1536개 신호 | 신호매매 1000만→2,912,408,085 (+29024.1%) | 보유시 1000만→215,370,779 (+2053.7%)
+2026-06-21 20:55:13 [INFO] [KR 백테스트] LG유플러스(032640): 836개 신호 | 신호매매 1000만→2,627,754,391원 (+26177.5%) | 보유시 1000만→22,389,573원 (+123.9%)
+2026-06-21 20:55:17 [INFO] [US 백테스트] PANW: 419개 신호 | 신호매매 1000만→25,310,705 (+153.1%) | 보유시 1000만→245,930,775 (+2359.3%)
+2026-06-21 20:55:45 [INFO] [KR 백테스트] LG이노텍(011070): 564개 신호 | 신호매매 1000만→317,759,132원 (+3077.6%) | 보유시 1000만→288,443,154원 (+2784.4%)
+2026-06-21 20:55:46 [INFO] [US 백테스트] MUFG: 805개 신호 | 신호매매 1000만→912,246,585 (+9022.5%) | 보유시 1000만→21,990,124 (+119.9%)
+2026-06-21 20:56:27 [INFO] [US 백테스트] BHP: 1512개 신호 | 신호매매 1000만→45,701,157,165 (+456911.6%) | 보유시 1000만→1,839,745,738 (+18297.5%)
+2026-06-21 20:56:36 [INFO] [KR 백테스트] LG전자(066570): 730개 신호 | 신호매매 1000만→581,856,780원 (+5718.6%) | 보유시 1000만→56,345,011원 (+463.4%)
+2026-06-21 20:57:07 [INFO] [KR 백테스트] LG전자우(066575): 654개 신호 | 신호매매 1000만→321,231,008원 (+3112.3%) | 보유시 1000만→23,958,175원 (+139.6%)
+2026-06-21 20:57:08 [INFO] [US 백테스트] SAP: 954개 신호 | 신호매매 1000만→1,041,348,884 (+10313.5%) | 보유시 1000만→165,281,587 (+1552.8%)
+2026-06-21 20:57:28 [INFO] [KR 백테스트] LG헬로비전(037560): 419개 신호 | 신호매매 1000만→59,202,044원 (+492.0%) | 보유시 1000만→1,880,742원 (-81.2%)
+2026-06-21 20:57:58 [INFO] [US 백테스트] AXP: 1715개 신호 | 신호매매 1000만→45,502,929,022 (+454929.3%) | 보유시 1000만→2,935,998,163 (+29260.0%)
+2026-06-21 20:58:08 [INFO] [KR 백테스트] LG화학(051910): 793개 신호 | 신호매매 1000만→756,498,549원 (+7465.0%) | 보유시 1000만→296,882,601원 (+2868.8%)
+2026-06-21 20:58:16 [INFO] [US 백테스트] ANET: 369개 신호 | 신호매매 1000만→248,975,301 (+2389.8%) | 보유시 1000만→391,001,002 (+3810.0%)
+2026-06-21 20:58:28 [INFO] [KR 백테스트] LIG디펜스앤에어로스페이스(079550): 329개 신호 | 신호매매 1000만→297,702,890원 (+2877.0%) | 보유시 1000만→95,633,117원 (+856.3%)
+2026-06-21 20:58:38 [INFO] [US 백테스트] STX: 715개 신호 | 신호매매 1000만→2,544,304,628 (+25343.0%) | 보유시 1000만→2,482,056,620 (+24720.6%)
+2026-06-21 20:59:19 [INFO] [KR 백테스트] LS(006260): 834개 신호 | 신호매매 1000만→3,622,372,211원 (+36123.7%) | 보유시 1000만→455,789,385원 (+4457.9%)
+2026-06-21 20:59:25 [INFO] [US 백테스트] ADI: 1484개 신호 | 신호매매 1000만→2,433,447,139 (+24234.5%) | 보유시 1000만→11,053,912,776 (+110439.1%)
+2026-06-21 20:59:59 [INFO] [US 백테스트] TTE: 1109개 신호 | 신호매매 1000만→413,671,373 (+4036.7%) | 보유시 1000만→274,907,746 (+2649.1%)
+2026-06-21 21:00:03 [INFO] [KR 백테스트] LS ELECTRIC(010120): 824개 신호 | 신호매매 1000만→5,653,243,699원 (+56432.4%) | 보유시 1000만→1,413,641,672원 (+14036.4%)
+2026-06-21 21:00:44 [INFO] [US 백테스트] WDC: 1536개 신호 | 신호매매 1000만→13,827,581,010,465 (+138275710.1%) | 보유시 1000만→12,354,071,302 (+123440.7%)
+2026-06-21 21:00:46 [INFO] [KR 백테스트] LS네트웍스(000680): 779개 신호 | 신호매매 1000만→368,386,338원 (+3583.9%) | 보유시 1000만→5,758,124원 (-42.4%)
+2026-06-21 21:01:03 [INFO] [KR 백테스트] LS에코에너지(229640): 302개 신호 | 신호매매 1000만→117,600,575원 (+1076.0%) | 보유시 1000만→126,470,933원 (+1164.7%)
+2026-06-21 21:01:31 [INFO] [KR 백테스트] LX세미콘(108320): 489개 신호 | 신호매매 1000만→464,847,445원 (+4548.5%) | 보유시 1000만→23,710,046원 (+137.1%)
+2026-06-21 21:01:33 [INFO] [US 백테스트] PEP: 1685개 신호 | 신호매매 1000만→1,627,328,814 (+16173.3%) | 보유시 1000만→3,899,175,053 (+38891.8%)
+2026-06-21 21:02:23 [INFO] [US 백테스트] NVO: 1486개 신호 | 신호매매 1000만→8,339,496,005 (+83295.0%) | 보유시 1000만→4,393,998,256 (+43840.0%)
+2026-06-21 21:02:25 [INFO] [KR 백테스트] LX인터내셔널(001120): 838개 신호 | 신호매매 1000만→723,489,438원 (+7134.9%) | 보유시 1000만→436,712,154원 (+4267.1%)
+2026-06-21 21:02:36 [INFO] [KR 백테스트] LX홀딩스(383800): 163개 신호 | 신호매매 1000만→9,931,576원 (-0.7%) | 보유시 1000만→8,136,048원 (-18.6%)
+2026-06-21 21:03:16 [INFO] [US 백테스트] MCD: 1882개 신호 | 신호매매 1000만→164,307,188,777 (+1642971.9%) | 보유시 1000만→27,911,090,037 (+279010.9%)
+2026-06-21 21:03:22 [INFO] [KR 백테스트] MH에탄올(023150): 865개 신호 | 신호매매 1000만→27,059,528,468원 (+270495.3%) | 보유시 1000만→182,687,440원 (+1726.9%)
+2026-06-21 21:03:33 [INFO] [US 백테스트] TMUS: 592개 신호 | 신호매매 1000만→298,763,779 (+2887.6%) | 보유시 1000만→34,008,366 (+240.1%)
+2026-06-21 21:03:40 [INFO] [US 백테스트] APP: 158개 신호 | 신호매매 1000만→222,112,934 (+2121.1%) | 보유시 1000만→75,225,817 (+652.3%)
+2026-06-21 21:04:14 [INFO] [KR 백테스트] NAVER(035420): 734개 신호 | 신호매매 1000만→2,010,242,328원 (+20002.4%) | 보유시 1000만→1,334,280,451원 (+13242.8%)
+2026-06-21 21:04:21 [INFO] [US 백테스트] TD: 913개 신호 | 신호매매 1000만→205,321,252 (+1953.2%) | 보유시 1000만→739,227,731 (+7292.3%)
+2026-06-21 21:04:53 [INFO] [KR 백테스트] NC(036570): 843개 신호 | 신호매매 1000만→182,274,453원 (+1722.7%) | 보유시 1000만→122,124,395원 (+1121.2%)
+2026-06-21 21:05:14 [INFO] [US 백테스트] VZ: 1330개 신호 | 신호매매 1000만→276,967,366 (+2669.7%) | 보유시 1000만→465,662,450 (+4556.6%)
+2026-06-21 21:05:17 [INFO] [KR 백테스트] NHN(181710): 395개 신호 | 신호매매 1000만→137,916,894원 (+1279.2%) | 보유시 1000만→8,291,429원 (-17.1%)
+2026-06-21 21:05:25 [INFO] [KR 백테스트] NH올원리츠(400760): 137개 신호 | 신호매매 1000만→12,631,010원 (+26.3%) | 보유시 1000만→8,354,291원 (-16.5%)
+2026-06-21 21:05:46 [INFO] [US 백테스트] AMGN: 1332개 신호 | 신호매매 1000만→2,464,537,920 (+24545.4%) | 보유시 1000만→20,764,465,796 (+207544.7%)
+2026-06-21 21:05:55 [INFO] [US 백테스트] CRWD: 217개 신호 | 신호매매 1000만→77,344,780 (+673.5%) | 보유시 1000만→81,999,523 (+720.0%)
+2026-06-21 21:06:20 [INFO] [US 백테스트] APH: 1093개 신호 | 신호매매 1000만→2,305,916,386 (+22959.2%) | 보유시 1000만→14,894,498,200 (+148845.0%)
+2026-06-21 21:06:50 [INFO] [US 백테스트] SAN: 1280개 신호 | 신호매매 1000만→1,777,518,040 (+17675.2%) | 보유시 1000만→216,854,637 (+2068.6%)
+2026-06-21 21:07:25 [INFO] [US 백테스트] TMO: 1481개 신호 | 신호매매 1000만→4,080,027,647 (+40700.3%) | 보유시 1000만→2,719,134,773 (+27091.3%)
+2026-06-21 21:08:04 [INFO] [US 백테스트] NEE: 1704개 신호 | 신호매매 1000만→2,873,993,913 (+28639.9%) | 보유시 1000만→2,558,124,574 (+25481.2%)
+2026-06-21 21:08:36 [INFO] [US 백테스트] TJX: 1224개 신호 | 신호매매 1000만→7,662,662,783 (+76526.6%) | 보유시 1000만→4,329,842,465 (+43198.4%)
+2026-06-21 21:09:22 [INFO] [US 백테스트] DIS: 2021개 신호 | 신호매매 1000만→192,066,729,556 (+1920567.3%) | 보유시 1000만→17,732,598,250 (+177226.0%)
+2026-06-21 21:10:21 [INFO] [KR 백테스트] NH투자증권(005940): 841개 신호 | 신호매매 1000만→660,384,035원 (+6503.8%) | 보유시 1000만→45,907,153원 (+359.1%)
+2026-06-21 21:10:33 [INFO] [US 백테스트] BA: 2049개 신호 | 신호매매 1000만→39,669,758,641 (+396597.6%) | 보유시 1000만→10,391,935,709 (+103819.4%)
+2026-06-21 21:10:40 [INFO] [KR 백테스트] NH투자증권우(005945): 666개 신호 | 신호매매 1000만→140,565,401원 (+1305.7%) | 보유시 1000만→80,290,191원 (+702.9%)
+2026-06-21 21:10:51 [INFO] [KR 백테스트] NH프라임리츠(338100): 202개 신호 | 신호매매 1000만→15,813,105원 (+58.1%) | 보유시 1000만→11,030,484원 (+10.3%)
+2026-06-21 21:11:04 [INFO] [US 백테스트] RIO: 1137개 신호 | 신호매매 1000만→1,023,323,097 (+10133.2%) | 보유시 1000만→560,162,431 (+5501.6%)
+2026-06-21 21:11:20 [INFO] [KR 백테스트] NICE(034310): 672개 신호 | 신호매매 1000만→133,779,947원 (+1237.8%) | 보유시 1000만→45,766,187원 (+357.7%)
+2026-06-21 21:11:52 [INFO] [US 백테스트] GLW: 1384개 신호 | 신호매매 1000만→49,293,503,236 (+492835.0%) | 보유시 1000만→2,776,837,999 (+27668.4%)
+2026-06-21 21:12:02 [INFO] [KR 백테스트] NICE평가정보(030190): 865개 신호 | 신호매매 1000만→931,271,613원 (+9212.7%) | 보유시 1000만→110,753,156원 (+1007.5%)
+2026-06-21 21:12:42 [INFO] [US 백테스트] ETN: 1737개 신호 | 신호매매 1000만→2,613,159,462 (+26031.6%) | 보유시 1000만→12,342,346,099 (+123323.5%)
+2026-06-21 21:12:49 [INFO] [KR 백테스트] NI스틸(008260): 869개 신호 | 신호매매 1000만→50,702,617,168원 (+506926.2%) | 보유시 1000만→61,620,810원 (+516.2%)
+2026-06-21 21:13:11 [INFO] [US 백테스트] SCCO: 941개 신호 | 신호매매 1000만→3,585,998,752 (+35760.0%) | 보유시 1000만→2,517,471,112 (+25074.7%)
+2026-06-21 21:13:26 [INFO] [KR 백테스트] NPC(004250): 880개 신호 | 신호매매 1000만→508,984,324원 (+4989.8%) | 보유시 1000만→226,373,922원 (+2163.7%)
+2026-06-21 21:13:32 [INFO] [KR 백테스트] OCI(456040): 95개 신호 | 신호매매 1000만→35,964,609원 (+259.6%) | 보유시 1000만→8,604,970원 (-13.9%)
+2026-06-21 21:13:49 [INFO] [US 백테스트] GILD: 1093개 신호 | 신호매매 1000만→20,319,199,351 (+203092.0%) | 보유시 1000만→3,297,366,080 (+32873.7%)
+2026-06-21 21:14:21 [INFO] [KR 백테스트] OCI홀딩스(010060): 834개 신호 | 신호매매 1000만→8,294,011,081원 (+82840.1%) | 보유시 1000만→810,085,668원 (+8000.9%)
+2026-06-21 21:14:41 [INFO] [KR 백테스트] PI첨단소재(178920): 352개 신호 | 신호매매 1000만→195,649,986원 (+1856.5%) | 보유시 1000만→29,096,058원 (+191.0%)
+2026-06-21 21:14:45 [INFO] [US 백테스트] DE: 1708개 신호 | 신호매매 1000만→10,207,297,089 (+101973.0%) | 보유시 1000만→9,410,259,146 (+94002.6%)
+2026-06-21 21:15:15 [INFO] [US 백테스트] BLK: 812개 신호 | 신호매매 1000만→216,476,194 (+2064.8%) | 보유시 1000만→1,163,546,687 (+11535.5%)
+2026-06-21 21:15:23 [INFO] [KR 백테스트] PKC(001340): 866개 신호 | 신호매매 1000만→10,575,078,486원 (+105650.8%) | 보유시 1000만→283,039,336원 (+2730.4%)
+2026-06-21 21:15:51 [INFO] [US 백테스트] T: 1322개 신호 | 신호매매 1000만→1,399,058,049 (+13890.6%) | 보유시 1000만→900,428,969 (+8904.3%)
+2026-06-21 21:16:19 [INFO] [KR 백테스트] POSCO홀딩스(005490): 809개 신호 | 신호매매 1000만→990,654,179원 (+9806.5%) | 보유시 1000만→49,661,888원 (+396.6%)
+2026-06-21 21:16:25 [INFO] [US 백테스트] DTEGY: 958개 신호 | 신호매매 1000만→256,797,082 (+2468.0%) | 보유시 1000만→49,214,901 (+392.1%)
+2026-06-21 21:17:01 [INFO] [KR 백테스트] S-Oil(010950): 820개 신호 | 신호매매 1000만→251,022,597원 (+2410.2%) | 보유시 1000만→234,653,802원 (+2246.5%)
+2026-06-21 21:17:13 [INFO] [US 백테스트] ABT: 1465개 신호 | 신호매매 1000만→1,138,530,649 (+11285.3%) | 보유시 1000만→4,171,126,726 (+41611.3%)
+2026-06-21 21:17:49 [INFO] [KR 백테스트] SGC에너지(005090): 864개 신호 | 신호매매 1000만→1,789,086,680원 (+17790.9%) | 보유시 1000만→303,755,978원 (+2937.6%)
+2026-06-21 21:17:59 [INFO] [US 백테스트] UNP: 1449개 신호 | 신호매매 1000만→17,369,254,652 (+173592.5%) | 보유시 1000만→2,266,535,130 (+22565.3%)
+2026-06-21 21:18:30 [INFO] [US 백테스트] UBS: 806개 신호 | 신호매매 1000만→80,281,165 (+702.8%) | 보유시 1000만→30,415,613 (+204.2%)
+2026-06-21 21:18:32 [INFO] [KR 백테스트] SG글로벌(001380): 780개 신호 | 신호매매 1000만→66,925,676,509원 (+669156.8%) | 보유시 1000만→11,883,333원 (+18.8%)
+2026-06-21 21:18:56 [INFO] [US 백테스트] CRM: 664개 신호 | 신호매매 1000만→399,480,311 (+3894.8%) | 보유시 1000만→474,729,821 (+4647.3%)
+2026-06-21 21:19:06 [INFO] [KR 백테스트] SG세계물산(004060): 868개 신호 | 신호매매 1000만→7,771,782,760원 (+77617.8%) | 보유시 1000만→4,821,429원 (-51.8%)
+2026-06-21 21:19:35 [INFO] [US 백테스트] SCHW: 1195개 신호 | 신호매매 1000만→7,042,480,355 (+70324.8%) | 보유시 1000만→8,083,299,536 (+80733.0%)
+2026-06-21 21:19:47 [INFO] [KR 백테스트] SH에너지화학(002360): 856개 신호 | 신호매매 1000만→28,616,536,016원 (+286065.4%) | 보유시 1000만→24,114,121원 (+141.1%)
+2026-06-21 21:19:54 [INFO] [US 백테스트] BUD: 534개 신호 | 신호매매 1000만→22,252,692 (+122.5%) | 보유시 1000만→28,682,781 (+186.8%)
+2026-06-21 21:20:10 [INFO] [US 백테스트] SHOP: 336개 신호 | 신호매매 1000만→730,515,305 (+7205.1%) | 보유시 1000만→372,901,685 (+3629.0%)
+2026-06-21 21:20:22 [INFO] [KR 백테스트] SIMPAC(009160): 855개 신호 | 신호매매 1000만→463,921,679원 (+4539.2%) | 보유시 1000만→32,543,010원 (+225.4%)
+2026-06-21 21:20:33 [INFO] [US 백테스트] SMFG: 660개 신호 | 신호매매 1000만→124,155,049 (+1141.5%) | 보유시 1000만→12,059,405 (+20.6%)
+2026-06-21 21:21:04 [INFO] [US 백테스트] ISRG: 812개 신호 | 신호매매 1000만→9,294,261,797 (+92842.6%) | 보유시 1000만→1,449,908,646 (+14399.1%)
+2026-06-21 21:21:06 [INFO] [KR 백테스트] SJG세종(033530): 849개 신호 | 신호매매 1000만→6,808,738,492원 (+67987.4%) | 보유시 1000만→31,625,452원 (+216.2%)
+2026-06-21 21:21:23 [INFO] [US 백테스트] IBKR: 600개 신호 | 신호매매 1000만→203,638,937 (+1936.4%) | 보유시 1000만→186,284,182 (+1762.8%)
+2026-06-21 21:21:36 [INFO] [US 백테스트] UBER: 209개 신호 | 신호매매 1000만→24,165,502 (+141.7%) | 보유시 1000만→15,446,313 (+54.5%)
+2026-06-21 21:21:40 [INFO] [KR 백테스트] SK(034730): 501개 신호 | 신호매매 1000만→176,847,466원 (+1668.5%) | 보유시 1000만→204,326,031원 (+1943.3%)
+2026-06-21 21:22:24 [INFO] [US 백테스트] PFE: 1695개 신호 | 신호매매 1000만→3,270,774,900 (+32607.8%) | 보유시 1000만→1,674,143,646 (+16641.4%)
+2026-06-21 21:22:33 [INFO] [KR 백테스트] SKC(011790): 836개 신호 | 신호매매 1000만→3,696,946,599원 (+36869.5%) | 보유시 1000만→274,624,833원 (+2646.2%)
+2026-06-21 21:22:43 [INFO] [US 백테스트] BX: 578개 신호 | 신호매매 1000만→133,286,508 (+1232.9%) | 보유시 1000만→131,046,740 (+1210.5%)
+2026-06-21 21:23:28 [INFO] [US 백테스트] COP: 1372개 신호 | 신호매매 1000만→2,843,095,389 (+28331.0%) | 보유시 1000만→1,194,995,036 (+11850.0%)
+2026-06-21 21:23:28 [INFO] [KR 백테스트] SK네트웍스(001740): 832개 신호 | 신호매매 1000만→1,886,313,794원 (+18763.1%) | 보유시 1000만→892,291원 (-91.1%)
+2026-06-21 21:23:42 [INFO] [KR 백테스트] SK리츠(395400): 145개 신호 | 신호매매 1000만→15,905,578원 (+59.1%) | 보유시 1000만→13,349,382원 (+33.5%)
+2026-06-21 21:23:54 [INFO] [KR 백테스트] SK바이오사이언스(302440): 157개 신호 | 신호매매 1000만→24,961,668원 (+149.6%) | 보유시 1000만→2,750,890원 (-72.5%)
+2026-06-21 21:24:05 [INFO] [KR 백테스트] SK바이오팜(326030): 179개 신호 | 신호매매 1000만→30,745,346원 (+207.4%) | 보유시 1000만→4,554,974원 (-54.5%)
+2026-06-21 21:24:09 [INFO] [US 백테스트] WELL: 1465개 신호 | 신호매매 1000만→5,232,627,911 (+52226.3%) | 보유시 1000만→5,130,621,888 (+51206.2%)
+2026-06-21 21:24:12 [INFO] [KR 백테스트] SK스퀘어(402340): 140개 신호 | 신호매매 1000만→60,522,016원 (+505.2%) | 보유시 1000만→273,362,201원 (+2633.6%)
+2026-06-21 21:24:21 [INFO] [KR 백테스트] SK아이이테크놀로지(361610): 153개 신호 | 신호매매 1000만→97,116,846원 (+871.2%) | 보유시 1000만→1,182,857원 (-88.2%)
+2026-06-21 21:24:52 [INFO] [KR 백테스트] SK오션플랜트(100090): 561개 신호 | 신호매매 1000만→443,067,209원 (+4330.7%) | 보유시 1000만→48,240,511원 (+382.4%)
+2026-06-21 21:25:07 [INFO] [US 백테스트] HON: 2037개 신호 | 신호매매 1000만→68,310,135,686 (+683001.4%) | 보유시 1000만→2,478,902,502 (+24689.0%)
+2026-06-21 21:25:32 [INFO] [KR 백테스트] SK이노베이션(096770): 570개 신호 | 신호매매 1000만→96,497,031원 (+865.0%) | 보유시 1000만→11,618,234원 (+16.2%)
+2026-06-21 21:25:38 [INFO] [US 백테스트] PLD: 883개 신호 | 신호매매 1000만→748,192,539 (+7381.9%) | 보유시 1000만→177,846,800 (+1678.5%)
+2026-06-21 21:25:38 [INFO] [KR 백테스트] SK이터닉스(475150): 68개 신호 | 신호매매 1000만→38,589,146원 (+285.9%) | 보유시 1000만→30,369,069원 (+203.7%)
+2026-06-21 21:26:14 [INFO] [US 백테스트] DHR: 1530개 신호 | 신호매매 1000만→3,915,067,987 (+39050.7%) | 보유시 1000만→40,041,265,891 (+400312.7%)
+2026-06-21 21:26:46 [INFO] [KR 백테스트] SK증권(001510): 847개 신호 | 신호매매 1000만→2,295,405,979원 (+22854.1%) | 보유시 1000만→3,317,172원 (-66.8%)
+2026-06-21 21:27:09 [INFO] [KR 백테스트] SK증권우(001515): 663개 신호 | 신호매매 1000만→1,072,181,484원 (+10621.8%) | 보유시 1000만→14,710,371원 (+47.1%)
+2026-06-21 21:27:19 [INFO] [US 백테스트] SONY: 1770개 신호 | 신호매매 1000만→11,558,227,442 (+115482.3%) | 보유시 1000만→251,435,015 (+2414.3%)
+2026-06-21 21:27:21 [INFO] [KR 백테스트] SK케미칼(285130): 256개 신호 | 신호매매 1000만→42,050,891원 (+320.5%) | 보유시 1000만→7,311,170원 (-26.9%)
+2026-06-21 21:27:40 [INFO] [US 백테스트] BKNG: 822개 신호 | 신호매매 1000만→3,687,404,270 (+36774.0%) | 보유시 1000만→48,347,508 (+383.5%)
+2026-06-21 21:28:09 [INFO] [US 백테스트] IFNNY: 883개 신호 | 신호매매 1000만→30,311,115,615 (+303011.2%) | 보유시 1000만→19,182,312 (+91.8%)
+2026-06-21 21:28:19 [INFO] [KR 백테스트] SK텔레콤(017670): 840개 신호 | 신호매매 1000만→21,826,614원 (+118.3%) | 보유시 1000만→33,914,880원 (+239.2%)
+2026-06-21 21:28:43 [INFO] [US 백테스트] BBVA: 1241개 신호 | 신호매매 1000만→946,899,404 (+9369.0%) | 보유시 1000만→348,681,813 (+3386.8%)
+2026-06-21 21:29:13 [INFO] [KR 백테스트] SK하이닉스(000660): 828개 신호 | 신호매매 1000만→0원 (-100.0%) | 보유시 1000만→-130,113,172원 (-1401.1%)
+2026-06-21 21:29:29 [INFO] [US 백테스트] BTI: 1526개 신호 | 신호매매 1000만→455,489,695 (+4454.9%) | 보유시 1000만→6,892,806,273 (+68828.1%)
+2026-06-21 21:29:42 [INFO] [US 백테스트] VRT: 243개 신호 | 신호매매 1000만→132,092,810 (+1220.9%) | 보유시 1000만→341,654,328 (+3316.5%)
+2026-06-21 21:29:53 [INFO] [KR 백테스트] SNT다이내믹스(003570): 843개 신호 | 신호매매 1000만→8,900,573,095원 (+88905.7%) | 보유시 1000만→15,477,380원 (+54.8%)
+2026-06-21 21:30:35 [INFO] [US 백테스트] SPGI: 1716개 신호 | 신호매매 1000만→2,906,137,595 (+28961.4%) | 보유시 1000만→13,425,873,011 (+134158.7%)
+2026-06-21 21:30:36 [INFO] [KR 백테스트] SNT모티브(064960): 777개 신호 | 신호매매 1000만→976,918,556원 (+9669.2%) | 보유시 1000만→21,918,551원 (+119.2%)
+2026-06-21 21:31:09 [INFO] [KR 백테스트] SNT에너지(100840): 586개 신호 | 신호매매 1000만→262,740,835원 (+2527.4%) | 보유시 1000만→50,611,517원 (+406.1%)
+2026-06-21 21:31:16 [INFO] [US 백테스트] ENB: 1368개 신호 | 신호매매 1000만→1,281,546,250 (+12715.5%) | 보유시 1000만→2,490,201,183 (+24802.0%)
+2026-06-21 21:31:43 [INFO] [US 백테스트] HDB: 779개 신호 | 신호매매 1000만→187,873,061 (+1778.7%) | 보유시 1000만→356,756,974 (+3467.6%)
+2026-06-21 21:31:52 [INFO] [KR 백테스트] SP삼화(000390): 862개 신호 | 신호매매 1000만→337,196,401원 (+3272.0%) | 보유시 1000만→62,830,179원 (+528.3%)
+2026-06-21 21:31:59 [INFO] [US 백테스트] NOW: 418개 신호 | 신호매매 1000만→134,306,066 (+1243.1%) | 보유시 1000만→163,411,281 (+1534.1%)
+2026-06-21 21:32:00 [INFO] [KR 백테스트] STX그린로지스(465770): 86개 신호 | 신호매매 1000만→5,871,988원 (-41.3%) | 보유시 1000만→2,021,552원 (-79.8%)
+2026-06-21 21:32:08 [INFO] [US 백테스트] PDD: 242개 신호 | 신호매매 1000만→28,537,827 (+185.4%) | 보유시 1000만→46,202,091 (+362.0%)
+2026-06-21 21:32:37 [INFO] [KR 백테스트] STX엔진(077970): 680개 신호 | 신호매매 1000만→2,630,961,854원 (+26209.6%) | 보유시 1000만→16,505,870원 (+65.1%)
+2026-06-21 21:32:44 [INFO] [US 백테스트] CB: 1039개 신호 | 신호매매 1000만→442,071,640 (+4320.7%) | 보유시 1000만→664,870,668 (+6548.7%)
+2026-06-21 21:33:10 [INFO] [KR 백테스트] TBH글로벌(084870): 637개 신호 | 신호매매 1000만→102,227,537원 (+922.3%) | 보유시 1000만→1,660,932원 (-83.4%)
+2026-06-21 21:33:38 [INFO] [US 백테스트] CVS: 1723개 신호 | 신호매매 1000만→3,199,248,831 (+31892.5%) | 보유시 1000만→1,529,419,260 (+15194.2%)
+2026-06-21 21:33:49 [INFO] [KR 백테스트] TCC스틸(002710): 874개 신호 | 신호매매 1000만→526,056,874원 (+5160.6%) | 보유시 1000만→142,453,945원 (+1324.5%)
+2026-06-21 21:34:33 [INFO] [KR 백테스트] TKG휴켐스(069260): 759개 신호 | 신호매매 1000만→186,593,313원 (+1765.9%) | 보유시 1000만→285,651,548원 (+2756.5%)
+2026-06-21 21:34:43 [INFO] [US 백테스트] LMT: 2072개 신호 | 신호매매 1000만→48,891,137,322 (+488811.4%) | 보유시 1000만→5,650,455,292 (+56404.6%)
+2026-06-21 21:35:17 [INFO] [KR 백테스트] TP(007980): 868개 신호 | 신호매매 1000만→2,574,182,991원 (+25641.8%) | 보유시 1000만→30,751,850원 (+207.5%)
+2026-06-21 21:35:30 [INFO] [US 백테스트] UL: 1483개 신호 | 신호매매 1000만→3,521,585,841 (+35115.9%) | 보유시 1000만→1,931,760,562 (+19217.6%)
+2026-06-21 21:35:57 [INFO] [US 백테스트] MFG: 656개 신호 | 신호매매 1000만→88,151,788 (+781.5%) | 보유시 1000만→7,634,832 (-23.6%)
+2026-06-21 21:36:00 [INFO] [KR 백테스트] TYM(002900): 868개 신호 | 신호매매 1000만→1,918,577,695원 (+19085.8%) | 보유시 1000만→90,833,440원 (+808.3%)
+2026-06-21 21:36:47 [INFO] [KR 백테스트] WISCOM(024070): 877개 신호 | 신호매매 1000만→189,238,391원 (+1792.4%) | 보유시 1000만→7,060,822원 (-29.4%)
+2026-06-21 21:36:56 [INFO] [US 백테스트] MO: 2038개 신호 | 신호매매 1000만→27,930,191,068 (+279201.9%) | 보유시 1000만→315,952,672,147 (+3159426.7%)
+2026-06-21 21:37:25 [INFO] [KR 백테스트] YG PLUS(037270): 736개 신호 | 신호매매 1000만→68,985,684원 (+589.9%) | 보유시 1000만→23,780,688원 (+137.8%)
+2026-06-21 21:37:48 [INFO] [US 백테스트] LOW: 1468개 신호 | 신호매매 1000만→4,680,477,314 (+46704.8%) | 보유시 1000만→8,147,750,551 (+81377.5%)
+2026-06-21 21:37:53 [INFO] [KR 백테스트] iM금융지주(139130): 478개 신호 | 신호매매 1000만→107,959,032원 (+979.6%) | 보유시 1000만→20,265,962원 (+102.7%)
+2026-06-21 21:38:18 [INFO] [US 백테스트] PBR: 769개 신호 | 신호매매 1000만→8,329,672,538 (+83196.7%) | 보유시 1000만→128,899,904 (+1189.0%)
+2026-06-21 21:38:24 [INFO] [KR 백테스트] 가온전선(000500): 661개 신호 | 신호매매 1000만→678,381,750원 (+6683.8%) | 보유시 1000만→413,443,790원 (+4034.4%)
+2026-06-21 21:39:05 [INFO] [US 백테스트] BMO: 1008개 신호 | 신호매매 1000만→716,475,003 (+7064.8%) | 보유시 1000만→733,667,697 (+7236.7%)
+2026-06-21 21:39:09 [INFO] [KR 백테스트] 강원랜드(035250): 770개 신호 | 신호매매 1000만→195,725,801원 (+1857.3%) | 보유시 1000만→24,292,417원 (+142.9%)
+2026-06-21 21:39:58 [INFO] [US 백테스트] NEM: 1426개 신호 | 신호매매 1000만→38,203,963,995 (+381939.6%) | 보유시 1000만→217,907,835 (+2079.1%)
+2026-06-21 21:40:02 [INFO] [KR 백테스트] 갤럭시아에스엠(011420): 858개 신호 | 신호매매 1000만→473,248,937원 (+4632.5%) | 보유시 1000만→3,357,907원 (-66.4%)
+2026-06-21 21:40:02 [INFO] [KR 백테스트] 완료 — 86508개 신호 저장
+2026-06-21 21:40:02 [INFO] [KR 백테스트] 다음 배치까지 5분 대기…
