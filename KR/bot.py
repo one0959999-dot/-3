@@ -2052,6 +2052,24 @@ class KRBotController:
             logger.debug(f"[{self.mode_name}] indicators_dict 오류 ({ticker}): {e}")
         return ind
 
+    def _forecast_block(self, name: str, ticker: str, price: float, ex_df) -> str:
+        """매수 시 백테스트 통계 기반 예측 4줄(예상 보유/목표/손절). 없으면 빈 문자열."""
+        try:
+            from base.signals import detect_latest_signals
+            from base.signal_forecast import get_forecast, format_forecast_msg
+            sigs = detect_latest_signals(ex_df)
+            if not sigs:
+                return ''
+            mkt = self._build_market_info_dict()
+            phase = mkt.get('market_phase')
+            fc = get_forecast('KR', phase, sigs)
+            if not fc:
+                return ''
+            return '\n' + format_forecast_msg(name, ticker, price,
+                                              mkt.get('market_phase_kr') or phase, sigs, fc)
+        except Exception:
+            return ''
+
     def _build_market_info_dict(self) -> dict:
         """파인튜닝 형식 판단에 필요한 시장 국면/매크로 dict — 일별 캐시."""
         today_str = _now_kst().strftime('%Y-%m-%d')
@@ -3388,7 +3406,8 @@ class KRBotController:
                                     pos.initial_shares_for_exit  = 0
                                                                        
                                 self._log_trade(ticker, p_nm, 'BUY', price, st_nm, f"AI 승인 [{regime_label}] 1차(30%) ({ai_reason})")
-                                self._send_trade_telegram(self._fmt_trade_msg("📈", "AI 매수 승인 (1차 30%)", ticker, p_nm, price, qty, strategy=f"{st_nm}  ·  {regime_label}", ai_reason=ai_reason, note=f"2차 -2%({price*0.98:,.0f}원) / 3차 -4%({price*0.96:,.0f}원) 예약"))
+                                _fc_block = self._forecast_block(p_nm, ticker, price, ex_df)
+                                self._send_trade_telegram(self._fmt_trade_msg("📈", "AI 매수 승인 (1차 30%)", ticker, p_nm, price, qty, strategy=f"{st_nm}  ·  {regime_label}", ai_reason=ai_reason, note=f"2차 -2%({price*0.98:,.0f}원) / 3차 -4%({price*0.96:,.0f}원) 예약") + _fc_block)
                                 self.claude.record_trade_event(f"KR 위성 매수: {p_nm}({ticker}) {qty}주 @ {price:,.0f}원 | {regime_label} | AI: {ai_reason[:60]}")
                         else:
                             pos.status     = "AI 거절 🛑"
