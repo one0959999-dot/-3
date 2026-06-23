@@ -34,12 +34,16 @@ public static extern uint SetThreadExecutionState(uint esFlags);
 # stale .pyc(옛 바이트코드)로 옛 코드가 살아나는 문제 원천 차단 — 캐시 안 만듦
 $env:PYTHONDONTWRITEBYTECODE = '1'
 
+# detached 환경에서 PATH에 python 없을 수 있어 절대경로 사용 (없으면 'python' 폴백)
+$PY = "C:\Users\신동호\AppData\Local\Programs\Python\Python312\python.exe"
+if (-not (Test-Path $PY)) { $PY = 'python' }
+
 while ($true) {
     "$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss') [wrapper] 백테스트 시작" | Out-File -FilePath $log -Append -Encoding utf8
     try {
         # run_backtest.py 가 backtest_standalone.log 를 FileHandler로 직접 사용하므로
         # 콘솔/예외 출력만 별도 파일로 (동일 파일 동시 쓰기 충돌 방지)
-        & python -B run_backtest.py --mode ALL *>> (Join-Path $PSScriptRoot 'backtest_console.log')
+        & $PY -B run_backtest.py --mode ALL *>> (Join-Path $PSScriptRoot 'backtest_console.log')
     } catch {
         "$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss') [wrapper] 예외: $_" | Out-File -FilePath $log -Append -Encoding utf8
     }
