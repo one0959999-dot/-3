@@ -12,10 +12,15 @@ import logging
 logging.disable(logging.CRITICAL)
 from pykrx import stock
 
-# 연도별 스냅샷 (반기 단위로 촘촘히 — 짧게 상장했다 상폐된 것도 포착)
-SNAP_DATES = ['20140102', '20150102', '20160104', '20170102', '20180102',
-              '20190102', '20200102', '20210104', '20220103', '20230102',
-              '20240102', '20250102']
+# 분기 단위 스냅샷 (촘촘히 — 짧게 상장했다 상폐된 것까지 포착, 목표 상폐 1500~2000건)
+def _quarter_snapshots():
+    out = []
+    for y in range(2014, 2026):
+        for md in ('0102', '0401', '0701', '1001'):
+            out.append(f'{y}{md}')
+    return out
+
+SNAP_DATES = _quarter_snapshots()
 
 
 def main():
