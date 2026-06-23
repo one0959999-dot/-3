@@ -43,6 +43,43 @@ def get_forecast(mode: str, market_phase: str, signal_types, min_n: int = 20) ->
         conn.close()
 
 
+def get_phase_avg(mode: str, market_phase: str) -> dict | None:
+    """국면 전체 BUY 평균 (신호 미발생 후보의 예상수익 폴백용)."""
+    from base.database import get_db_connection
+    conn = get_db_connection()
+    try:
+        row = conn.execute('''
+            SELECT COUNT(*) n, ROUND(AVG(max_gain_pct),1) target,
+                   ROUND(AVG(days_to_peak),0) hold_days, ROUND(AVG(max_drawdown_pct),1) stop,
+                   ROUND(100.0*SUM(CASE WHEN max_gain_pct>=10 THEN 1 ELSE 0 END)/COUNT(*),0) win10
+            FROM backtest_trade_signals
+            WHERE mode=? AND signal_direction='BUY' AND market_phase=?
+              AND max_gain_pct<=300 AND max_drawdown_pct>=-90
+        ''', (mode, market_phase)).fetchone()
+        if row and row['n'] and row['n'] >= 30:
+            return {'n': row['n'], 'target': row['target'], 'hold_days': row['hold_days'],
+                    'stop': row['stop'], 'win10': row['win10']}
+        return None
+    finally:
+        conn.close()
+
+
+def estimate_candidate_return(mode: str, df, market_phase: str) -> dict | None:
+    """후보 종목 '지금 사면 예상수익' 추정.
+    신호 발생시 그 신호 통계, 미발생시 국면평균. (정렬·표시용)
+    """
+    from base.signals import detect_latest_signals
+    sigs = [s for s in detect_latest_signals(df) if 'BUY' in s]
+    if sigs:
+        fc = get_forecast(mode, market_phase, sigs)
+        if fc:
+            fc['basis'] = '·'.join(sigs); return fc
+    pa = get_phase_avg(mode, market_phase)
+    if pa:
+        pa['basis'] = '국면평균'; return pa
+    return None
+
+
 def format_forecast_msg(name, ticker, price, market_phase_kr, signal_types, fc: dict) -> str:
     """예측 매수 메시지 4줄 생성."""
     sig = ' · '.join(signal_types) if isinstance(signal_types, (list, tuple)) else signal_types

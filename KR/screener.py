@@ -1117,6 +1117,19 @@ def select_satellites(toss=None, n=NUM_SATELLITES, verbose=True, claude_client=N
             except Exception:
                 pass
 
+            # ── 백테스트 기반 '지금 사면 예상수익' 추정 (정렬·표시용) ──
+            _exp_return = None; _exp_win = None; _exp_basis = ''
+            try:
+                from base.signal_forecast import estimate_candidate_return
+                from base.market_phase import get_phase_for_date
+                import datetime as _dt2
+                _ph2 = get_phase_for_date('KR', _dt2.date.today().strftime('%Y-%m-%d')).get('phase')
+                _est = estimate_candidate_return('KR', df, _ph2)
+                if _est:
+                    _exp_return = _est.get('target'); _exp_win = _est.get('win10'); _exp_basis = _est.get('basis', '')
+            except Exception:
+                pass
+
             results.append({
                 'ticker':       ticker,
                 'name':         name,
@@ -1128,6 +1141,9 @@ def select_satellites(toss=None, n=NUM_SATELLITES, verbose=True, claude_client=N
                 'momentum_20d': float(round(recent_ret, 2)),
                 'pos_52w':      float(round(pos_52w, 1)) if pos_52w is not None else None,
                 'dl_prob':      float(round(ai_up_prob, 1)),
+                'exp_return':   _exp_return,
+                'exp_win':      _exp_win,
+                'exp_basis':    _exp_basis,
                 'frgn_inst':    ticker in frgn_inst_tickers,
                 'frgn_only':    ticker in frgn_only_tickers,
                 'score':        float(round(score, 2)),
@@ -1141,7 +1157,9 @@ def select_satellites(toss=None, n=NUM_SATELLITES, verbose=True, claude_client=N
         except Exception:
             continue
 
-    results.sort(key=lambda x: x['score'], reverse=True)
+    # 예상수익률(백테스트 기반) 우선 정렬, 없으면 기존 점수
+    results.sort(key=lambda x: (x.get('exp_return') if x.get('exp_return') is not None else -999,
+                                x['score']), reverse=True)
     
     selected = None
     if claude_client:
