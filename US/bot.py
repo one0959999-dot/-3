@@ -3260,7 +3260,14 @@ class USBotController:
                                    df=None, signal_types: list = None,
                                    sector: str = '기타', rsi: float = None) -> dict:
         """US 파인튜닝 형식 지표 dict."""
-        ind = {'sector': sector, 'signal_types': signal_types or [], 'mode': 'US'}
+        # 백테스트와 동일한 신호 라벨을 단일기준(base.signals)으로 생성 → 용어 통일
+        bt_signals = []
+        try:
+            from base.signals import detect_latest_signals
+            bt_signals = detect_latest_signals(df)
+        except Exception:
+            pass
+        ind = {'sector': sector, 'signal_types': bt_signals or (signal_types or []), 'mode': 'US'}
         if rsi is not None:
             ind['rsi'] = rsi
         if df is None or (hasattr(df, 'empty') and df.empty) or 'close' not in (df.columns if hasattr(df, 'columns') else []):

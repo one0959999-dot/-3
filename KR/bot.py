@@ -1988,7 +1988,15 @@ class KRBotController:
                                 ex_df: 'pd.DataFrame', signal_types: list = None,
                                 sector: str = '기타') -> dict:
         """파인튜닝 형식 판단에 필요한 지표 dict 구성."""
-        ind = {'sector': sector, 'signal_types': signal_types or []}
+        # 백테스트와 동일한 신호 라벨을 단일기준(base.signals)으로 생성 → 용어 통일
+        bt_signals = []
+        try:
+            from base.signals import detect_latest_signals
+            bt_signals = detect_latest_signals(ex_df)
+        except Exception:
+            pass
+        # 백테스트 크로스 신호 우선, 없으면 호출부가 넘긴 라벨(CORE_BUY 등) 폴백
+        ind = {'sector': sector, 'signal_types': bt_signals or (signal_types or [])}
         if ex_df is None or ex_df.empty or 'close' not in ex_df.columns:
             return ind
         try:
