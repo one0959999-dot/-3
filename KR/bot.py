@@ -3253,6 +3253,21 @@ class KRBotController:
                     pos.status_msg = f"진입 점수 미달 | 충족: {' | '.join(entry_reasons[:3]) if entry_reasons else '없음'}"
                     continue
 
+                # ── 앙상블 게이트: 점수제 통과 + 백테스트 엔진(신호+통계)도 동의해야 매수 ──
+                # (대결 결과 앙상블이 평균수익 최고 — 신호·점수 둘 다 동의할 때만 선별 진입)
+                if p_sh == 0 and is_cd_passed and is_golden_hours and entry_score >= entry_threshold:
+                    try:
+                        from base.entry_engine import evaluate_ensemble
+                        _mkt_e = self._build_market_info_dict()
+                        _ens = evaluate_ensemble('KR', ex_df, _mkt_e.get('market_phase'),
+                                                 score_agrees=True)
+                        if not _ens['engine_buy']:
+                            pos.status = "엔진 미동의 ⏸"
+                            pos.status_msg = f"점수 통과했으나 백테스트 신호 미발생/저승률 — 앙상블 보류"
+                            continue
+                    except Exception:
+                        pass
+
                 if p_sh == 0 and is_cd_passed and is_golden_hours and entry_score >= entry_threshold:
 
                                                                     
