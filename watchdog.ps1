@@ -26,3 +26,14 @@ if (-not $ka) {
     "$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss') [watchdog] 절전방지 죽음 → 재기동" | Out-File -FilePath $log -Append -Encoding utf8
     Start-Process powershell -ArgumentList '-ExecutionPolicy','Bypass','-WindowStyle','Hidden','-File',(Join-Path $dir 'keep_awake.ps1') -WindowStyle Hidden
 }
+
+# 4) 진행률 리포터 살아있나
+$rep = Get-CimInstance Win32_Process | Where-Object {
+    $_.Name -like 'python*' -and $_.CommandLine -like '*progress_reporter*'
+}
+if (-not $rep) {
+    $py = "C:\Users\신동호\AppData\Local\Programs\Python\Python312\python.exe"
+    if (-not (Test-Path $py)) { $py = 'python' }
+    "$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss') [watchdog] 리포터 죽음 → 재기동" | Out-File -FilePath $log -Append -Encoding utf8
+    Start-Process $py -ArgumentList '-B','progress_reporter.py' -WorkingDirectory $dir -WindowStyle Hidden
+}
