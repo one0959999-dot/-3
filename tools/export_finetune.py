@@ -108,6 +108,13 @@ def build_input_text(row: dict) -> str:
         lines.append("=== 공시 정보 ===")
         lines.append(row['news_summary'])
 
+    dl = row.get('_delist')
+    if dl and dl.get('reason'):
+        lines.append("")
+        lines.append("=== 상폐 정보 (이 종목의 최종 운명) ===")
+        lines.append(f"이 종목은 {dl.get('last_date','')}에 [{dl['reason']}]로 상장폐지됨 "
+                     f"(최종가 고점대비 {dl.get('last_vs_peak_pct','?')}%)")
+
     lines.append("")
     lines.append(f"질문: 위 조건에서 {row['signal_direction']} 신호가 발생했습니다. 향후 가격 결과를 예측하세요.")
     return '\n'.join(lines)
@@ -181,11 +188,19 @@ def export(mode: str = 'ALL', out_path: str = 'finetune.jsonl',
     rows = [dict(r) for r in rows]
     print(f"총 {len(rows)}개 신호 → JSONL 변환 시작")
 
+    # 상폐 사유 맵 (생존자 편향 교정 — 파산/피인수 구분 컨텍스트)
+    try:
+        from base.database import get_delisting_map
+        delist_map = get_delisting_map()
+    except Exception:
+        delist_map = {}
+
     written = 0
     skipped = 0
     with open(out_path, 'w', encoding='utf-8') as f:
         for row in rows:
             try:
+                row['_delist'] = delist_map.get(row['ticker'])
                 user_text  = build_input_text(row)
                 model_text = build_output_text(row)
                 record = {

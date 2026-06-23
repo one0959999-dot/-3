@@ -368,6 +368,12 @@ def init_db():
                 cursor.execute(
                     "ALTER TABLE backtest_trade_signals ADD COLUMN hot_sectors TEXT DEFAULT ''")
 
+            # 상폐 종목 사유 (생존자 편향 교정 — 파산/피인수 구분)
+            cursor.execute('''CREATE TABLE IF NOT EXISTS ticker_delisting (
+                ticker TEXT, mode TEXT, reason TEXT, last_date TEXT,
+                last_price REAL, peak_1y REAL, last_vs_peak_pct REAL,
+                PRIMARY KEY (ticker, mode))''')
+
             cursor.execute('''
         CREATE TABLE IF NOT EXISTS backtest_run_status (
             id INTEGER PRIMARY KEY CHECK (id = 1),
@@ -957,6 +963,34 @@ def log_backtest_signal(data: dict) -> int:
             return cur.lastrowid
         finally:
             conn.close()
+
+
+def save_delisting(ticker: str, mode: str, info: dict):
+    """상폐 사유 저장 (생존자 편향 교정용)."""
+    with db_lock:
+        conn = get_db_connection()
+        try:
+            conn.execute('''INSERT OR REPLACE INTO ticker_delisting
+                (ticker, mode, reason, last_date, last_price, peak_1y, last_vs_peak_pct)
+                VALUES (?,?,?,?,?,?,?)''',
+                (ticker, mode, info.get('reason'), info.get('last_date'),
+                 info.get('last_price'), info.get('peak_1y'), info.get('last_vs_peak_pct')))
+            conn.commit()
+        finally:
+            conn.close()
+
+
+def get_delisting_map(mode: str = None) -> dict:
+    """{ticker: {reason, last_date, ...}} 반환 (export 컨텍스트용)."""
+    conn = get_db_connection()
+    try:
+        if mode:
+            rows = conn.execute('SELECT * FROM ticker_delisting WHERE mode=?', (mode,)).fetchall()
+        else:
+            rows = conn.execute('SELECT * FROM ticker_delisting').fetchall()
+        return {r['ticker']: dict(r) for r in rows}
+    finally:
+        conn.close()
 
 
 def delete_backtest_signals_for_ticker(user_id: int, mode: str, ticker: str) -> int:

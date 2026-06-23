@@ -429,9 +429,22 @@ def run_full_backtest_ticker(ticker: str, stock_name: str, user_id: int,
     if len(df) < 60:
         return _mark_skipped()
 
-    # 거래량 필터 — 일평균 거래량 미달 종목 스킵
+    # 상폐 종목 감지 + 사유 분류 (생존자 편향 교정 — 파산/피인수 구분)
+    is_delisted = False
+    try:
+        import datetime as _dt
+        _last = df.index.max()
+        if _last is not None and (_dt.datetime.now() - _last.to_pydatetime()).days > 30:
+            is_delisted = True
+            from base.delisting_reason import classify
+            from base.database import save_delisting
+            save_delisting(ticker, 'KR', classify(ticker, df, news_monitor))
+    except Exception:
+        pass
+
+    # 거래량 필터 — 미달 스킵 (단 상폐주는 '죽음 패턴'이 핵심이라 우회)
     avg_vol = df['volume'].tail(60).mean()
-    if avg_vol < _MIN_VOL_KR:
+    if avg_vol < _MIN_VOL_KR and not is_delisted:
         logger.debug(f"[KR 백테스트] {ticker} 거래량 부족 ({avg_vol:.0f}주) 스킵")
         return _mark_skipped()
 
