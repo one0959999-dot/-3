@@ -2017,6 +2017,23 @@ class USBotController:
                     with self.lock:
                         pos.status = _timing_status
                 continue
+
+            # ── 앙상블 게이트: 점수제 통과 + 백테스트 엔진(신호+통계)도 동의해야 매수 (KR과 통일) ──
+            try:
+                from base.entry_engine import evaluate_ensemble
+                _mkt_e = self._build_us_market_info_dict()
+                _ens = evaluate_ensemble('US', df_raw, _mkt_e.get('market_phase'), score_agrees=True)
+                if not _ens['engine_buy']:
+                    _st = "엔진 미동의 ⏸ (앙상블 보류)"
+                    if pos is None:
+                        self.satellite_positions[ticker] = USPosition(
+                            ticker=ticker, name=info["name"], budget_usd=sat_budget_per, status=_st)
+                    else:
+                        with self.lock:
+                            pos.status = _st
+                    continue
+            except Exception:
+                pass
                                                                               
                                                              
                                 
