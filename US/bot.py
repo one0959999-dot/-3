@@ -2248,10 +2248,12 @@ class USBotController:
                         initial_shares_for_exit = 0.0,
                     )
                 self.add_log(f"🛰️ 위성 1차매수 {info['name']}({ticker}) {qty}주 @ ${price:.2f} | {entry_score}pt [{score_str}]")
+                _us_fc = self._forecast_block(info['name'], ticker, price, df_raw)
                 self._tg(
                     f"🛰️ [US 위성 1차매수] {info['name']} ({ticker})\n"
                     f"@ ${price:.2f}  점수 {entry_score}pt  섹터: {info.get('sector','')}\n"
                     f"2차 예약: ${price*0.98:.2f} (-2%)  3차: ${price*0.96:.2f} (-4%)"
+                    f"{_us_fc}"
                 )
                 if self.claude:
                     self.claude.record_trade_event(
@@ -3329,6 +3331,24 @@ class USBotController:
         except Exception:
             pass
         return ind
+
+    def _forecast_block(self, name: str, ticker: str, price: float, ex_df) -> str:
+        """US 매수 시 백테스트 통계 기반 예측(예상 보유/목표/손절). 없으면 빈 문자열. (KR과 통일)"""
+        try:
+            from base.signals import detect_latest_signals
+            from base.signal_forecast import get_forecast, format_forecast_msg
+            sigs = detect_latest_signals(ex_df)
+            if not sigs:
+                return ''
+            mkt = self._build_us_market_info_dict()
+            phase = mkt.get('market_phase')
+            fc = get_forecast('US', phase, sigs)
+            if not fc:
+                return ''
+            return '\n' + format_forecast_msg(name, ticker, price,
+                                              mkt.get('market_phase_kr') or phase, sigs, fc)
+        except Exception:
+            return ''
 
     def _build_us_market_info_dict(self) -> dict:
         """US 파인튜닝 형식 시장 국면/매크로 dict — 일별 캐시."""
