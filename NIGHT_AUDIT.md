@@ -20,3 +20,4 @@
 ## 검증 로그(H 준비)
 - 20:02 forecast 핵심쿼리 idx_bts_mode_phase 인덱스 사용 확인(209만행 풀스캔X). US 예측블록 통일(6133410). 감시정상.
 - 20:29 **killswitch 점검**: 종목별 일일손실(-5천원)+과열청산은 있음. 그러나 합의한 **포트폴리오 2단계 killswitch(-10%신규중단/-20%전량청산) 미구현**. 구현시 메인루프+전량청산 로직 변경(오작동=오청산 위험) → 사용자 확정 후 진행 권고. 스펙: 일중 고점대비 equity drawdown -10%→신규매수 일시중단, -20%→전포지션 청산+당일 거래중단.
+- 20:56 **AI후보선정 연결**: KR ✅ bot→screener.select_satellites→ai_select_satellites(국면·섹터 종합)+estimate_candidate_return(exp_return) 정상연결(死코드 아님). US ⚠️ 점수기반 _satellite_score만, AI종합판단/exp_return 없음 → KR/US 불일치. 권고: US screener도 ai_select_satellites+estimate_candidate_return 통일(단 US 매수종목 변경 → 확정 후).
