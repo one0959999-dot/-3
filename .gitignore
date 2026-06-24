@@ -22,3 +22,5 @@ lassi.db
 
 # Fine-tuning data (generated locally)
 finetune*.jsonl
+lassi.db-shm
+lassi.db-wal
