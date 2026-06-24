@@ -10,7 +10,7 @@
 - [x] E. 앙상블 균형 — 정상: 게이트는 '당일 크로스 신호 발생 + 점수통과' 둘 다 요구 → 점수제 단독보다 선별적이나 0건 아님(대결서 15종목 history 720건). 의도된 선별성(백테스트 진입과 일치). 다만 라이브는 '당일 신호'만 봐서 점수제보다 매수빈도↓ — 이게 곧 +4.5% 고품질의 대가.
 - [x] F. 필터 — win10(55%게이트)은 변별력 없음(전국면 65~86% 다 통과). win20(20%달성)은 41~73%로 변별력 큼. PANIC 86%/73% vs BULL_LATE 65%/41%. 권고: 엔진 게이트를 win20 또는 국면가중으로 개선→고품질 국면 우선. 라이브 매수빈도 영향이라 사용자확정 후 적용.
 - [x] G. 코드정리 — 중복 신호/지표함수 0개(base.signals 단일기준으로 6파일 공유: KR/US backtest_runner+bot, entry_engine, signal_forecast). 구조 일관. 점수제는 앙상블로 활용(삭제X 유지).
-- [ ] H. 최종 일관성 점검 + "수익 최대화 조건" 종합 리포트
+- [~] H. 종합리포트 초안 PROFIT_REPORT.md 작성완료(6:30 최종보고)
 
 ## 원칙
 - 라이브 매매 핵심 로직은 안전하게(테스트 가능한 것만), 깨질 위험 큰 변경은 리포트로 남기고 사용자 확정 대기
@@ -22,3 +22,4 @@
 - 20:29 **killswitch 점검**: 종목별 일일손실(-5천원)+과열청산은 있음. 그러나 합의한 **포트폴리오 2단계 killswitch(-10%신규중단/-20%전량청산) 미구현**. 구현시 메인루프+전량청산 로직 변경(오작동=오청산 위험) → 사용자 확정 후 진행 권고. 스펙: 일중 고점대비 equity drawdown -10%→신규매수 일시중단, -20%→전포지션 청산+당일 거래중단.
 - 20:56 **AI후보선정 연결**: KR ✅ bot→screener.select_satellites→ai_select_satellites(국면·섹터 종합)+estimate_candidate_return(exp_return) 정상연결(死코드 아님). US ⚠️ 점수기반 _satellite_score만, AI종합판단/exp_return 없음 → KR/US 불일치. 권고: US screener도 ai_select_satellites+estimate_candidate_return 통일(단 US 매수종목 변경 → 확정 후).
 - 21:24 forecast fallback 체인 동작확인: 정상조회→표본부족시 None→phase-avg폴백(28511건). 라이브 후보평가가 표본없어도 국면평균으로 안전동작 ✅.
+- 21:51 delisting_reason 검증(버그아님, ≥20행가드, 8건정확). 안전점검 소진 → H리포트 초안 PROFIT_REPORT.md 작성. 총신호 209만(KR60.8만/US149만), 섹터캐시3252.
