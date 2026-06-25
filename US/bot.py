@@ -241,6 +241,7 @@ class USBotController:
         self._equity_peak_date    = None
         self._trading_halted_date = None
         self._killswitch_last_warn= ''
+        self.MAX_STOCK_PCT        = 0.30   # 단일종목 포트폴리오 비중 상한(불타기 폭주 방지)
 
                                                            
         self.initial_capital_captured = False
@@ -430,6 +431,24 @@ class USBotController:
                 self._sell(tk, nm, sh, self._price(tk), strategy='killswitch', ai_reason='killswitch L2 전량청산')
         except Exception as e:
             logger.error(f"[US봇] killswitch 청산 오류: {e}", exc_info=True)
+
+    def _concentration_blocked(self, ticker: str, budget_usd: float, name: str = '') -> bool:
+        """단일종목이 포트폴리오 MAX_STOCK_PCT 초과시 매수 차단."""
+        try:
+            eq = float(self._get_total_assets_usd())
+            px = self._price(ticker) or 0
+            if eq <= 0 or px <= 0:
+                return False
+            pos = self.satellite_positions.get(ticker) or self.core_positions.get(ticker)
+            cur_val = (float(getattr(pos, 'shares', 0)) * px) if pos else 0.0
+            new_val = cur_val + float(budget_usd or 0)
+            if new_val > self.MAX_STOCK_PCT * eq:
+                self.add_log(f"🚫 [{name or ticker}] 매수차단 — 집中도 상한 "
+                             f"({new_val/eq*100:.0f}% > {self.MAX_STOCK_PCT*100:.0f}%)")
+                return True
+        except Exception:
+            return False
+        return False
 
     def _warn_blocked(self, ticker: str, name: str = '') -> bool:
         """투자경고·거래정지 종목 매수 차단 (일일 캐시)."""
@@ -938,6 +957,8 @@ class USBotController:
         if self._killswitch_blocked(name):          # 포트폴리오 killswitch 게이트
             return 0
         if self._warn_blocked(ticker, name):        # 투자경고/거래정지 차단
+            return 0
+        if self._concentration_blocked(ticker, budget_usd, name):   # 단일종목 집中도 상한
             return 0
         if self.cash_usd is None:
             self.add_log(f"⏳ [{name}] 매수 보류 — 토스 잔고 초기화 대기 중")

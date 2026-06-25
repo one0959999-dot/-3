@@ -156,6 +156,7 @@ class KRBotController:
         self._equity_peak_date    = None
         self._trading_halted_date = None   # 'YYYY-MM-DD' = 당일 killswitch L2 발동됨
         self._killswitch_last_warn= ''
+        self.MAX_STOCK_PCT        = 0.30   # 단일종목 포트폴리오 비중 상한(불타기 폭주 방지 백스톱)
 
 
                                                           
@@ -762,6 +763,25 @@ class KRBotController:
         except Exception as e:
             logger.error(f"[{self.mode_name}] killswitch 청산 오류: {e}", exc_info=True)
 
+    def _concentration_blocked(self, ticker: str, qty: int, name: str = '') -> bool:
+        """단일종목이 포트폴리오 MAX_STOCK_PCT 초과시 매수 차단 (과점/불타기 폭주 방지)."""
+        try:
+            eq = float(getattr(self, '_last_total_equity', 0) or 0)
+            px = self.live_prices.get(ticker, 0) or 0
+            if eq <= 0 or px <= 0:
+                return False                         # 정보 부족시 통과
+            pos = self.satellite_positions.get(ticker) or next(
+                (c for c in self.core_positions if c.ticker == ticker), None)
+            cur_sh = float(getattr(pos, 'shares', 0)) if pos else 0
+            new_val = (cur_sh + qty) * px
+            if new_val > self.MAX_STOCK_PCT * eq:
+                self.add_log(f"🚫 [{name or ticker}] 매수차단 — 집中도 상한 "
+                             f"({new_val/eq*100:.0f}% > {self.MAX_STOCK_PCT*100:.0f}%)")
+                return True
+        except Exception:
+            return False
+        return False
+
     def _warn_blocked(self, ticker: str, name: str = '') -> bool:
         """관리종목·투자경고·거래정지·VI·과열 종목 매수 차단 (일일 캐시). 토스 API 활용."""
         today = _now_kst().strftime('%Y-%m-%d')
@@ -938,6 +958,8 @@ class KRBotController:
         if self._killswitch_blocked(name):          # 포트폴리오 killswitch 게이트
             return False
         if self._warn_blocked(ticker, name):        # 관리종목·투자경고·거래정지·VI 차단
+            return False
+        if self._concentration_blocked(ticker, qty, name):   # 단일종목 집中도 상한
             return False
         if self.internal_cash is None:
             self.add_log(f"⏳ [{name}] 매수 보류 — 토스 잔고 초기화 대기 중")
