@@ -1072,7 +1072,7 @@ class KRBotController:
                                          
                         try:
                             context = f"악재 공시 발생: {report_nm} ({rcept_dt})\n보유: {shares}주 @ 평단 {avg_price:,.0f}원"
-                            decision, ai_reason = self.claude.ai_approve_trade(
+                            decision, ai_reason, _ = self.claude.ai_approve_trade(
                                 'SELL', name, ticker, avg_price, "공시감지",
                                 {}, self.hot_sectors,
                                 get_recent_trades(self.user_id, ticker),
@@ -3445,7 +3445,7 @@ class KRBotController:
                                 trade_ctx = self._build_trade_context(ticker, p_nm, price, ex_df, st_nm, regime)
                                 _ind = self._build_indicators_dict(ticker, price, ex_df, signal_types=[st_nm])
                                 _mkt = self._build_market_info_dict()
-                                decision, ai_reason = self.claude.ai_approve_trade(sig, p_nm, ticker, price, st_nm, ind_val, self.hot_sectors, context=trade_ctx, indicators=_ind, market_info=_mkt)
+                                decision, ai_reason, _ = self.claude.ai_approve_trade(sig, p_nm, ticker, price, st_nm, ind_val, self.hot_sectors, context=trade_ctx, indicators=_ind, market_info=_mkt)
                                 if decision:
                                     if self._buy_order(ticker, qty, pos, p_nm):
                                         with self.lock:
@@ -3545,7 +3545,7 @@ class KRBotController:
                             trade_ctx += f"\n[52주 신고가] {_52w_note_kr}"
                         _ind = self._build_indicators_dict(ticker, price, ex_df, signal_types=[st_nm])
                         _mkt = self._build_market_info_dict()
-                        decision, ai_reason = self.claude.ai_approve_trade(sig, p_nm, ticker, price, st_nm, ind_val, self.hot_sectors, context=trade_ctx, indicators=_ind, market_info=_mkt)
+                        decision, ai_reason, _ = self.claude.ai_approve_trade(sig, p_nm, ticker, price, st_nm, ind_val, self.hot_sectors, context=trade_ctx, indicators=_ind, market_info=_mkt)
                         if decision:
                             qty = int((entry_cash * 0.98) // price)
                             if qty > 0 and self._buy_order(ticker, qty, pos, p_nm):
@@ -3609,7 +3609,7 @@ class KRBotController:
                         trade_ctx = self._build_trade_context(ticker, p_nm, price, ex_df, st_nm, regime)
                         _ind = self._build_indicators_dict(ticker, price, ex_df, signal_types=[st_nm])
                         _mkt = self._build_market_info_dict()
-                        decision, ai_reason = self.claude.ai_approve_trade(sig, p_nm, ticker, price, st_nm, ind_val, self.hot_sectors, context=trade_ctx, indicators=_ind, market_info=_mkt)
+                        decision, ai_reason, _ = self.claude.ai_approve_trade(sig, p_nm, ticker, price, st_nm, ind_val, self.hot_sectors, context=trade_ctx, indicators=_ind, market_info=_mkt)
                         if decision:
                             if self._sell_order(ticker, p_sh, pos, p_nm):
                                 with self.lock:
