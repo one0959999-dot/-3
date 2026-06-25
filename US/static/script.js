@@ -176,7 +176,9 @@ document.addEventListener('DOMContentLoaded', () => {
     // 🟢 팝업창(모달)을 띄우는 함수
     window.showStatusModal = function (name, message) {
         document.getElementById('modalTickerName').innerText = `[${name}] 진행 상황`;
-        document.getElementById('modalStatusMsg').innerText = message;
+        // 구분자(· |)를 줄바꿈으로 — 모달/모바일 가독성
+        document.getElementById('modalStatusMsg').innerText =
+            (message || '').replace(/\s*·\s*/g, '\n').replace(/\s*\|\s*/g, '\n');
         document.getElementById('statusModal').style.display = 'flex';
     }
     // 📦 onclick 속성용 — encodeURIComponent로 개행·특수문자 안전 처리
