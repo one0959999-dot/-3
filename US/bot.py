@@ -3443,6 +3443,7 @@ class USBotController:
                     self._ai_market_entry_bonus = 0
 
                 # ── 8단계 국면(백테스트 기준)에서 regime 파생 — 3단계와 통일(불일치 해소) ──
+                _r8_ok = False
                 try:
                     from base.market_phase import get_phase_for_date, regime_from_phase
                     _ph_us = get_phase_for_date('US', _now_et().strftime('%Y-%m-%d')).get('phase')
@@ -3451,26 +3452,24 @@ class USBotController:
                         if _r8 != regime:
                             self.add_log(f"🔄 [US regime 통일] 3단계({regime}) → 8단계기준({_r8}) | 국면 {_ph_us}")
                         regime = _r8
+                        _r8_ok = True
                 except Exception as _pe:
                     logger.debug(f"[US봇] 8단계 regime 파생 실패: {_pe}")
 
                 self.market_regime = regime
 
-
-
-                _proposed_us = self.market_regime
-                if _proposed_us == "BULL" and _prev_regime != "BULL":
-                    self._bull_pending_days += 1
-                    if self._bull_pending_days < 2:
-                        self.market_regime = _prev_regime             
-                        self.add_log(
-                            f"⏳ [US] BULL 확인 대기 {self._bull_pending_days}/2회 — "
-                            f"{_prev_regime} 유지 (단기 급등 필터)"
-                        )
-                    else:
-                        self._bull_pending_days = 0                    
-                elif _proposed_us != "BULL":
-                    self._bull_pending_days = 0                                
+                # BULL 확인 hysteresis는 옛 3단계 규칙용 — 8단계(권위)가 성공하면 건너뜀
+                if not _r8_ok:
+                    _proposed_us = self.market_regime
+                    if _proposed_us == "BULL" and _prev_regime != "BULL":
+                        self._bull_pending_days += 1
+                        if self._bull_pending_days < 2:
+                            self.market_regime = _prev_regime
+                            self.add_log(f"⏳ [US] BULL 확인 대기 {self._bull_pending_days}/2회 — {_prev_regime} 유지")
+                        else:
+                            self._bull_pending_days = 0
+                    elif _proposed_us != "BULL":
+                        self._bull_pending_days = 0
 
         except Exception as e:
             logger.debug(f"[US봇] 시장 국면 판단 실패: {e}")

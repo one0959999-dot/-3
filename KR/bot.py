@@ -1808,6 +1808,7 @@ class KRBotController:
                 self._ai_market_entry_bonus = 0
 
             # ── 8단계 국면(백테스트 기준)에서 regime 파생 — 3단계와 통일(불일치 해소) ──
+            _r8_ok = False
             try:
                 from base.market_phase import get_phase_for_date, regime_from_phase
                 _ph_kr = get_phase_for_date('KR', _now_kst().strftime('%Y-%m-%d')).get('phase')
@@ -1816,22 +1817,22 @@ class KRBotController:
                     if _r8 != self.market_regime:
                         self.add_log(f"🔄 [KR regime 통일] 3단계({self.market_regime}) → 8단계기준({_r8}) | 국면 {_ph_kr}")
                     self.market_regime = _r8
+                    _r8_ok = True
             except Exception as _pe:
                 logger.debug(f"[{self.mode_name}] 8단계 regime 파생 실패: {_pe}")
 
-            _proposed = self.market_regime
-            if _proposed == "BULL" and prev != "BULL":
-                self._bull_pending_days += 1
-                if self._bull_pending_days < 2:
-                    self.market_regime = prev                       
-                    self.add_log(
-                        f"⏳ [{self.mode_name}] BULL 확인 대기 {self._bull_pending_days}/2회 — "
-                        f"{prev} 유지 (단기 급등 필터)"
-                    )
-                else:
-                    self._bull_pending_days = 0                       
-            elif _proposed != "BULL":
-                self._bull_pending_days = 0                                
+            # BULL 확인 hysteresis는 옛 3단계 규칙용 — 8단계(권위)가 성공하면 건너뜀
+            if not _r8_ok:
+                _proposed = self.market_regime
+                if _proposed == "BULL" and prev != "BULL":
+                    self._bull_pending_days += 1
+                    if self._bull_pending_days < 2:
+                        self.market_regime = prev
+                        self.add_log(f"⏳ [{self.mode_name}] BULL 확인 대기 {self._bull_pending_days}/2회 — {prev} 유지")
+                    else:
+                        self._bull_pending_days = 0
+                elif _proposed != "BULL":
+                    self._bull_pending_days = 0
 
                                                               
             adx_str    = f"ADX={detail['adx']:.1f}"
