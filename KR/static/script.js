@@ -158,8 +158,8 @@ document.addEventListener('DOMContentLoaded', () => {
                 statusColor = holding ? '#2563eb' : '#6b7280';
             }
 
-            return `<div style="border:1px solid ${borderColor};background:${bgColor};border-radius:12px;padding:14px 16px;transition:all 0.3s;">
-                <div style="font-size:0.72rem;color:${clr.label};margin-bottom:6px;">${asset.emoji} ${ratioStr}</div>
+            return `<div onclick="showStatusModalEncoded('${asset.name}', '${encodeURIComponent(asset.status_msg||'')}')" style="border:1px solid ${borderColor};background:${bgColor};border-radius:12px;padding:14px 16px;transition:all 0.3s;cursor:pointer;">
+                <div style="font-size:0.72rem;color:${clr.label};margin-bottom:6px;">${asset.emoji} ${ratioStr} 📋</div>
                 <div style="font-size:0.95rem;font-weight:700;color:${clr.name};margin-bottom:4px;">${asset.name}</div>
                 <div style="font-size:0.78rem;color:${clr.ticker};margin-bottom:8px;">${asset.ticker}</div>
                 <div style="font-size:0.88rem;color:${clr.valueTxt};">

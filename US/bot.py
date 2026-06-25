@@ -4238,6 +4238,12 @@ class USBotController:
                 t        = asset["ticker"]
                 sp_usd   = self._price_cache.get(t, 0.0)
                 d_shares = self._defensive_shares.get(t, 0)
+                _def_msg = (
+                    f"🛡️ {asset['name']} ({t}) · 헤지 배정 {asset['ratio']*100:.0f}%  ·  📊 {_phase_kr_s}  ·  "
+                    + (f"✅ 헤지 가동 중 · 보유 {d_shares}주 (평가 {round(d_shares*sp_usd*fx):,}원) · 현재가 {round(sp_usd*fx):,}원"
+                       if is_bear else
+                       f"⏸ 대기 — 하락장(BEAR) 전환 시 자동 매수 · 현재 {round(sp_usd*fx):,}원 · 인버스/금/달러로 하락 방어")
+                )
                 defensive_list.append({
                     "ticker":     t,
                     "name":       asset["name"],
@@ -4248,6 +4254,7 @@ class USBotController:
                     "value":      round(d_shares * sp_usd * fx),
                     "active":     is_bear,
                     "change_pct": 0.0,
+                    "status_msg": _def_msg,
                 })
 
                                                           

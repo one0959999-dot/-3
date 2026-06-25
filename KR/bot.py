@@ -4902,6 +4902,8 @@ class KRBotController:
                                           
             is_bear = (self.market_regime == "BEAR")
             defensive_list = []
+            _def_phase_kr = self._build_market_info_dict().get('market_phase_kr') or self.market_regime
+            _def_is_bear = (self.market_regime == 'BEAR')
             bal_stocks = {s['ticker']: int(s.get('shares', 0)) for s in (self.cached_balance or {}).get('stocks', [])} if self.cached_balance else {}
             for asset in DEFENSIVE_ASSETS:
                 d_ticker = asset['ticker']
@@ -4927,6 +4929,12 @@ class KRBotController:
                                 d_change_pct = (d_price - _prev) / _prev * 100
                     except Exception:
                         pass
+                _dmsg = (
+                    f"🛡️ {asset['name']} ({d_ticker}) · 헤지 배정 {asset['ratio']*100:.0f}%  ·  📊 {_def_phase_kr}  ·  "
+                    + (f"✅ 헤지 가동 중 · 보유 {d_shares}주 (평가 {d_shares*d_price:,.0f}원) · 현재가 {d_price:,.0f}원"
+                       if _def_is_bear else
+                       f"⏸ 대기 — 하락장(BEAR) 전환 시 자동 매수 · 현재 {d_price:,.0f}원 · 인버스/금/채권으로 하락 방어")
+                )
                 defensive_list.append({
                     "ticker":     d_ticker,
                     "name":       asset['name'],
@@ -4935,8 +4943,9 @@ class KRBotController:
                     "price":      d_price,
                     "shares":     d_shares,
                     "value":      d_shares * d_price,
-                    "active":     is_bear,
+                    "active":     _def_is_bear,
                     "change_pct": round(d_change_pct, 2),
+                    "status_msg": _dmsg,
                 })
 
                                                                         
