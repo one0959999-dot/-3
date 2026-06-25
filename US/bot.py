@@ -1036,8 +1036,9 @@ class USBotController:
         _use_fractional = (qty_f is not None and abs(qty_f - round(qty_f)) >= 1e-6 and qty_f >= 0.001
                            and hasattr(self.toss, 'buy_fractional_order'))
         if _use_fractional:
-            ok   = self.toss.buy_fractional_order(ticker, qty_f)
-            qty  = qty_f             
+            # buy_fractional_order는 '달러 금액'(orderAmount) 기반 — 수량(qty_f)이 아니라 금액(avail)을 넘겨야 함
+            ok   = self.toss.buy_fractional_order(ticker, round(avail, 2))
+            qty  = qty_f              # 회계용 예상 체결수량(금액/현재가)
         else:
             qty  = int(qty_f) if qty_f is not None else qty
             ok   = self.toss.buy_market_order(ticker, qty)
