@@ -1148,6 +1148,22 @@ def get_backtest_run_status() -> dict:
         conn.close()
 
 
+def get_sector_phase_stat(mode: str, sector: str, market_phase: str) -> dict | None:
+    """섹터×국면 백테스트 통계 조회 (라이브 후보선정·AI판단용). 없으면 None."""
+    if not sector or not market_phase:
+        return None
+    conn = get_db_connection()
+    try:
+        row = conn.execute('''
+            SELECT win_rate, avg_max_gain_pct, avg_max_drawdown_pct, total_signals
+            FROM sector_phase_stats
+            WHERE mode=? AND sector=? AND market_phase=? AND total_signals>=30
+        ''', (mode, sector, market_phase)).fetchone()
+        return dict(row) if row else None
+    finally:
+        conn.close()
+
+
 def rebuild_sector_phase_stats(mode: str):
     """backtest_trade_signals에서 섹터×국면 승률 집계."""
     with db_lock:
