@@ -508,6 +508,15 @@ class USBotController:
             return
         self._self_improve_date = today
         try:
+            _wk = _dt.date.today().isocalendar()[1]
+            if getattr(self, '_stats_refresh_wk', None) != _wk:
+                self._stats_refresh_wk = _wk
+                from base.database import rebuild_sector_phase_stats, rebuild_seasonality_stats
+                rebuild_sector_phase_stats('US'); rebuild_seasonality_stats('US')
+                self.add_log("📊 파생통계 주간 재집계 완료")
+        except Exception as e:
+            logger.error(f"[US봇] 파생통계 갱신 오류: {e}")
+        try:
             self._backfill_ai_outcomes()              # AI veto 사후검증
         except Exception as e:
             logger.error(f"[US봇] AI outcome 백필 오류: {e}")

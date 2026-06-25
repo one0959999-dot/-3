@@ -873,6 +873,17 @@ class KRBotController:
         if getattr(self, '_self_improve_date', None) == today:
             return
         self._self_improve_date = today
+        # 주 1회 파생통계(섹터×국면·계절성) 재집계 — 백테스트 데이터 갱신 반영
+        try:
+            import datetime as _dtw
+            _wk = _dtw.date.today().isocalendar()[1]
+            if getattr(self, '_stats_refresh_wk', None) != _wk:
+                self._stats_refresh_wk = _wk
+                from base.database import rebuild_sector_phase_stats, rebuild_seasonality_stats
+                rebuild_sector_phase_stats('KR'); rebuild_seasonality_stats('KR')
+                self.add_log("📊 파생통계(섹터×국면·계절성) 주간 재집계 완료")
+        except Exception as e:
+            logger.error(f"[{self.mode_name}] 파생통계 갱신 오류: {e}")
         try:
             self._backfill_ai_outcomes()              # AI veto 사후검증
         except Exception as e:
