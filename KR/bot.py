@@ -2422,7 +2422,7 @@ class KRBotController:
                                                                      
                                                      
         _is_pause = ("15:15" <= current_time_str < "16:00")
-        is_golden_hours = ("09:01" <= current_time_str <= "20:00") and not _is_pause
+        is_golden_hours = ("08:05" <= current_time_str <= "20:00") and not _is_pause
 
                                                          
                                                 
