@@ -16,7 +16,7 @@ import os
 import pickle
 import time
 
-from dl_model import StockLSTM, _add_features, INPUT_SIZE, SEQ_LEN
+from ai.dl_model import StockLSTM, _add_features, INPUT_SIZE, SEQ_LEN
 
 print("🧠 [딥러닝 엔진 v2] 10피처 Bidirectional LSTM 훈련을 시작합니다...")
 

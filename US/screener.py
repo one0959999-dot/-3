@@ -662,7 +662,7 @@ def scan_us_satellites(n: int = 5, exclude: set = None, toss_api=None) -> list[d
 
     # ④ DL 예측기 싱글턴 로드
     try:
-        from dl_model import DeepLearningPredictor
+        from ai.dl_model import DeepLearningPredictor
     except ImportError:
         DeepLearningPredictor = None
     if DeepLearningPredictor is not None and _dl_predictor_us is None:

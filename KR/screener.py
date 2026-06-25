@@ -950,7 +950,7 @@ def select_satellites(toss=None, n=NUM_SATELLITES, verbose=True, claude_client=N
     # W-05: 락으로 멀티스레드 환경에서 중복 생성(레이스컨디션) 방지
     # BUG-06 FIX: dl_model 임포트 실패 시 무음 처리되던 것을 명시적 경고로 변경
     try:
-        from dl_model import DeepLearningPredictor
+        from ai.dl_model import DeepLearningPredictor
     except ImportError as e:
         logger.warning(f"[스크리너] dl_model 로드 실패 — DL 예측 비활성화: {e}")
         DeepLearningPredictor = None
