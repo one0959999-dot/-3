@@ -30,14 +30,16 @@ def get_forecast(mode: str, market_phase: str, signal_types, min_n: int = 20) ->
                    ROUND(AVG(days_to_peak),0) hold_days,
                    ROUND(AVG(max_gain_pct),1) target,
                    ROUND(AVG(max_drawdown_pct),1) stop,
-                   ROUND(100.0*SUM(CASE WHEN max_gain_pct>=10 THEN 1 ELSE 0 END)/COUNT(*),0) win10
+                   ROUND(100.0*SUM(CASE WHEN max_gain_pct>=10 THEN 1 ELSE 0 END)/COUNT(*),0) win10,
+                   ROUND(100.0*SUM(CASE WHEN max_gain_pct>=20 THEN 1 ELSE 0 END)/COUNT(*),0) win20
                 FROM backtest_trade_signals
                 WHERE mode=? AND signal_direction='BUY'
                   AND max_gain_pct<=300 AND max_drawdown_pct>=-90 AND {cond}
             ''', (mode, *params)).fetchone()
             if row and row['n'] and row['n'] >= min_n:
                 return {'n': row['n'], 'hold_days': row['hold_days'],
-                        'target': row['target'], 'stop': row['stop'], 'win10': row['win10']}
+                        'target': row['target'], 'stop': row['stop'],
+                        'win10': row['win10'], 'win20': row['win20']}
         return None
     finally:
         conn.close()
@@ -51,14 +53,15 @@ def get_phase_avg(mode: str, market_phase: str) -> dict | None:
         row = conn.execute('''
             SELECT COUNT(*) n, ROUND(AVG(max_gain_pct),1) target,
                    ROUND(AVG(days_to_peak),0) hold_days, ROUND(AVG(max_drawdown_pct),1) stop,
-                   ROUND(100.0*SUM(CASE WHEN max_gain_pct>=10 THEN 1 ELSE 0 END)/COUNT(*),0) win10
+                   ROUND(100.0*SUM(CASE WHEN max_gain_pct>=10 THEN 1 ELSE 0 END)/COUNT(*),0) win10,
+                   ROUND(100.0*SUM(CASE WHEN max_gain_pct>=20 THEN 1 ELSE 0 END)/COUNT(*),0) win20
             FROM backtest_trade_signals
             WHERE mode=? AND signal_direction='BUY' AND market_phase=?
               AND max_gain_pct<=300 AND max_drawdown_pct>=-90
         ''', (mode, market_phase)).fetchone()
         if row and row['n'] and row['n'] >= 30:
             return {'n': row['n'], 'target': row['target'], 'hold_days': row['hold_days'],
-                    'stop': row['stop'], 'win10': row['win10']}
+                    'stop': row['stop'], 'win10': row['win10'], 'win20': row['win20']}
         return None
     finally:
         conn.close()

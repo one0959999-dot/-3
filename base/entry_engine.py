@@ -11,18 +11,19 @@ from base.signal_forecast import get_forecast
 
 
 def evaluate(mode: str, df, market_phase: str, sector: str = '기타',
-             min_win: float = 55.0, min_n: int = 20) -> dict:
+             min_win: float = 55.0, min_n: int = 20, min_win20: float = 45.0) -> dict:
     """매수 후보 평가. 백테스트 신호+통계로 진입 여부·예상치 산출.
 
-    decision=True 조건: 매수신호 존재 + 과거 동일조건 승률(min_win) 이상.
+    decision=True 조건: 매수신호 존재 + 10%달성률(min_win) + 20%달성률(min_win20) 둘 다 충족.
+    win20는 국면별 변별력이 커(PANIC 73% vs BULL_LATE 41%) 고품질 국면을 자연히 우선한다.
     """
     sigs = detect_latest_signals(df)
     buy_sigs = [s for s in sigs if 'BUY' in s]
     base = {
         'decision': False, 'score': 0, 'signals': sigs, 'buy_signals': buy_sigs,
         'expected_return': None, 'hold_days': None, 'stop_pct': None,
-        'win_rate': None, 'n': 0, 'market_phase': market_phase, 'sector': sector,
-        'reason': '',
+        'win_rate': None, 'win20': None, 'n': 0,
+        'market_phase': market_phase, 'sector': sector, 'reason': '',
     }
     if not buy_sigs:
         base['reason'] = '매수 신호 없음'
@@ -36,16 +37,18 @@ def evaluate(mode: str, df, market_phase: str, sector: str = '기타',
         base['score'] = 50
         return base
 
+    win20 = fc.get('win20', 0) or 0
     base.update({
         'expected_return': fc['target'], 'hold_days': fc['hold_days'],
-        'stop_pct': fc['stop'], 'win_rate': fc['win10'], 'n': fc['n'],
+        'stop_pct': fc['stop'], 'win_rate': fc['win10'], 'win20': win20, 'n': fc['n'],
     })
-    # 점수 = 승률 기반 (정렬·우선순위용). 신호 2개 이상이면 가산점.
-    score = fc['win10'] + (10 if len(buy_sigs) >= 2 else 0)
+    # 점수 = win10 + win20(고품질 국면 가중) + 신호 2개 이상 가산점 (정렬·우선순위용)
+    score = fc['win10'] + win20 + (10 if len(buy_sigs) >= 2 else 0)
     base['score'] = round(score, 1)
-    base['decision'] = fc['win10'] >= min_win
+    # 게이트: 10%달성률(후함) + 20%달성률(변별력) 둘 다 — BULL_LATE 등 저품질 자연 배제
+    base['decision'] = (fc['win10'] >= min_win) and (win20 >= min_win20)
     base['reason'] = (f"{'·'.join(buy_sigs)} | {market_phase} | "
-                      f"과거 {fc['n']:,}건 승률 {fc['win10']:.0f}% "
+                      f"과거 {fc['n']:,}건 10%달성 {fc['win10']:.0f}%·20%달성 {win20:.0f}% "
                       f"(목표 +{fc['target']:.0f}% / 보유 ~{fc['hold_days']:.0f}일 / 손절 {fc['stop']:.0f}%)")
     return base
 
