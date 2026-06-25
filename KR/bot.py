@@ -3779,10 +3779,8 @@ class KRBotController:
                 try:
                     ohlcv = self._get_cached_base_ohlcv(ticker)
                     if ohlcv.empty: continue
-                    score, reasons, _ = calculate_entry_score(
-                        ohlcv, ticker, self.market_regime,
-                        sector_score=0, kis_score=0, dl_score=0, roe_bonus=0
-                    )
+                    _px = float(ohlcv['close'].iloc[-1]) if 'close' in ohlcv.columns and len(ohlcv) else 0
+                    score, reasons = calculate_entry_score(ohlcv, _px, self.market_regime)
                     threshold = get_entry_threshold(self.market_regime)
                                        
                     if score < threshold - 1:
@@ -3917,10 +3915,8 @@ class KRBotController:
                             from KR.strategy import calculate_entry_score, get_entry_threshold
                             _ohlcv = self._get_cached_base_ohlcv(ticker)
                             if not _ohlcv.empty:
-                                _score, _, _ = calculate_entry_score(
-                                    _ohlcv, ticker, self.market_regime,
-                                    sector_score=0, kis_score=0, dl_score=0, roe_bonus=0
-                                )
+                                _px2 = float(_ohlcv['close'].iloc[-1]) if 'close' in _ohlcv.columns and len(_ohlcv) else 0
+                                _score, _ = calculate_entry_score(_ohlcv, _px2, self.market_regime)
                                 _threshold = get_entry_threshold(self.market_regime)
                                 if _score < _threshold - 1:
                                                                                   
