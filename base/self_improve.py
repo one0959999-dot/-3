@@ -60,6 +60,9 @@ def optimize_entry_thresholds(mode: str, dry_run: bool = False) -> list:
     results = []
     conn = get_db_connection()
     try:
+        # 원본 백테스트 테이블이 없으면(예: EC2 경량 db) 자기개선 스킵 — 튜닝은 로컬에서 수행
+        if not conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='backtest_trade_signals'").fetchone():
+            return results
         for phase in PHASES:
             combos = _phase_combos(conn, mode, phase)
             all_trades = sum(n for n, _, _ in combos)

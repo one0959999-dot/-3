@@ -27,6 +27,12 @@ def refresh_all():
         out['ticker_summary'] = f'{n} 종목'
     except Exception as e:
         out['ticker_summary'] = f'ERR: {e}'
+    try:
+        from base.signal_forecast import rebuild_forecast_cache
+        c = sum(rebuild_forecast_cache(m) for m in ('KR', 'US'))  # 라이브 예측용(원본 없이 동작)
+        out['forecast_cache'] = f'{c} 행'
+    except Exception as e:
+        out['forecast_cache'] = f'ERR: {e}'
     return out
 
 
