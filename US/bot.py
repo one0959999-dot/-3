@@ -4060,6 +4060,49 @@ class USBotController:
             "values":  daily_values,
         }
 
+    def _candidate_indicators(self, ticker: str) -> dict:
+        """후보 지표 on-demand 계산 (계좌편입 등 스크리너 미경유). 5분 캐시."""
+        import time as _t
+        ce = getattr(self, '_cand_ind_cache', None)
+        if ce is None:
+            ce = self._cand_ind_cache = {}
+        hit = ce.get(ticker)
+        if hit and _t.time() - hit[0] < 300:
+            return hit[1]
+        out = {}
+        try:
+            df = self._get_cached_ohlcv(ticker, period="180d")
+            if df is not None and not df.empty and 'close' in df.columns and len(df) >= 25:
+                from base.signals import calc_indicators
+                d = calc_indicators(df)
+                close = d['close']; cur = float(close.iloc[-1])
+                mom20 = (cur / float(close.iloc[-21]) - 1) * 100 if len(close) > 21 else 0.0
+                hi52 = float(close.tail(252).max()); lo52 = float(close.tail(252).min())
+                pos52 = (cur - lo52) / (hi52 - lo52) * 100 if hi52 > lo52 else None
+                rsi = float(d['rsi'].iloc[-1]) if 'rsi' in d.columns and not d['rsi'].isna().iloc[-1] else None
+                volr = 1.0
+                if 'volume' in d.columns:
+                    _vm = d['volume'].tail(20).mean()
+                    if _vm and _vm > 0:
+                        volr = float(d['volume'].iloc[-1] / _vm)
+                out = {'current_price': int(round(cur)), 'momentum_20d': round(mom20, 2),
+                       'rsi': round(rsi, 1) if rsi is not None else None,
+                       'pos_52w': round(pos52, 1) if pos52 is not None else None,
+                       'vol_ratio': round(volr, 2)}
+                try:
+                    from base.signal_forecast import estimate_candidate_return
+                    _ph = self._build_us_market_info_dict().get('market_phase')
+                    est = estimate_candidate_return('US', df, _ph)
+                    if est:
+                        out['exp_return'] = est.get('target')
+                        out['ai_reason'] = f"백테스트 예상수익 +{est.get('target', 0):.0f}% · 근거 {est.get('basis', '')}"
+                except Exception:
+                    pass
+        except Exception:
+            pass
+        ce[ticker] = (_t.time(), out)
+        return out
+
     def _rich_status_msg(self, sp_usd, avg_p, fx, pnl_pct, holding, pos, phase_kr, pavg_target):
         """대시보드 상태 메시지 — 백테스트 국면·예상수익·목표/손절 포함(풍부)."""
         cur = f"{sp_usd*fx:,.0f}원 (${sp_usd:.2f})"
@@ -4213,19 +4256,24 @@ class USBotController:
             for c in self.satellite_info:
                 if c.get('ticker') in _held_us_tickers:
                     continue
+                if c.get('pos_52w') is None and c.get('momentum_20d') is None:
+                    _enr = self._candidate_indicators(c.get('ticker', ''))
+                    if _enr:
+                        c = {**c, **_enr}
                 _sat_info_out.append({
                     "ticker":       c.get("ticker", ""),
                     "name":         c.get("name", ""),
                     "sector":       c.get("sector", "-"),
-                    "momentum_20d": float(c.get("momentum_20d", c.get("return_pct", 0))),
+                    "momentum_20d": float(c.get("momentum_20d", c.get("return_pct", 0)) or 0),
                     "rsi":          c.get("rsi"),
-                    "vol_ratio":    float(c.get("vol_ratio", c.get("volume_surge", 1.0))),
+                    "vol_ratio":    float(c.get("vol_ratio", c.get("volume_surge", 1.0)) or 1.0),
                     "frgn_inst":    bool(c.get("frgn_inst", False)),
                     "frgn_only":    bool(c.get("frgn_only", False)),
                     "pos_52w":      c.get("pos_52w"),
-                    "dl_prob":      float(c.get("dl_prob", 0)),
+                    "dl_prob":      float(c.get("dl_prob", 0) or 0),
                     "ai_reason":    c.get("ai_reason", ""),
-                    "current_price": int(c.get("current_price", 0)),
+                    "exp_return":   c.get("exp_return"),
+                    "current_price": int(c.get("current_price", 0) or 0),
                     "screened_at":  c.get("screened_at", ""),
                 })
                 if len(_sat_info_out) >= 5:
