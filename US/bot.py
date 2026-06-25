@@ -1942,13 +1942,27 @@ class USBotController:
         holding_tickers = {t for t, p in self.satellite_positions.items() if p.shares > 0}
         candidates = [c for c in candidates if c["ticker"] not in holding_tickers]
 
-                                                  
+
+        _us_phase = self._build_us_market_info_dict().get('market_phase')
         for c in candidates:
             _rb, _rr = self._roe_turnaround_bonus(c["ticker"])
             if _rb > 0:
                 c["score"] = c.get("score", 0) + _rb
                 c["ai_reason"] = (c.get("ai_reason", "") + f" | {_rr}").strip(" |")
-        candidates.sort(key=lambda x: x.get("score", 0), reverse=True)
+            # 백테스트 통계 기반 '지금 사면 예상수익' (KR과 통일 — 표시·정렬용)
+            try:
+                from base.signal_forecast import estimate_candidate_return
+                _cdf = self._get_cached_ohlcv(c["ticker"], period="180d")
+                if _cdf is not None and not _cdf.empty:
+                    _est = estimate_candidate_return('US', _cdf, _us_phase)
+                    if _est:
+                        c["exp_return"] = _est.get('target')
+                        c["exp_basis"]  = _est.get('basis', '')
+            except Exception:
+                pass
+        # 예상수익률 우선 정렬(있으면), 동률·부재시 퀀트 점수 (KR과 통일)
+        candidates.sort(key=lambda x: (x.get("exp_return") if x.get("exp_return") is not None else -999,
+                                        x.get("score", 0)), reverse=True)
 
                              
         seen_sec: dict = {}
