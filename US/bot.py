@@ -2432,257 +2432,266 @@ class USBotController:
 
                                                          
         for ticker, pos in list(self.satellite_positions.items()):
-            if pos.shares <= 0:
-                continue
-            price = self._price(ticker)
-            if price <= 0:
-                continue
+            try:
+                self._manage_one_satellite(ticker, pos, regime, sat_budget_per)
+            except Exception as _e:
+                logger.error(f"[US봇] 위성 관리 오류 ({ticker}): {_e}", exc_info=True)
 
-                               
-            df_raw = self._get_cached_ohlcv(ticker, period="60d")
-            if df_raw.empty:
-                df_raw = None
+    def _manage_one_satellite(self, ticker, pos, regime, sat_budget_per):
+        """위성 1종목 관리(손절/익절/청산). per-ticker 보호용으로 분리 — 예외시 호출측에서 continue."""
+        import pandas as pd
+        if pos.shares <= 0:
+            return
+        price = self._price(ticker)
+        if price <= 0:
+            return
 
-            avg = pos.avg_price_usd
-            if avg <= 0:
-                continue
+                           
+        df_raw = self._get_cached_ohlcv(ticker, period="60d")
+        if df_raw.empty:
+            df_raw = None
 
-                    
-            s_atr = avg * 0.02
-            if df_raw is not None and not df_raw.empty and all(
-                    c in df_raw.columns for c in ['high', 'low', 'close']):
+        avg = pos.avg_price_usd
+        if avg <= 0:
+            return
+
+                
+        s_atr = avg * 0.02
+        if df_raw is not None and not df_raw.empty and all(
+                c in df_raw.columns for c in ['high', 'low', 'close']):
+            try:
+                tr    = pd.concat([
+                    df_raw['high'] - df_raw['low'],
+                    (df_raw['high'] - df_raw['close'].shift(1)).abs(),
+                    (df_raw['low']  - df_raw['close'].shift(1)).abs(),
+                ], axis=1).max(axis=1)
+                s_atr = float(tr.rolling(14, min_periods=1).mean().iloc[-1])
+            except Exception:
+                pass
+
+        trail_mult  = self.SAT_TRAIL_MULT.get(regime, 1.5)
+        trail_trig  = self.SAT_TRAIL_TRIG.get(regime, 1.0)
+        hard_mult   = self.SAT_HARD_MULT.get(regime, 2.5)
+        pnl_pct     = (price / avg - 1) * 100
+        is_cd       = time.time() - pos.last_order_time > self.ORDER_COOLDOWN
+
+               
+        if price > pos.max_price_usd:
+            with self.lock:
+                pos.max_price_usd = price
+
+        p_max = pos.max_price_usd
+
+        # ── 백테스트 통계 손절/익절선 (표시=실제, D정렬) ──
+        if is_cd:
+            _bt_stop = getattr(pos, 'bt_stop_pct', 0) or 0
+            _bt_tgt  = getattr(pos, 'bt_target_pct', 0) or 0
+            if _bt_stop and pnl_pct <= _bt_stop:
+                self._close_sat(ticker, pos, price, f"백테스트 손절선 {_bt_stop:.0f}% 도달 🚨")
+                return
+            if _bt_tgt and pnl_pct >= _bt_tgt:
+                self._close_sat(ticker, pos, price, f"백테스트 목표 +{_bt_tgt:.0f}% 달성 🎯")
+                return
+
+
+        if regime == "BEAR" and is_cd and price >= avg * 1.05:
+            self._close_sat(ticker, pos, price,
+                            f"BEAR +5% 하드 익절 (평단${avg:.2f}→${price:.2f})")
+            return
+
+                                
+        if (p_max >= avg + (trail_trig * s_atr)
+                and price <= p_max - (trail_mult * s_atr)):
+            self._close_sat(ticker, pos, price,
+                            f"ATR 트레일링 익절 (고점${p_max:.2f}→${price:.2f})")
+            return
+
+                                                   
+        if price <= avg - (hard_mult * s_atr):
+            _stop_news_s = self._fetch_us_news([ticker])
+            _stop_skip_s = False
+            if _stop_news_s and not getattr(pos, 'stop_news_checked', False):
+                _positive_kw = ['beat', 'upgrade', 'buy', 'bullish', 'record', 'contract', 'deal', 'win']
+                if any(kw in _stop_news_s.lower() for kw in _positive_kw):
+                    pos.stop_news_checked = True
+                    _stop_skip_s = True
+                    self.add_log(f"⚠️ [위성] {pos.name} ATR 손절 but 호재 뉴스 → 1회 유예\n{_stop_news_s[:120]}")
+            if not _stop_skip_s:
+                pos.stop_news_checked = False
+                self._close_sat(ticker, pos, price,
+                                f"ATR 손절 (평단${avg:.2f}  ATR×{hard_mult:.1f})")
+            return
+
+                                              
+                                                        
+        if pos.shares > 0 and avg > 0 and is_cd:
+            if df_raw is not None and not df_raw.empty:
                 try:
-                    tr    = pd.concat([
-                        df_raw['high'] - df_raw['low'],
-                        (df_raw['high'] - df_raw['close'].shift(1)).abs(),
-                        (df_raw['low']  - df_raw['close'].shift(1)).abs(),
-                    ], axis=1).max(axis=1)
-                    s_atr = float(tr.rolling(14, min_periods=1).mean().iloc[-1])
-                except Exception:
-                    pass
+                    _sat_info_us   = next((s for s in self.satellite_info if s["ticker"] == ticker), None)
+                    _sector_us     = _sat_info_us.get("sector", "") if _sat_info_us else ""
+                    _sector_bonus_us = 10 if (_sector_us and _sector_us in (self.hot_sectors or [])) else 0
 
-            trail_mult  = self.SAT_TRAIL_MULT.get(regime, 1.5)
-            trail_trig  = self.SAT_TRAIL_TRIG.get(regime, 1.0)
-            hard_mult   = self.SAT_HARD_MULT.get(regime, 2.5)
-            pnl_pct     = (price / avg - 1) * 100
-            is_cd       = time.time() - pos.last_order_time > self.ORDER_COOLDOWN
+                    _oe_sig, _oe_sc, _oe_reason  = check_theme_overextension_exit(df_raw, price, _sector_bonus_us)
+                    _rs_sig, _rs_val, _rs_reason = check_rsi_progressive_exit(df_raw, price, avg)
 
-                   
-            if price > pos.max_price_usd:
+                    _sig_rank = {'HOLD': 0, 'PARTIAL_EXIT_30': 1, 'PARTIAL_EXIT_60': 2, 'FULL_EXIT': 3}
+                    _fe_sig, _fe_reason = ((_oe_sig, _oe_reason) if _sig_rank.get(_oe_sig, 0) >= _sig_rank.get(_rs_sig, 0)
+                                           else (_rs_sig, _rs_reason))
+
+                    if _fe_sig == 'FULL_EXIT':
+                        self._close_sat(ticker, pos, price, f"과열 전량청산 [{_fe_reason[:50]}]")
+                        return
+                    elif _fe_sig == 'PARTIAL_EXIT_60' and pos.shares > 1:
+                        _q60 = max(1.0, pos.shares * 0.60)
+                        if self._sell(ticker, pos.name, _q60, price) <= 0:
+                            return
+                        _pnl60 = _net_profit_usd(price, avg, _q60)
+                        with self.lock:
+                            pos.shares -= _q60
+                            pos.status  = f"과열 선익절 60% ✂️"
+                        self._record_pnl(_pnl60)
+                        self.add_log(f"✂️ [US 과열청산 60%] {pos.name} | {_fe_reason[:50]} | ${_pnl60:+.0f}")
+                    elif _fe_sig == 'PARTIAL_EXIT_30' and pos.shares > 1:
+                        _oe_cnt = getattr(pos, 'overext_sell_count', 0)
+                        if _oe_cnt < 3:
+                                                                
+                            if _oe_cnt == 0 and not getattr(pos, 'initial_shares_for_exit', 0):
+                                with self.lock: pos.initial_shares_for_exit = pos.shares
+                            _init_sh_oe = getattr(pos, 'initial_shares_for_exit', 0) or pos.shares
+                            _q30 = max(1.0, min(_init_sh_oe * 0.30, pos.shares))
+                            if self._sell(ticker, pos.name, _q30, price) <= 0:
+                                return
+                            _pnl30 = _net_profit_usd(price, avg, _q30)
+                            with self.lock:
+                                pos.shares = max(0.0, pos.shares - _q30)
+                                pos.overext_sell_count = _oe_cnt + 1
+                                pos.status = f"과열 선익절 {_oe_cnt+1}차 30% ✂️"
+                            self._record_pnl(_pnl30)
+                            self.add_log(f"✂️ [US 과열청산 30% {_oe_cnt+1}차] {pos.name} | {_fe_reason[:50]} | ${_pnl30:+.0f}")
+                except Exception as _oe_err:
+                    logger.debug(f"[US봇] 과열청산 체크 오류 ({ticker}): {_oe_err}")
+
+                                                    
+        _sat_partial1 = 15.0 if regime == "BULL" else self.PARTIAL1_PCT
+        _sat_partial2 = 30.0 if regime == "BULL" else self.PARTIAL2_PCT
+        if not pos.partial_sold and pnl_pct >= _sat_partial1 and pos.shares > 1:
+            decision = getattr(pos, 'ai_exit_decision', None)
+            if decision is None:
+                if self.claude:
+                    self._trigger_ai_partial_exit(pos, ticker, pos.name, price, avg, pnl_pct, regime)
+                    with self.lock: pos.status = f"AI 익절 검토 중 ({pnl_pct:+.1f}%) 🤖"
+                else:
+                    with self.lock: pos.ai_exit_decision = "SELL_PARTIAL"
+                return
+            if decision == "HOLD":
                 with self.lock:
-                    pos.max_price_usd = price
+                    pos.ai_exit_hold_until = time.time() + 300
+                    pos.ai_exit_decision   = None
+                    pos.status = f"AI 홀드 ({pnl_pct:+.1f}%) ⏳"
+                return
+                                                                   
+                                       
+            if not getattr(pos, 'initial_shares_for_exit', 0):
+                with self.lock: pos.initial_shares_for_exit = pos.shares
+            _init_sh1 = getattr(pos, 'initial_shares_for_exit', 0) or pos.shares
+            sellable_s1 = max(0.0, pos.shares - pos.floor_shares)
+            if sellable_s1 > 0:
+                q   = max(1.0, min(_init_sh1 * self.PARTIAL1_QTY, sellable_s1))
+                self._sell(ticker, pos.name, q, price)
+                pnl = _net_profit_usd(price, avg, q)
+                with self.lock:
+                    pos.shares           -= q
+                    pos.ai_exit_decision  = None
+                    pos.status            = f"1차익절({pnl_pct:+.1f}%) ✂️"
+                self._record_pnl(pnl)
+                self.add_log(f"✂️  1차익절 {pos.name} ({q:.0f}주 / 원금 {_init_sh1:.0f}주 기준 50%) | PnL ${pnl:+.0f}")
+                self._tg(f"✂️ [US 위성 1차익절] {pos.name}\n@ ${price:.2f}  +{pnl_pct:.1f}% | 원금 {_init_sh1:.0f}주 기준 50%")
+            with self.lock:
+                pos.partial_sold = True
+                if sellable_s1 <= 0:
+                    pos.ai_exit_decision = None
+                    pos.status = f"floor 보호 ({pnl_pct:+.1f}%) 🛡️"
+            return
 
-            p_max = pos.max_price_usd
-
-            # ── 백테스트 통계 손절/익절선 (표시=실제, D정렬) ──
-            if is_cd:
-                _bt_stop = getattr(pos, 'bt_stop_pct', 0) or 0
-                _bt_tgt  = getattr(pos, 'bt_target_pct', 0) or 0
-                if _bt_stop and pnl_pct <= _bt_stop:
-                    self._close_sat(ticker, pos, price, f"백테스트 손절선 {_bt_stop:.0f}% 도달 🚨")
-                    continue
-                if _bt_tgt and pnl_pct >= _bt_tgt:
-                    self._close_sat(ticker, pos, price, f"백테스트 목표 +{_bt_tgt:.0f}% 달성 🎯")
-                    continue
-
-
-            if regime == "BEAR" and is_cd and price >= avg * 1.05:
-                self._close_sat(ticker, pos, price,
-                                f"BEAR +5% 하드 익절 (평단${avg:.2f}→${price:.2f})")
-                continue
-
-                                    
-            if (p_max >= avg + (trail_trig * s_atr)
-                    and price <= p_max - (trail_mult * s_atr)):
-                self._close_sat(ticker, pos, price,
-                                f"ATR 트레일링 익절 (고점${p_max:.2f}→${price:.2f})")
-                continue
+                                                                    
+        if (pos.partial_sold and not pos.partial_sold_2
+                and pnl_pct >= _sat_partial2 and pos.shares > 1 and is_cd):
+            decision2 = getattr(pos, 'ai_exit_decision', None)
+            if decision2 is None:
+                if self.claude:
+                    self._trigger_ai_partial_exit(pos, ticker, pos.name, price, avg, pnl_pct, regime)
+                    with self.lock: pos.status = f"AI 2차익절 검토 ({pnl_pct:+.1f}%) 🤖"
+                else:
+                    with self.lock: pos.ai_exit_decision = "SELL_PARTIAL"
+                return
+            if decision2 == "HOLD":
+                with self.lock:
+                    pos.ai_exit_decision = None
+                    pos.status = f"AI 홀드 ({pnl_pct:+.1f}%) ⏳"
+                return
+            _init_sh2 = getattr(pos, 'initial_shares_for_exit', 0) or pos.shares
+            q2 = max(1.0, min(_init_sh2 * 0.50, pos.shares))
+            self._sell(ticker, pos.name, q2, price)
+            pnl2 = _net_profit_usd(price, avg, q2)
+            with self.lock:
+                pos.shares           = max(0.0, pos.shares - q2)
+                pos.partial_sold_2   = True
+                pos.ai_exit_decision = None
+                pos.status           = f"2차익절({pnl_pct:+.1f}%) ✅"
+            self._record_pnl(pnl2)
+            self._reinvest_to_cores(pnl2, f"위성 2차익절 {ticker}")
+            _thr2 = "30%(BULL)" if regime == "BULL" else "20%"
+            self.add_log(f"✅ 2차익절 {pos.name} +{_thr2} ({q2:.0f}주 / 원금 {_init_sh2:.0f}주 기준 50%) | PnL ${pnl2:+.0f}")
+            self._tg(f"✅ [US 위성 2차익절] {pos.name}\n@ ${price:.2f}  +{_thr2} | 잔여 {pos.shares:.0f}주 ATR 트레일링 대기")
+            return
 
                                                        
-            if price <= avg - (hard_mult * s_atr):
-                _stop_news_s = self._fetch_us_news([ticker])
-                _stop_skip_s = False
-                if _stop_news_s and not getattr(pos, 'stop_news_checked', False):
-                    _positive_kw = ['beat', 'upgrade', 'buy', 'bullish', 'record', 'contract', 'deal', 'win']
-                    if any(kw in _stop_news_s.lower() for kw in _positive_kw):
-                        pos.stop_news_checked = True
-                        _stop_skip_s = True
-                        self.add_log(f"⚠️ [위성] {pos.name} ATR 손절 but 호재 뉴스 → 1회 유예\n{_stop_news_s[:120]}")
-                if not _stop_skip_s:
-                    pos.stop_news_checked = False
-                    self._close_sat(ticker, pos, price,
-                                    f"ATR 손절 (평단${avg:.2f}  ATR×{hard_mult:.1f})")
-                continue
+        if (regime == "BULL" and not pos.partial_sold
+                and not getattr(pos, 'bull_pyramid_done', False)
+                and pnl_pct >= 3.0 and is_cd and self.cash_usd > price):
+            try:
+                _py_ok = False
+                if df_raw is not None and not df_raw.empty and len(df_raw['close'].dropna()) >= 22:
+                    _cl = df_raw['close'].dropna()
+                    _py_ok = float(_cl.rolling(5).mean().iloc[-1]) > float(_cl.rolling(20).mean().iloc[-1])
+                if _py_ok:
+                    _py_budget = min(sat_budget_per * 0.30, self.cash_usd * 0.15)
+                    _py_qty = self._buy(ticker, pos.name, _py_budget, price)
+                    if _py_qty > 0:
+                        with self.lock:
+                            new_sh = pos.shares + _py_qty
+                            pos.avg_price_usd  = (pos.avg_price_usd * pos.shares + price * _py_qty) / new_sh if new_sh > 0 else price
+                            pos.shares         = new_sh
+                                                                     
+                            pos.floor_shares   = max(pos.floor_shares, pos.shares * 0.5)
+                            pos.bull_pyramid_done = True
+                            pos.max_price_usd  = max(pos.max_price_usd, price)
+                            pos.last_order_time= time.time()
+                            pos.status         = f"불타기 🔥 (+{pnl_pct:.1f}%)"
+                        self.add_log(f"🔥 [BULL 위성 불타기] {pos.name}({ticker}) +{pnl_pct:.1f}% | {_py_qty}주 @ ${price:.2f} 추가")
+                        self._tg(f"🔥 [US BULL 위성 불타기] {pos.name}\n+{pnl_pct:.1f}% 추세 추종 | {_py_qty}주 @ ${price:.2f}")
+            except Exception as _pye:
+                logger.debug(f"[US봇] BULL 불타기(위성) 오류: {_pye}")
 
-                                                  
-                                                            
-            if pos.shares > 0 and avg > 0 and is_cd:
-                if df_raw is not None and not df_raw.empty:
-                    try:
-                        _sat_info_us   = next((s for s in self.satellite_info if s["ticker"] == ticker), None)
-                        _sector_us     = _sat_info_us.get("sector", "") if _sat_info_us else ""
-                        _sector_bonus_us = 10 if (_sector_us and _sector_us in (self.hot_sectors or [])) else 0
+                              
+                                                     
+        in_info = {i["ticker"] for i in self.satellite_info}
+        _is_user_mgd = getattr(pos, 'user_managed', False)
+        _info_e = next((i for i in self.satellite_info if i["ticker"] == ticker), None)
+        _is_acct = _info_e and _info_e.get("sector") == "계좌편입"
+                                
+        _sell_fail_ts = getattr(pos, '_sell_fail_ts', 0)
+        _sell_cooldown = (time.time() - _sell_fail_ts) < 300
+                                                    
+        if ticker not in in_info and not _is_user_mgd and not _is_acct \
+                and pnl_pct <= 0 \
+                and _is_us_market_open() and not _sell_cooldown:
+            self._close_sat(ticker, pos, price, f"스크리너 제외 (손실 {pnl_pct:.1f}%)")
+            return
 
-                        _oe_sig, _oe_sc, _oe_reason  = check_theme_overextension_exit(df_raw, price, _sector_bonus_us)
-                        _rs_sig, _rs_val, _rs_reason = check_rsi_progressive_exit(df_raw, price, avg)
+        with self.lock:
+            pos.status = f"보유 중 🛰️ ({pnl_pct:+.1f}%)"
 
-                        _sig_rank = {'HOLD': 0, 'PARTIAL_EXIT_30': 1, 'PARTIAL_EXIT_60': 2, 'FULL_EXIT': 3}
-                        _fe_sig, _fe_reason = ((_oe_sig, _oe_reason) if _sig_rank.get(_oe_sig, 0) >= _sig_rank.get(_rs_sig, 0)
-                                               else (_rs_sig, _rs_reason))
-
-                        if _fe_sig == 'FULL_EXIT':
-                            self._close_sat(ticker, pos, price, f"과열 전량청산 [{_fe_reason[:50]}]")
-                            continue
-                        elif _fe_sig == 'PARTIAL_EXIT_60' and pos.shares > 1:
-                            _q60 = max(1.0, pos.shares * 0.60)
-                            if self._sell(ticker, pos.name, _q60, price) <= 0:
-                                continue
-                            _pnl60 = _net_profit_usd(price, avg, _q60)
-                            with self.lock:
-                                pos.shares -= _q60
-                                pos.status  = f"과열 선익절 60% ✂️"
-                            self._record_pnl(_pnl60)
-                            self.add_log(f"✂️ [US 과열청산 60%] {pos.name} | {_fe_reason[:50]} | ${_pnl60:+.0f}")
-                        elif _fe_sig == 'PARTIAL_EXIT_30' and pos.shares > 1:
-                            _oe_cnt = getattr(pos, 'overext_sell_count', 0)
-                            if _oe_cnt < 3:
-                                                                    
-                                if _oe_cnt == 0 and not getattr(pos, 'initial_shares_for_exit', 0):
-                                    with self.lock: pos.initial_shares_for_exit = pos.shares
-                                _init_sh_oe = getattr(pos, 'initial_shares_for_exit', 0) or pos.shares
-                                _q30 = max(1.0, min(_init_sh_oe * 0.30, pos.shares))
-                                if self._sell(ticker, pos.name, _q30, price) <= 0:
-                                    continue
-                                _pnl30 = _net_profit_usd(price, avg, _q30)
-                                with self.lock:
-                                    pos.shares = max(0.0, pos.shares - _q30)
-                                    pos.overext_sell_count = _oe_cnt + 1
-                                    pos.status = f"과열 선익절 {_oe_cnt+1}차 30% ✂️"
-                                self._record_pnl(_pnl30)
-                                self.add_log(f"✂️ [US 과열청산 30% {_oe_cnt+1}차] {pos.name} | {_fe_reason[:50]} | ${_pnl30:+.0f}")
-                    except Exception as _oe_err:
-                        logger.debug(f"[US봇] 과열청산 체크 오류 ({ticker}): {_oe_err}")
-
-                                                        
-            _sat_partial1 = 15.0 if regime == "BULL" else self.PARTIAL1_PCT
-            _sat_partial2 = 30.0 if regime == "BULL" else self.PARTIAL2_PCT
-            if not pos.partial_sold and pnl_pct >= _sat_partial1 and pos.shares > 1:
-                decision = getattr(pos, 'ai_exit_decision', None)
-                if decision is None:
-                    if self.claude:
-                        self._trigger_ai_partial_exit(pos, ticker, pos.name, price, avg, pnl_pct, regime)
-                        with self.lock: pos.status = f"AI 익절 검토 중 ({pnl_pct:+.1f}%) 🤖"
-                    else:
-                        with self.lock: pos.ai_exit_decision = "SELL_PARTIAL"
-                    continue
-                if decision == "HOLD":
-                    with self.lock:
-                        pos.ai_exit_hold_until = time.time() + 300
-                        pos.ai_exit_decision   = None
-                        pos.status = f"AI 홀드 ({pnl_pct:+.1f}%) ⏳"
-                    continue
-                                                                       
-                                           
-                if not getattr(pos, 'initial_shares_for_exit', 0):
-                    with self.lock: pos.initial_shares_for_exit = pos.shares
-                _init_sh1 = getattr(pos, 'initial_shares_for_exit', 0) or pos.shares
-                sellable_s1 = max(0.0, pos.shares - pos.floor_shares)
-                if sellable_s1 > 0:
-                    q   = max(1.0, min(_init_sh1 * self.PARTIAL1_QTY, sellable_s1))
-                    self._sell(ticker, pos.name, q, price)
-                    pnl = _net_profit_usd(price, avg, q)
-                    with self.lock:
-                        pos.shares           -= q
-                        pos.ai_exit_decision  = None
-                        pos.status            = f"1차익절({pnl_pct:+.1f}%) ✂️"
-                    self._record_pnl(pnl)
-                    self.add_log(f"✂️  1차익절 {pos.name} ({q:.0f}주 / 원금 {_init_sh1:.0f}주 기준 50%) | PnL ${pnl:+.0f}")
-                    self._tg(f"✂️ [US 위성 1차익절] {pos.name}\n@ ${price:.2f}  +{pnl_pct:.1f}% | 원금 {_init_sh1:.0f}주 기준 50%")
-                with self.lock:
-                    pos.partial_sold = True
-                    if sellable_s1 <= 0:
-                        pos.ai_exit_decision = None
-                        pos.status = f"floor 보호 ({pnl_pct:+.1f}%) 🛡️"
-                continue
-
-                                                                        
-            if (pos.partial_sold and not pos.partial_sold_2
-                    and pnl_pct >= _sat_partial2 and pos.shares > 1 and is_cd):
-                decision2 = getattr(pos, 'ai_exit_decision', None)
-                if decision2 is None:
-                    if self.claude:
-                        self._trigger_ai_partial_exit(pos, ticker, pos.name, price, avg, pnl_pct, regime)
-                        with self.lock: pos.status = f"AI 2차익절 검토 ({pnl_pct:+.1f}%) 🤖"
-                    else:
-                        with self.lock: pos.ai_exit_decision = "SELL_PARTIAL"
-                    continue
-                if decision2 == "HOLD":
-                    with self.lock:
-                        pos.ai_exit_decision = None
-                        pos.status = f"AI 홀드 ({pnl_pct:+.1f}%) ⏳"
-                    continue
-                _init_sh2 = getattr(pos, 'initial_shares_for_exit', 0) or pos.shares
-                q2 = max(1.0, min(_init_sh2 * 0.50, pos.shares))
-                self._sell(ticker, pos.name, q2, price)
-                pnl2 = _net_profit_usd(price, avg, q2)
-                with self.lock:
-                    pos.shares           = max(0.0, pos.shares - q2)
-                    pos.partial_sold_2   = True
-                    pos.ai_exit_decision = None
-                    pos.status           = f"2차익절({pnl_pct:+.1f}%) ✅"
-                self._record_pnl(pnl2)
-                self._reinvest_to_cores(pnl2, f"위성 2차익절 {ticker}")
-                _thr2 = "30%(BULL)" if regime == "BULL" else "20%"
-                self.add_log(f"✅ 2차익절 {pos.name} +{_thr2} ({q2:.0f}주 / 원금 {_init_sh2:.0f}주 기준 50%) | PnL ${pnl2:+.0f}")
-                self._tg(f"✅ [US 위성 2차익절] {pos.name}\n@ ${price:.2f}  +{_thr2} | 잔여 {pos.shares:.0f}주 ATR 트레일링 대기")
-                continue
-
-                                                           
-            if (regime == "BULL" and not pos.partial_sold
-                    and not getattr(pos, 'bull_pyramid_done', False)
-                    and pnl_pct >= 3.0 and is_cd and self.cash_usd > price):
-                try:
-                    _py_ok = False
-                    if df_raw is not None and not df_raw.empty and len(df_raw['close'].dropna()) >= 22:
-                        _cl = df_raw['close'].dropna()
-                        _py_ok = float(_cl.rolling(5).mean().iloc[-1]) > float(_cl.rolling(20).mean().iloc[-1])
-                    if _py_ok:
-                        _py_budget = min(sat_budget_per * 0.30, self.cash_usd * 0.15)
-                        _py_qty = self._buy(ticker, pos.name, _py_budget, price)
-                        if _py_qty > 0:
-                            with self.lock:
-                                new_sh = pos.shares + _py_qty
-                                pos.avg_price_usd  = (pos.avg_price_usd * pos.shares + price * _py_qty) / new_sh if new_sh > 0 else price
-                                pos.shares         = new_sh
-                                                                         
-                                pos.floor_shares   = max(pos.floor_shares, pos.shares * 0.5)
-                                pos.bull_pyramid_done = True
-                                pos.max_price_usd  = max(pos.max_price_usd, price)
-                                pos.last_order_time= time.time()
-                                pos.status         = f"불타기 🔥 (+{pnl_pct:.1f}%)"
-                            self.add_log(f"🔥 [BULL 위성 불타기] {pos.name}({ticker}) +{pnl_pct:.1f}% | {_py_qty}주 @ ${price:.2f} 추가")
-                            self._tg(f"🔥 [US BULL 위성 불타기] {pos.name}\n+{pnl_pct:.1f}% 추세 추종 | {_py_qty}주 @ ${price:.2f}")
-                except Exception as _pye:
-                    logger.debug(f"[US봇] BULL 불타기(위성) 오류: {_pye}")
-
-                                  
-                                                         
-            in_info = {i["ticker"] for i in self.satellite_info}
-            _is_user_mgd = getattr(pos, 'user_managed', False)
-            _info_e = next((i for i in self.satellite_info if i["ticker"] == ticker), None)
-            _is_acct = _info_e and _info_e.get("sector") == "계좌편입"
-                                    
-            _sell_fail_ts = getattr(pos, '_sell_fail_ts', 0)
-            _sell_cooldown = (time.time() - _sell_fail_ts) < 300
-                                                        
-            if ticker not in in_info and not _is_user_mgd and not _is_acct \
-                    and pnl_pct <= 0 \
-                    and _is_us_market_open() and not _sell_cooldown:
-                self._close_sat(ticker, pos, price, f"스크리너 제외 (손실 {pnl_pct:.1f}%)")
-                continue
-
-            with self.lock:
-                pos.status = f"보유 중 🛰️ ({pnl_pct:+.1f}%)"
 
     def _check_swing_rebuy_queue(self):
                                                                 
