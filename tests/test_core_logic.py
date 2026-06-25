@@ -57,24 +57,26 @@ def test_entry_engine():
           ('decision', 'score', 'win_rate', 'win20', 'reason')))
     # 불변식: win10/win20 둘 다 통과해야만 decision True (fc 있을 때)
     # 합성 fc로 직접 게이트 로직 검증
-    import base.signal_forecast as sf
-    orig = sf.get_forecast
+    # entry_engine은 import시 get_forecast/detect_latest_signals를 자기 네임스페이스에 바인딩하므로
+    # 반드시 ee.* 를 직접 패치해야 효과가 있다(중요: 모듈원본 패치는 무효).
+    import base.entry_engine as ee2
+    orig_f, orig_d = ee2.get_forecast, ee2.detect_latest_signals
     try:
-        sf.get_forecast = lambda *a, **k: {'n': 999, 'hold_days': 10, 'target': 30,
-                                           'stop': -15, 'win10': 80, 'win20': 60}
-        # 매수신호 강제: 신호 있는 척하려면 detect_latest_signals 패치
-        import base.entry_engine as ee2
-        orig_d = ee2.detect_latest_signals
         ee2.detect_latest_signals = lambda df: ['RSI_BUY']
+        ee2.get_forecast = lambda *a, **k: {'n': 999, 'hold_days': 10, 'target': 30,
+                                            'stop': -15, 'win10': 80, 'win20': 60}
         r2 = ee2.evaluate('KR', _synth_df(), 'PANIC', min_win=55, min_win20=45)
         check("entry: win10=80·win20=60 → 통과", r2['decision'] is True)
-        sf.get_forecast = lambda *a, **k: {'n': 999, 'hold_days': 10, 'target': 20,
-                                           'stop': -15, 'win10': 80, 'win20': 40}
+        ee2.get_forecast = lambda *a, **k: {'n': 999, 'hold_days': 10, 'target': 20,
+                                            'stop': -15, 'win10': 80, 'win20': 40}
         r3 = ee2.evaluate('KR', _synth_df(), 'BULL_LATE', min_win=55, min_win20=45)
         check("entry: win20=40<45 → 차단(불변식)", r3['decision'] is False)
-        ee2.detect_latest_signals = orig_d
+        ee2.get_forecast = lambda *a, **k: {'n': 999, 'hold_days': 10, 'target': 30,
+                                            'stop': -15, 'win10': 50, 'win20': 60}
+        r4 = ee2.evaluate('KR', _synth_df(), 'PANIC', min_win=55, min_win20=45)
+        check("entry: win10=50<55 → 차단(불변식)", r4['decision'] is False)
     finally:
-        sf.get_forecast = orig
+        ee2.get_forecast, ee2.detect_latest_signals = orig_f, orig_d
 
 
 # ── 3. base.signal_forecast — 구조/폴백 ──────────────────────────
