@@ -1873,22 +1873,28 @@ def backtest_ticker_detail(mode, ticker):
 def backtest_stats():
     conn = get_db_connection()
     try:
-        kr = conn.execute(
-            'SELECT COUNT(DISTINCT ticker) FROM backtest_full_progress WHERE mode="KR"'
-        ).fetchone()[0]
-        us = conn.execute(
-            'SELECT COUNT(DISTINCT ticker) FROM backtest_full_progress WHERE mode="US"'
-        ).fetchone()[0]
-        total = conn.execute(
-            'SELECT COUNT(*) FROM backtest_trade_signals WHERE user_id=?', (current_user.id,)
-        ).fetchone()[0]
+        # 미리 집계된 요약 테이블에서 즉시 조회 (209만 행 풀스캔 회피 — t2.micro 타임아웃 방지)
+        has_summary = conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='backtest_ticker_summary'"
+        ).fetchone()
+        if has_summary:
+            row = conn.execute('''
+                SELECT
+                  SUM(CASE WHEN mode='KR' THEN 1 ELSE 0 END) kr,
+                  SUM(CASE WHEN mode='US' THEN 1 ELSE 0 END) us,
+                  COALESCE(SUM(total_signals),0) total,
+                  ROUND(SUM(avg_max_gain*buy_signals)/NULLIF(SUM(buy_signals),0),1) avg_gain
+                FROM backtest_ticker_summary
+            ''').fetchone()
+            kr, us, total, avg_gain = row['kr'] or 0, row['us'] or 0, row['total'] or 0, row['avg_gain']
+        else:
+            # 요약 미생성 폴백 (가벼운 카운트만)
+            kr = conn.execute('SELECT COUNT(DISTINCT ticker) FROM backtest_trade_signals WHERE mode="KR"').fetchone()[0]
+            us = conn.execute('SELECT COUNT(DISTINCT ticker) FROM backtest_trade_signals WHERE mode="US"').fetchone()[0]
+            total = conn.execute('SELECT COUNT(*) FROM backtest_trade_signals').fetchone()[0]
+            avg_gain = 0
         today = conn.execute(
-            'SELECT COUNT(*) FROM backtest_trade_signals WHERE user_id=? AND date(created_at)=date("now")',
-            (current_user.id,)
-        ).fetchone()[0]
-        avg_gain = conn.execute(
-            'SELECT ROUND(AVG(max_gain_pct), 1) FROM backtest_trade_signals WHERE user_id=? AND signal_direction="BUY" AND max_gain_pct IS NOT NULL',
-            (current_user.id,)
+            'SELECT COUNT(*) FROM backtest_trade_signals WHERE date(created_at)=date("now")'
         ).fetchone()[0]
     finally:
         conn.close()

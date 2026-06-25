@@ -9,7 +9,8 @@ import sys, os
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import logging
 logging.disable(logging.CRITICAL)
-from base.database import rebuild_sector_phase_stats, rebuild_seasonality_stats
+from base.database import (rebuild_sector_phase_stats, rebuild_seasonality_stats,
+                           rebuild_backtest_ticker_summary)
 
 
 def refresh_all():
@@ -21,6 +22,11 @@ def refresh_all():
             out[mode] = 'OK'
         except Exception as e:
             out[mode] = f'ERR: {e}'
+    try:
+        n = rebuild_backtest_ticker_summary()    # 웹 백테스트 페이지용 종목요약
+        out['ticker_summary'] = f'{n} 종목'
+    except Exception as e:
+        out['ticker_summary'] = f'ERR: {e}'
     return out
 
 

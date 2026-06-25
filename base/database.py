@@ -1441,24 +1441,47 @@ def get_phase_strategy_stats(mode: str, phase: str) -> list[dict]:
         conn.close()
 
 
-def get_trade_signals_summary(user_id: int):
+def rebuild_backtest_ticker_summary():
+    """209만 행을 종목별로 미리 집계 → backtest_ticker_summary (웹이 즉시 읽도록).
+    무거운 GROUP BY를 매 페이지로드마다 하지 않기 위함 — 로컬에서 1회 빌드 후 db 배포."""
+    with db_lock:
+        conn = get_db_connection()
+        try:
+            conn.execute('DROP TABLE IF EXISTS backtest_ticker_summary')
+            conn.execute('''
+                CREATE TABLE backtest_ticker_summary AS
+                SELECT s.mode, s.ticker, s.stock_name, s.sector,
+                       prog.last_processed_date, prog.completed_at,
+                       prog.final_value_10m, prog.return_pct, prog.trade_count,
+                       COUNT(s.id) AS total_signals,
+                       SUM(CASE WHEN s.signal_direction='BUY'  THEN 1 ELSE 0 END) AS buy_signals,
+                       SUM(CASE WHEN s.signal_direction='SELL' THEN 1 ELSE 0 END) AS sell_signals,
+                       ROUND(AVG(CASE WHEN s.signal_direction='BUY' THEN s.max_gain_pct END), 2) AS avg_max_gain,
+                       ROUND(AVG(CASE WHEN s.signal_direction='BUY' THEN s.days_to_peak END), 1) AS avg_days_to_peak
+                FROM backtest_trade_signals s
+                LEFT JOIN backtest_full_progress prog ON prog.ticker=s.ticker AND prog.mode=s.mode
+                GROUP BY s.mode, s.ticker
+            ''')
+            conn.execute('CREATE INDEX IF NOT EXISTS idx_bts_summary_mode ON backtest_ticker_summary(mode, return_pct)')
+            conn.commit()
+            return conn.execute('SELECT COUNT(*) FROM backtest_ticker_summary').fetchone()[0]
+        finally:
+            conn.close()
+
+
+def get_trade_signals_summary(user_id: int = None):
+    """종목별 요약 — 미리 집계된 backtest_ticker_summary에서 즉시 조회(없으면 빈 리스트)."""
     conn = get_db_connection()
     try:
+        if not conn.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='backtest_ticker_summary'").fetchone():
+            return []
         return conn.execute('''
-            SELECT s.mode, s.ticker, s.stock_name, s.sector,
-                   prog.last_processed_date, prog.completed_at,
-                   prog.final_value_10m, prog.return_pct, prog.trade_count,
-                   COUNT(s.id) AS total_signals,
-                   SUM(CASE WHEN s.signal_direction='BUY'  THEN 1 ELSE 0 END) AS buy_signals,
-                   SUM(CASE WHEN s.signal_direction='SELL' THEN 1 ELSE 0 END) AS sell_signals,
-                   ROUND(AVG(CASE WHEN s.signal_direction='BUY' THEN s.max_gain_pct END), 2) AS avg_max_gain,
-                   ROUND(AVG(CASE WHEN s.signal_direction='BUY' THEN s.days_to_peak END), 1) AS avg_days_to_peak
-            FROM backtest_trade_signals s
-            LEFT JOIN backtest_full_progress prog ON prog.ticker=s.ticker AND prog.mode=s.mode
-            WHERE s.user_id=?
-            GROUP BY s.mode, s.ticker
-            ORDER BY prog.return_pct DESC
-        ''', (user_id,)).fetchall()
+            SELECT mode, ticker, stock_name, sector, last_processed_date, completed_at,
+                   final_value_10m, return_pct, trade_count, total_signals,
+                   buy_signals, sell_signals, avg_max_gain, avg_days_to_peak
+            FROM backtest_ticker_summary
+            ORDER BY (return_pct IS NULL), return_pct DESC
+        ''').fetchall()
     finally:
         conn.close()
 
