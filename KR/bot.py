@@ -2163,6 +2163,26 @@ class KRBotController:
         except Exception:
             return ''
 
+    def _capture_bt_levels(self, pos, ex_df):
+        """매수 직후 백테스트 통계 손절/익절/보유선을 포지션에 저장 → 청산이 '표시값=실제'로 동작.
+        실패해도 무해(기존 ATR/RSI 청산이 계속 작동)."""
+        try:
+            from base.signals import detect_latest_signals
+            from base.signal_forecast import get_forecast
+            sigs = [s for s in detect_latest_signals(ex_df) if 'BUY' in s]
+            if not sigs:
+                return
+            phase = self._build_market_info_dict().get('market_phase')
+            fc = get_forecast('KR', phase, sigs)
+            if not fc:
+                return
+            with self.lock:
+                pos.bt_stop_pct   = float(fc['stop'])      # 평균 max_drawdown (음수 %)
+                pos.bt_target_pct = float(fc['target'])    # 평균 max_gain (%)
+                pos.bt_hold_days  = float(fc['hold_days'])
+        except Exception:
+            pass
+
     def _build_market_info_dict(self) -> dict:
         """파인튜닝 형식 판단에 필요한 시장 국면/매크로 dict — 일별 캐시."""
         today_str = _now_kst().strftime('%Y-%m-%d')
@@ -3008,6 +3028,29 @@ class KRBotController:
 
                                                                                  
                                                                          
+                # ── 백테스트 통계 손절/익절선 (표시=실제, D정렬) — 매수메시지에 띄운 값을 실제로 강제 ──
+                if p_sh > 0 and p_avg > 0 and is_cd_passed:
+                    _bt_stop = getattr(pos, 'bt_stop_pct', 0) or 0
+                    _bt_tgt  = getattr(pos, 'bt_target_pct', 0) or 0
+                    _pnl_pct = (price / p_avg - 1) * 100
+                    _bt_hit  = None
+                    if _bt_stop and _pnl_pct <= _bt_stop:
+                        _bt_hit = ("백테스트 손절선 🚨", f"통계 손절 {_bt_stop:.0f}% 도달")
+                    elif _bt_tgt and _pnl_pct >= _bt_tgt:
+                        _bt_hit = ("백테스트 목표달성 🎯", f"통계 목표 +{_bt_tgt:.0f}% 도달")
+                    if _bt_hit:
+                        _bt_qty = p_sh
+                        if self._sell_order(ticker, _bt_qty, pos, p_nm):
+                            with self.lock:
+                                pos.last_order_time = time.time(); pos.status = _bt_hit[0]
+                                self._sat_exit_reset(pos); pos.shares = 0; p_sh = 0
+                            profit = _net_profit(price, p_avg, _bt_qty)
+                            self._log_trade(ticker, p_nm, 'SELL', price, st_nm, _bt_hit[1], profit=profit)
+                            self._send_trade_telegram(self._fmt_trade_msg("🎯", _bt_hit[0], ticker, p_nm, price, _bt_qty, profit=profit, strategy=st_nm, note=_bt_hit[1]))
+                            with self.lock: self.pnl_this_turn += profit
+                            self._record_daily_pnl(profit)
+                        continue
+
                 if p_sh > 0 and p_avg > 0 and is_cd_passed and "09:00" <= current_time_str <= "09:30":
                     _es_stage, _es_pct, _es_reason = check_early_drop_stop(price, p_avg)
                     if _es_stage > 0 and _es_pct > 0:
@@ -3513,6 +3556,7 @@ class KRBotController:
                                     pos.partial_sold_2           = False
                                     pos.initial_shares_for_exit  = 0
                                                                        
+                                self._capture_bt_levels(pos, ex_df)
                                 self._log_trade(ticker, p_nm, 'BUY', price, st_nm, f"AI 승인 [{regime_label}] 1차(30%) ({ai_reason})")
                                 _fc_block = self._forecast_block(p_nm, ticker, price, ex_df)
                                 self._send_trade_telegram(self._fmt_trade_msg("📈", "AI 매수 승인 (1차 30%)", ticker, p_nm, price, qty, strategy=f"{st_nm}  ·  {regime_label}", ai_reason=ai_reason, note=f"2차 -2%({price*0.98:,.0f}원) / 3차 -4%({price*0.96:,.0f}원) 예약") + _fc_block)
@@ -3546,8 +3590,10 @@ class KRBotController:
                                 pos.partial_sold             = False
                                 pos.partial_sold_2           = False
                                 pos.initial_shares_for_exit  = 0
+                            self._capture_bt_levels(pos, ex_df)
                             self._log_trade(ticker, p_nm, 'BUY', price, st_nm, f"알고리즘 [{regime_label}] 1차(30%): {regime_reason_str}")
-                            self._send_trade_telegram(self._fmt_trade_msg("📈", "알고리즘 매수 (1차 30%)", ticker, p_nm, price, qty, strategy=f"{st_nm}  ·  {regime_label}", note=f"2차 -2%({price*0.98:,.0f}원) / 3차 -4%({price*0.96:,.0f}원) 예약 | {regime_reason_str}"))
+                            _fc_block = self._forecast_block(p_nm, ticker, price, ex_df)
+                            self._send_trade_telegram(self._fmt_trade_msg("📈", "알고리즘 매수 (1차 30%)", ticker, p_nm, price, qty, strategy=f"{st_nm}  ·  {regime_label}", note=f"2차 -2%({price*0.98:,.0f}원) / 3차 -4%({price*0.96:,.0f}원) 예약 | {regime_reason_str}") + _fc_block)
 
                 elif sig == 'SELL' and p_sh > 0 and is_cd_passed:
                     if self.claude:

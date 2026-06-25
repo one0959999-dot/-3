@@ -162,9 +162,12 @@ class USPosition:
     second_buy_cash:         float = 0.0                       
     second_buy_done:         bool  = False               
     third_buy_price:         float = 0.0                               
-    third_buy_cash:          float = 0.0                       
-    third_buy_done:          bool  = False               
-    initial_shares_for_exit: float = 0.0                        
+    third_buy_cash:          float = 0.0
+    third_buy_done:          bool  = False
+    initial_shares_for_exit: float = 0.0
+    bt_stop_pct:             float = 0.0   # 백테스트 통계 손절선(%) — D정렬
+    bt_target_pct:           float = 0.0   # 백테스트 통계 목표(%) — D정렬
+    bt_hold_days:            float = 0.0
 
 
                                                                         
@@ -2334,6 +2337,9 @@ class USBotController:
                         initial_shares_for_exit = 0.0,
                     )
                 self.add_log(f"🛰️ 위성 1차매수 {info['name']}({ticker}) {qty}주 @ ${price:.2f} | {entry_score}pt [{score_str}]")
+                _sat_pos_for_bt = self.satellite_positions.get(ticker)
+                if _sat_pos_for_bt is not None:
+                    self._capture_bt_levels(_sat_pos_for_bt, df_raw)
                 _us_fc = self._forecast_block(info['name'], ticker, price, df_raw)
                 self._tg(
                     f"🛰️ [US 위성 1차매수] {info['name']} ({ticker})\n"
@@ -2453,7 +2459,18 @@ class USBotController:
 
             p_max = pos.max_price_usd
 
-                                                
+            # ── 백테스트 통계 손절/익절선 (표시=실제, D정렬) ──
+            if is_cd:
+                _bt_stop = getattr(pos, 'bt_stop_pct', 0) or 0
+                _bt_tgt  = getattr(pos, 'bt_target_pct', 0) or 0
+                if _bt_stop and pnl_pct <= _bt_stop:
+                    self._close_sat(ticker, pos, price, f"백테스트 손절선 {_bt_stop:.0f}% 도달 🚨")
+                    continue
+                if _bt_tgt and pnl_pct >= _bt_tgt:
+                    self._close_sat(ticker, pos, price, f"백테스트 목표 +{_bt_tgt:.0f}% 달성 🎯")
+                    continue
+
+
             if regime == "BEAR" and is_cd and price >= avg * 1.05:
                 self._close_sat(ticker, pos, price,
                                 f"BEAR +5% 하드 익절 (평단${avg:.2f}→${price:.2f})")
@@ -3435,6 +3452,25 @@ class USBotController:
                                               mkt.get('market_phase_kr') or phase, sigs, fc)
         except Exception:
             return ''
+
+    def _capture_bt_levels(self, pos, ex_df):
+        """매수 직후 백테스트 통계 손절/익절/보유선을 포지션에 저장 → 청산 '표시=실제'. (KR과 통일)"""
+        try:
+            from base.signals import detect_latest_signals
+            from base.signal_forecast import get_forecast
+            sigs = [s for s in detect_latest_signals(ex_df) if 'BUY' in s]
+            if not sigs:
+                return
+            phase = self._build_us_market_info_dict().get('market_phase')
+            fc = get_forecast('US', phase, sigs)
+            if not fc:
+                return
+            with self.lock:
+                pos.bt_stop_pct   = float(fc['stop'])
+                pos.bt_target_pct = float(fc['target'])
+                pos.bt_hold_days  = float(fc['hold_days'])
+        except Exception:
+            pass
 
     def _build_us_market_info_dict(self) -> dict:
         """US 파인튜닝 형식 시장 국면/매크로 dict — 일별 캐시."""
