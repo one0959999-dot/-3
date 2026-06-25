@@ -334,6 +334,8 @@ class KRBotController:
             if int(time.time()) % 300 < 30:
                 try: self._save_state()
                 except Exception: pass
+            try: self._maybe_self_improve()
+            except Exception: pass
             time.sleep(30)
 
     def _sync_internal_balances(self, real_balance):
@@ -759,6 +761,23 @@ class KRBotController:
                         pos.shares = 0
         except Exception as e:
             logger.error(f"[{self.mode_name}] killswitch 청산 오류: {e}", exc_info=True)
+
+    def _maybe_self_improve(self):
+        """하루 1회: 백테스트 데이터로 국면별 진입임계값 자동 재최적화(자기개선 루프)."""
+        today = _now_kst().strftime('%Y-%m-%d')
+        if getattr(self, '_self_improve_date', None) == today:
+            return
+        self._self_improve_date = today
+        try:
+            from base.self_improve import optimize_entry_thresholds
+            recs = optimize_entry_thresholds('KR')
+            applied = [r for r in recs if r.get('applied')]
+            if applied:
+                msg = '\n'.join(f"  {r['phase']}: win20 {r['current']:.0f}→{r['proposed']:.0f} (가중상승 +{r['improve_pp']}%p)" for r in applied)
+                self.add_log(f"🧠 자기개선 자동반영 {len(applied)}건\n{msg}")
+                self._send_telegram(f"🧠 <b>[KR 자기개선]</b> 진입임계값 {len(applied)}건 자동반영\n{msg}", msg_type='misc')
+        except Exception as e:
+            logger.error(f"[{self.mode_name}] 자기개선 오류: {e}")
 
     def _send_trade_telegram(self, message):
 

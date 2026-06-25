@@ -1148,6 +1148,58 @@ def get_backtest_run_status() -> dict:
         conn.close()
 
 
+def _ensure_strategy_params_tables(conn):
+    conn.execute('''CREATE TABLE IF NOT EXISTS strategy_params (
+        mode TEXT, market_phase TEXT, param_name TEXT, param_value REAL,
+        basis TEXT, updated_at TEXT,
+        PRIMARY KEY (mode, market_phase, param_name))''')
+    conn.execute('''CREATE TABLE IF NOT EXISTS strategy_params_history (
+        id INTEGER PRIMARY KEY AUTOINCREMENT, mode TEXT, market_phase TEXT,
+        param_name TEXT, old_value REAL, new_value REAL, basis TEXT, changed_at TEXT)''')
+
+
+def get_strategy_param(mode: str, market_phase: str, param_name: str, default: float) -> float:
+    """자기개선 루프가 저장한 라이브 파라미터 조회. 없으면 default. (entry_engine 등에서 사용)"""
+    try:
+        conn = get_db_connection()
+        try:
+            _ensure_strategy_params_tables(conn)
+            row = conn.execute('''SELECT param_value FROM strategy_params
+                WHERE mode=? AND market_phase=? AND param_name=?''',
+                (mode, market_phase, param_name)).fetchone()
+            return float(row['param_value']) if row and row['param_value'] is not None else default
+        finally:
+            conn.close()
+    except Exception:
+        return default
+
+
+def set_strategy_param(mode: str, market_phase: str, param_name: str,
+                       value: float, basis: str = '') -> bool:
+    """자기개선 루프의 자동반영 — 이전값을 이력에 남기고 갱신. 변경시 True."""
+    with db_lock:
+        conn = get_db_connection()
+        try:
+            _ensure_strategy_params_tables(conn)
+            old = conn.execute('''SELECT param_value FROM strategy_params
+                WHERE mode=? AND market_phase=? AND param_name=?''',
+                (mode, market_phase, param_name)).fetchone()
+            old_val = float(old['param_value']) if old else None
+            if old_val is not None and abs(old_val - value) < 1e-9:
+                return False
+            now = datetime.now().isoformat(timespec='seconds')
+            conn.execute('''INSERT OR REPLACE INTO strategy_params
+                (mode, market_phase, param_name, param_value, basis, updated_at)
+                VALUES (?,?,?,?,?,?)''', (mode, market_phase, param_name, value, basis, now))
+            conn.execute('''INSERT INTO strategy_params_history
+                (mode, market_phase, param_name, old_value, new_value, basis, changed_at)
+                VALUES (?,?,?,?,?,?,?)''', (mode, market_phase, param_name, old_val, value, basis, now))
+            conn.commit()
+            return True
+        finally:
+            conn.close()
+
+
 def get_sector_phase_stat(mode: str, sector: str, market_phase: str) -> dict | None:
     """섹터×국면 백테스트 통계 조회 (라이브 후보선정·AI판단용). 없으면 None."""
     if not sector or not market_phase:

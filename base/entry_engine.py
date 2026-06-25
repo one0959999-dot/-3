@@ -11,12 +11,18 @@ from base.signal_forecast import get_forecast
 
 
 def evaluate(mode: str, df, market_phase: str, sector: str = '기타',
-             min_win: float = 55.0, min_n: int = 20, min_win20: float = 45.0) -> dict:
+             min_win: float = 55.0, min_n: int = 20, min_win20: float = None) -> dict:
     """매수 후보 평가. 백테스트 신호+통계로 진입 여부·예상치 산출.
 
     decision=True 조건: 매수신호 존재 + 10%달성률(min_win) + 20%달성률(min_win20) 둘 다 충족.
     win20는 국면별 변별력이 커(PANIC 73% vs BULL_LATE 41%) 고품질 국면을 자연히 우선한다.
     """
+    if min_win20 is None:                       # 자기개선 루프가 튜닝한 국면별 임계값 반영
+        try:
+            from base.database import get_strategy_param
+            min_win20 = get_strategy_param(mode, market_phase, 'min_win20', 45.0)
+        except Exception:
+            min_win20 = 45.0
     sigs = detect_latest_signals(df)
     buy_sigs = [s for s in sigs if 'BUY' in s]
     base = {
