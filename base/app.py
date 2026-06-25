@@ -1425,9 +1425,16 @@ def set_satellites_count():
 def set_news_keys():
     """DART + Naver 뉴스 API 키 저장 및 봇 즉시 반영."""
     data = request.json or {}
-    dart_key   = (data.get('dart_api_key') or '').strip()
-    naver_id   = (data.get('naver_client_id') or '').strip()
-    naver_sec  = (data.get('naver_client_secret') or '').strip()
+    # 빈칸/마스킹('****') 값이면 기존 키 유지 — 폼이 비어있을 때 실수로 키가 지워지는 것 방지
+    _existing = get_news_api_keys(current_user.id)
+    def _keep(new_val, old_val):
+        new_val = (new_val or '').strip()
+        if not new_val or '****' in new_val:
+            return old_val or ''
+        return new_val
+    dart_key   = _keep(data.get('dart_api_key'),        _existing.get('dart_api_key'))
+    naver_id   = _keep(data.get('naver_client_id'),     _existing.get('naver_client_id'))
+    naver_sec  = _keep(data.get('naver_client_secret'), _existing.get('naver_client_secret'))
     set_news_api_keys(current_user.id, dart_key, naver_id, naver_sec)
     # 실행 중인 봇에 즉시 적용
     for is_mock in (True, False):

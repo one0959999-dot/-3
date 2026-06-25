@@ -16,6 +16,13 @@ def get_db_connection():
     conn.execute('PRAGMA journal_mode=WAL;')
     conn.execute('PRAGMA synchronous=NORMAL;')
     conn.execute('PRAGMA busy_timeout=5000;')
+    # I/O 병목 완화(t2.micro, 3.9GB db): 메모리맵 + 캐시 확대로 디스크 read 호출 감소
+    try:
+        conn.execute('PRAGMA mmap_size=536870912;')   # 512MB 메모리맵 (page cache 공유)
+        conn.execute('PRAGMA cache_size=-32000;')      # 32MB 페이지 캐시
+        conn.execute('PRAGMA temp_store=MEMORY;')
+    except Exception:
+        pass
     return conn
 
 def init_db():
