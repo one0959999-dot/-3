@@ -51,6 +51,15 @@ _buy_order → killswitch 게이트 → 체결
 
 **AI는 백테스트 통계를 받아 판단** → 알고리즘과 같은 데이터로 사고(충돌 방지). AI가 죽어도 알고리즘은 작동.
 
+## 4-1. 자기개선 루프 (신규 — base/self_improve.py)
+봇이 하루 1회 자동 실행: 백테스트 데이터로 **국면별 진입임계값(min_win20)을 재최적화**해 `strategy_params`에 저장 → entry_engine이 즉시 반영(완전 자동).
+- 안전게이트: 범위 [35~60] · 표본 최소치 · 거래 20%+ 보존 · 개선 +1%p 이상만 반영 · 전 변경 이력(strategy_params_history, 롤백) · 전역토글 `SELF_IMPROVE_ENABLED`
+- 손절/포지션/killswitch 는 절대 자동변경 안 함(진입 품질 게이트만)
+- 1차 적용예: KR BEAR_MID 45→60, US BEAR_EARLY 45→50, US BEAR_LATE 45→50
+
+## 4-2. 섹터×국면 통계 (신규 활용)
+`sector_phase_stats`(KR96·US104행)를 AI 판단 프롬프트에 주입 → 현 국면에서 강한 섹터 우대.
+
 ## 5. 안전장치
 - 포트폴리오 2단계 killswitch (-10% 신규중단 / -20% 전량청산)
 - per-ticker 예외격리(한 종목 오류가 전체 안 막음) — KR·US 동일
