@@ -3442,10 +3442,22 @@ class USBotController:
                 else:
                     self._ai_market_entry_bonus = 0
 
+                # ── 8단계 국면(백테스트 기준)에서 regime 파생 — 3단계와 통일(불일치 해소) ──
+                try:
+                    from base.market_phase import get_phase_for_date, regime_from_phase
+                    _ph_us = get_phase_for_date('US', _now_et().strftime('%Y-%m-%d')).get('phase')
+                    if _ph_us:
+                        _r8 = regime_from_phase(_ph_us)
+                        if _r8 != regime:
+                            self.add_log(f"🔄 [US regime 통일] 3단계({regime}) → 8단계기준({_r8}) | 국면 {_ph_us}")
+                        regime = _r8
+                except Exception as _pe:
+                    logger.debug(f"[US봇] 8단계 regime 파생 실패: {_pe}")
+
                 self.market_regime = regime
 
-                                                                    
-                                                        
+
+
                 _proposed_us = self.market_regime
                 if _proposed_us == "BULL" and _prev_regime != "BULL":
                     self._bull_pending_days += 1

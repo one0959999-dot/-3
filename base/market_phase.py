@@ -22,6 +22,18 @@ PHASES = {
     'RECOVERY':    '회복 구간',
 }
 
+# 8단계 국면 → 라이브 3단계 regime 매핑 (백테스트 기준으로 통일)
+_PHASE_TO_REGIME = {
+    'BULL_EARLY': 'BULL', 'BULL_MID': 'BULL', 'BULL_LATE': 'BULL', 'RECOVERY': 'BULL',
+    'BEAR_EARLY': 'BEAR', 'BEAR_MID': 'BEAR', 'BEAR_LATE': 'BEAR', 'PANIC': 'BEAR',
+    'SIDEWAYS': 'NEUTRAL',
+}
+
+
+def regime_from_phase(phase: str) -> str:
+    """8단계 국면 → 3단계 regime(BULL/BEAR/NEUTRAL). 봇 매매로직이 8단계와 일치하도록."""
+    return _PHASE_TO_REGIME.get(phase, 'NEUTRAL')
+
 PHASE_BEST_SIGNALS = {
     'BULL_EARLY':  ['BREAK_BUY', 'MA_BUY', 'MACD_BUY'],
     'BULL_MID':    ['MA_BUY', 'RSI_BUY', 'MACD_BUY'],

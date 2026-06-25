@@ -1807,9 +1807,18 @@ class KRBotController:
                 self.market_regime = detail['regime']
                 self._ai_market_entry_bonus = 0
 
-                                                                  
-                                                       
-                                                          
+            # ── 8단계 국면(백테스트 기준)에서 regime 파생 — 3단계와 통일(불일치 해소) ──
+            try:
+                from base.market_phase import get_phase_for_date, regime_from_phase
+                _ph_kr = get_phase_for_date('KR', _now_kst().strftime('%Y-%m-%d')).get('phase')
+                if _ph_kr:
+                    _r8 = regime_from_phase(_ph_kr)
+                    if _r8 != self.market_regime:
+                        self.add_log(f"🔄 [KR regime 통일] 3단계({self.market_regime}) → 8단계기준({_r8}) | 국면 {_ph_kr}")
+                    self.market_regime = _r8
+            except Exception as _pe:
+                logger.debug(f"[{self.mode_name}] 8단계 regime 파생 실패: {_pe}")
+
             _proposed = self.market_regime
             if _proposed == "BULL" and prev != "BULL":
                 self._bull_pending_days += 1
