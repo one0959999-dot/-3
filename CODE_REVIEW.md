@@ -27,9 +27,11 @@
 - **상태저장**: 범용 JSON 직렬화 — 신규 필드 영속 정상.
 - **forecast/entry_engine/signals/killswitch**: end-to-end 런타임(KR삼성·US 국면별) 에러 0.
 
-## 🟡 권고 (확정 후 — 위험 큰 구조변경이라 미적용)
-- **US 위성 관리 루프 per-ticker try 부재**(~250라인): 한 종목 예외시 그 사이클의 나머지 종목 손절체크가 스킵됨(봇은 메인 try로 생존). KR처럼 per-ticker 보호 추가 권장 — 단 250라인 재들여쓰기/헬퍼추출 리팩터라 확정 후 진행.
-- _close_sat 내부 try 없음(위 루프 보호에 포함되면 해소).
+## 🔴 추가 수정 완료 (4) — `a8edaab`
+- **US 위성 관리 루프 per-ticker 보호**: 본문(~250라인)을 `_manage_one_satellite()`로 분리하고 호출을 try/except로 감쌈. 한 종목 예외가 나머지 종목 손절체크를 막지 않음(KR과 동일 수준). 내용 무손실 검증(청산로직 38문자열 보존, continue→return 18개 정확변환, AST·import OK).
+
+## ✅ 전체 점검 (수정 후)
+- py_compile 13모듈 OK / 전체 import OK / 신규·수정 메서드 US7+KR5 존재 / end-to-end 런타임(KR삼성·SK하이닉스) OK / arity 잔존버그 0 / killswitch·bt필드 영속 확인.
 
 ## 참고 (무해)
 - 순익계산(_net_profit)이 매수수수료 0.015% 생략(표시용, 무시가능).
