@@ -753,6 +753,10 @@ class USBotController:
                     self._maybe_self_improve()
                 except Exception:
                     pass
+                try:
+                    self._sync_regime_from_phase()   # 8단계 기준 regime 상시 동기화(취약한 시간당 갱신 보완)
+                except Exception:
+                    pass
             except Exception as e:
                 logger.debug(f"[US봇] 잔고 동기화 오류: {e}")
             time.sleep(60)
@@ -4059,6 +4063,20 @@ class USBotController:
             "labels":  daily_labels,
             "values":  daily_values,
         }
+
+    def _sync_regime_from_phase(self):
+        """8단계 국면(백테스트 기준)에서 regime을 상시 동기화 — 시간당 _update_market_regime이
+        실패/지연돼도 대시보드·매매 regime이 항상 8단계와 일치하도록(BEAR 오판 방지)."""
+        try:
+            from base.market_phase import get_phase_for_date, regime_from_phase
+            ph = get_phase_for_date('US', _now_et().strftime('%Y-%m-%d')).get('phase')
+            if ph:
+                r = regime_from_phase(ph)
+                if r != self.market_regime:
+                    self.add_log(f"🔄 [US regime 동기화] {self.market_regime} → {r} (국면 {ph})")
+                    self.market_regime = r
+        except Exception:
+            pass
 
     def _candidate_indicators(self, ticker: str) -> dict:
         """후보 지표 on-demand 계산 (계좌편입 등 스크리너 미경유). 5분 캐시."""

@@ -341,6 +341,8 @@ class KRBotController:
                 except Exception: pass
             try: self._maybe_self_improve()
             except Exception: pass
+            try: self._sync_regime_from_phase()   # 8단계 기준 regime 상시 동기화
+            except Exception: pass
             time.sleep(30)
 
     def _sync_internal_balances(self, real_balance):
@@ -2306,6 +2308,19 @@ class KRBotController:
         except Exception as e:
             logger.debug(f"[{self.mode_name}] indicators_dict 오류 ({ticker}): {e}")
         return ind
+
+    def _sync_regime_from_phase(self):
+        """8단계 국면(백테스트 기준)에서 regime 상시 동기화 — 시간당 갱신 실패/지연시에도 일치 보장."""
+        try:
+            from base.market_phase import get_phase_for_date, regime_from_phase
+            ph = get_phase_for_date('KR', _now_kst().strftime('%Y-%m-%d')).get('phase')
+            if ph:
+                r = regime_from_phase(ph)
+                if r != self.market_regime:
+                    self.add_log(f"🔄 [KR regime 동기화] {self.market_regime} → {r} (국면 {ph})")
+                    self.market_regime = r
+        except Exception:
+            pass
 
     def _candidate_indicators(self, ticker: str) -> dict:
         """후보 지표 on-demand 계산 (계좌편입 등 스크리너 미경유 종목용). 5분 캐시."""
