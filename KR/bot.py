@@ -762,6 +762,24 @@ class KRBotController:
         except Exception as e:
             logger.error(f"[{self.mode_name}] killswitch 청산 오류: {e}", exc_info=True)
 
+    def _warn_blocked(self, ticker: str, name: str = '') -> bool:
+        """관리종목·투자경고·거래정지·VI·과열 종목 매수 차단 (일일 캐시). 토스 API 활용."""
+        today = _now_kst().strftime('%Y-%m-%d')
+        cache = getattr(self, '_warn_cache', None)
+        if cache is None or cache.get('_date') != today:
+            cache = {'_date': today}; self._warn_cache = cache
+        if ticker in cache:
+            blocked = cache[ticker]
+        else:
+            try:
+                blocked = bool(self.toss.has_investment_warning(ticker))
+            except Exception:
+                blocked = False                        # 조회 실패시 통과(fail-open)
+            cache[ticker] = blocked
+        if blocked:
+            self.add_log(f"🚫 [{name or ticker}] 매수차단 — 관리종목/투자경고/거래정지/VI 감지")
+        return blocked
+
     def _maybe_self_improve(self):
         """하루 1회: 백테스트 데이터로 국면별 진입임계값 자동 재최적화(자기개선 루프)."""
         today = _now_kst().strftime('%Y-%m-%d')
@@ -918,6 +936,8 @@ class KRBotController:
         if not self.toss:
             return False
         if self._killswitch_blocked(name):          # 포트폴리오 killswitch 게이트
+            return False
+        if self._warn_blocked(ticker, name):        # 관리종목·투자경고·거래정지·VI 차단
             return False
         if self.internal_cash is None:
             self.add_log(f"⏳ [{name}] 매수 보류 — 토스 잔고 초기화 대기 중")

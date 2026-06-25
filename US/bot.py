@@ -431,6 +431,25 @@ class USBotController:
         except Exception as e:
             logger.error(f"[US봇] killswitch 청산 오류: {e}", exc_info=True)
 
+    def _warn_blocked(self, ticker: str, name: str = '') -> bool:
+        """투자경고·거래정지 종목 매수 차단 (일일 캐시)."""
+        import datetime as _dt0
+        today = _dt0.date.today().strftime('%Y-%m-%d')
+        cache = getattr(self, '_warn_cache', None)
+        if cache is None or cache.get('_date') != today:
+            cache = {'_date': today}; self._warn_cache = cache
+        if ticker in cache:
+            blocked = cache[ticker]
+        else:
+            try:
+                blocked = bool(self.toss.has_investment_warning(ticker))
+            except Exception:
+                blocked = False
+            cache[ticker] = blocked
+        if blocked:
+            self.add_log(f"🚫 [{name or ticker}] 매수차단 — 투자경고/거래정지 감지")
+        return blocked
+
     def _maybe_self_improve(self):
         """하루 1회: 백테스트 데이터로 국면별 진입임계값 자동 재최적화(자기개선 루프)."""
         import datetime as _dt
@@ -917,6 +936,8 @@ class USBotController:
             self.add_log(f"⚠️ BUY 실패: 토스 API 미설정 ({ticker})")
             return 0
         if self._killswitch_blocked(name):          # 포트폴리오 killswitch 게이트
+            return 0
+        if self._warn_blocked(ticker, name):        # 투자경고/거래정지 차단
             return 0
         if self.cash_usd is None:
             self.add_log(f"⏳ [{name}] 매수 보류 — 토스 잔고 초기화 대기 중")
