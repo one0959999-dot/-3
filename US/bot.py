@@ -469,6 +469,37 @@ class USBotController:
             self.add_log(f"🚫 [{name or ticker}] 매수차단 — 투자경고/거래정지 감지")
         return blocked
 
+    def _log_ai(self, ticker, name, signal, decision, reason, price):
+        """위성 AI 판단 로깅 — 사후검증 표본."""
+        try:
+            log_ai_decision(
+                user_id=self.user_id, mode='US', ticker=ticker, stock_name=name,
+                signal=signal, ai_decision='CONFIRM' if decision else 'REJECT',
+                confidence=75, ai_reason=(reason or '')[:500], input_context='',
+                portfolio_snapshot='', market_regime=getattr(self, 'market_regime', ''),
+                strategy='satellite', price=price, session_type='live')
+        except Exception:
+            pass
+
+    def _backfill_ai_outcomes(self):
+        """5일+ 지난 AI 판단의 실제 결과 채우고 적중률 보고 (AI veto 사후검증)."""
+        from base.database import get_pending_ai_decisions, update_ai_decision_outcome, get_ai_decision_stats
+        filled = 0
+        for d in get_pending_ai_decisions('US', min_age_days=5):
+            tk = d['ticker']; dp = float(d['price'] or 0)
+            cur = self._price(tk)
+            if dp <= 0 or not cur or cur <= 0:
+                continue
+            try:
+                update_ai_decision_outcome(d['id'], float(cur), 0.0, round((cur/dp-1)*100, 2), 5)
+                filled += 1
+            except Exception:
+                pass
+        if filled:
+            st = get_ai_decision_stats(self.user_id, 'US')
+            self.add_log(f"🔎 US AI 사후검증 {filled}건 | 적중률 {st.get('accuracy',0):.0f}% ({st.get('correct',0)}/{st.get('total',0)})")
+            self._tg(f"🔎 [US AI 사후검증] {filled}건 결과반영\n누적 적중률 {st.get('accuracy',0):.0f}% ({st.get('correct',0)}/{st.get('total',0)})")
+
     def _maybe_self_improve(self):
         """하루 1회: 백테스트 데이터로 국면별 진입임계값 자동 재최적화(자기개선 루프)."""
         import datetime as _dt
@@ -476,6 +507,10 @@ class USBotController:
         if getattr(self, '_self_improve_date', None) == today:
             return
         self._self_improve_date = today
+        try:
+            self._backfill_ai_outcomes()              # AI veto 사후검증
+        except Exception as e:
+            logger.error(f"[US봇] AI outcome 백필 오류: {e}")
         try:
             from base.self_improve import optimize_entry_thresholds
             recs = optimize_entry_thresholds('US')
@@ -1475,6 +1510,7 @@ class USBotController:
                             indicators     = _c_ind,
                             market_info    = _c_mkt,
                         )
+                    self._log_ai(ticker, pos.name, 'BUY', approved, ai_reason, price)
                     if not approved:
                         with self.lock:
                             pos.status = f"코어 AI 거절 🛑 ({c_score}pt)"
@@ -2357,6 +2393,7 @@ class USBotController:
                         indicators     = _s_ind,
                         market_info    = _s_mkt,
                     )
+                    self._log_ai(ticker, info["name"], 'BUY', approved, ai_reason, price)
                     if not approved:
                                                                    
                         self.satellite_info = [s for s in self.satellite_info if s.get("ticker") != ticker]
@@ -2813,7 +2850,7 @@ class USBotController:
                     news_headlines=news,
                     indicators=_rb_ind, market_info=_rb_mkt,
                 )
-
+            self._log_ai(ticker, name, 'BUY', approved, ai_reason, price)
             if approved:
                 qty = self._buy(ticker, name, min(budget, self.cash_usd * 0.95), price)
                 if qty > 0:
