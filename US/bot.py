@@ -4060,10 +4060,34 @@ class USBotController:
             "values":  daily_values,
         }
 
+    def _rich_status_msg(self, sp_usd, avg_p, fx, pnl_pct, holding, pos, phase_kr, pavg_target):
+        """대시보드 상태 메시지 — 백테스트 국면·예상수익·목표/손절 포함(풍부)."""
+        cur = f"{sp_usd*fx:,.0f}원 (${sp_usd:.2f})"
+        ph = f"  ·  📊 {phase_kr}" if phase_kr else ""
+        if holding and avg_p > 0:
+            tgt = getattr(pos, 'bt_target_pct', 0) or 0
+            stp = getattr(pos, 'bt_stop_pct', 0) or 0
+            goal = f"  ·  🎯 목표 +{tgt:.0f}% / 손절 {stp:.0f}%" if tgt else ""
+            return (f"💼 {int(pos.shares)}주 · 평단 {avg_p*fx:,.0f}원(${avg_p:.2f}) · "
+                    f"수익 {pnl_pct:+.1f}% · 현재 {cur}{ph}{goal}")
+        exp = f"  ·  💹 이 국면 평균수익 +{pavg_target:.0f}%" if pavg_target else ""
+        reason = (getattr(pos, 'status', '') or '진입 대기').strip()
+        return f"👀 현재 {cur}{ph}{exp}  ·  {reason}"
+
     def get_status(self) -> dict:
-                                                                   
+
         try:
             fx = _get_fx_rate()
+            # 국면/국면평균수익 1회 계산(상태메시지 풍부화용 — 캐시 사용)
+            _mkt_s = self._build_us_market_info_dict()
+            _phase_kr_s = _mkt_s.get('market_phase_kr') or _mkt_s.get('market_phase') or ''
+            _pavg_t = 0
+            try:
+                from base.signal_forecast import get_phase_avg
+                _pa = get_phase_avg('US', _mkt_s.get('market_phase'))
+                _pavg_t = _pa.get('target') if _pa else 0
+            except Exception:
+                pass
 
                                                                         
                                                             
@@ -4098,13 +4122,8 @@ class USBotController:
                     "budget":     round(pos.budget_usd * fx),
                     "floor":      round(pos.floor_shares * avg_p * fx) if avg_p > 0 else 0,
                     "status":     pos.status,
-                    "status_msg": (
-                        f"{pos.shares:.0f}주 보유 | 평단 {avg_p * fx:,.0f}원 (${avg_p:.2f}) | "
-                        f"수익 {pnl_pct:+.1f}% | 현재가 {sp_usd * fx:,.0f}원 | 시장: {self.market_regime}"
-                        if pos.shares > 0 and avg_p > 0
-                        else f"현재가 {sp_usd * fx:,.0f}원 (${sp_usd:.2f}) | "
-                             f"진입점수 확인 중 | 시장: {self.market_regime}"
-                    ),
+                    "status_msg": self._rich_status_msg(sp_usd, avg_p, fx, pnl_pct,
+                                       pos.shares > 0 and avg_p > 0, pos, _phase_kr_s, _pavg_t),
                     "dca_mode":   False,
                 })
 
@@ -4131,13 +4150,8 @@ class USBotController:
                     "avg_price":  round(avg_p * fx),
                     "budget":     round(pos.budget_usd * fx),
                     "status":     pos.status,
-                    "status_msg": (
-                        f"{int(pos.shares)}주 보유 | 평단 {avg_p * fx:,.0f}원 (${avg_p:.2f}) | "
-                        f"수익 {pnl_pct:+.1f}% | 현재가 {sp_usd * fx:,.0f}원 | 시장: {self.market_regime}"
-                        if pos.shares > 0 and avg_p > 0
-                        else f"현재가 {sp_usd * fx:,.0f}원 (${sp_usd:.2f}) | "
-                             f"진입 대기 | 시장: {self.market_regime}"
-                    ),
+                    "status_msg": self._rich_status_msg(sp_usd, avg_p, fx, pnl_pct,
+                                       pos.shares > 0 and avg_p > 0, pos, _phase_kr_s, _pavg_t),
                 })
 
                                 

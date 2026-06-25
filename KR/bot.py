@@ -2497,19 +2497,33 @@ class KRBotController:
             with self.lock:
                 _regime_now = getattr(self, 'market_regime', 'NEUTRAL')
                 _regime_label = {"BULL": "상승장 🚀", "BEAR": "하락장 🐻", "NEUTRAL": "횡보장 ➡️"}.get(_regime_now, "분석 중")
+                # 풍부화 컨텍스트: 8단계 국면(한글) + 국면평균수익 (캐시)
+                _mkt_s = self._build_market_info_dict()
+                _phase_kr_s = _mkt_s.get('market_phase_kr') or _regime_label
+                _pavg_t = 0
+                try:
+                    from base.signal_forecast import get_phase_avg
+                    _pa = get_phase_avg('KR', _mkt_s.get('market_phase'))
+                    _pavg_t = _pa.get('target') if _pa else 0
+                except Exception:
+                    pass
+                _exp_str = f"  ·  💹 이 국면 평균수익 +{_pavg_t:.0f}%" if _pavg_t else ""
+                def _goal_str(p):
+                    tgt = getattr(p, 'bt_target_pct', 0) or 0; stp = getattr(p, 'bt_stop_pct', 0) or 0
+                    return f"  ·  🎯 목표 +{tgt:.0f}% / 손절 {stp:.0f}%" if tgt else ""
                 for core in self.core_positions:
                     if "대기" not in core.status and "심사" not in core.status:
                         if core.shares > 0:
                             _cp = getattr(core, 'toss_current_price', 0) or self.live_prices.get(core.ticker, 0)
                             _pnl = ((_cp - core.avg_price) / core.avg_price * 100) if core.avg_price > 0 and _cp > 0 else 0
                             core.status = "보유 중 💎"
-                            core.status_msg = f"{core.shares}주 보유 중 | 평단 {core.avg_price:,.0f}원 | 수익률 {_pnl:+.1f}% | {_regime_label}"
+                            core.status_msg = f"💼 {core.shares}주 · 평단 {core.avg_price:,.0f}원 · 수익 {_pnl:+.1f}% · 현재 {_cp:,.0f}원  ·  📊 {_phase_kr_s}{_goal_str(core)}"
                         elif core.cash > 0:
                             core.status = "감시 중 👀"
-                            core.status_msg = f"진입점수 확인 중 | 가용 예산 {core.cash:,.0f}원 | 시장: {_regime_label}"
+                            core.status_msg = f"👀 진입 대기 · 예산 {core.cash:,.0f}원  ·  📊 {_phase_kr_s}{_exp_str}"
                         else:
                             core.status = "감시 중 👀"
-                            core.status_msg = f"예산 소진 — 다음 잔고 동기화 대기 중 | 시장: {_regime_label}"
+                            core.status_msg = f"👀 예산 소진 — 잔고 동기화 대기  ·  📊 {_phase_kr_s}"
 
                 for sat in self.satellite_positions.values():
                     if "대기" not in sat.status and "심사" not in sat.status:
@@ -2517,13 +2531,13 @@ class KRBotController:
                             _sp = getattr(sat, 'toss_current_price', 0) or self.live_prices.get(sat.ticker, 0)
                             _pnl = ((_sp - sat.avg_price) / sat.avg_price * 100) if sat.avg_price > 0 and _sp > 0 else 0
                             sat.status = "보유 중 ✅"
-                            sat.status_msg = f"{sat.shares}주 보유 중 | 평단 {sat.avg_price:,.0f}원 | 수익률 {_pnl:+.1f}% | {_regime_label}"
+                            sat.status_msg = f"💼 {sat.shares}주 · 평단 {sat.avg_price:,.0f}원 · 수익 {_pnl:+.1f}% · 현재 {_sp:,.0f}원  ·  📊 {_phase_kr_s}{_goal_str(sat)}"
                         elif sat.cash > 0:
                             sat.status = "감시 중 👀"
-                            sat.status_msg = f"신호 대기 | 예산 {sat.cash:,.0f}원 | 시장: {_regime_label}"
+                            sat.status_msg = f"👀 신호 대기 · 예산 {sat.cash:,.0f}원  ·  📊 {_phase_kr_s}{_exp_str}"
                         else:
                             sat.status = "감시 중 👀"
-                            sat.status_msg = f"예산 소진 — 다음 종목 교체 대기 | 시장: {_regime_label}"
+                            sat.status_msg = f"👀 예산 소진 — 종목 교체 대기  ·  📊 {_phase_kr_s}"
 
                                                          
         if self.news_monitor and is_golden_hours:
