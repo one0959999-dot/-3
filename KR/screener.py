@@ -9,6 +9,7 @@ stock_screener.py
 ⑤ 종합 점수로 랭킹      : 섹터보너스 + 거래량 점수 + 백테스트 수익률
 """
 
+import os
 import time
 import threading
 import warnings
@@ -948,12 +949,17 @@ def select_satellites(toss=None, n=NUM_SATELLITES, verbose=True, claude_client=N
 
     # 🤖 딥러닝 모델 로드 (모듈 레벨 싱글턴 — 매 호출마다 디스크 I/O 방지)
     # W-05: 락으로 멀티스레드 환경에서 중복 생성(레이스컨디션) 방지
-    # BUG-06 FIX: dl_model 임포트 실패 시 무음 처리되던 것을 명시적 경고로 변경
-    try:
-        from ai.dl_model import DeepLearningPredictor
-    except ImportError as e:
-        logger.warning(f"[스크리너] dl_model 로드 실패 — DL 예측 비활성화: {e}")
-        DeepLearningPredictor = None
+    # 메모리 최적화(t2.micro 1GB): 학습된 모델 파일이 있을 때만 torch/dl_model import
+    # → 모델 없으면 torch(수백MB) 미로딩. 모델 학습되면 자동 활성.
+    DeepLearningPredictor = None
+    _dl_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                            'ai', 'stock_lstm_model.pth')
+    if os.path.exists(_dl_path):
+        try:
+            from ai.dl_model import DeepLearningPredictor
+        except ImportError as e:
+            logger.warning(f"[스크리너] dl_model 로드 실패 — DL 예측 비활성화: {e}")
+            DeepLearningPredictor = None
     global _dl_predictor_instance
     if DeepLearningPredictor is not None and _dl_predictor_instance is None:
         with _dl_predictor_lock:

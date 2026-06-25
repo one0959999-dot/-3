@@ -13,6 +13,7 @@ us_screener.py — 미국장 위성 종목 스크리너 (yfinance 기반, KR 동
 ⑩ 종합 스코어 → AI 최종 심사 → N개 선정
 """
 
+import os
 import time
 import datetime
 import logging
@@ -660,11 +661,15 @@ def scan_us_satellites(n: int = 5, exclude: set = None, toss_api=None) -> list[d
         except Exception as e:
             logger.warning(f"[US스크리너] KIS 랭킹 수집 실패: {e}")
 
-    # ④ DL 예측기 싱글턴 로드
-    try:
-        from ai.dl_model import DeepLearningPredictor
-    except ImportError:
-        DeepLearningPredictor = None
+    # ④ DL 예측기 싱글턴 로드 (메모리 최적화: 모델 파일 있을 때만 torch import)
+    DeepLearningPredictor = None
+    _dl_path_us = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                               'ai', 'stock_lstm_model.pth')
+    if os.path.exists(_dl_path_us):
+        try:
+            from ai.dl_model import DeepLearningPredictor
+        except ImportError:
+            DeepLearningPredictor = None
     if DeepLearningPredictor is not None and _dl_predictor_us is None:
         with _dl_lock_us:
             if _dl_predictor_us is None:
