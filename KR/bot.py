@@ -2307,6 +2307,50 @@ class KRBotController:
             logger.debug(f"[{self.mode_name}] indicators_dict 오류 ({ticker}): {e}")
         return ind
 
+    def _candidate_indicators(self, ticker: str) -> dict:
+        """후보 지표 on-demand 계산 (계좌편입 등 스크리너 미경유 종목용). 5분 캐시."""
+        import time as _t
+        ce = getattr(self, '_cand_ind_cache', None)
+        if ce is None:
+            ce = self._cand_ind_cache = {}
+        hit = ce.get(ticker)
+        if hit and _t.time() - hit[0] < 300:
+            return hit[1]
+        out = {}
+        try:
+            df = self._get_cached_base_ohlcv(ticker)
+            if df is not None and not df.empty and 'close' in df.columns and len(df) >= 25:
+                from base.signals import calc_indicators
+                d = calc_indicators(df)
+                close = d['close']
+                cur = float(close.iloc[-1])
+                mom20 = (cur / float(close.iloc[-21]) - 1) * 100 if len(close) > 21 else 0.0
+                hi52 = float(close.tail(252).max()); lo52 = float(close.tail(252).min())
+                pos52 = (cur - lo52) / (hi52 - lo52) * 100 if hi52 > lo52 else None
+                rsi = float(d['rsi'].iloc[-1]) if 'rsi' in d.columns and not d['rsi'].isna().iloc[-1] else None
+                volr = 1.0
+                if 'volume' in d.columns:
+                    _vm = d['volume'].tail(20).mean()
+                    if _vm and _vm > 0:
+                        volr = float(d['volume'].iloc[-1] / _vm)
+                out = {'current_price': int(cur), 'momentum_20d': round(mom20, 2),
+                       'rsi': round(rsi, 1) if rsi is not None else None,
+                       'pos_52w': round(pos52, 1) if pos52 is not None else None,
+                       'vol_ratio': round(volr, 2)}
+                try:
+                    from base.signal_forecast import estimate_candidate_return
+                    _ph = self._build_market_info_dict().get('market_phase')
+                    est = estimate_candidate_return('KR', df, _ph)
+                    if est:
+                        out['exp_return'] = est.get('target')
+                        out['ai_reason'] = f"백테스트 예상수익 +{est.get('target', 0):.0f}% · 근거 {est.get('basis', '')}"
+                except Exception:
+                    pass
+        except Exception:
+            pass
+        ce[ticker] = (_t.time(), out)
+        return out
+
     def _forecast_block(self, name: str, ticker: str, price: float, ex_df) -> str:
         """매수 시 백테스트 통계 기반 예측 4줄(예상 보유/목표/손절). 없으면 빈 문자열."""
         try:
@@ -4888,19 +4932,25 @@ class KRBotController:
             for c in self.satellite_info:
                 if c.get('ticker') in _held_sat_tickers:
                     continue
+                # 계좌편입 등 지표 누락 후보 → on-demand 지표 계산으로 채움
+                if c.get('pos_52w') is None and c.get('momentum_20d') is None:
+                    _enr = self._candidate_indicators(c.get('ticker', ''))
+                    if _enr:
+                        c = {**c, **_enr}
                 sat_info_snapshot.append({
                     "ticker":      c.get("ticker", ""),
                     "name":        c.get("name", ""),
                     "sector":      c.get("sector", "-"),
-                    "momentum_20d": float(c.get("momentum_20d", c.get("return_pct", 0))),
+                    "momentum_20d": float(c.get("momentum_20d", c.get("return_pct", 0)) or 0),
                     "rsi":         c.get("rsi"),
-                    "vol_ratio":   float(c.get("vol_ratio", c.get("volume_surge", 1.0))),
+                    "vol_ratio":   float(c.get("vol_ratio", c.get("volume_surge", 1.0)) or 1.0),
                     "frgn_inst":   bool(c.get("frgn_inst", False)),
                     "frgn_only":   bool(c.get("frgn_only", False)),
                     "pos_52w":     c.get("pos_52w"),
-                    "dl_prob":     float(c.get("dl_prob", 0)),
+                    "dl_prob":     float(c.get("dl_prob", 0) or 0),
                     "ai_reason":   c.get("ai_reason", ""),
-                    "current_price": int(c.get("current_price", 0)),
+                    "exp_return":  c.get("exp_return"),
+                    "current_price": int(c.get("current_price", 0) or 0),
                     "screened_at": c.get("screened_at", ""),
                 })
                 if len(sat_info_snapshot) >= 5:
