@@ -1895,14 +1895,13 @@ def backtest_stats():
             ''').fetchone()
             kr, us, total, avg_gain = row['kr'] or 0, row['us'] or 0, row['total'] or 0, row['avg_gain']
         else:
-            # 요약 미생성 폴백 (가벼운 카운트만)
-            kr = conn.execute('SELECT COUNT(DISTINCT ticker) FROM backtest_trade_signals WHERE mode="KR"').fetchone()[0]
-            us = conn.execute('SELECT COUNT(DISTINCT ticker) FROM backtest_trade_signals WHERE mode="US"').fetchone()[0]
-            total = conn.execute('SELECT COUNT(*) FROM backtest_trade_signals').fetchone()[0]
-            avg_gain = 0
-        today = conn.execute(
-            'SELECT COUNT(*) FROM backtest_trade_signals WHERE date(created_at)=date("now")'
-        ).fetchone()[0]
+            kr = us = total = avg_gain = 0
+        # 오늘 수집 — 원본 테이블 있을 때만(경량 db엔 없음)
+        today = 0
+        if conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='backtest_trade_signals'").fetchone():
+            today = conn.execute(
+                'SELECT COUNT(*) FROM backtest_trade_signals WHERE date(created_at)=date("now")'
+            ).fetchone()[0]
     finally:
         conn.close()
     return jsonify({
