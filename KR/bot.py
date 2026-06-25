@@ -146,9 +146,18 @@ class KRBotController:
         self._weekend_scan_done: str = ""                        
         self.daily_report = None
         self.volume_surge_details = []                                             
-        self._last_total_equity = 0.0                              
+        self._last_total_equity = 0.0
 
-                              
+        # ── 포트폴리오 2단계 killswitch (일중 고점대비 equity drawdown) ──
+        self.KILLSWITCH_ENABLED   = True
+        self.KILL_PAUSE_DD        = 0.10   # -10% → 신규매수 중단
+        self.KILL_LIQUIDATE_DD    = 0.20   # -20% → 전포지션 청산 + 당일 거래중단
+        self._equity_peak_today   = 0.0
+        self._equity_peak_date    = None
+        self._trading_halted_date = None   # 'YYYY-MM-DD' = 당일 killswitch L2 발동됨
+        self._killswitch_last_warn= ''
+
+
                                                           
         self.internal_cash = None                                             
         self._last_trade_ts = 0.0                                            
@@ -297,6 +306,10 @@ class KRBotController:
                     if real_balance:
                         self.cached_balance = real_balance
                         self._sync_internal_balances(real_balance)
+                        try:
+                            self._killswitch_enforce()     # 포트폴리오 급락 감시(L2 자동청산)
+                        except Exception as _ke:
+                            logger.error(f"[{self.mode_name}] killswitch 오류: {_ke}")
 
                                                                        
                     try:
@@ -668,8 +681,86 @@ class KRBotController:
             return
         threading.Thread(target=self.telegram.send_message, args=(message,), daemon=True).start()
 
+    def _killswitch_level(self) -> int:
+        """일중 고점대비 equity drawdown으로 0/1/2 반환. 1=신규매수중단, 2=전량청산.
+        백테스트 기반 안전판 — 라이브 자산(_last_total_equity) 기준."""
+        if not getattr(self, 'KILLSWITCH_ENABLED', True):
+            return 0
+        eq = float(getattr(self, '_last_total_equity', 0) or 0)
+        if eq <= 0:
+            return 0
+        today = _now_kst().strftime('%Y-%m-%d')
+        if self._equity_peak_date != today:        # 날짜 바뀌면 일중 고점 리셋
+            self._equity_peak_date  = today
+            self._equity_peak_today = eq
+        if eq > self._equity_peak_today:
+            self._equity_peak_today = eq
+        peak = self._equity_peak_today or eq
+        dd = (peak - eq) / peak if peak > 0 else 0.0
+        if dd >= self.KILL_LIQUIDATE_DD:
+            return 2
+        if dd >= self.KILL_PAUSE_DD:
+            return 1
+        return 0
+
+    def _killswitch_blocked(self, name: str = '') -> bool:
+        """매수 차단 여부(L1 이상 또는 당일 L2 발동). _buy_order에서 호출."""
+        today = _now_kst().strftime('%Y-%m-%d')
+        if self._trading_halted_date == today:
+            self.add_log(f"🛑 [{name}] 매수차단 — killswitch 당일 거래중단(-{self.KILL_LIQUIDATE_DD*100:.0f}% 발동)")
+            return True
+        if self._killswitch_level() >= 1:
+            self.add_log(f"⏸️ [{name}] 매수보류 — killswitch 일중 -{self.KILL_PAUSE_DD*100:.0f}% 도달(신규매수 중단)")
+            return True
+        return False
+
+    def _killswitch_enforce(self):
+        """사이클마다 호출. L1=경고, L2=전포지션 청산+당일 거래중단."""
+        if not getattr(self, 'KILLSWITCH_ENABLED', True):
+            return
+        lvl = self._killswitch_level()
+        if lvl == 0:
+            return
+        today = _now_kst().strftime('%Y-%m-%d')
+        eq    = float(getattr(self, '_last_total_equity', 0) or 0)
+        peak  = self._equity_peak_today or eq
+        dd_pct = (peak - eq) / peak * 100 if peak > 0 else 0
+        warn_key = f"{today}-L{lvl}"
+        if self._killswitch_last_warn != warn_key:
+            self._killswitch_last_warn = warn_key
+            try:
+                self._send_telegram(
+                    f"⚠️ <b>[KR killswitch L{lvl}]</b> 일중 고점대비 -{dd_pct:.1f}%\n"
+                    f"현재자산 {eq:,.0f}원 (고점 {peak:,.0f}원)\n"
+                    + ("→ 신규매수 중단" if lvl == 1 else "→ <b>전포지션 청산 + 당일 거래중단</b>"),
+                    msg_type='misc')
+            except Exception:
+                pass
+        if lvl < 2 or self._trading_halted_date == today:
+            return
+        # ── L2: 전포지션 청산 + 당일 거래중단 ──
+        self._trading_halted_date = today
+        try:
+            with self.lock:
+                _targets = [(c.ticker, c.name, int(getattr(c, 'shares', 0)), c, getattr(c, 'avg_price', 0)) for c in self.core_positions]
+                _targets += [(t, getattr(p, 'name', t), int(getattr(p, 'shares', 0)), p, getattr(p, 'avg_price', 0)) for t, p in self.satellite_positions.items()]
+            for tk, nm, sh, pos, avg in _targets:
+                if sh <= 0:
+                    continue
+                price = self.live_prices.get(tk, 0) or avg or 0
+                if self._sell_order(tk, sh, pos, nm, ai_reason='killswitch L2 전량청산'):
+                    try:
+                        profit = _net_profit(price, avg, sh) if avg else 0
+                        self._log_trade(tk, nm, 'SELL', price, 'killswitch', 'killswitch -20% 전량청산', profit=profit)
+                    except Exception:
+                        pass
+                    with self.lock:
+                        pos.shares = 0
+        except Exception as e:
+            logger.error(f"[{self.mode_name}] killswitch 청산 오류: {e}", exc_info=True)
+
     def _send_trade_telegram(self, message):
-                             
+
         self._send_telegram(message, msg_type='trade')
 
     def _send_reject_telegram(self, message):
@@ -805,6 +896,8 @@ class KRBotController:
 \
                                     
         if not self.toss:
+            return False
+        if self._killswitch_blocked(name):          # 포트폴리오 killswitch 게이트
             return False
         if self.internal_cash is None:
             self.add_log(f"⏳ [{name}] 매수 보류 — 토스 잔고 초기화 대기 중")

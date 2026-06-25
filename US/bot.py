@@ -228,7 +228,16 @@ class USBotController:
 
                                                                   
         self.cash_usd        = 0.0
-        self._last_trade_ts  = 0.0                                 
+        self._last_trade_ts  = 0.0
+
+        # ── 포트폴리오 2단계 killswitch (일중 고점대비 equity drawdown) ──
+        self.KILLSWITCH_ENABLED   = True
+        self.KILL_PAUSE_DD        = 0.10   # -10% → 신규매수 중단
+        self.KILL_LIQUIDATE_DD    = 0.20   # -20% → 전포지션 청산 + 당일 거래중단
+        self._equity_peak_today   = 0.0
+        self._equity_peak_date    = None
+        self._trading_halted_date = None
+        self._killswitch_last_warn= ''
 
                                                            
         self.initial_capital_captured = False
@@ -346,6 +355,77 @@ class USBotController:
                 self.telegram.send_message(msg)
             except Exception:
                 pass
+
+    def _killswitch_level(self) -> int:
+        """일중 고점대비 equity drawdown으로 0/1/2 반환. 1=신규매수중단, 2=전량청산."""
+        if not getattr(self, 'KILLSWITCH_ENABLED', True):
+            return 0
+        try:
+            eq = float(self._get_total_assets_usd())
+        except Exception:
+            return 0
+        if eq <= 0:
+            return 0
+        import datetime as _dt
+        today = _dt.date.today().strftime('%Y-%m-%d')
+        if self._equity_peak_date != today:
+            self._equity_peak_date  = today
+            self._equity_peak_today = eq
+        if eq > self._equity_peak_today:
+            self._equity_peak_today = eq
+        peak = self._equity_peak_today or eq
+        dd = (peak - eq) / peak if peak > 0 else 0.0
+        if dd >= self.KILL_LIQUIDATE_DD:
+            return 2
+        if dd >= self.KILL_PAUSE_DD:
+            return 1
+        return 0
+
+    def _killswitch_blocked(self, name: str = '') -> bool:
+        import datetime as _dt
+        today = _dt.date.today().strftime('%Y-%m-%d')
+        if self._trading_halted_date == today:
+            self.add_log(f"🛑 [{name}] 매수차단 — killswitch 당일 거래중단(-{self.KILL_LIQUIDATE_DD*100:.0f}% 발동)")
+            return True
+        if self._killswitch_level() >= 1:
+            self.add_log(f"⏸️ [{name}] 매수보류 — killswitch 일중 -{self.KILL_PAUSE_DD*100:.0f}% 도달(신규매수 중단)")
+            return True
+        return False
+
+    def _killswitch_enforce(self):
+        """사이클마다 호출. L1=경고, L2=전포지션 청산+당일 거래중단."""
+        if not getattr(self, 'KILLSWITCH_ENABLED', True):
+            return
+        lvl = self._killswitch_level()
+        if lvl == 0:
+            return
+        import datetime as _dt
+        today = _dt.date.today().strftime('%Y-%m-%d')
+        try:
+            eq = float(self._get_total_assets_usd())
+        except Exception:
+            eq = 0.0
+        peak = self._equity_peak_today or eq
+        dd_pct = (peak - eq) / peak * 100 if peak > 0 else 0
+        warn_key = f"{today}-L{lvl}"
+        if self._killswitch_last_warn != warn_key:
+            self._killswitch_last_warn = warn_key
+            self._tg(f"⚠️ [US killswitch L{lvl}] 일중 고점대비 -{dd_pct:.1f}%\n"
+                     f"현재자산 ${eq:,.0f} (고점 ${peak:,.0f})\n"
+                     + ("→ 신규매수 중단" if lvl == 1 else "→ 전포지션 청산 + 당일 거래중단"))
+        if lvl < 2 or self._trading_halted_date == today:
+            return
+        self._trading_halted_date = today
+        try:
+            with self.lock:
+                _targets = [(t, getattr(p, 'name', t), float(getattr(p, 'shares', 0)), getattr(p, 'avg_price_usd', 0)) for t, p in self.core_positions.items()]
+                _targets += [(t, getattr(p, 'name', t), float(getattr(p, 'shares', 0)), getattr(p, 'avg_price_usd', 0)) for t, p in self.satellite_positions.items()]
+            for tk, nm, sh, avg in _targets:
+                if sh <= 0:
+                    continue
+                self._sell(tk, nm, sh, self._price(tk), strategy='killswitch', ai_reason='killswitch L2 전량청산')
+        except Exception as e:
+            logger.error(f"[US봇] killswitch 청산 오류: {e}", exc_info=True)
 
     def _run_threaded(self, fn):
         threading.Thread(target=fn, daemon=True).start()
@@ -561,6 +641,10 @@ class USBotController:
             try:
                 if self.toss:
                     self._sync_balance_from_toss()
+                    try:
+                        self._killswitch_enforce()     # 포트폴리오 급락 감시(L2 자동청산)
+                    except Exception as _ke:
+                        logger.error(f"[US봇] killswitch 오류: {_ke}")
             except Exception as e:
                 logger.debug(f"[US봇] 잔고 동기화 오류: {e}")
             time.sleep(60)
@@ -805,6 +889,8 @@ class USBotController:
                                                             
         if not self.toss:
             self.add_log(f"⚠️ BUY 실패: 토스 API 미설정 ({ticker})")
+            return 0
+        if self._killswitch_blocked(name):          # 포트폴리오 killswitch 게이트
             return 0
         if self.cash_usd is None:
             self.add_log(f"⏳ [{name}] 매수 보류 — 토스 잔고 초기화 대기 중")
