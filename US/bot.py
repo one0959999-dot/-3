@@ -416,8 +416,9 @@ class USBotController:
             self._tg(f"⚠️ [US killswitch L{lvl}] 일중 고점대비 -{dd_pct:.1f}%\n"
                      f"현재자산 ${eq:,.0f} (고점 ${peak:,.0f})\n"
                      + ("→ 신규매수 중단" if lvl == 1 else "→ 전포지션 청산 + 당일 거래중단"))
-        if lvl < 2 or self._trading_halted_date == today:
+        if lvl < 2:
             return
+        # halted_date는 매수만 차단. 청산은 매 사이클 재시도(장마감/매도실패 대비) — 0주는 자동 skip.
         self._trading_halted_date = today
         try:
             with self.lock:
@@ -3128,6 +3129,10 @@ class USBotController:
                     if price_usd <= 0:
                         continue
 
+                    import datetime as _dt_kw
+                    if self._trading_halted_date == _dt_kw.date.today().strftime('%Y-%m-%d'):
+                        self.add_log(f"🛑 US방어매수 차단 — killswitch 당일 거래중단(-20% 발동): {name}")
+                        continue
                     qty = int(budget_usd // price_usd)
                     if qty > 0 and cash_usd >= qty * price_usd * 1.003:
                         if self.toss.buy_market_order(ticker, qty):
@@ -3684,6 +3689,9 @@ class USBotController:
                         "overext_sell_count":      getattr(p, 'overext_sell_count', 0),
                         "initial_shares_for_exit": p.initial_shares_for_exit,
                         "last_order_time":         getattr(p, 'last_order_time', 0.0),
+                        "bt_stop_pct":             getattr(p, 'bt_stop_pct', 0.0),   # D 청산정렬 영속
+                        "bt_target_pct":           getattr(p, 'bt_target_pct', 0.0),
+                        "bt_hold_days":            getattr(p, 'bt_hold_days', 0.0),
                     }
                     for t, p in self.satellite_positions.items()
                 },
@@ -3771,6 +3779,9 @@ class USBotController:
                 _sat_pos.overext_sell_count      = int(s.get("overext_sell_count",  0))
                 _sat_pos.initial_shares_for_exit = float(s.get("initial_shares_for_exit", 0.0))
                 _sat_pos.last_order_time         = float(s.get("last_order_time", 0.0))
+                _sat_pos.bt_stop_pct             = float(s.get("bt_stop_pct",   0.0))   # D 청산정렬 영속
+                _sat_pos.bt_target_pct           = float(s.get("bt_target_pct", 0.0))
+                _sat_pos.bt_hold_days            = float(s.get("bt_hold_days",  0.0))
                 self.satellite_positions[t] = _sat_pos
                                                                             
             _existing_us = set(self.satellite_positions.keys())

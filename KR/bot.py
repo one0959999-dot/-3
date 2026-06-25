@@ -736,9 +736,10 @@ class KRBotController:
                     msg_type='misc')
             except Exception:
                 pass
-        if lvl < 2 or self._trading_halted_date == today:
+        if lvl < 2:
             return
         # ── L2: 전포지션 청산 + 당일 거래중단 ──
+        # halted_date는 매수만 차단. 청산은 매 사이클 재시도(매도실패/장마감 대비) — 0주는 자동 skip.
         self._trading_halted_date = today
         try:
             with self.lock:
@@ -1448,7 +1449,7 @@ class KRBotController:
         try:
             state = {
                 "cores": [{"ticker": c.ticker, "name": c.name, "shares": int(c.shares), "floor_shares": int(c.floor_shares), "cash": float(c.cash), "initial_cash": float(c.initial_cash), "avg_price": float(c.avg_price), "dca_mode": bool(getattr(c, 'dca_mode', False)), "dca_amount": float(getattr(c, 'dca_amount', 0)), "dca_interval_hours": int(getattr(c, 'dca_interval_hours', 72)), "dca_dip_pct": float(getattr(c, 'dca_dip_pct', 3.0)), "last_dca_time": float(getattr(c, 'last_dca_time', 0.0)), "last_order_time": float(getattr(c, 'last_order_time', 0.0)), "second_buy_price": float(getattr(c, 'second_buy_price', 0.0)), "second_buy_cash": float(getattr(c, 'second_buy_cash', 0.0)), "second_buy_done": bool(getattr(c, 'second_buy_done', False))} for c in self.core_positions],
-                "satellites": {ticker: {"name": pos.name, "shares": int(pos.shares), "cash": float(pos.cash), "initial_cash": float(pos.initial_cash), "avg_price": float(pos.avg_price), "partial_sold": bool(getattr(pos, 'partial_sold', False)), "partial_sold_2": bool(getattr(pos, 'partial_sold_2', False)), "second_buy_done": bool(getattr(pos, 'second_buy_done', False)), "pyramid_done": bool(getattr(pos, 'pyramid_done', False)), "second_buy_price": float(getattr(pos, 'second_buy_price', 0)), "second_buy_cash": float(getattr(pos, 'second_buy_cash', 0)), "max_price": float(getattr(pos, 'max_price', 0)), "last_order_time": float(getattr(pos, 'last_order_time', 0.0)), "stop_news_checked": bool(getattr(pos, 'stop_news_checked', False)), "swing_acc_count": int(getattr(pos, 'swing_acc_count', 0)), "overext_sell_count": int(getattr(pos, 'overext_sell_count', 0))} for ticker, pos in self.satellite_positions.items()},
+                "satellites": {ticker: {"name": pos.name, "shares": int(pos.shares), "cash": float(pos.cash), "initial_cash": float(pos.initial_cash), "avg_price": float(pos.avg_price), "partial_sold": bool(getattr(pos, 'partial_sold', False)), "partial_sold_2": bool(getattr(pos, 'partial_sold_2', False)), "second_buy_done": bool(getattr(pos, 'second_buy_done', False)), "pyramid_done": bool(getattr(pos, 'pyramid_done', False)), "second_buy_price": float(getattr(pos, 'second_buy_price', 0)), "second_buy_cash": float(getattr(pos, 'second_buy_cash', 0)), "max_price": float(getattr(pos, 'max_price', 0)), "last_order_time": float(getattr(pos, 'last_order_time', 0.0)), "stop_news_checked": bool(getattr(pos, 'stop_news_checked', False)), "swing_acc_count": int(getattr(pos, 'swing_acc_count', 0)), "overext_sell_count": int(getattr(pos, 'overext_sell_count', 0)), "bt_stop_pct": float(getattr(pos, 'bt_stop_pct', 0)), "bt_target_pct": float(getattr(pos, 'bt_target_pct', 0)), "bt_hold_days": float(getattr(pos, 'bt_hold_days', 0))} for ticker, pos in self.satellite_positions.items()},
                 "satellite_info": self.satellite_info, "hot_sectors": self.hot_sectors, "num_satellites": self.num_satellites,
                 "last_screen_month": getattr(self, 'last_screen_month', None), "last_screen_date": self.last_screen_date.strftime('%Y-%m-%d') if getattr(self, 'last_screen_date', None) else None,
                 "last_core_rebalance_date": self.last_core_rebalance_date.strftime('%Y-%m-%d') if getattr(self, 'last_core_rebalance_date', None) else None,
@@ -1548,6 +1549,9 @@ class KRBotController:
                 pos.stop_news_checked  = bool(s.get("stop_news_checked",  False))
                 pos.swing_acc_count    = int(s.get("swing_acc_count",     0))
                 pos.overext_sell_count = int(s.get("overext_sell_count",  0))
+                pos.bt_stop_pct        = float(s.get("bt_stop_pct",   0))   # D 청산정렬 영속
+                pos.bt_target_pct      = float(s.get("bt_target_pct", 0))
+                pos.bt_hold_days       = float(s.get("bt_hold_days",  0))
                 self.satellite_positions[ticker] = pos
 
                                                 
@@ -1782,12 +1786,15 @@ class KRBotController:
 
                                                                              
                                                                  
+                    if self._trading_halted_date == _now_kst().strftime('%Y-%m-%d'):
+                        self.add_log(f"🛑 방어매수 차단 — killswitch 당일 거래중단(-20% 발동): {name}")
+                        continue
                     budget = int(total_assets * ratio)
                     price  = self.toss.get_current_price(ticker)
                     if price and price > 0:
                         qty = int(budget // price)
                         if qty > 0 and total_cash >= qty * price * 1.002:
-                            if self.toss.buy_market_order(ticker, qty):                    
+                            if self.toss.buy_market_order(ticker, qty):
                                 total_cash -= qty * price                     
                                 self.add_log(f"🐻 하락장 방어 매수 | {emoji} {name} {qty}주 @ {price:,.0f}원")
                                 self._log_trade(ticker, name, 'BUY', price, "방어자산", f"BEAR 국면 총자산 {ratio*100:.0f}% 헤지")
