@@ -4139,6 +4139,8 @@ class USBotController:
 
         try:
             fx = _get_fx_rate()
+            try: self._sync_regime_from_phase()   # 대시보드 표시 regime을 8단계와 항상 일치(봇 미가동시에도)
+            except Exception: pass
             # 국면/국면평균수익 1회 계산(상태메시지 풍부화용 — 캐시 사용)
             _mkt_s = self._build_us_market_info_dict()
             _phase_kr_s = _mkt_s.get('market_phase_kr') or _mkt_s.get('market_phase') or ''

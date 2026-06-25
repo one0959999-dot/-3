@@ -4802,7 +4802,8 @@ class KRBotController:
 
     def get_status(self):
         try:
-                                                            
+            try: self._sync_regime_from_phase()   # 표시 regime을 8단계와 항상 일치(봇 미가동시에도)
+            except Exception: pass
             if not self.lock.acquire(timeout=2):
                 return {"running": self.is_running, "is_running": self.is_running,
                         "cores": [], "satellites": [], "logs": list(self._log_buffer)[-30:],
