@@ -828,12 +828,55 @@ class KRBotController:
             self.add_log(f"🚫 [{name or ticker}] 매수차단 — 관리종목/투자경고/거래정지/VI 감지")
         return blocked
 
+    def _log_ai(self, ticker, name, signal, decision, reason, price):
+        """위성 AI 판단(승인/거절) 로깅 — 사후검증 표본 확보."""
+        try:
+            log_ai_decision(
+                user_id=self.user_id, mode='KR', ticker=ticker, stock_name=name,
+                signal=signal, ai_decision='CONFIRM' if decision else 'REJECT',
+                confidence=75, ai_reason=(reason or '')[:500], input_context='',
+                portfolio_snapshot='', market_regime=getattr(self, 'market_regime', ''),
+                strategy='satellite', price=price, session_type='live')
+        except Exception:
+            pass
+
+    def _backfill_ai_outcomes(self):
+        """5일+ 지난 AI 판단의 실제 결과를 채우고 적중률 보고 (AI veto 사후검증)."""
+        from base.database import get_pending_ai_decisions, update_ai_decision_outcome, get_ai_decision_stats
+        pend = get_pending_ai_decisions('KR', min_age_days=5)
+        filled = 0
+        for d in pend:
+            tk = d['ticker']; dp = float(d['price'] or 0)
+            if dp <= 0:
+                continue
+            cur = self.live_prices.get(tk, 0)
+            if not cur:
+                try: cur = self.toss.get_current_price(tk) or 0
+                except Exception: cur = 0
+            if not cur or cur <= 0:
+                continue
+            pnl_pct = (cur / dp - 1) * 100
+            try:
+                update_ai_decision_outcome(d['id'], float(cur), 0.0, round(pnl_pct, 2), 5)
+                filled += 1
+            except Exception:
+                pass
+        if filled:
+            st = get_ai_decision_stats(self.user_id, 'KR')
+            acc = st.get('accuracy', 0)
+            self.add_log(f"🔎 AI 사후검증 {filled}건 갱신 | 누적 적중률 {acc:.0f}% ({st.get('correct',0)}/{st.get('total',0)})")
+            self._send_telegram(f"🔎 <b>[KR AI 사후검증]</b> {filled}건 결과반영\n누적 적중률 {acc:.0f}% ({st.get('correct',0)}/{st.get('total',0)})", msg_type='misc')
+
     def _maybe_self_improve(self):
         """하루 1회: 백테스트 데이터로 국면별 진입임계값 자동 재최적화(자기개선 루프)."""
         today = _now_kst().strftime('%Y-%m-%d')
         if getattr(self, '_self_improve_date', None) == today:
             return
         self._self_improve_date = today
+        try:
+            self._backfill_ai_outcomes()              # AI veto 사후검증
+        except Exception as e:
+            logger.error(f"[{self.mode_name}] AI outcome 백필 오류: {e}")
         try:
             from base.self_improve import optimize_entry_thresholds
             recs = optimize_entry_thresholds('KR')
@@ -3537,6 +3580,7 @@ class KRBotController:
                                 _ind = self._build_indicators_dict(ticker, price, ex_df, signal_types=[st_nm])
                                 _mkt = self._build_market_info_dict()
                                 decision, ai_reason, _ = self.claude.ai_approve_trade(sig, p_nm, ticker, price, st_nm, ind_val, self.hot_sectors, context=trade_ctx, indicators=_ind, market_info=_mkt)
+                                self._log_ai(ticker, p_nm, sig, decision, ai_reason, price)
                                 if decision:
                                     if self._buy_order(ticker, qty, pos, p_nm):
                                         with self.lock:
@@ -3637,6 +3681,7 @@ class KRBotController:
                         _ind = self._build_indicators_dict(ticker, price, ex_df, signal_types=[st_nm])
                         _mkt = self._build_market_info_dict()
                         decision, ai_reason, _ = self.claude.ai_approve_trade(sig, p_nm, ticker, price, st_nm, ind_val, self.hot_sectors, context=trade_ctx, indicators=_ind, market_info=_mkt)
+                        self._log_ai(ticker, p_nm, sig, decision, ai_reason, price)
                         if decision:
                             qty = int((entry_cash * 0.98) // price)
                             if qty > 0 and self._buy_order(ticker, qty, pos, p_nm):
@@ -3701,6 +3746,7 @@ class KRBotController:
                         _ind = self._build_indicators_dict(ticker, price, ex_df, signal_types=[st_nm])
                         _mkt = self._build_market_info_dict()
                         decision, ai_reason, _ = self.claude.ai_approve_trade(sig, p_nm, ticker, price, st_nm, ind_val, self.hot_sectors, context=trade_ctx, indicators=_ind, market_info=_mkt)
+                        self._log_ai(ticker, p_nm, sig, decision, ai_reason, price)
                         if decision:
                             if self._sell_order(ticker, p_sh, pos, p_nm):
                                 with self.lock:

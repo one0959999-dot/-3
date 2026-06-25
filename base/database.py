@@ -833,6 +833,22 @@ def update_ai_decision_outcome(log_id: int, outcome_price: float,
             conn.close()
 
 
+def get_pending_ai_decisions(mode: str, min_age_days: int = 5, limit: int = 200) -> list:
+    """결과 미기록 + 충분히 시간 지난 AI 판단들 — 사후검증 백필용."""
+    conn = get_db_connection()
+    try:
+        rows = conn.execute('''
+            SELECT id, ticker, signal, ai_decision, price, created_at
+            FROM ai_decision_log
+            WHERE mode=? AND outcome_pnl IS NULL AND price > 0
+              AND julianday('now') - julianday(created_at) >= ?
+            ORDER BY created_at ASC LIMIT ?
+        ''', (mode, min_age_days, limit)).fetchall()
+        return [dict(r) for r in rows]
+    finally:
+        conn.close()
+
+
 def get_ai_decision_stats(user_id: int, mode: str = 'KR',
                            session_type: str = 'live') -> dict:
     conn = get_db_connection()
