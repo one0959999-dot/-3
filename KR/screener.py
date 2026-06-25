@@ -974,6 +974,15 @@ def select_satellites(toss=None, n=NUM_SATELLITES, verbose=True, claude_client=N
         "선물인버스", "인버스(합성)", "레버리지(합성)",
     )
 
+    # 현재 시장국면 1회 계산 (sector×국면 가산점·예상수익 추정 공통 사용)
+    _cur_phase = None
+    try:
+        from base.market_phase import get_phase_for_date
+        import datetime as _dtp
+        _cur_phase = get_phase_for_date('KR', _dtp.date.today().strftime('%Y-%m-%d')).get('phase')
+    except Exception:
+        pass
+
     for ticker in candidate_pool:
         try:
             name = stock.get_market_ticker_name(ticker)
@@ -1073,6 +1082,17 @@ def select_satellites(toss=None, n=NUM_SATELLITES, verbose=True, claude_client=N
             ai_up_prob = dl_predictor.predict_up_probability(df) if dl_predictor is not None else 50.0
             ml_factor_score = (ai_up_prob - 50.0) * 0.2
 
+            # ── 섹터×국면 백테스트 강도 가산 (현 국면에서 historically 강한 섹터 우대) ──
+            sector_phase_bonus = 0.0
+            try:
+                from base.database import get_sector_phase_stat
+                _sps = get_sector_phase_stat('KR', ticker_to_sector.get(ticker, ''), _cur_phase)
+                if _sps and _sps.get('avg_max_gain_pct'):
+                    # 국면 평균상승 대비: 30% 기준 ±, 최대 ±8점
+                    sector_phase_bonus = max(-4.0, min(8.0, (_sps['avg_max_gain_pct'] - 30.0) * 0.4))
+            except Exception:
+                pass
+
             score = ((vol_score - 1) * 6
                      + sector_bonus
                      + frgn_inst_bonus
@@ -1083,7 +1103,8 @@ def select_satellites(toss=None, n=NUM_SATELLITES, verbose=True, claude_client=N
                      - stat_arb_penalty
                      + ml_factor_score
                      + rsi_oversold_bonus      # RSI 과매도 근접 보너스
-                     + macd_pullback_bonus)    # MACD 눌림목 보너스
+                     + macd_pullback_bonus     # MACD 눌림목 보너스
+                     + sector_phase_bonus)     # 섹터×국면 백테스트 강도
 
             # RSI(14) 현재값 계산 — AI 전략 검수 프롬프트에 활용
             try:
@@ -1121,10 +1142,7 @@ def select_satellites(toss=None, n=NUM_SATELLITES, verbose=True, claude_client=N
             _exp_return = None; _exp_win = None; _exp_basis = ''
             try:
                 from base.signal_forecast import estimate_candidate_return
-                from base.market_phase import get_phase_for_date
-                import datetime as _dt2
-                _ph2 = get_phase_for_date('KR', _dt2.date.today().strftime('%Y-%m-%d')).get('phase')
-                _est = estimate_candidate_return('KR', df, _ph2)
+                _est = estimate_candidate_return('KR', df, _cur_phase)
                 if _est:
                     _exp_return = _est.get('target'); _exp_win = _est.get('win10'); _exp_basis = _est.get('basis', '')
             except Exception:
