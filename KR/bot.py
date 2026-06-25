@@ -157,6 +157,8 @@ class KRBotController:
         self._trading_halted_date = None   # 'YYYY-MM-DD' = 당일 killswitch L2 발동됨
         self._killswitch_last_warn= ''
         self.MAX_STOCK_PCT        = 0.30   # 단일종목 포트폴리오 비중 상한(불타기 폭주 방지 백스톱)
+        self._order_ts            = {}     # 체결확인용: ticker→마지막 주문시각
+        self.STALE_ORDER_SEC      = 600    # 미체결 지정가 10분 후 취소
 
 
                                                           
@@ -334,6 +336,8 @@ class KRBotController:
                            
             if int(time.time()) % 300 < 30:
                 try: self._save_state()
+                except Exception: pass
+                try: self._cleanup_stale_orders()
                 except Exception: pass
             try: self._maybe_self_improve()
             except Exception: pass
@@ -763,6 +767,30 @@ class KRBotController:
         except Exception as e:
             logger.error(f"[{self.mode_name}] killswitch 청산 오류: {e}", exc_info=True)
 
+    def _cleanup_stale_orders(self):
+        """미체결 지정가 주문이 STALE_ORDER_SEC 초과시 취소 — 자본 묶임/유령주문 방지."""
+        try:
+            opens = self.toss.get_open_orders() if self.toss else []
+        except Exception:
+            return
+        if not opens:
+            self._order_ts = {}
+            return
+        now = time.time()
+        for o in opens:
+            sym = str(o.get('symbol', ''))
+            oid = o.get('orderId', '')
+            if not oid:
+                continue
+            placed = self._order_ts.get(sym, 0)
+            if placed and (now - placed) > self.STALE_ORDER_SEC:
+                try:
+                    if self.toss.cancel_order(oid):
+                        self.add_log(f"⏱️ 미체결 주문 취소: {sym} ({(now-placed)/60:.0f}분 경과)")
+                        self._order_ts.pop(sym, None)
+                except Exception:
+                    pass
+
     def _concentration_blocked(self, ticker: str, qty: int, name: str = '') -> bool:
         """단일종목이 포트폴리오 MAX_STOCK_PCT 초과시 매수 차단 (과점/불타기 폭주 방지)."""
         try:
@@ -984,9 +1012,10 @@ class KRBotController:
             limit_price = 0       
         result = self.toss.buy_market_order(ticker, qty, price=limit_price)
         if result:
-                                           
+
             with self.lock:
                 self._last_trade_ts = time.time()
+                self._order_ts[ticker] = time.time()      # 체결확인용
             est_price = self.live_prices.get(ticker, 0) or getattr(pos, 'avg_price', 0) or 0
             if est_price > 0:
                 with self.lock:
@@ -1026,9 +1055,10 @@ class KRBotController:
                 return False
         result = self.toss.sell_market_order(ticker, qty, price=price)
         if result:
-                                           
+
             with self.lock:
                 self._last_trade_ts = time.time()
+                self._order_ts[ticker] = time.time()      # 체결확인용
             est_price = price or self.live_prices.get(ticker, 0) or getattr(pos, 'avg_price', 0) or 0
             if est_price > 0:
                 with self.lock:
