@@ -10,7 +10,7 @@ from pykrx import stock
 
 # ===== 설정 =====
 TICKER = "101490"        # 에스앤에스텍 (코스닥)
-INDEX_CODE = "2001"      # 코스닥 지수 (코스피는 "1001")
+INDEX_CODE = "^KQ11"      # 코스닥 지수 (코스피는 "1001")
 START = "20230101"
 END = "20251231"
 INIT_CASH = 10_000_000
@@ -24,12 +24,22 @@ SLIPPAGE = 0.001
 
 def load_close(code, is_index):
     if is_index:
-        df = stock.get_index_ohlcv_by_date(START, END, code)
-    else:
-        df = stock.get_market_ohlcv_by_date(START, END, code)
+        import yfinance as yf
+        s = "{}-{}-{}".format(START[:4], START[4:6], START[6:])
+        e = "{}-{}-{}".format(END[:4], END[4:6], END[6:])
+        df = yf.download(code, start=s, end=e, progress=False)
+        c = df["Close"]
+        if hasattr(c, "columns"):
+            c = c.iloc[:, 0]
+        out = c.astype(float)
+        out.index = pd.to_datetime(out.index)
+        return out
+    df = stock.get_market_ohlcv_by_date(START, END, code)
     if df is None or df.empty:
         raise RuntimeError("데이터 없음: " + code)
-    return df["종가"].astype(float)
+    out = df["종가"].astype(float)
+    out.index = pd.to_datetime(out.index)
+    return out
 
 
 def buy_px(p):
