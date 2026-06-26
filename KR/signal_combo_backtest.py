@@ -101,7 +101,7 @@ def main():
     rows.sort(key=lambda x: x[1], reverse=True)
     print("A=20일선 B=골든 C=200일 D=모멘")
     print("조합  수익%  MDD  보유%")
-    for name, ret, m, hp in rows[:8]:
+    for name, ret, m, hp in rows:
         print("{:<5}{:+5.0f}% {:4.0f} {:3.0f}%".format(name, ret, m, hp))
     print("[기준] 단순보유 -28% / 봇8단계 +18.7%")
 
