@@ -33,30 +33,42 @@ def _agg(paths, kind, p):
             'beat_bh': round(100 * beats / n, 0), 'mdd_med': round(mdd_med, 1)}
 
 
-def _load_paths(conn, mode, phase, sig, period):
+import itertools as _it
+PAIRS = list(_it.combinations(SIGNALS, 2))
+
+
+def _entry_defs():
+    """진입 기법 후보: 단독 / 봇앙상블(다중신호 동의=현 프로그램 로직) / 2신호 AND 조합."""
+    defs = [(f'단독:{s}', "signal_types LIKE ?", [f'%{s}%']) for s in SIGNALS]
+    defs.append(('봇앙상블(2+신호동의)', "signal_count >= 2", []))      # 현 프로그램 로직(앙상블)
+    defs += [(f'조합:{a}+{b}', "signal_types LIKE ? AND signal_types LIKE ?",
+              [f'%{a}%', f'%{b}%']) for a, b in PAIRS]
+    return defs
+
+
+def _load_paths(conn, mode, phase, sig_cond, sig_params, period):
     cond = "trade_date < ?" if period == 'build' else "trade_date >= ?"
     rows = conn.execute(f'''
         SELECT price_path_json FROM backtest_trade_signals
         WHERE mode=? AND market_phase=? AND signal_direction='BUY'
-          AND signal_types LIKE ? AND price_path_json LIKE '[%' AND {cond}
-    ''', (mode, phase, f'%{sig}%', SPLIT_DATE)).fetchall()
+          AND {sig_cond} AND price_path_json LIKE '[%' AND {cond}
+    ''', (mode, phase, *sig_params, SPLIT_DATE)).fetchall()
     out = [parse_path(r[0]) for r in rows]
     return [p for p in out if p]
 
 
 def analyze(mode, phase):
-    """국면별 (신호×청산) 실현수익 OOS 랭킹 + 단순보유 기준선."""
+    """국면별 (진입기법[단독/앙상블/조합] × 청산) 실현수익 OOS 랭킹 + 단순보유 기준선."""
     from base.database import get_db_connection
     conn = get_db_connection()
     try:
         results = []
-        # 단순보유 기준선 (이 국면 전체 신호, 만기보유 실현)
-        all_b = _load_paths(conn, mode, phase, '', 'build') if False else None
-        for sig in SIGNALS:
-            bpaths = _load_paths(conn, mode, phase, sig, 'build')
-            vpaths = _load_paths(conn, mode, phase, sig, 'valid')
+        for label, sig_cond, sig_params in _entry_defs():
+            bpaths = _load_paths(conn, mode, phase, sig_cond, sig_params, 'build')
+            vpaths = _load_paths(conn, mode, phase, sig_cond, sig_params, 'valid')
             if len(vpaths) < MIN_N or len(bpaths) < MIN_N:
                 continue
+            sig = label
             v_bh = round(_st.median([buy_hold_return(p) for p in vpaths]), 1)
             # 이 신호에서 각 청산전략 평가 → 검증 best 선택
             cand = []
