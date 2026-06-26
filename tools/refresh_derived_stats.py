@@ -33,6 +33,11 @@ def refresh_all():
         out['forecast_cache'] = f'{c} 행'
     except Exception as e:
         out['forecast_cache'] = f'ERR: {e}'
+    try:
+        from base.method_ranking import rebuild_method_ranking_cache
+        out['method_ranking'] = f'{rebuild_method_ranking_cache()} 조합'  # 방식 랭킹(EC2 경량 db용)
+    except Exception as e:
+        out['method_ranking'] = f'ERR: {e}'
     return out
 
 

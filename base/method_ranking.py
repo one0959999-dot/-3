@@ -83,6 +83,53 @@ def rank_methods(mode: str, market_phase: str = None) -> list:
         conn.close()
 
 
+def _has_raw(conn) -> bool:
+    return conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='backtest_trade_signals'").fetchone() is not None \
+        and conn.execute("SELECT 1 FROM backtest_trade_signals LIMIT 1").fetchone() is not None
+
+
+def rebuild_method_ranking_cache():
+    """로컬에서 방식 랭킹을 미리 계산해 method_ranking_cache에 저장(JSON).
+    EC2 경량 db(원본 없음)는 이 캐시를 읽음 — 워크플로우: 로컬 계산→캐시만 배포."""
+    import json as _json
+    from base.database import get_db_connection, db_lock
+    phases = [None, 'BULL_LATE', 'BULL_MID', 'BULL_EARLY', 'BEAR_MID', 'BEAR_EARLY',
+              'BEAR_LATE', 'SIDEWAYS', 'PANIC']
+    with db_lock:
+        conn = get_db_connection()
+        try:
+            conn.execute('''CREATE TABLE IF NOT EXISTS method_ranking_cache (
+                mode TEXT, phase TEXT, json TEXT, updated_at TEXT,
+                PRIMARY KEY (mode, phase))''')
+            n = 0
+            now = __import__('datetime').datetime.now().isoformat(timespec='seconds')
+            for mode in ('KR', 'US'):
+                for ph in phases:
+                    rows = rank_methods(mode, ph)
+                    conn.execute('INSERT OR REPLACE INTO method_ranking_cache VALUES (?,?,?,?)',
+                                 (mode, ph or '*', _json.dumps(rows, ensure_ascii=False), now))
+                    n += 1
+            conn.commit()
+            return n
+        finally:
+            conn.close()
+
+
+def get_ranked_methods(mode: str, market_phase: str = None) -> list:
+    """방식 랭킹 — 원본 있으면 즉석계산, 없으면(EC2 경량) 캐시 조회."""
+    import json as _json
+    from base.database import get_db_connection
+    conn = get_db_connection()
+    try:
+        if _has_raw(conn):
+            return rank_methods(mode, market_phase)
+        row = conn.execute('SELECT json FROM method_ranking_cache WHERE mode=? AND phase=?',
+                           (mode, market_phase or '*')).fetchone()
+        return _json.loads(row['json']) if row and row['json'] else []
+    finally:
+        conn.close()
+
+
 def rank_summary(mode: str) -> dict:
     """전체 + 주요 국면별 랭킹 묶음 (UI용)."""
     res = {'overall': rank_methods(mode)}
