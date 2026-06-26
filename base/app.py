@@ -1196,6 +1196,15 @@ def ai_chat():
     if saved_history:
         claude_client._conversation_history = saved_history
 
+    try:
+        from base.market_index import holdings_market_context
+        from base.backtest_context import build_backtest_context
+        _ctx_st = bot.get_status()
+        _ctx_tk = [p.get('ticker') for p in (_ctx_st.get('cores', []) + _ctx_st.get('satellites', []))]
+        stock_analysis_context += holdings_market_context(_ctx_tk)
+        stock_analysis_context += build_backtest_context(_ctx_tk)
+    except Exception:
+        pass
     reply = claude_client.chat(
         user_message,
         portfolio_context=bot.get_status(),
