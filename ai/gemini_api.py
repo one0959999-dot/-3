@@ -4,7 +4,7 @@ import logging
 
 logger = logging.getLogger('lassi_bot')
 
-_FREE_MODEL = 'gemini-2.0-flash'
+_FREE_MODEL = 'gemini-2.5-flash'
 
 
 class GeminiApi:
