@@ -10,7 +10,7 @@ import pandas as pd
 from pykrx import stock
 
 # ===== 설정 (여기만 바꾸면 됨) =====
-TICKER = "005930"        # 코어 종목코드
+TICKER = "003850"        # 코어 종목코드
 START = "20230101"
 END = "20251231"
 INIT_CASH = 10_000_000   # 초기 자금(원)
