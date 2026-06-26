@@ -11,8 +11,8 @@ from pykrx import stock
 # ===== 설정 =====
 TICKER = "101490"        # 에스앤에스텍 (코스닥)
 INDEX_CODE = "^KQ11"      # 코스닥 지수 (코스피는 "1001")
-START = "20230101"
-END = "20251231"
+START = "20211101"
+END = "20221231"
 INIT_CASH = 10_000_000
 MA_N = 20                # 시장 국면 판단 이동평균
 
