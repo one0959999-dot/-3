@@ -1884,6 +1884,20 @@ def backtest_ticker_detail(mode, ticker):
     return jsonify([dict(r) for r in rows])
 
 
+@app.route('/api/backtest/method_ranking')
+@login_required
+def backtest_method_ranking():
+    """방식(신호조합) OOS 검증 랭킹 — 만들기(~2020)·검증(2021~) 둘 다 강한 것 순위."""
+    mode  = (request.args.get('mode', 'KR') or 'KR').upper()
+    phase = request.args.get('phase') or None
+    try:
+        from base.method_ranking import rank_methods
+        rows = rank_methods(mode, phase)
+        return jsonify({"mode": mode, "phase": phase, "methods": rows})
+    except Exception as e:
+        return jsonify({"mode": mode, "methods": [], "error": str(e)})
+
+
 @app.route('/api/backtest/stats')
 @login_required
 def backtest_stats():
