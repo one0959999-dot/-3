@@ -14,7 +14,8 @@ import yfinance as yf
 from pykrx import stock
 
 TICKER = "101490"
-INDEX_YF = "^KQ11"
+INDEX_YF = "^KQ11"        # 코스닥 지수
+KOSPI_YF = "^KS11"        # 코스피 지수
 WARMUP = "2020-06-01"
 START = "20211101"
 END = "20221231"
@@ -128,7 +129,10 @@ def report(name, eq, sh, tr):
 def main():
     spx = stock_close(TICKER)
     kq = yf_close(INDEX_YF)
-    healthy_all = (kq >= kq.rolling(MA_N).mean())
+    ks = yf_close(KOSPI_YF)
+    kq_ok = (kq >= kq.rolling(MA_N).mean())
+    ks_ok = (ks >= ks.rolling(MA_N).mean())
+    healthy_all = (kq_ok | ks_ok)
     df = pd.DataFrame({"px": spx})
     df["ok"] = healthy_all.reindex(df.index).ffill().fillna(False).astype(bool)
     df = df.dropna(subset=["px"])
