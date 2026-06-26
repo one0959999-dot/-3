@@ -1891,11 +1891,27 @@ def backtest_method_ranking():
     mode  = (request.args.get('mode', 'KR') or 'KR').upper()
     phase = request.args.get('phase') or None
     try:
+        if phase:
+            from base.algo_engine import get_algo_ranking
+            rows = get_algo_ranking(mode, phase)
+            return jsonify({"mode": mode, "phase": phase, "methods": rows, "engine": "algo"})
+        # 전체(국면 미선택)는 기존 신호 스크린
         from base.method_ranking import get_ranked_methods
-        rows = get_ranked_methods(mode, phase)
-        return jsonify({"mode": mode, "phase": phase, "methods": rows})
+        return jsonify({"mode": mode, "phase": phase, "methods": get_ranked_methods(mode, None), "engine": "screen"})
     except Exception as e:
         return jsonify({"mode": mode, "methods": [], "error": str(e)})
+
+
+@app.route('/api/backtest/algo_ruletable')
+@login_required
+def backtest_algo_ruletable():
+    """국면→최적전략 룰표(알고리즘 결론)."""
+    mode = (request.args.get('mode', 'KR') or 'KR').upper()
+    try:
+        from base.algo_engine import get_ruletable
+        return jsonify({"mode": mode, "rules": get_ruletable(mode)})
+    except Exception as e:
+        return jsonify({"mode": mode, "rules": [], "error": str(e)})
 
 
 @app.route('/api/backtest/stats')

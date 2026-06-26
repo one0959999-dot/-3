@@ -122,6 +122,12 @@
     <div class="tab" onclick="switchTab('US',this)">US 미국</div>
   </div>
 
+  <!-- 🧠 알고리즘 룰표 (국면→최적전략, OOS 실현수익) -->
+  <div style="border:1px solid var(--border);border-radius:12px;padding:14px 16px;margin-bottom:16px;">
+    <div style="font-weight:700;font-size:14px;margin-bottom:4px;">🧠 알고리즘 룰표 <span style="font-size:11px;color:var(--muted);font-weight:400;">— 국면별 최적전략 (실현수익·검증·단순보유 비교)</span></div>
+    <div id="ruleTableWrap"><div class="loader">로딩 중…</div></div>
+  </div>
+
   <!-- 방식 랭킹 (OOS 검증) + 1~5등 결론 -->
   <div style="display:grid;grid-template-columns:1fr 1.5fr;gap:16px;margin-bottom:22px;">
     <div style="border:1px solid var(--border);border-radius:12px;padding:14px 16px;">
@@ -244,6 +250,31 @@ function switchTab(mode, el) {
   document.getElementById('searchInput').value = '';
   renderTable();
   loadMethodRanking(mode);
+  loadRuleTable(mode);
+}
+
+const PHASE_KR = {PANIC:'패닉',BEAR_EARLY:'하락초기',BEAR_MID:'하락중반',BEAR_LATE:'하락말기',SIDEWAYS:'횡보장',BULL_EARLY:'상승초기',BULL_MID:'상승중반',BULL_LATE:'상승말기'};
+async function loadRuleTable(mode) {
+  const w = document.getElementById('ruleTableWrap');
+  let rules = [];
+  try { const r = await fetch(`/api/backtest/algo_ruletable?mode=${mode}`); rules = (await r.json()).rules || []; } catch(e){}
+  if (!rules.length) { w.innerHTML = '<div style="color:var(--muted);font-size:12px;">룰표 생성 대기 중 (로컬 빌드 후 배포)</div>'; return; }
+  const order = ['PANIC','BEAR_EARLY','BEAR_MID','BEAR_LATE','SIDEWAYS','BULL_EARLY','BULL_MID','BULL_LATE'];
+  rules.sort((a,b)=>order.indexOf(a.phase)-order.indexOf(b.phase));
+  w.innerHTML = `<table style="font-size:12px;"><thead><tr style="color:var(--muted);">
+    <th style="text-align:left;padding:4px 8px;">국면</th><th style="text-align:left;">최적 전략</th>
+    <th>실현 중앙값</th><th>보유이김</th><th>단순보유</th><th style="text-align:left;">판정</th></tr></thead><tbody>`
+    + rules.map(r=>{
+        const adopt = (r.verdict||'').includes('채택');
+        const col = adopt ? '#22c55e' : '#94a3b8';
+        return `<tr style="border-top:1px solid var(--border);">
+          <td style="padding:6px 8px;font-weight:600;">${PHASE_KR[r.phase]||r.phase}</td>
+          <td>${r.signal} ${r.exit_rule!=='만기보유'?'· '+r.exit_rule:''}</td>
+          <td style="text-align:center;">${r.ret_med!=null?(r.ret_med>=0?'+':'')+r.ret_med+'%':'—'}</td>
+          <td style="text-align:center;">${r.beat_bh?r.beat_bh+'%':'—'}</td>
+          <td style="text-align:center;color:var(--muted);">${r.buyhold!=null?(r.buyhold>=0?'+':'')+r.buyhold+'%':'—'}</td>
+          <td style="color:${col};">${r.verdict||''}</td></tr>`; }).join('')
+    + '</tbody></table>';
 }
 
 // ── 방식 랭킹 (OOS 검증) ──────────────────────────────────────────
@@ -266,26 +297,29 @@ async function loadMethodRanking(mode) {
   const vColor = v => v.includes('초과')||v.includes('채택') ? '#22c55e' : v.includes('노이즈')||v.includes('미달') ? '#ef4444'
                     : v.includes('기준선') ? '#60a5fa' : '#eab308';
   rankWrap.innerHTML = _methodData.map((m,i) => {
+    const label = m.signal ? `${m.signal} · ${m.exit}` : m.method;        // algo : screen
+    const right = m.signal ? `이김 ${m.valid.beat_bh}%` : (m.vs_bot!=null ? `${m.vs_bot>=0?'+':''}${m.vs_bot}%p` : m.score);
     const base = (m.kind||'').startsWith('baseline');
-    const dlt = (m.vs_bot!=null) ? ` <span style="color:${m.vs_bot>=0?'#22c55e':'#ef4444'};font-size:11px;">${m.vs_bot>=0?'+':''}${m.vs_bot}%p</span>` : '';
     return `
     <div onclick="showMethodConc(${i})" style="display:flex;justify-content:space-between;align-items:center;padding:8px 10px;border-radius:8px;cursor:pointer;margin-bottom:5px;background:${base?'rgba(96,165,250,0.10)':(i<6?'rgba(99,102,241,0.05)':'transparent')};border:1px solid var(--border);">
-      <span><b style="color:var(--accent);">${m.rank}위</b> &nbsp;${m.method}${dlt}</span>
-      <span style="font-size:12px;"><span style="color:${vColor(m.verdict)};">${m.verdict.split(' ')[0]}</span> &nbsp;<b>${m.score}</b></span>
+      <span><b style="color:var(--accent);">${m.rank}위</b> &nbsp;${label}</span>
+      <span style="font-size:12px;"><span style="color:${vColor(m.verdict)};">${m.verdict.split(' ')[0]}</span> &nbsp;<b>${right}</b></span>
     </div>`; }).join('');
   // 결론: 1~5등 전부 표시
+  const lbl = m => m.signal ? `${m.signal} · ${m.exit}` : m.method;
   concWrap.innerHTML = _methodData.slice(0,5).map(m => `
     <div style="padding:10px 12px;border-radius:8px;border:1px solid var(--border);margin-bottom:8px;">
-      <div style="font-weight:700;margin-bottom:4px;"><span style="color:var(--accent);">${m.rank}위</span> ${m.method} &nbsp;<span style="color:${vColor(m.verdict)};font-size:12px;">${m.verdict}</span></div>
+      <div style="font-weight:700;margin-bottom:4px;"><span style="color:var(--accent);">${m.rank}위</span> ${lbl(m)} &nbsp;<span style="color:${vColor(m.verdict)};font-size:12px;">${m.verdict}</span></div>
       <div style="font-size:12px;color:var(--muted);line-height:1.6;white-space:pre-wrap;">${m.conclusion.split('\n').slice(1).join('\n')}</div>
     </div>`).join('');
 }
 function showMethodConc(i) {
   const m = _methodData[i]; if(!m) return;
-  const vColor = m.verdict.includes('채택') ? '#22c55e' : m.verdict.includes('노이즈') ? '#ef4444' : '#eab308';
+  const lbl = m.signal ? `${m.signal} · ${m.exit}` : m.method;
+  const vColor = m.verdict.includes('채택')||m.verdict.includes('초과') ? '#22c55e' : m.verdict.includes('노이즈')||m.verdict.includes('미달') ? '#ef4444' : '#eab308';
   document.getElementById('methodConcWrap').innerHTML = `
     <div style="padding:12px 14px;border-radius:8px;border:1px solid var(--border);">
-      <div style="font-weight:700;font-size:15px;margin-bottom:6px;"><span style="color:var(--accent);">${m.rank}위</span> ${m.method} &nbsp;<span style="color:${vColor};font-size:13px;">${m.verdict}</span></div>
+      <div style="font-weight:700;font-size:15px;margin-bottom:6px;"><span style="color:var(--accent);">${m.rank}위</span> ${lbl} &nbsp;<span style="color:${vColor};font-size:13px;">${m.verdict}</span></div>
       <div style="font-size:13px;color:var(--muted);line-height:1.7;white-space:pre-wrap;">${m.conclusion}</div>
     </div>`;
 }
@@ -434,6 +468,7 @@ document.getElementById('detailModal').addEventListener('click', e => {
 loadStats();
 loadHistory();
 loadMethodRanking('KR');
+loadRuleTable('KR');
 pollStatus();
 setInterval(() => { pollStatus(); loadStats(); }, 10000);
 setInterval(loadHistory, 60000);
