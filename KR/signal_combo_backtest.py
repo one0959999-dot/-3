@@ -82,37 +82,28 @@ def main():
     spx = stock_close(TICKER)
     idx = yf_close(INDEX_YF)
     sigs = {
-        "A20": (idx >= idx.rolling(20).mean()),
-        "B골크": (idx.rolling(50).mean() >= idx.rolling(200).mean()),
-        "C200": (idx >= idx.rolling(200).mean()),
-        "D모멘": (idx / idx.shift(252) - 1 > 0),
+        "A": (idx >= idx.rolling(20).mean()),
+        "B": (idx.rolling(50).mean() >= idx.rolling(200).mean()),
+        "C": (idx >= idx.rolling(200).mean()),
+        "D": (idx / idx.shift(252) - 1 > 0),
     }
     df = pd.DataFrame({"px": spx})
     for k, v in sigs.items():
         df[k] = v.reindex(df.index).ffill().fillna(False).astype(bool)
     df = df.dropna(subset=["px"])
-
     keys = list(sigs.keys())
     rows = []
-    p0 = buy_px(df["px"].iloc[0])
-    sh0 = INIT_CASH // p0
-    bh = (INIT_CASH - sh0 * p0) + sh0 * df["px"]
-    rows.append(("단순보유", bh.iloc[-1], mdd(bh), 0, 100.0))
     for r in range(1, len(keys) + 1):
         for combo in itertools.combinations(keys, r):
             ok = df[list(combo)].all(axis=1)
             fin, m, tr, hp = run_filter(df["px"], ok)
-            rows.append(("+".join(combo), fin, m, tr, hp))
-
+            rows.append(("".join(combo), (fin / INIT_CASH - 1) * 100, m, hp))
     rows.sort(key=lambda x: x[1], reverse=True)
-    print("종목 {} | {}~{} | 신호조합 전수(AND) — 수익순".format(TICKER, START, END))
-    print("{:<20} {:>8} {:>8} {:>5} {:>6}".format("조합", "수익%", "MDD%", "매매", "보유%"))
-    for name, fin, m, tr, hp in rows:
-        ret = (fin / INIT_CASH - 1) * 100
-        print("{:<20} {:>+7.1f} {:>8.1f} {:>5} {:>5.0f}%".format(name, ret, m, tr, hp))
-    print("")
-    print(">>> 보유%가 0~5%면 '신호 너무 빡빡(거의 현금)' = 사실상 작동 안 함")
-    print(">>> 참고: 봇 8단계 = +18.7%, MDD -14.2%")
+    print("A=20일선 B=골든 C=200일 D=모멘")
+    print("조합  수익%  MDD  보유%")
+    for name, ret, m, hp in rows[:8]:
+        print("{:<5}{:+5.0f}% {:4.0f} {:3.0f}%".format(name, ret, m, hp))
+    print("[기준] 단순보유 -28% / 봇8단계 +18.7%")
 
 
 if __name__ == "__main__":
