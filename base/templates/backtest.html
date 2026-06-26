@@ -125,8 +125,21 @@
   <!-- 방식 랭킹 (OOS 검증) + 1~5등 결론 -->
   <div style="display:grid;grid-template-columns:1fr 1.5fr;gap:16px;margin-bottom:22px;">
     <div style="border:1px solid var(--border);border-radius:12px;padding:14px 16px;">
-      <div style="font-weight:700;font-size:14px;margin-bottom:4px;">📊 방식 랭킹</div>
-      <div style="font-size:11px;color:var(--muted);margin-bottom:10px;">만들기(~2020)·검증(2021~) 둘 다 강한 순 · 클릭→결론</div>
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px;">
+        <span style="font-weight:700;font-size:14px;">📊 방식 랭킹</span>
+        <select id="phaseSel" onchange="loadMethodRanking(curTab)" style="font-size:12px;background:var(--card,#1a1a2e);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:3px 6px;">
+          <option value="">전체</option>
+          <option value="PANIC">패닉</option>
+          <option value="BEAR_EARLY">하락초기</option>
+          <option value="BEAR_MID">하락중반</option>
+          <option value="BEAR_LATE">하락말기</option>
+          <option value="SIDEWAYS">횡보장</option>
+          <option value="BULL_EARLY">상승초기</option>
+          <option value="BULL_MID">상승중반</option>
+          <option value="BULL_LATE">상승말기</option>
+        </select>
+      </div>
+      <div style="font-size:11px;color:var(--muted);margin-bottom:10px;">만들기(~2020)·검증(2021~) 둘 다 강한 순 · 🤖봇/⚪단순보유 기준선 비교 · 클릭→결론</div>
       <div id="methodRankWrap"><div class="loader">로딩 중…</div></div>
     </div>
     <div style="border:1px solid var(--border);border-radius:12px;padding:14px 16px;">
@@ -240,8 +253,9 @@ async function loadMethodRanking(mode) {
   const concWrap = document.getElementById('methodConcWrap');
   rankWrap.innerHTML = '<div class="loader">로딩 중…</div>';
   concWrap.innerHTML = '<div class="loader">로딩 중…</div>';
+  const phase = (document.getElementById('phaseSel')||{}).value || '';
   try {
-    const r = await fetch(`/api/backtest/method_ranking?mode=${mode}`);
+    const r = await fetch(`/api/backtest/method_ranking?mode=${mode}&phase=${phase}`);
     const d = await r.json();
     _methodData = d.methods || [];
   } catch(e) { _methodData = []; }
@@ -249,12 +263,16 @@ async function loadMethodRanking(mode) {
     rankWrap.innerHTML = '<div style="color:var(--muted);font-size:12px;">데이터 없음</div>';
     concWrap.innerHTML = ''; return;
   }
-  const vColor = v => v.includes('채택') ? '#22c55e' : v.includes('노이즈') ? '#ef4444' : '#eab308';
-  rankWrap.innerHTML = _methodData.map((m,i) => `
-    <div onclick="showMethodConc(${i})" style="display:flex;justify-content:space-between;align-items:center;padding:8px 10px;border-radius:8px;cursor:pointer;margin-bottom:5px;background:${i<5?'rgba(99,102,241,0.06)':'transparent'};border:1px solid var(--border);">
-      <span><b style="color:var(--accent);">${m.rank}위</b> &nbsp;${m.method}</span>
+  const vColor = v => v.includes('초과')||v.includes('채택') ? '#22c55e' : v.includes('노이즈')||v.includes('미달') ? '#ef4444'
+                    : v.includes('기준선') ? '#60a5fa' : '#eab308';
+  rankWrap.innerHTML = _methodData.map((m,i) => {
+    const base = (m.kind||'').startsWith('baseline');
+    const dlt = (m.vs_bot!=null) ? ` <span style="color:${m.vs_bot>=0?'#22c55e':'#ef4444'};font-size:11px;">${m.vs_bot>=0?'+':''}${m.vs_bot}%p</span>` : '';
+    return `
+    <div onclick="showMethodConc(${i})" style="display:flex;justify-content:space-between;align-items:center;padding:8px 10px;border-radius:8px;cursor:pointer;margin-bottom:5px;background:${base?'rgba(96,165,250,0.10)':(i<6?'rgba(99,102,241,0.05)':'transparent')};border:1px solid var(--border);">
+      <span><b style="color:var(--accent);">${m.rank}위</b> &nbsp;${m.method}${dlt}</span>
       <span style="font-size:12px;"><span style="color:${vColor(m.verdict)};">${m.verdict.split(' ')[0]}</span> &nbsp;<b>${m.score}</b></span>
-    </div>`).join('');
+    </div>`; }).join('');
   // 결론: 1~5등 전부 표시
   concWrap.innerHTML = _methodData.slice(0,5).map(m => `
     <div style="padding:10px 12px;border-radius:8px;border:1px solid var(--border);margin-bottom:8px;">
