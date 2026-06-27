@@ -168,9 +168,53 @@ def report_sequence(agg, n):
     return "\n".join(L)
 
 
+# ── 실제 프로그램 방어자산 (인버스20%+달러13%+금7%+현금60%) 시퀀스 ──
+DEEP_BEAR = {'PANIC', 'BEAR_EARLY', 'BEAR_MID'}     # 깊은 하락=방어바스켓
+
+
+def _defensive_basket_ret():
+    """방어바스켓 일별 포트수익 = 0.20*인버스 + 0.13*달러 + 0.07*금 (+0.60 현금=0)."""
+    from KR.regime_period_backtest import _yf
+    inv = _yf('114800.KS')['close'].pct_change()
+    dol = _yf('130730.KS')['close'].pct_change()
+    gold = _yf('132030.KS')['close'].pct_change()
+    r = (0.20 * inv).add(0.13 * dol, fill_value=0).add(0.07 * gold, fill_value=0)
+    return r
+
+
+def run_sequence_defensive(stocks=None):
+    stocks = stocks or SAMPLE_KR
+    basket = _defensive_basket_ret()
+    agg = {'방어전환(인버스+달러+금)': [], '하락현금전환': [], '단순보유': []}
+    done = 0
+    for code, name in stocks:
+        df = _ohlc(code)
+        if df is None or len(df) < 400: continue
+        ph = classify8_series(df); idx = df.index
+        sr = df['close'].pct_change().fillna(0.0)
+        br = basket.reindex(idx).fillna(0.0)
+        is_bear = ph.isin(DEEP_BEAR).shift(1).fillna(False)   # 어제 국면으로 오늘 포지션(룩어헤드 제거)
+        sw = is_bear.astype(int).diff().abs().fillna(0) * (COST * 2)   # 전환비용
+        # 방어전환: 하락=방어바스켓, 그외=보유
+        r_def = np.where(is_bear.values, br.values, sr.values) - sw.values
+        # 하락현금전환: 하락=0, 그외=보유
+        r_cash = np.where(is_bear.values, 0.0, sr.values) - sw.values
+        eq_def = pd.Series((1 + r_def).cumprod(), index=idx)
+        eq_cash = pd.Series((1 + r_cash).cumprod(), index=idx)
+        eq_hold = (1 + sr).cumprod()
+        for k, e in [('방어전환(인버스+달러+금)', eq_def), ('하락현금전환', eq_cash), ('단순보유', eq_hold)]:
+            m = _oos(e, idx)
+            if m: agg[k].append(m)
+        done += 1; print(f"  {name} 완료")
+    return agg, done
+
+
 if __name__ == '__main__':
     n = int(sys.argv[1]) if len(sys.argv) > 1 and sys.argv[1].isdigit() else len(SAMPLE_KR)
-    if '--seq' in sys.argv:
+    if '--def' in sys.argv:
+        agg, done = run_sequence_defensive(SAMPLE_KR[:n])
+        rep = report_sequence(agg, done).replace('전체 시퀀스 검증', '방어자산 시퀀스 검증(실제 프로그램 로직)')
+    elif '--seq' in sys.argv:
         agg, done = run_sequence(SAMPLE_KR[:n])
         rep = report_sequence(agg, done)
     else:
