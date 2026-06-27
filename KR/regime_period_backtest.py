@@ -108,7 +108,8 @@ def backtest_stock(code, name, reg):
     px = df['close']; reg2 = reg.reindex(px.index).ffill()
     bull_now = (reg2 == '상승')
     strategies = {'단순보유': pd.Series(True, index=px.index),
-                  '봇헤지(상승만보유)': bull_now}      # 봇 헤지 근사: 비-상승이면 현금
+                  '봇헤지(상승만보유)': bull_now,        # 풀헤지: 비-상승이면 현금
+                  '적응형(하락만현금)': (reg2 != '하락')}  # 국면조건부: 하락장에만 헤지, 상승·횡보 보유
     for nm, fn in METHODS.items():
         try: strategies[nm] = fn(df).reindex(px.index).fillna(False)
         except Exception: pass
