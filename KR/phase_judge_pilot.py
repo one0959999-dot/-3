@@ -17,7 +17,56 @@ import pandas as pd
 from KR.regime_period_backtest import _ohlc, _yf, COST, _run_frac
 from KR.program_logic_backtest import (_simulate, PHASE_ORDER, PHASE_KR, PHASE2REG3,
                                        send_telegram, SAMPLE_KR)
+from KR.strategy import (get_bull_momentum_score, get_neutral_range_score,
+                         get_bear_bottom_score, get_bear_budget_ratio)
 from base.market_phase import _adx
+
+WIN8 = 130
+
+
+def _phase8_target(phase, win):
+    """8단계 각각의 고유 목표비중 — PHASE_GUIDANCE를 비중으로 구현(3개로 안 뭉침)."""
+    try:
+        if phase == 'PANIC':                       # 극공포=역발상 소량
+            sc, _ = get_bear_bottom_score(win); return min(get_bear_budget_ratio(sc), 0.30)
+        if phase == 'BEAR_EARLY':                  # 하락초기=신규금지/손절→현금
+            return 0.0
+        if phase == 'BEAR_MID':                    # 하락중반=현금 최우선
+            return 0.0
+        if phase == 'BEAR_LATE':                   # 바닥=소량 분할매수 시작
+            sc, _ = get_bear_bottom_score(win); return min(get_bear_budget_ratio(sc), 0.30)
+        if phase == 'RECOVERY':                    # 회복초입=추세전환 매수
+            sc, _ = get_bull_momentum_score(win); return 0.5 if sc == 0 else (0.6 if sc <= 2 else 0.7)
+        if phase == 'BULL_EARLY':                  # 상승초입=적극매수 홀딩
+            sc, _ = get_bull_momentum_score(win); return 0.8 if sc == 0 else (0.9 if sc <= 2 else 1.0)
+        if phase == 'BULL_MID':                    # 상승중반=보유 지속
+            return 0.75
+        if phase == 'BULL_LATE':                   # 상승말기=신규자제/익절(축소)
+            return 0.35
+        if phase == 'SIDEWAYS':                    # 횡보=박스권 스윙
+            sc, _ = get_neutral_range_score(win); return {0: 0.0, 1: 0.30, 2: 0.45}.get(sc, 0.55)
+    except Exception:
+        pass
+    return None                                     # UNKNOWN → 직전 유지
+
+
+def _simulate8(df, phase_daily):
+    """8단계 고유 비중대로 리밸런싱(히스테리시스 0.1). phase_daily=일별 8단계 라벨."""
+    px = df['close']; n = len(px); w = np.zeros(n); cur = 0.5
+    for i in range(n):
+        if i < 62:
+            w[i] = 0.0; continue
+        ph = phase_daily.iloc[i]
+        t = _phase8_target(ph, df.iloc[max(0, i - WIN8):i + 1])
+        if t is None:
+            t = cur
+        cur = t; w[i] = t
+    held = 0.0
+    for i in range(n):
+        if abs(w[i] - held) >= 0.10:
+            held = w[i]
+        w[i] = held
+    return _run_frac(px, pd.Series(w, index=px.index))
 
 OOS_SPLIT = '2021-01-01'
 PILOT = SAMPLE_KR[:5]
@@ -142,8 +191,8 @@ def run_pilot(stocks=None, send=False):
         # 각 라벨로 백테스트 (OOS)
         bot_ser = _label_series_to_daily(df, bot_m)
         gem_ser = _label_series_to_daily(df, gem_m)
-        eq_bot = _simulate(df, bot_ser, 'phase')
-        eq_gem = _simulate(df, gem_ser, 'phase')
+        eq_bot = _simulate8(df, bot_ser)          # 8단계 고유전략
+        eq_gem = _simulate8(df, gem_ser)
         eq_hold = _run_frac(df['close'], pd.Series(1.0, index=df.index))
         mb, mg, mh = _oos_metrics(eq_bot, df), _oos_metrics(eq_gem, df), _oos_metrics(eq_hold, df)
         results.append({'name': name, 'agree': agree_pct, 'n': len(common),
