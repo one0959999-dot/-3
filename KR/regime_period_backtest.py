@@ -90,8 +90,34 @@ def sig_macd(df):
 def sig_above200(df):
     return df['close'] > df['close'].rolling(200).mean()
 
-METHODS = {'MA교차': sig_ma_cross, '골든크로스': sig_golden, 'RSI': sig_rsi,
-           'MACD': sig_macd, '200일선': sig_above200}
+def _rsi(df, n=14):
+    d = df['close'].diff(); up = d.clip(lower=0).rolling(n).mean(); dn = (-d.clip(upper=0)).rolling(n).mean()
+    return 100 - 100 / (1 + up / (dn + 1e-9))
+
+def _swing(entry, exit_):
+    """평균회귀 스윙: entry True에 진입, exit True까지 보유(상태기반)."""
+    e = entry.fillna(False).values; x = exit_.fillna(False).values
+    hold = np.zeros(len(e), dtype=bool); h = False
+    for i in range(len(e)):
+        if not h and e[i]: h = True
+        elif h and x[i]: h = False
+        hold[i] = h
+    return pd.Series(hold, index=entry.index)
+
+# 진짜 스윙(평균회귀) — 횡보장용: 과매도 매수→과매수 매도
+def sig_swing_rsi(df):
+    r = _rsi(df); return _swing(r < 35, r > 65)
+def sig_swing_bb(df):
+    ma = df['close'].rolling(20).mean(); sd = df['close'].rolling(20).std()
+    return _swing(df['close'] < ma - 2 * sd, df['close'] > ma + 2 * sd)
+def sig_swing_stoch(df):
+    lo = df['low'].rolling(14).min(); hi = df['high'].rolling(14).max()
+    k = (df['close'] - lo) / (hi - lo + 1e-9) * 100
+    return _swing(k < 20, k > 80)
+
+METHODS = {'MA교차': sig_ma_cross, '골든크로스': sig_golden, 'RSI(추세)': sig_rsi,
+           'MACD': sig_macd, '200일선': sig_above200,
+           '스윙RSI(반전)': sig_swing_rsi, '스윙볼린저': sig_swing_bb, '스윙스토캐스틱': sig_swing_stoch}
 
 
 def _run(px, hold_bool):
@@ -210,9 +236,10 @@ def run_sample(stocks=None, verbose=True):
 if __name__ == '__main__':
     n = int(sys.argv[1]) if len(sys.argv) > 1 else 6
     s = run_sample(SAMPLE_KR[:n])
-    print("\n=== 국면별 수익률 + 위험(MDD) + 위험조정 중앙값 (표본 %d종목) ===" % n)
-    print(f"{'전략':22} {'상승':>7} {'하락':>7} {'횡보':>7} {'전체':>7} {'MDD':>7} {'수익/MDD':>8}")
-    order = sorted(s.items(), key=lambda kv: kv[1].get('수익MDD', -999), reverse=True)
-    for strat, per in order:
-        g = lambda k: str(per.get(k, '-'))
-        print(f"{strat:22} {g('상승'):>7} {g('하락'):>7} {g('횡보'):>7} {g('전체'):>7} {g('MDD'):>7} {g('수익MDD'):>8}")
+    print("\n############ 국면별 전략 순위 (표본 %d종목, 수익률 중앙값) ############" % n)
+    for rg in ('상승', '하락', '횡보'):
+        print(f"\n===== [{rg}장] — 이 국면 수익률 높은 순 =====")
+        order = sorted(s.items(), key=lambda kv: kv[1].get(rg, -9999), reverse=True)
+        for i, (strat, per) in enumerate(order, 1):
+            v = per.get(rg, '-')
+            print(f"  {i:2}. {strat:24} {str(v):>7}%")
