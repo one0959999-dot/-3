@@ -41,3 +41,5 @@ scg_big.log
 data_cache_big.pkl
 data_cache_big.pkl.stocks
 tune_*.log
+collect_del.log
+data_cache_delisted.pkl
