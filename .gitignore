@@ -24,3 +24,6 @@ lassi.db
 finetune*.jsonl
 lassi.db-shm
 lassi.db-wal
+
+# 백테스트 데이터 캐시(생성물)
+data_cache_*.pkl
