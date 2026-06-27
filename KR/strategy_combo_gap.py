@@ -24,7 +24,7 @@ from KR.reliability_check import sim_momentum
 START = '2015-01-01'
 COST = 0.0021
 BORROW = 0.045 / 252
-CACHE = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'data_cache_wf.pkl')
+CACHE = os.environ.get('LASSI_CACHE') or os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'data_cache_wf.pkl')
 BULL = {'RECOVERY', 'BULL_EARLY', 'BULL_MID', 'BULL_LATE'}
 
 DOWN = ['현금', '인버스', '보유']

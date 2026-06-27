@@ -22,7 +22,7 @@ from KR.phase_source_backtest import gemini_index_phase
 
 START = '2015-01-01'
 COST = 0.0021
-CACHE = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'data_cache_wf.pkl')
+CACHE = os.environ.get('LASSI_CACHE') or os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'data_cache_wf.pkl')
 BEAR = {'PANIC', 'BEAR_EARLY', 'BEAR_MID', 'BEAR_LATE'}
 PHASE_ORDER = ['PANIC', 'BEAR_EARLY', 'BEAR_MID', 'BEAR_LATE', 'RECOVERY',
                'BULL_EARLY', 'BULL_MID', 'BULL_LATE', 'SIDEWAYS']

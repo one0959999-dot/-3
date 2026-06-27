@@ -35,3 +35,8 @@ rel_run.log
 data_cache_rel.pkl
 pa_run.log
 scg_run.log
+build_uni*.log
+pa_big.log
+scg_big.log
+data_cache_big.pkl
+data_cache_big.pkl.stocks
