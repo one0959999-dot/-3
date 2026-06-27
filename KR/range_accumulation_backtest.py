@@ -78,6 +78,25 @@ def _mdd(eq):
     peak = eq.cummax(); return round(float(((eq / peak - 1) * 100).min()), 1)
 
 
+def range_score(df):
+    """박스권(횡보) 점수 0~100 — 높을수록 진짜 박스권(추세약함). 추세주 배제용.
+    구성: ADX낮음 + 200MA기울기 평탄 + 추세설명력(R²) 낮음 + 박스권 일수비율."""
+    c, h, l = df['close'], df['high'], df['low']
+    adx = _adx(h, l, c)
+    adx_mean = float(adx.iloc[200:].mean()) if len(adx) > 200 else float(adx.mean())
+    ma200 = c.rolling(200).mean()
+    slope = abs(float((ma200.iloc[-1] / ma200.dropna().iloc[0] - 1)) * 100) / max(len(c) / 252, 1)  # 연환산 추세
+    pct_lowadx = float((adx < ADX_RANGE).mean()) * 100
+    # 추세 설명력 R² (로그가격 vs 시간) — 높으면 강추세
+    y = np.log(c.values); x = np.arange(len(y))
+    r2 = float(np.corrcoef(x, y)[0, 1] ** 2)
+    s_adx = max(0, (30 - adx_mean) / 30) * 100          # ADX 30→0점, 0→100점
+    s_slope = max(0, (40 - slope) / 40) * 100           # 연 40%↑ 추세=0점
+    s_r2 = (1 - r2) * 100
+    score = round(0.35 * s_adx + 0.25 * s_slope + 0.20 * pct_lowadx + 0.20 * s_r2, 0)
+    return score
+
+
 def run(stocks=None):
     stocks = stocks or SAMPLE_KR
     rows = []
@@ -88,14 +107,16 @@ def run(stocks=None):
         eqs, sh_s, cash_s, lastp = accumulation_swing(df)
         eqh, sh_h = buy_hold(df)
         eqn, sh_n = program_neutral(df)
+        rs = range_score(df)
         rows.append({
-            'name': name,
+            'name': name, 'range_score': rs,
             'swing_ret': round((eqs.iloc[-1] / eqs.iloc[0] - 1) * 100, 1), 'swing_mdd': _mdd(eqs),
             'swing_shares': round(sh_s / sh_h, 2),        # 보유대비 주식수 배수
             'hold_ret': round((eqh.iloc[-1] / eqh.iloc[0] - 1) * 100, 1), 'hold_mdd': _mdd(eqh),
             'prog_ret': round((eqn.iloc[-1] / eqn.iloc[0] - 1) * 100, 1), 'prog_mdd': _mdd(eqn),
         })
-        print(f"  {name}: 스윙 {rows[-1]['swing_ret']:+.0f}%(주식 {rows[-1]['swing_shares']}배) / 보유 {rows[-1]['hold_ret']:+.0f}% / 내장 {rows[-1]['prog_ret']:+.0f}%")
+        win = '✅스윙승' if rows[-1]['swing_ret'] > rows[-1]['hold_ret'] else '✗보유승'
+        print(f"  {name}: 박스권{rs:.0f} | 스윙 {rows[-1]['swing_ret']:+.0f}%(주식{rows[-1]['swing_shares']}배) vs 보유 {rows[-1]['hold_ret']:+.0f}% {win}")
     return rows
 
 
@@ -105,7 +126,18 @@ def report(rows):
     md = lambda k: round(float(np.median([r[k] for r in rows])), 1)
     win_swing = sum(1 for r in rows if r['swing_ret'] > r['hold_ret'])
     more_shares = sum(1 for r in rows if r['swing_shares'] > 1.0)
+    # 박스권 점수가 스윙성공을 예측하나 — 상/하위 그룹 비교
+    srt = sorted(rows, key=lambda r: r['range_score'], reverse=True)
+    half = max(1, len(srt) // 2)
+    hi, loo = srt[:half], srt[half:]
+    hi_win = sum(1 for r in hi if r['swing_ret'] > r['hold_ret'])
+    lo_win = sum(1 for r in loo if r['swing_ret'] > r['hold_ret'])
     L = [f"📦 횡보 누적스윙 vs 보유 vs 내장로직 (KR {len(rows)}종목, 전기간)", "",
+         "[박스권점수 높은 종목(상위절반) — 추세주 배제]",
+         f"  스윙 승률: {hi_win}/{len(hi)}  (박스권점수 중앙값 {round(float(np.median([r['range_score'] for r in hi])))})",
+         "[박스권점수 낮은 종목(추세주)]",
+         f"  스윙 승률: {lo_win}/{len(loo)}  (박스권점수 중앙값 {round(float(np.median([r['range_score'] for r in loo])))})",
+         "",
          f"{'전략':16} 수익중앙값  MDD중앙값",
          f"{'누적스윙+돌파보유':16} {md('swing_ret'):+}%   {md('swing_mdd')}%",
          f"{'단순보유':16} {md('hold_ret'):+}%   {md('hold_mdd')}%",
