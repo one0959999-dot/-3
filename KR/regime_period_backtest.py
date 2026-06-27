@@ -133,6 +133,10 @@ def backtest_stock(code, name, reg):
             # 그 국면 날들의 일별수익만 복리 (비연속 구간 정확 격리)
             per[rg] = round((np.prod(1.0 + dr.values[mask]) - 1.0) * 100, 1)
         per['전체'] = round((eq.iloc[-1] / eq.iloc[0] - 1.0) * 100, 1)
+        # 위험: 최대낙폭(MDD) + 위험조정(전체/|MDD|)
+        peak = eq.cummax(); dd = (eq / peak - 1.0) * 100
+        per['MDD'] = round(float(dd.min()), 1)
+        per['수익MDD'] = round(per['전체'] / (abs(per['MDD']) + 1), 2)
         out[nm] = per
     return out
 
@@ -161,8 +165,9 @@ def run_sample(stocks=None, verbose=True):
 if __name__ == '__main__':
     n = int(sys.argv[1]) if len(sys.argv) > 1 else 6
     s = run_sample(SAMPLE_KR[:n])
-    print("\n=== 국면별 전략 수익률 중앙값 (표본 %d종목) ===" % n)
-    print(f"{'전략':22} {'상승':>7} {'하락':>7} {'횡보':>7} {'전체':>7}")
-    order = sorted(s.items(), key=lambda kv: kv[1].get('하락', -999), reverse=True)
+    print("\n=== 국면별 수익률 + 위험(MDD) + 위험조정 중앙값 (표본 %d종목) ===" % n)
+    print(f"{'전략':22} {'상승':>7} {'하락':>7} {'횡보':>7} {'전체':>7} {'MDD':>7} {'수익/MDD':>8}")
+    order = sorted(s.items(), key=lambda kv: kv[1].get('수익MDD', -999), reverse=True)
     for strat, per in order:
-        print(f"{strat:22} {str(per.get('상승','-')):>7} {str(per.get('하락','-')):>7} {str(per.get('횡보','-')):>7} {str(per.get('전체','-')):>7}")
+        g = lambda k: str(per.get(k, '-'))
+        print(f"{strat:22} {g('상승'):>7} {g('하락'):>7} {g('횡보'):>7} {g('전체'):>7} {g('MDD'):>7} {g('수익MDD'):>8}")
