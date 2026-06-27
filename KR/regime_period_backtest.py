@@ -18,9 +18,17 @@ COST = 0.0021   # 편도 거래비용+세금 근사 (KR)
 
 # 다양한 표본 (대형/중형/소형 + 섹터 분산) — 확장 가능
 SAMPLE_KR = [
+    # 대형(다양 섹터)
     ('005930', '삼성전자'), ('000660', 'SK하이닉스'), ('035420', 'NAVER'),
     ('051910', 'LG화학'), ('005380', '현대차'), ('068270', '셀트리온'),
     ('035720', '카카오'), ('105560', 'KB금융'), ('012330', '현대모비스'),
+    ('005490', 'POSCO홀딩스'), ('015760', '한국전력'), ('055550', '신한지주'),
+    ('017670', 'SK텔레콤'), ('066570', 'LG전자'), ('000270', '기아'),
+    ('006400', '삼성SDI'), ('086790', '하나금융'), ('207940', '삼성바이오'),
+    ('033780', 'KT&G'), ('011170', '롯데케미칼'), ('010130', '고려아연'),
+    ('009150', '삼성전기'), ('316140', '우리금융'), ('259960', '크래프톤'),
+    ('097950', 'CJ제일제당'), ('271560', '오리온'), ('004990', '롯데지주'),
+    # 중소/성장(변동성)
     ('101490', '에스앤에스텍'), ('000250', '삼천당제약'), ('247540', '에코프로비엠'),
     ('086520', '에코프로'), ('028300', 'HLB'), ('196170', '알테오젠'),
 ]
@@ -138,6 +146,21 @@ def backtest_stock(code, name, reg):
     try: bin_strats['조합:MACD+200일선'] = (sig_macd(df) & sig_above200(df)).reindex(px.index).fillna(False)
     except Exception: pass
     try: bin_strats['조합:MA+MACD+RSI'] = (sig_ma_cross(df) & sig_macd(df) & sig_rsi(df)).reindex(px.index).fillna(False)
+    except Exception: pass
+    # ── 복합기법(투표/가중) ──
+    try:
+        votes = (sig_ma_cross(df).astype(int) + sig_rsi(df).astype(int) + sig_macd(df).astype(int))
+        bin_strats['복합:투표2of3(MA/RSI/MACD)'] = (votes >= 2).reindex(px.index).fillna(False)
+        bin_strats['복합:OR(MA|MACD|돌파)'] = (sig_ma_cross(df) | sig_macd(df) | (df['close'] > df['close'].rolling(20).max().shift(1))).reindex(px.index).fillna(False)
+    except Exception: pass
+    # ── 복합기법 + 봇 내장로직(헤지) 결합 = 신호진입 후 BEAR엔 봇처럼 부분트림 ──
+    try:
+        vote2 = (votes >= 2).reindex(px.index).fillna(False).astype(float)
+        wv = vote2.copy(); wv[bear_now & (vote2 > 0)] = 0.7   # 복합 보유 중 BEAR면 30%트림(봇식)
+        frac_strats['복합투표+봇헤지'] = wv
+        gc = sig_golden(df).reindex(px.index).fillna(False).astype(float)
+        wg = gc.copy(); wg[bear_now & (gc > 0)] = 0.7
+        frac_strats['골든크로스+봇헤지'] = wg
     except Exception: pass
 
     # 전부 비중(0~1)으로 통일해 _run_frac 실행
