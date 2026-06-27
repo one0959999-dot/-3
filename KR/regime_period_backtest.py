@@ -87,18 +87,28 @@ METHODS = {'MA교차': sig_ma_cross, '골든크로스': sig_golden, 'RSI': sig_r
 
 
 def _run(px, hold_bool):
-    """hold_bool=True인 날만 보유. 진입/청산시 비용. 누적수익% 반환."""
+    """hold_bool=True인 날만 보유(전량 in/out). 누적수익% 반환."""
+    return _run_frac(px, hold_bool.astype(float))
+
+
+def _run_frac(px, weight):
+    """목표 보유비중(0~1) 시리즈대로 리밸런싱. 비중 변할 때 거래분에 비용. 실제 봇 부분헤지용."""
+    w = weight.reindex(px.index).ffill().fillna(0.0).clip(0, 1)
     cash, sh, eq = 1.0, 0.0, []
-    prev = False
+    prevw = 0.0
     for d in px.index:
-        p = px.loc[d]; h = bool(hold_bool.loc[d]) if d in hold_bool.index else False
-        if h and not prev:
-            sh = cash * (1 - COST) / p; cash = 0.0
-        elif not h and prev:
-            cash = sh * p * (1 - COST); sh = 0.0
-        prev = h; eq.append(cash + sh * p)
-    e = pd.Series(eq, index=px.index)
-    return e
+        p = float(px.loc[d]); tw = float(w.loc[d])
+        nav = cash + sh * p
+        target_val = tw * nav
+        cur_val = sh * p
+        if abs(target_val - cur_val) > nav * 0.01:        # 1%+ 차이만 리밸런싱
+            delta = target_val - cur_val
+            cost = abs(delta) * COST
+            sh = target_val / p if p > 0 else 0.0
+            cash = nav - target_val - cost
+        eq.append(cash + sh * p)
+        prevw = tw
+    return pd.Series(eq, index=px.index)
 
 
 def backtest_stock(code, name, reg):
@@ -107,23 +117,35 @@ def backtest_stock(code, name, reg):
         return None
     px = df['close']; reg2 = reg.reindex(px.index).ffill()
     bull_now = (reg2 == '상승')
-    strategies = {'단순보유': pd.Series(True, index=px.index),
-                  '봇헤지(상승만보유)': bull_now,        # 풀헤지: 비-상승이면 현금
-                  '적응형(하락만현금)': (reg2 != '하락')}  # 국면조건부: 하락장에만 헤지, 상승·횡보 보유
+    bear_now = (reg2 == '하락')
+    # ── 실제 프로그램 봇 로직 부분헤지 (KR/bot.py 기준) ──
+    # 코어: 50% floor 절대미매도 → 코어포지션은 항상 100% 보유(=보유와 동일)
+    # 위성: BEAR시 30% 트림 → BEAR 70%, 그 외 100%
+    w_core = pd.Series(1.0, index=px.index)                       # 코어(floor) = 사실상 보유
+    w_sat = pd.Series(1.0, index=px.index); w_sat[bear_now] = 0.70  # 위성 BEAR 30%트림
+    # 포트폴리오 봇(코어50%+위성50% 가정): BEAR시 0.5*1.0 + 0.5*0.7 = 0.85
+    w_bot = 0.5 * w_core + 0.5 * w_sat
+    bin_strats = {'단순보유': pd.Series(True, index=px.index),
+                  '봇 풀헤지(대용-전량현금)': bull_now,       # 옛 대용품(참고)
+                  '적응형(하락만현금)': (reg2 != '하락')}
+    frac_strats = {'봇 실제(코어50%+위성트림)': w_bot,
+                   '봇 위성(BEAR 30%트림)': w_sat}
     for nm, fn in METHODS.items():
-        try: strategies[nm] = fn(df).reindex(px.index).fillna(False)
+        try: bin_strats[nm] = fn(df).reindex(px.index).fillna(False)
         except Exception: pass
-    # 2-3 조합(AND): MA+RSI, MACD+200일선, MA+MACD+RSI
-    try: strategies['조합:MA+RSI'] = (sig_ma_cross(df) & sig_rsi(df)).reindex(px.index).fillna(False)
+    try: bin_strats['조합:MA+RSI'] = (sig_ma_cross(df) & sig_rsi(df)).reindex(px.index).fillna(False)
     except Exception: pass
-    try: strategies['조합:MACD+200일선'] = (sig_macd(df) & sig_above200(df)).reindex(px.index).fillna(False)
+    try: bin_strats['조합:MACD+200일선'] = (sig_macd(df) & sig_above200(df)).reindex(px.index).fillna(False)
     except Exception: pass
-    try: strategies['조합:MA+MACD+RSI'] = (sig_ma_cross(df) & sig_macd(df) & sig_rsi(df)).reindex(px.index).fillna(False)
+    try: bin_strats['조합:MA+MACD+RSI'] = (sig_ma_cross(df) & sig_macd(df) & sig_rsi(df)).reindex(px.index).fillna(False)
     except Exception: pass
 
+    # 전부 비중(0~1)으로 통일해 _run_frac 실행
+    weights = {nm: hb.astype(float) for nm, hb in bin_strats.items()}
+    weights.update(frac_strats)
     out = {}
-    for nm, hb in strategies.items():
-        eq = _run(px, hb)
+    for nm, w in weights.items():
+        eq = _run_frac(px, w)
         dr = eq.pct_change().fillna(0.0)        # 전략 일별수익
         per = {}
         for rg in ('상승', '하락', '횡보'):
