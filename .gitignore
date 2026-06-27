@@ -40,3 +40,4 @@ pa_big.log
 scg_big.log
 data_cache_big.pkl
 data_cache_big.pkl.stocks
+tune_*.log

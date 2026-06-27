@@ -21,8 +21,8 @@ import datetime as dt
 import numpy as np
 import pandas as pd
 
-TOP_K = 4
-LOOKBACK = 252          # 12개월 모멘텀
+TOP_K = 6               # 과최적화 회피: 분산으로 MDD↓(238·61 표본 공통 robust). top4→top6
+LOOKBACK = 252          # 12개월 모멘텀(표준·양 표본서 robust. 6M은 표본의존이라 회피)
 SKIP_RECENT = 0         # (옵션) 최근 N일 제외 모멘텀. 0=순수 12개월
 
 # ── 종목 풀: 코스피+코스닥 혼합 대형/중형 (유동성 큰 것 위주) ──
