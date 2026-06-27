@@ -29,3 +29,4 @@ lassi.db-wal
 data_cache_*.pkl
 wf_run*.log
 final_algo_run.log
+psb_run.log

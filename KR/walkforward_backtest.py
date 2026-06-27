@@ -176,8 +176,9 @@ def load(force=False):
 # ──────────────────────────────────────────────────────────────────────────
 # 포트폴리오 시뮬레이션 (1000만원, 동일가중, 워크포워드 국면→기법)
 # ──────────────────────────────────────────────────────────────────────────
-def simulate(data, mkt, algo=True):
-    """algo=True: 국면별 알고리즘. algo=False: 단순보유 벤치마크."""
+def simulate(data, mkt, algo=True, phase_series=None):
+    """algo=True: 국면별 알고리즘. algo=False: 단순보유 벤치마크.
+    phase_series: 외부 국면판단(예: AI) 일별 라벨. None이면 봇 classify_phase 사용. (같은 매매엔진)"""
     stocks = data[mkt]
     idx_df = data['index'][mkt]
     inv_df = data['inverse'][mkt]
@@ -188,7 +189,7 @@ def simulate(data, mkt, algo=True):
     if len(cal) < 100:
         return None
     # 워크포워드 국면(어제까지 판단 → 오늘 매매: shift1)
-    phase = classify_phase_walkforward(idx_df, data.get('vix'))
+    phase = phase_series if phase_series is not None else classify_phase_walkforward(idx_df, data.get('vix'))
     phase_t = phase.reindex(idx_df.index).ffill().shift(1).reindex(cal).fillna('UNKNOWN')
     inv_ret = inv_df['close'].pct_change().reindex(cal).fillna(0.0) if inv_df is not None else pd.Series(0.0, index=cal)
 
