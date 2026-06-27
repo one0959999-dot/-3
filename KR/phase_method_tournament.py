@@ -111,10 +111,71 @@ def format_report(table, n):
     return "\n".join(L)
 
 
+# ── 전체 시퀀스 검증 (국면따라 매매방식 전환 + 전환비용) — 격리함정 제거 ──
+TABLE_TOURNAMENT = {'PANIC': '현금', 'BEAR_EARLY': '현금', 'BEAR_MID': '현금',
+                    'BEAR_LATE': '박스권스윙', 'RECOVERY': '박스권스윙', 'BULL_EARLY': '박스권스윙',
+                    'BULL_MID': '박스권스윙', 'BULL_LATE': '200일선위', 'SIDEWAYS': '보유'}
+TABLE_SIMPLE = {'PANIC': '현금', 'BEAR_EARLY': '현금', 'BEAR_MID': '현금', 'BEAR_LATE': '현금',
+                'RECOVERY': '보유', 'BULL_EARLY': '보유', 'BULL_MID': '보유',
+                'BULL_LATE': '보유', 'SIDEWAYS': '보유'}
+
+
+def _seq_weight(df, phase_daily, table):
+    mw = {m: METHODS[m](df).reindex(df.index).fillna(0).clip(0, 1) for m in set(table.values())}
+    w = pd.Series(0.0, index=df.index)
+    for ph, m in table.items():
+        sel = (phase_daily == ph).values
+        w.values[sel] = mw[m].values[sel]
+    return w
+
+
+def _oos(eq, idx):
+    v = eq[idx >= OOS]
+    if len(v) < 30: return None
+    ret = (v.iloc[-1] / v.iloc[0] - 1) * 100
+    peak = v.cummax(); mdd = ((v / peak - 1) * 100).min()
+    return round(ret, 1), round(float(mdd), 1)
+
+
+def run_sequence(stocks=None):
+    stocks = stocks or SAMPLE_KR
+    agg = {'토너먼트표': [], '단순표(하락현금)': [], '단순보유': []}
+    done = 0
+    for code, name in stocks:
+        df = _ohlc(code)
+        if df is None or len(df) < 400: continue
+        ph = classify8_series(df); idx = df.index
+        e_t = _run_frac(df['close'], _seq_weight(df, ph, TABLE_TOURNAMENT))
+        e_s = _run_frac(df['close'], _seq_weight(df, ph, TABLE_SIMPLE))
+        e_h = _run_frac(df['close'], pd.Series(1.0, index=idx))
+        for k, e in [('토너먼트표', e_t), ('단순표(하락현금)', e_s), ('단순보유', e_h)]:
+            m = _oos(e, idx)
+            if m: agg[k].append(m)
+        done += 1; print(f"  {name} 완료")
+    return agg, done
+
+
+def report_sequence(agg, n):
+    L = [f"🔁 전체 시퀀스 검증 (국면전환+비용, KR {n}종목, OOS 2021~)",
+         "격리함정 제거 — 실제로 국면따라 갈아탔을 때 보유를 이기나", ""]
+    for k, lst in agg.items():
+        if not lst: continue
+        rets = [x[0] for x in lst]; mdds = [x[1] for x in lst]
+        win = sum(1 for r in rets if r > 0)
+        L.append(f"{k:16} 수익중앙 {np.median(rets):+.0f}% · MDD중앙 {np.median(mdds):.0f}% · 양(+) {win}/{len(rets)}")
+    # 표별 보유 대비 승률
+    base = {tuple(x): None for x in []}
+    return "\n".join(L)
+
+
 if __name__ == '__main__':
     n = int(sys.argv[1]) if len(sys.argv) > 1 and sys.argv[1].isdigit() else len(SAMPLE_KR)
-    table, done = run(SAMPLE_KR[:n])
-    rep = format_report(table, done)
+    if '--seq' in sys.argv:
+        agg, done = run_sequence(SAMPLE_KR[:n])
+        rep = report_sequence(agg, done)
+    else:
+        table, done = run(SAMPLE_KR[:n])
+        rep = format_report(table, done)
     print("\n" + rep)
     if '--tg' in sys.argv:
         from KR.program_logic_backtest import send_telegram
