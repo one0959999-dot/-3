@@ -53,14 +53,17 @@ def _phase8_target(phase, win):
 def _simulate8(df, phase_daily):
     """8단계 고유 비중대로 리밸런싱(히스테리시스 0.1). phase_daily=일별 8단계 라벨."""
     px = df['close']; n = len(px); w = np.zeros(n); cur = 0.5
+    phv = phase_daily.values; prev_ph = None
     for i in range(n):
         if i < 62:
             w[i] = 0.0; continue
-        ph = phase_daily.iloc[i]
-        t = _phase8_target(ph, df.iloc[max(0, i - WIN8):i + 1])
-        if t is None:
-            t = cur
-        cur = t; w[i] = t
+        ph = phv[i]
+        if ph != prev_ph:                         # 국면 바뀔 때만 비중 재계산(속도 20배↑)
+            t = _phase8_target(ph, df.iloc[max(0, i - WIN8):i + 1])
+            if t is not None:
+                cur = t
+            prev_ph = ph
+        w[i] = cur
     held = 0.0
     for i in range(n):
         if abs(w[i] - held) >= 0.10:
