@@ -42,18 +42,38 @@ def w_swing_bb(df):  # 박스권 스윙: 하단매수~상단매도(상태)
 METHODS = {'보유': w_hold, '현금': w_cash, '반보유50%': w_half,
            '추세추종(5>20MA)': w_trend, '200일선위': w_above200, '박스권스윙': w_swing_bb}
 
+# 방어자산 (종목과 무관한 별도 수익스트림) — 프로그램 하락장 로직
+_ASSET_RETS = None
+def _asset_rets():
+    global _ASSET_RETS
+    if _ASSET_RETS is None:
+        from KR.regime_period_backtest import _yf
+        inv = _yf('114800.KS')['close'].pct_change()
+        dol = _yf('130730.KS')['close'].pct_change()
+        gold = _yf('132030.KS')['close'].pct_change()
+        _ASSET_RETS = {
+            '인버스100%': inv, '달러100%': dol, '금100%': gold,
+            '방어바스켓(인+달+금)': (0.20 * inv).add(0.13 * dol, fill_value=0).add(0.07 * gold, fill_value=0),
+        }
+    return _ASSET_RETS
+
 
 def _phase_oos_returns(df, phase_daily):
-    """각 매매방식 × 8단계의 OOS(검증기간) 격리수익 + MDD."""
+    """각 매매방식(기법+방어자산) × 9국면 OOS 격리수익. 방어자산은 종목무관 별도 수익."""
     out = {}
     oos_mask = np.asarray(df.index >= OOS)
+    # 기법(종목 비중 기반)
+    streams = {}
     for mname, fn in METHODS.items():
         try:
             w = fn(df).reindex(df.index).fillna(0.0).clip(0, 1)
+            streams[mname] = _run_frac(df['close'], w).pct_change().fillna(0.0).values
         except Exception:
-            continue
-        eq = _run_frac(df['close'], w)
-        dr = eq.pct_change().fillna(0.0).values
+            pass
+    # 방어자산(별도 수익스트림)
+    for aname, ar in _asset_rets().items():
+        streams[aname] = ar.reindex(df.index).fillna(0.0).values
+    for mname, dr in streams.items():
         for ph in PHASE_ORDER:
             mask = ((phase_daily.values == ph) & oos_mask)
             if mask.sum() < 15:
@@ -93,21 +113,21 @@ def run(stocks=None):
 
 
 def format_report(table, n):
-    L = [f"🏁 매매방식 토너먼트 — 8단계별 최선 매매방식 (KR {n}종목, OOS 2021~)",
-         "후보: 보유/현금/반보유/추세추종/200일선/박스권스윙", ""]
+    L = [f"🏁 9국면 × 매매방식 순위 (KR {n}종목, OOS 2021~)",
+         "후보: 보유/현금/반보유/추세추종/200일선/박스권스윙 + 방어자산(인버스/달러/금/바스켓)", ""]
     for ph in PHASE_ORDER:
         if ph not in table:
             continue
         t = table[ph]
         rank = sorted(t['meds'].items(), key=lambda kv: kv[1], reverse=True)
         L.append(f"■ {PHASE_KR[ph]}({ph}) — 표본 {t['n']}")
-        L.append("   " + " / ".join(f"{m} {v:+.0f}%" for m, v in rank))
-        L.append(f"   → 최선: 【{t['winner']}】 ({t['meds'][t['winner']]:+.0f}%)")
+        for i, (m, v) in enumerate(rank, 1):
+            L.append(f"   {i:2}. {m:18} {v:+.0f}%")
         L.append("")
-    L.append("[매매방식 알고리즘 = 국면→행동]")
+    L.append("[국면 → 1위 매매방식]")
     for ph in PHASE_ORDER:
         if ph in table:
-            L.append(f"  {PHASE_KR[ph]:12} → {table[ph]['winner']}")
+            L.append(f"  {PHASE_KR[ph]:12} → {table[ph]['winner']} ({table[ph]['meds'][table[ph]['winner']]:+.0f}%)")
     return "\n".join(L)
 
 
