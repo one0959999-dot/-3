@@ -17,15 +17,77 @@ logging.disable(logging.CRITICAL)
 import numpy as np
 import pandas as pd
 
-from KR.regime_period_backtest import _ohlc, _kospi_phase_daily, SAMPLE_KR, COST
+from KR.regime_period_backtest import _ohlc, _yf, SAMPLE_KR, COST
 from KR.strategy import (calculate_entry_score, get_entry_threshold, get_budget_ratio_from_score,
                          get_bull_momentum_score, get_neutral_range_score,
                          get_bear_bottom_score, get_bear_budget_ratio, get_bear_bounce_signal,
                          check_rsi_progressive_exit)
+from base.market_phase import _adx
 
-REG3 = {'상승': 'BULL', '하락': 'BEAR', '횡보': 'NEUTRAL'}
 WIN = 130        # 함수에 넘길 과거창(60MA+여유)
 GIVEBACK = 0.12  # 고점대비 되돌림 손절
+
+# 8단계 → 전략함수 선택용 3-regime (프로그램 regime_from_phase 와 동일)
+PHASE2REG3 = {
+    'PANIC': 'BEAR', 'BEAR_EARLY': 'BEAR', 'BEAR_MID': 'BEAR', 'BEAR_LATE': 'BEAR',
+    'RECOVERY': 'BULL', 'BULL_EARLY': 'BULL', 'BULL_MID': 'BULL', 'BULL_LATE': 'BULL',
+    'SIDEWAYS': 'NEUTRAL',
+}
+PHASE_ORDER = ['PANIC', 'BEAR_EARLY', 'BEAR_MID', 'BEAR_LATE', 'RECOVERY',
+               'BULL_EARLY', 'BULL_MID', 'BULL_LATE', 'SIDEWAYS']
+PHASE_KR = {'PANIC': '패닉', 'BEAR_EARLY': '하락초기', 'BEAR_MID': '하락중반', 'BEAR_LATE': '하락말기(바닥)',
+            'RECOVERY': '회복초입', 'BULL_EARLY': '상승초입', 'BULL_MID': '상승중반',
+            'BULL_LATE': '상승말기(고점)', 'SIDEWAYS': '횡보'}
+
+
+def _phase8_daily():
+    """KOSPI(^KS11) 일별 8단계 — base/market_phase.classify_phase 트리를 그대로 재현.
+    (VIX 미사용 → PANIC은 20일 급락 -12% 근사). 기울기=ma200_slope 사용."""
+    idx = _yf('^KS11')
+    if idx is None or len(idx) < 220:
+        return pd.Series(dtype=object), None
+    c, h, l = idx['close'].astype(float), idx['high'].astype(float), idx['low'].astype(float)
+    ma60 = c.rolling(60).mean(); ma120 = c.rolling(120).mean(); ma200 = c.rolling(200).mean()
+    mom20 = (c / c.shift(20) - 1) * 100
+    mom60 = (c / c.shift(60) - 1) * 100
+    vs200 = (c / ma200 - 1) * 100
+    vs52 = (c / c.rolling(252).max() - 1) * 100
+    adx = _adx(h, l, c)
+    slope = (ma200 / ma200.shift(20) - 1) * 100      # MA200 기울기(각도)
+    out = {}
+    phases = []
+    for i in range(len(c)):
+        cur = c.iloc[i]; m200 = ma200.iloc[i]
+        if pd.isna(m200) or i < 200:
+            phases.append('UNKNOWN'); continue
+        m20s = mom20.iloc[i]; m60s = mom60.iloc[i]; ax = adx.iloc[i]; sl = slope.iloc[i]
+        m60v = ma60.iloc[i]; m120v = ma120.iloc[i]; v52 = vs52.iloc[i]
+        if m20s < -12:                                          # PANIC 근사(VIX 없음)
+            ph = 'PANIC'
+        elif cur < m200 * 0.92 and m20s < -5:
+            ph = 'BEAR_MID'
+        elif cur < m200 and m60s < -15:
+            ph = 'BEAR_MID'
+        elif cur < m200 and m20s < -3:
+            ph = 'BEAR_EARLY'
+        elif cur < m200 and ax < 18:
+            ph = 'BEAR_LATE'
+        elif cur > m200 and m20s > 3 and m60s < -10:
+            ph = 'RECOVERY'
+        elif cur > m200 and sl > 0:
+            if v52 > -5:
+                ph = 'BULL_LATE'
+            elif cur > m60v > m120v and ax > 25:
+                ph = 'BULL_EARLY' if (m20s > 0 and m60s < 15) else 'BULL_MID'
+            else:
+                ph = 'BULL_MID'
+        else:
+            ph = 'SIDEWAYS'
+        phases.append(ph)
+    ser = pd.Series(phases, index=c.index)
+    # 국면별 판별 특성(평균 기울기/ADX/모멘텀) — '어떻게 판별했나' 기록용
+    feat = pd.DataFrame({'phase': ser, 'slope': slope, 'adx': adx, 'mom20': mom20, 'mom60': mom60})
+    return ser, feat
 
 
 def _rsi(c, n=14):
@@ -40,7 +102,7 @@ def _target_weight(df, reg2, strat):
     for i in range(n):
         if i < 62:
             continue
-        p = float(px.iloc[i]); rg = reg2.iloc[i]; r3 = REG3.get(rg, 'NEUTRAL')
+        p = float(px.iloc[i]); ph = reg2.iloc[i]; r3 = PHASE2REG3.get(ph, 'NEUTRAL')
         win = df.iloc[max(0, i - WIN):i + 1]
         t = cur
         try:
@@ -48,14 +110,16 @@ def _target_weight(df, reg2, strat):
                 score, _ = calculate_entry_score(win, p, r3)
                 thr = get_entry_threshold(r3, 'satellite')
                 t = get_budget_ratio_from_score(score, thr) if score >= thr else 0.0
-            else:  # 국면전용
-                if rg == '상승':
+            else:  # 국면전용 (8단계 → 상승/횡보/하락 함수 + 8단계 뉘앙스)
+                if r3 == 'BULL':
                     score, _ = get_bull_momentum_score(win)
                     t = 0.6 if score == 0 else (0.7 if score <= 2 else 0.8)
-                elif rg == '횡보':
+                    if ph == 'BULL_LATE':
+                        t = min(t, 0.4)                       # 상승말기=익절/축소
+                elif r3 == 'NEUTRAL':
                     score, _ = get_neutral_range_score(win)
                     t = {0: 0.0, 1: 0.30, 2: 0.45}.get(score, 0.55)
-                else:  # 하락
+                else:  # BEAR
                     if strat == 'phase_hedge':
                         t = 0.0                               # 하락=현금/인버스
                     else:
@@ -88,7 +152,7 @@ def backtest_stock(code, name, reg):
     df = _ohlc(code)
     if df is None or len(df) < 300:
         return None
-    px = df['close']; reg2 = reg.reindex(px.index).ffill().fillna('횡보')
+    px = df['close']; reg2 = reg.reindex(px.index).ffill().fillna('SIDEWAYS')
     strats = {'단순보유': 'hold', '프로그램(공통점수)': 'common',
               '프로그램(국면전용)': 'phase', '프로그램(국면전용+하락헤지)': 'phase_hedge'}
     out = {}
@@ -96,9 +160,9 @@ def backtest_stock(code, name, reg):
         eq = _simulate(df, reg2, key)
         dr = eq.pct_change().fillna(0.0)
         per = {}
-        for rg in ('상승', '하락', '횡보'):
-            mask = (reg2 == rg).values
-            per[rg] = round((np.prod(1.0 + dr.values[mask]) - 1.0) * 100, 1) if mask.sum() >= 20 else None
+        for ph in PHASE_ORDER:                              # 8단계별 격리수익
+            mask = (reg2 == ph).values
+            per[ph] = round((np.prod(1.0 + dr.values[mask]) - 1.0) * 100, 1) if mask.sum() >= 15 else None
         per['전체'] = round((eq.iloc[-1] / eq.iloc[0] - 1.0) * 100, 1)
         peak = eq.cummax(); per['MDD'] = round(float(((eq / peak - 1) * 100).min()), 1)
         out[nm] = per
@@ -106,7 +170,7 @@ def backtest_stock(code, name, reg):
 
 
 def run(stocks=None):
-    reg = _kospi_phase_daily()
+    reg, feat = _phase8_daily()
     stocks = stocks or SAMPLE_KR
     agg = {}
     done = 0
@@ -123,22 +187,45 @@ def run(stocks=None):
                 if v is not None:
                     agg.setdefault(strat, {}).setdefault(k, []).append(v)
     summary = {s: {k: round(float(np.median(vs)), 1) for k, vs in d.items()} for s, d in agg.items()}
-    return summary, done
+    # 국면별 판별특성(어떻게 잡았나) + 일수
+    phase_feat = {}
+    if feat is not None:
+        for ph in PHASE_ORDER:
+            sub = feat[feat['phase'] == ph]
+            if len(sub):
+                phase_feat[ph] = {'days': len(sub), 'slope': round(sub['slope'].mean(), 2),
+                                  'adx': round(sub['adx'].mean(), 1), 'mom20': round(sub['mom20'].mean(), 1),
+                                  'mom60': round(sub['mom60'].mean(), 1)}
+    return summary, done, phase_feat
 
 
-def format_report(summary, n):
-    L = [f"📊 실제 프로그램 로직 백테스트 (KR {n}종목, 국면별 수익률 중앙값)", ""]
-    L.append(f"{'전략':24} 상승   하락   횡보   전체   MDD")
-    order = ['단순보유', '프로그램(공통점수)', '프로그램(국면전용)', '프로그램(국면전용+하락헤지)']
-    for s in order:
+_SHORT = {'단순보유': '보유', '프로그램(공통점수)': '공통점수',
+          '프로그램(국면전용)': '국면전용', '프로그램(국면전용+하락헤지)': '국면+헤지'}
+
+
+def format_report(summary, n, phase_feat):
+    L = [f"📊 8단계 국면별 프로그램 로직 백테스트 (KR {n}종목, 수익률 중앙값)",
+         "전략: 보유 / 공통점수(calc_entry_score) / 국면전용(bull·neutral·bear score) / 국면+하락헤지", ""]
+    strats = list(_SHORT.keys())
+    for ph in PHASE_ORDER:
+        f = phase_feat.get(ph)
+        if not f:
+            continue
+        # 이 국면 1위
+        ranked = sorted(((s, summary.get(s, {}).get(ph)) for s in strats),
+                        key=lambda kv: (kv[1] if kv[1] is not None else -9999), reverse=True)
+        ranked = [(s, v) for s, v in ranked if v is not None]
+        if not ranked:
+            continue
+        L.append(f"■ {PHASE_KR[ph]}({ph}) — {f['days']}일")
+        L.append(f"   판별: MA200기울기 {f['slope']:+.2f} · ADX {f['adx']} · 20일 {f['mom20']:+.1f}% · 60일 {f['mom60']:+.1f}%")
+        L.append("   " + " / ".join(f"{_SHORT[s]} {v:+.0f}%" for s, v in ranked))
+        L.append(f"   → 1위: {_SHORT[ranked[0][0]]} ({ranked[0][1]:+.0f}%)")
+        L.append("")
+    L.append("[전체/MDD]")
+    for s in strats:
         p = summary.get(s, {})
-        g = lambda k: f"{p.get(k,'-')}"
-        L.append(f"{s:24} {g('상승'):>5} {g('하락'):>5} {g('횡보'):>5} {g('전체'):>5} {g('MDD'):>6}")
-    L.append("")
-    L.append("국면별 1위:")
-    for rg in ('상승', '하락', '횡보'):
-        best = max(summary.items(), key=lambda kv: kv[1].get(rg, -9999))
-        L.append(f"  {rg}: {best[0]} ({best[1].get(rg)}%)")
+        L.append(f"  {_SHORT[s]:6} 전체 {p.get('전체','-')}% · MDD {p.get('MDD','-')}%")
     return "\n".join(L)
 
 
@@ -159,8 +246,8 @@ def send_telegram(text):
 
 if __name__ == '__main__':
     n = int(sys.argv[1]) if len(sys.argv) > 1 else len(SAMPLE_KR)
-    summary, done = run(SAMPLE_KR[:n])
-    report = format_report(summary, done)
+    summary, done, phase_feat = run(SAMPLE_KR[:n])
+    report = format_report(summary, done, phase_feat)
     print("\n" + report)
     if '--tg' in sys.argv or len(sys.argv) <= 2:
         send_telegram(report)
