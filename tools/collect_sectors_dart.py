@@ -50,19 +50,26 @@ def main(maxn=99999):
     s2c = stockcode_to_corp(key)
     uni = [c for c in universe() if c in s2c][:maxn]
     con = sqlite3.connect(DB, timeout=120); con.execute('PRAGMA busy_timeout=120000')
-    con.execute("CREATE TABLE IF NOT EXISTS ticker_sector (ticker TEXT PRIMARY KEY, induty_code TEXT)")
-    have = {r[0] for r in con.execute("SELECT ticker FROM ticker_sector").fetchall()}
+    con.execute("CREATE TABLE IF NOT EXISTS ticker_sector (ticker TEXT PRIMARY KEY, induty_code TEXT, market TEXT)")
+    try:
+        con.execute("ALTER TABLE ticker_sector ADD COLUMN market TEXT")  # 기존 테이블 호환
+    except Exception:
+        pass
+    have = {r[0] for r in con.execute("SELECT ticker FROM ticker_sector WHERE induty_code IS NOT NULL").fetchall()}
     n = 0
     for i, code in enumerate(uni, 1):
         if code in have:
             continue
+        ind = mkt = None
         try:
             r = requests.get('https://opendart.fss.or.kr/api/company.json',
                              params={'crtfc_key': key, 'corp_code': s2c[code]}, timeout=15).json()
-            ind = r.get('induty_code') if r.get('status') == '000' else None
+            if r.get('status') == '000':
+                ind = r.get('induty_code')
+                mkt = {'Y': 'KOSPI', 'K': 'KOSDAQ', 'N': 'KONEX'}.get(r.get('corp_cls'), r.get('corp_cls'))
         except Exception:
-            ind = None
-        con.execute("INSERT OR REPLACE INTO ticker_sector VALUES (?,?)", (code, ind))
+            pass
+        con.execute("INSERT OR REPLACE INTO ticker_sector(ticker,induty_code,market) VALUES (?,?,?)", (code, ind, mkt))
         n += 1
         if n % 50 == 0:
             con.commit(); print(f"  [{i}/{len(uni)}] {n}건")
