@@ -151,11 +151,12 @@ def market_block(name, closes, core, sat, fin, idx, healthy_on, note):
     # (구성라벨, n_core, n_sat, with_index, vol_target, trend)
     configs = [
         ('코어2+위성2 (기본)',           2, 2, False, None, False),
-        ('코어2+위성2 +고정지수',         2, 2, True,  None, False),
         ('코어4+위성4 (분산)',           4, 4, False, None, False),
-        ('코어4+위성4 +변동성타게팅',      4, 4, False, 0.20, False),
-        ('코어4+위성4 +변동성+추세필터',    4, 4, False, 0.20, True),
-        ('코어6+위성6 +변동성타게팅',      6, 6, False, 0.20, False),
+        ('코어6+위성6 (분산↑)',          6, 6, False, None, False),
+        ('코어4+위성4 +변동성35%',        4, 4, False, 0.35, False),
+        ('코어4+위성4 +변동성30%',        4, 4, False, 0.30, False),
+        ('코어6+위성6 +변동성35%',        6, 6, False, 0.35, False),
+        ('코어6+위성6 +변동성30%+추세',    6, 6, False, 0.30, True),
     ]
     for label, nc, ns, wi, vt, tr in configs:
         r = port_returns(closes, core, sat, fin, idx, cal, nc, ns, wi, healthy_on)
