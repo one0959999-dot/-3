@@ -43,3 +43,4 @@ data_cache_big.pkl.stocks
 tune_*.log
 collect_del.log
 data_cache_delisted.pkl
+collect_fin.log
