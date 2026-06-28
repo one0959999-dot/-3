@@ -52,8 +52,9 @@ def load_kr():
         fin.setdefault(t, {})[y] = cap
     con.close()
     idx = pickle.load(open(P('data_cache_wf.pkl'), 'rb'))['index']['KOSPI']['close']
+    # 코어=코스피(대형, 상폐드뭄). 위성=코스닥 + 상폐('E', 대부분 소형=위성성격) → 생존편향 교정은 위성에서.
     core = [c for c in closes if market.get(c) == 'KOSPI']
-    sat = [c for c in closes if market.get(c) == 'KOSDAQ']
+    sat = [c for c in closes if market.get(c) in ('KOSDAQ', 'E')]
     return closes, core, sat, fin, idx
 
 
@@ -96,48 +97,72 @@ def select(closes, pool, cal, t, k, fin, healthy_on):
     return [c for c, _ in sorted(mom.items(), key=lambda kv: kv[1], reverse=True)[:k]]
 
 
-def run_bt(closes, core, sat, fin, idx, cal, with_index, healthy_on):
+def port_returns(closes, core, sat, fin, idx, cal, n_core, n_sat, with_index, healthy_on):
+    """무오버레이 일별 포트수익 Series."""
     R = {c: closes[c].reindex(cal).pct_change() for c in closes}
     idx_ret = idx.reindex(cal).pct_change().fillna(0.0)
     me = month_ends(cal)
-    sel_at = {}
-    for t in me:
-        c2 = select(closes, core, cal, t, 2, fin, healthy_on)
-        s2 = select(closes, sat, cal, t, 2, fin, healthy_on)
-        sel_at[t] = c2 + s2
+    sel_at = {t: select(closes, core, cal, t, n_core, fin, healthy_on)
+                 + select(closes, sat, cal, t, n_sat, fin, healthy_on) for t in me}
     me_sorted = sorted(sel_at)
-    eq = [1.0]; cur = []; prev = None; ptr = 0
+    out = pd.Series(0.0, index=cal); cur = []; prev = None; ptr = 0
     for d in cal[1:]:
         while ptr < len(me_sorted) and me_sorted[ptr] < d:
             cur = sel_at[me_sorted[ptr]]; ptr += 1
         slots = (cur + ['__IDX__']) if with_index else cur
         if not slots:
-            eq.append(eq[-1]); continue
-        w = 1.0 / len(slots)
-        r = 0.0
+            continue
+        w = 1.0 / len(slots); r = 0.0
         for s in slots:
             rr = idx_ret.loc[d] if s == '__IDX__' else R[s].loc[d]
             r += w * (rr if rr == rr else 0.0)
         if cur is not prev:
-            r -= COST  # 전환비용 근사
-            prev = cur
-        eq.append(eq[-1] * (1 + r))
-    e = pd.Series(eq, index=cal)
+            r -= COST; prev = cur
+        out.loc[d] = r
+    return out
+
+
+def overlay(r, idx, cal, vol_target=None, trend=False):
+    """변동성 타게팅(노출 축소) + 추세필터. 룩어헤드 제거(shift). 노출은 0~1(레버리지 없음)."""
+    scale = pd.Series(1.0, index=cal)
+    if vol_target:
+        rv = r.rolling(20).std() * np.sqrt(252)
+        s = (vol_target / rv.replace(0, np.nan)).clip(upper=1.0).fillna(1.0)
+        scale *= s
+    if trend:
+        ic = idx.reindex(cal).ffill(); ma = ic.rolling(200).mean()
+        scale *= pd.Series(np.where(ic > ma, 1.0, 0.5), index=cal)
+    return r * scale.shift(1).fillna(1.0)
+
+
+def metrics(r):
+    e = (1 + r.fillna(0)).cumprod()
     ret = (e.iloc[-1] - 1) * 100
     yrs = len(e) / 252
     cagr = (e.iloc[-1] ** (1 / yrs) - 1) * 100
     mdd = float(((e / e.cummax() - 1) * 100).min())
-    return ret, cagr, mdd
+    return ret, cagr, mdd, cagr / (abs(mdd) + 1e-9)
 
 
 def market_block(name, closes, core, sat, fin, idx, healthy_on, note):
     cal = idx.index[idx.index >= START]
-    # 공통 달력: 지수 거래일
-    L = [f"[{name}] 코어풀 {len(core)} · 위성풀 {len(sat)}종목  {note}"]
-    for label, wi in [('지수 안넣고(코어2+위성2)', False), ('지수 넣고(+고정지수)', True)]:
-        ret, cagr, mdd = run_bt(closes, core, sat, fin, idx, cal, wi, healthy_on)
+    L = [f"[{name}] 코어풀 {len(core)} · 위성풀 {len(sat)}종목  {note}",
+         f"  {'구성':30}{'1000만→':>9}{'수익':>8}{'연':>5}{'MDD':>6}{'Calmar':>7}"]
+    # (구성라벨, n_core, n_sat, with_index, vol_target, trend)
+    configs = [
+        ('코어2+위성2 (기본)',           2, 2, False, None, False),
+        ('코어2+위성2 +고정지수',         2, 2, True,  None, False),
+        ('코어4+위성4 (분산)',           4, 4, False, None, False),
+        ('코어4+위성4 +변동성타게팅',      4, 4, False, 0.20, False),
+        ('코어4+위성4 +변동성+추세필터',    4, 4, False, 0.20, True),
+        ('코어6+위성6 +변동성타게팅',      6, 6, False, 0.20, False),
+    ]
+    for label, nc, ns, wi, vt, tr in configs:
+        r = port_returns(closes, core, sat, fin, idx, cal, nc, ns, wi, healthy_on)
+        r = overlay(r, idx, cal, vol_target=vt, trend=tr)
+        ret, cagr, mdd, cal_ = metrics(r)
         final = 1000 * (1 + ret / 100)
-        L.append(f"  {label:22} 1000만→{final:>7,.0f}만  {ret:>+7.0f}%  연{cagr:>+5.0f}%  MDD{mdd:>+5.0f}%")
+        L.append(f"  {label:30}{final:>8,.0f}만{ret:>+7.0f}%{cagr:>+4.0f}{mdd:>+6.0f}{cal_:>7.1f}")
     return "\n".join(L)
 
 
