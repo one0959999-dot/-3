@@ -47,3 +47,6 @@ collect_fin.log
 data_cache_us.pkl
 algo_faithful*.log
 data_answersheet.pkl
+ai_detect*.log
+data_answersheet*.pkl
+data_detect_results.pkl
