@@ -21,7 +21,7 @@ import logging
 logging.disable(logging.CRITICAL)
 import warnings
 warnings.filterwarnings('ignore')
-from KR.live_v1 import fetch_universe, compute_target, is_rebalance_week, tg, ETFS, BUY_COST
+from KR.live_v1 import fetch_universe, compute_target, is_rebalance_week, tg, ETFS, BUY_COST, KR_ETF_WEIGHT
 
 P = lambda f: os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', f)
 MARKER = P('auto_order_done.txt'); LOCK = P('auto_order.lock')
@@ -80,11 +80,18 @@ def write_marker(state):  # 원자적
     os.replace(tmp, MARKER)
 
 
+def _alloc(cash, sleeve_kind, n_stock, n_etf):
+    """국내 50/50 배분: ETF 슬리브 50%(ETF수로 균등) / 저변동 50%(종목수로 균등)."""
+    if sleeve_kind == '지수ETF':
+        return cash * KR_ETF_WEIGHT / max(n_etf, 1)
+    return cash * (1 - KR_ETF_WEIGHT) / max(n_stock, 1)
+
+
 def plan_buyonly(target, toss, cash):
-    """★신규자금 배분(매도 없음): 가용현금을 ⅓×3로 배분해 매수만. 기존보유 불간섭.
+    """★신규자금 배분(매도 없음): 가용현금을 50/50로 배분해 매수만. 기존보유 불간섭.
     반환 (buys[(sym,qty,name,lp)], skipped)."""
-    sleeve = cash / 3
     n_stock = sum(1 for t in target if t['sleeve'] == '저변동')
+    n_etf = sum(1 for t in target if t['sleeve'] == '지수ETF')
     buys, skipped = [], []
     for t in target:
         sym = t['symbol']; lp = toss.get_price(sym)
@@ -92,8 +99,7 @@ def plan_buyonly(target, toss, cash):
             skipped.append((t['name'], '시세실패')); continue
         if abs(lp / t['price'] - 1) > PRICE_SANITY:
             skipped.append((t['name'], f'괴리{(lp/t["price"]-1)*100:+.0f}%')); continue
-        alloc = sleeve if t['sleeve'] == '지수ETF' else sleeve / max(n_stock, 1)
-        q = int(alloc // (lp * (1 + BUY_BUF)))
+        q = int(_alloc(cash, t['sleeve'], n_stock, n_etf) // (lp * (1 + BUY_BUF)))
         if q > 0:
             buys.append((sym, q, t['name'], lp))
     return buys, skipped
@@ -101,15 +107,14 @@ def plan_buyonly(target, toss, cash):
 
 def plan_full(target, holdings, toss, budget):
     """전체 리밸런스(매도포함) — 드라이런 표시 전용. 실행은 T+2 안전확보 전까지 차단."""
-    sleeve = budget / 3
     n_stock = sum(1 for t in target if t['sleeve'] == '저변동')
+    n_etf = sum(1 for t in target if t['sleeve'] == '지수ETF')
     tgt = {}
     for t in target:
         sym = t['symbol']; lp = toss.get_price(sym)
         if not lp or lp <= 0 or abs(lp / t['price'] - 1) > PRICE_SANITY:
             continue
-        alloc = sleeve if t['sleeve'] == '지수ETF' else sleeve / max(n_stock, 1)
-        tgt[sym] = (int(alloc // (lp * (1 + BUY_COST))), t['name'], lp)
+        tgt[sym] = (int(_alloc(budget, t['sleeve'], n_stock, n_etf) // (lp * (1 + BUY_COST))), t['name'], lp)
     sells = [(s, q - tgt.get(s, (0,))[0], nm) for s, (q, nm) in holdings.items() if q > tgt.get(s, (0,))[0]]
     buys = [(s, w - holdings.get(s, (0,))[0], nm, lp) for s, (w, nm, lp) in tgt.items() if w > holdings.get(s, (0,))[0]]
     return sells, buys
