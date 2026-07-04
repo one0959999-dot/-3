@@ -89,6 +89,11 @@ def main(execute=False, max_usd=500.0, probe=False):
     L = [f"🇺🇸 US 자동주문 {head} — {today_tag()} (전략=SPY 보유)"]
     L.append(f"가용 USD ${deploy:,.2f} → SPY ${'?' if not price else f'{price:,.2f}'} 매수 (기존보유 불간섭, 캡 ${max_usd:,.0f})")
     rep = "\n".join(L); print(rep); tg(rep)
+    try:
+        from KR.journal import record
+        record('plan', 'US', {'cash_usd': cash, 'spy_held': spy_held, 'spy_price': price, 'deploy_usd': deploy})
+    except Exception:
+        pass
 
     if not execute:
         print("📋 드라이런 종료 — 주문 없음."); return 0

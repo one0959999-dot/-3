@@ -87,21 +87,31 @@ def _alloc(cash, sleeve_kind, n_stock, n_etf):
     return cash * (1 - KR_ETF_WEIGHT) / max(n_stock, 1)
 
 
+SMALL_DEPLOY = 3_000_000  # 이 미만 소액은 25종목 분산 불가 → ETF로 몰아줌
+
+
 def plan_buyonly(target, toss, cash):
     """★신규자금 배분(매도 없음): 가용현금을 50/50로 배분해 매수만. 기존보유 불간섭.
-    반환 (buys[(sym,qty,name,lp)], skipped)."""
+    ※소액(<300만)은 종목당 예산이 1주값도 안 돼 → 전액 ETF로. 반환 (buys, skipped)."""
+    small = cash < SMALL_DEPLOY
     n_stock = sum(1 for t in target if t['sleeve'] == '저변동')
     n_etf = sum(1 for t in target if t['sleeve'] == '지수ETF')
     buys, skipped = [], []
     for t in target:
+        if small and t['sleeve'] == '저변동':
+            continue  # 소액이면 개별종목 건너뜀
         sym = t['symbol']; lp = toss.get_price(sym)
         if not lp or lp <= 0:
             skipped.append((t['name'], '시세실패')); continue
         if abs(lp / t['price'] - 1) > PRICE_SANITY:
             skipped.append((t['name'], f'괴리{(lp/t["price"]-1)*100:+.0f}%')); continue
-        q = int(_alloc(cash, t['sleeve'], n_stock, n_etf) // (lp * (1 + BUY_BUF)))
+        # 소액이면 ETF에 cash 전액, 아니면 50/50
+        alloc = cash / max(n_etf, 1) if small else _alloc(cash, t['sleeve'], n_stock, n_etf)
+        q = int(alloc // (lp * (1 + BUY_BUF)))
         if q > 0:
             buys.append((sym, q, t['name'], lp))
+    if small:
+        skipped.append(('개별종목', f'소액<{SMALL_DEPLOY//10000}만 → ETF로 몰아줌'))
     return buys, skipped
 
 

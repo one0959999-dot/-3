@@ -141,6 +141,15 @@ def main(telegram=False, budget=10_000_000):
     L.append(f"⚠️ 페이퍼 트레이딩 — 실주문 없음. ({time.time()-t0:.0f}s, {meta['n_scan']}종목 스캔)")
     rep = "\n".join(L)
     print(rep)
+    # 봇 일기장 기록 (나중 백테스트 대조·dead-man용)
+    try:
+        from KR.journal import record
+        picks = [x for x in target if x['sleeve'] == '저변동']
+        record('plan', 'KR', {'n_picks': meta['n_picks'], 'rebalance_week': is_rebalance_week(),
+                              'top': [f"{x['name']}({x['symbol']})" for x in picks[:8]],
+                              'target': [{'sym': x['symbol'], 'name': x['name'], 'qty': x['qty'], 'price': x['price']} for x in target]})
+    except Exception as e:
+        print('일기장 기록 실패:', e)
     if telegram:
         print('텔레그램', '✓' if tg(rep) else '✗')
     return 0
