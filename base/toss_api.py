@@ -563,8 +563,9 @@ class TossInvestApi:
     # ────────────────────────────────────────────────────────────────────
     # 매수가능금액 / 매도가능수량
     # ────────────────────────────────────────────────────────────────────
-    def get_buyable_cash(self, stock_code: str = "005930", price: int = 0) -> float:
-        """KRW 매수가능금액"""
+    def get_buyable_cash(self, stock_code: str = "005930", price: int = 0, default: float | None = 0.0) -> float | None:
+        """KRW 매수가능금액. API 실패 시 default 반환 — 실패와 '현금0'을 구분해야 하는
+        호출자(자동주문)는 default=None으로 호출해 실패를 감지할 것."""
         data = self._get("/api/v1/buying-power", {"currency": "KRW"}, with_account=True)
         if data:
             val = data.get("cashBuyingPower")
@@ -573,7 +574,7 @@ class TossInvestApi:
                     return float(val)
                 except (TypeError, ValueError):
                     pass
-        return 0.0
+        return default
 
     def get_buyable_cash_usd(self, ticker: str = "AAPL", price: float = 0) -> float:
         """USD 매수가능금액"""
@@ -701,12 +702,15 @@ class TossInvestApi:
     # ────────────────────────────────────────────────────────────────────
     # 주문 조회 / 취소
     # ────────────────────────────────────────────────────────────────────
-    def get_open_orders(self, symbol: str | None = None) -> list[dict]:
+    def get_open_orders(self, symbol: str | None = None) -> list[dict] | None:
+        """미체결 주문 목록. API 실패 시 None(빈 리스트로 위장 금지 — 중복주문 방지 게이트용)."""
         params: dict = {"status": "OPEN"}
         if symbol:
             params["symbol"] = symbol
         data = self._get("/api/v1/orders", params, with_account=True)
-        return (data or {}).get("orders", [])
+        if data is None:
+            return None
+        return data.get("orders", [])
 
     def get_unfilled_orders(self) -> list[dict]:
         """토스증권 compat"""
@@ -738,8 +742,12 @@ class TossInvestApi:
         return data is not None
 
     def cancel_all_unfilled(self) -> int:
-        """미체결 주문 전량 취소. 취소 건수 반환."""
-        orders  = self.get_open_orders()
+        """미체결 주문 전량 취소. 취소 건수 반환. 조회 실패(재시도 1회 후)면 -1 — 취소 보장 못함."""
+        orders = self.get_open_orders()
+        if orders is None:
+            orders = self.get_open_orders()  # 일시 오류 재시도 1회
+        if orders is None:
+            return -1
         success = 0
         for o in orders:
             oid = o.get("orderId", "")
