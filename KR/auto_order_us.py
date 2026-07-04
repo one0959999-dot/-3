@@ -114,7 +114,7 @@ def main(execute=False, max_usd=500.0, probe=False):
         msg = "⛔ 실행거부: 미체결 조회 실패 — 안전중단"; print(msg); tg(msg); return 0
     if oo:
         msg = "⛔ 실행거부: 미체결 주문 존재 — 충돌방지"; print(msg); tg(msg); return 0
-    amount = min(deploy, max_usd)
+    amount = round(min(deploy, max_usd), 2)
     if not acquire_lock():
         msg = "⛔ 실행거부: 락파일(다른 실행중)"; print(msg); tg(msg); return 0
     try:
