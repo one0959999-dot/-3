@@ -23,7 +23,9 @@ import yfinance as yf
 from KR.algo_v1 import select, load_financial_flags
 
 P = lambda f: os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', f)
-ETF = '069500'  # KODEX 200 (시총가중 슬리브)
+# ⅓×3 구성 (검증: CAGR 16.4%/MDD-30%, 현행 50/50 대비 전지표 우위)
+ETFS = {'069500': 'KODEX200(코스피)', '360750': 'TIGER미국S&P500'}  # 시총가중 슬리브 2 (국내+미국·환노출=자연헤지)
+ETF = '069500'  # (하위호환) 무결성 게이트용
 N_SLEEVE = 25
 LOOKBACK_DAYS = 700          # 달력일 (200MA+기울기+버퍼 확보)
 MIN_TICKERS = 1500           # 무결성 게이트: 수집이 이보다 적으면 중단
@@ -66,7 +68,7 @@ def fetch_universe():
                     cl[t] = s
             except Exception:
                 continue
-    todo = [ETF] + tickers
+    todo = list(ETFS) + tickers
     for i in range(0, len(todo), 120):
         batch(todo[i:i + 120], '.KS')
     rem = [t for t in todo if t not in cl]
@@ -80,47 +82,61 @@ def is_rebalance_week(d=None):
     return d.month in (1, 4, 7, 10) and d.day <= 7
 
 
-def main(telegram=False, budget=10_000_000):
-    t0 = time.time()
-    cl, names = fetch_universe()
-    # ── 무결성 게이트: 데이터 이상하면 아무것도 안 한다 ──
-    if len(cl) < MIN_TICKERS or ETF not in cl:
-        msg = f"⛔ live_v1 중단: 데이터 무결성 실패 (수집 {len(cl)}종목, ETF {'OK' if ETF in cl else '누락'}) — 아무것도 하지 않음"
-        print(msg); tg(msg); return 1
-    etf = cl.pop(ETF)
-    panel = pd.DataFrame(cl).sort_index()
+def compute_target(cl, names, budget):
+    """확정 구조(⅓×3)로 목표 포트폴리오 산출 — 백테스트·라이브·자동주문 공용 단일소스.
+    반환 (target, meta) 또는 (None, 사유). target=[{symbol,name,qty,price,sleeve}]."""
+    for e in ETFS:
+        if e not in cl:
+            return None, f"ETF {e} 시세 누락"
+    if len(cl) < MIN_TICKERS:
+        return None, f"수집 {len(cl)}종목(<{MIN_TICKERS})"
+    etf_px = {e: float(cl[e].iloc[-1]) for e in ETFS}
+    panel = pd.DataFrame({t: s for t, s in cl.items() if t not in ETFS}).sort_index()
     last_day = panel.index[-1].date()
     if (datetime.date.today() - last_day).days > 7:
-        msg = f"⛔ live_v1 중단: 최신 데이터가 {last_day} (7일+ 낡음) — 아무것도 하지 않음"
-        print(msg); tg(msg); return 1
+        return None, f"최신데이터 {last_day} (7일+ 낡음)"
     fin, fy = load_financial_flags()
     picks = select(panel, fin, fy)[:N_SLEEVE]
     if len(picks) < 15:
-        msg = f"⛔ live_v1 중단: 선정 {len(picks)}종목(<15) — 규칙 통과 종목 부족, 점검 필요"
+        return None, f"선정 {len(picks)}종목(<15)"
+    sleeve = budget / 3  # ⅓씩 (지수ETF 2 + 저변동 1)
+    target = []
+    for e, nm in ETFS.items():
+        target.append({'symbol': e, 'name': nm, 'qty': int(sleeve // (etf_px[e] * (1 + BUY_COST))),
+                       'price': etf_px[e], 'sleeve': '지수ETF'})
+    per = sleeve / len(picks)
+    for t in picks:
+        px = float(panel[t].dropna().iloc[-1])
+        target.append({'symbol': t, 'name': names.get(t, t), 'qty': int(per // (px * (1 + BUY_COST))),
+                       'price': px, 'sleeve': '저변동'})
+    return target, {'last_day': last_day, 'n_scan': len(panel.columns), 'n_picks': len(picks)}
+
+
+def main(telegram=False, budget=10_000_000):
+    t0 = time.time()
+    cl, names = fetch_universe()
+    target, meta = compute_target(cl, names, budget)
+    if target is None:
+        msg = f"⛔ live_v1 중단: 데이터 무결성 실패 ({meta}) — 아무것도 하지 않음"
         print(msg); tg(msg); return 1
-    # ── 목표 포트폴리오 (1주 단위) ──
-    half = budget / 2
-    etf_px = float(etf.iloc[-1]); etf_q = int(half // (etf_px * (1 + BUY_COST)))
-    per = half / len(picks)
-    rebal = is_rebalance_week()
-    if rebal:
+    last_day = meta['last_day']
+    if is_rebalance_week():
         L = [f"🔴 [분기 리밸런스] {last_day} — 지금 아래 구성으로 매매하세요 (다음 변경: 3개월 후)"]
     else:
         L = [f"🟢 [유지 주간] {last_day} — 매매 불필요. 현재 보유 그대로 유지하세요.",
              f"    (실제 종목 변경은 분기 1회: 1·4·7·10월. 아래는 참고용 현재 순위)"]
-    L.append(f"예산 {budget/1e4:,.0f}만 · 구성 = 지수ETF 50% + 저변동 {len(picks)}종목 50%")
+    L.append(f"예산 {budget/1e4:,.0f}만 · 구성 = 코스피ETF ⅓ + 미국S&P500 ⅓ + 저변동 {meta['n_picks']}종목 ⅓")
     L.append("")
-    L.append(f"[슬리브A 50%] KODEX200({ETF}) {etf_q}주 × {etf_px:,.0f}원 = {etf_q*etf_px/1e4:,.0f}만")
-    L.append(f"[슬리브B 50%] 저변동성 {len(picks)}종목 (종목당 ~{per/1e4:,.0f}만):")
-    used = 0
-    for i, t in enumerate(picks, 1):
-        px = float(panel[t].dropna().iloc[-1])
-        q = int(per // (px * (1 + BUY_COST)))
-        used += q * px
-        L.append(f"  {i:2}. {names.get(t, t)[:8]:8} {q}주 × {px:,.0f}")
+    L.append("[슬리브1·2 = 지수ETF ⅔]")
+    for it in [x for x in target if x['sleeve'] == '지수ETF']:
+        L.append(f"  {it['name']}({it['symbol']}) {it['qty']}주 × {it['price']:,.0f} = {it['qty']*it['price']/1e4:,.0f}만")
+    L.append(f"[슬리브3 = 저변동 {meta['n_picks']}종목 ⅓]")
+    for i, it in enumerate([x for x in target if x['sleeve'] == '저변동'], 1):
+        L.append(f"  {i:2}. {it['name'][:8]:8} {it['qty']}주 × {it['price']:,.0f}")
+    used = sum(it['qty'] * it['price'] for it in target)
     L.append("")
-    L.append(f"체결가능 배분: ETF {etf_q*etf_px/1e4:,.0f}만 + 종목 {used/1e4:,.0f}만 / 잔여현금 {(budget-etf_q*etf_px-used)/1e4:,.0f}만")
-    L.append(f"⚠️ 페이퍼 트레이딩 — 실주문 없음. ({time.time()-t0:.0f}s, {len(panel.columns)}종목 스캔)")
+    L.append(f"체결가능 총액 {used/1e4:,.0f}만 / 잔여현금 {(budget-used)/1e4:,.0f}만")
+    L.append(f"⚠️ 페이퍼 트레이딩 — 실주문 없음. ({time.time()-t0:.0f}s, {meta['n_scan']}종목 스캔)")
     rep = "\n".join(L)
     print(rep)
     if telegram:
