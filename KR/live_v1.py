@@ -102,8 +102,13 @@ def main(telegram=False, budget=10_000_000):
     half = budget / 2
     etf_px = float(etf.iloc[-1]); etf_q = int(half // (etf_px * (1 + BUY_COST)))
     per = half / len(picks)
-    L = [f"📋 라이브 v1.0 드라이런 (기준 {last_day}, 예산 {budget/1e4:,.0f}만)"]
-    L.append(f"{'★분기 리밸런스 주간' if is_rebalance_week() else '(관망 주간 — 참고용)'}")
+    rebal = is_rebalance_week()
+    if rebal:
+        L = [f"🔴 [분기 리밸런스] {last_day} — 지금 아래 구성으로 매매하세요 (다음 변경: 3개월 후)"]
+    else:
+        L = [f"🟢 [유지 주간] {last_day} — 매매 불필요. 현재 보유 그대로 유지하세요.",
+             f"    (실제 종목 변경은 분기 1회: 1·4·7·10월. 아래는 참고용 현재 순위)"]
+    L.append(f"예산 {budget/1e4:,.0f}만 · 구성 = 지수ETF 50% + 저변동 {len(picks)}종목 50%")
     L.append("")
     L.append(f"[슬리브A 50%] KODEX200({ETF}) {etf_q}주 × {etf_px:,.0f}원 = {etf_q*etf_px/1e4:,.0f}만")
     L.append(f"[슬리브B 50%] 저변동성 {len(picks)}종목 (종목당 ~{per/1e4:,.0f}만):")
