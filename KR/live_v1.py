@@ -23,10 +23,11 @@ import yfinance as yf
 from KR.algo_v1 import select, load_financial_flags
 
 P = lambda f: os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', f)
-# ⅓×3 구성 (검증: CAGR 16.4%/MDD-30%, 현행 50/50 대비 전지표 우위)
-ETFS = {'069500': 'KODEX200(코스피)', '360750': 'TIGER미국S&P500'}  # 시총가중 슬리브 2 (국내+미국·환노출=자연헤지)
-ETF = '069500'  # (하위호환) 무결성 게이트용
+# KR 국내 2슬리브 (미국은 별도 US계좌 전략으로 분리). 검증: 50/50 = CAGR15.5%/MDD-32%.
+ETFS = {'069500': 'KODEX200(코스피)'}  # 국내 시총가중 슬리브 (미국ETF 360750 제거 — KR은 국내만)
+ETF = '069500'  # 무결성 게이트용
 N_SLEEVE = 25
+KR_ETF_WEIGHT = 0.5  # ETF 50% + 저변동 50%
 LOOKBACK_DAYS = 700          # 달력일 (200MA+기울기+버퍼 확보)
 MIN_TICKERS = 1500           # 무결성 게이트: 수집이 이보다 적으면 중단
 BUY_COST = 0.0015
@@ -83,7 +84,7 @@ def is_rebalance_week(d=None):
 
 
 def compute_target(cl, names, budget):
-    """확정 구조(⅓×3)로 목표 포트폴리오 산출 — 백테스트·라이브·자동주문 공용 단일소스.
+    """KR 국내 50/50 (KODEX200 + v3 저변동) 목표 산출 — 백테스트·라이브·자동주문 공용 단일소스.
     반환 (target, meta) 또는 (None, 사유). target=[{symbol,name,qty,price,sleeve}]."""
     for e in ETFS:
         if e not in cl:
@@ -99,12 +100,13 @@ def compute_target(cl, names, budget):
     picks = select(panel, fin, fy)[:N_SLEEVE]
     if len(picks) < 15:
         return None, f"선정 {len(picks)}종목(<15)"
-    sleeve = budget / 3  # ⅓씩 (지수ETF 2 + 저변동 1)
+    etf_bud = budget * KR_ETF_WEIGHT / max(len(ETFS), 1)
+    stock_bud = budget * (1 - KR_ETF_WEIGHT)
     target = []
     for e, nm in ETFS.items():
-        target.append({'symbol': e, 'name': nm, 'qty': int(sleeve // (etf_px[e] * (1 + BUY_COST))),
+        target.append({'symbol': e, 'name': nm, 'qty': int(etf_bud // (etf_px[e] * (1 + BUY_COST))),
                        'price': etf_px[e], 'sleeve': '지수ETF'})
-    per = sleeve / len(picks)
+    per = stock_bud / len(picks)
     for t in picks:
         px = float(panel[t].dropna().iloc[-1])
         target.append({'symbol': t, 'name': names.get(t, t), 'qty': int(per // (px * (1 + BUY_COST))),
@@ -125,12 +127,12 @@ def main(telegram=False, budget=10_000_000):
     else:
         L = [f"🟢 [유지 주간] {last_day} — 매매 불필요. 현재 보유 그대로 유지하세요.",
              f"    (실제 종목 변경은 분기 1회: 1·4·7·10월. 아래는 참고용 현재 순위)"]
-    L.append(f"예산 {budget/1e4:,.0f}만 · 구성 = 코스피ETF ⅓ + 미국S&P500 ⅓ + 저변동 {meta['n_picks']}종목 ⅓")
+    L.append(f"예산 {budget/1e4:,.0f}만 · 구성(국내만) = 코스피ETF 50% + 저변동 {meta['n_picks']}종목 50%")
     L.append("")
-    L.append("[슬리브1·2 = 지수ETF ⅔]")
+    L.append("[슬리브1 = 코스피 지수ETF 50%]")
     for it in [x for x in target if x['sleeve'] == '지수ETF']:
         L.append(f"  {it['name']}({it['symbol']}) {it['qty']}주 × {it['price']:,.0f} = {it['qty']*it['price']/1e4:,.0f}만")
-    L.append(f"[슬리브3 = 저변동 {meta['n_picks']}종목 ⅓]")
+    L.append(f"[슬리브2 = 저변동 {meta['n_picks']}종목 50%]")
     for i, it in enumerate([x for x in target if x['sleeve'] == '저변동'], 1):
         L.append(f"  {i:2}. {it['name'][:8]:8} {it['qty']}주 × {it['price']:,.0f}")
     used = sum(it['qty'] * it['price'] for it in target)
