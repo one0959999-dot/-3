@@ -79,7 +79,7 @@ def precompute(panel, tv, deli_only, fin, fy):
     bad = np.zeros(panel.shape, bool)
     for j, t in enumerate(cols):
         if t in badfy:
-            bad[:, j] = years >= badfy[t]
+            bad[:, j] = years >= badfy[t] + 1  # 재무랙: 부실은 다음해에 공시로 알려짐(룩어헤드 차단)
     return ff.values, notna, trend, vol, liq, bad, years, cols
 
 
@@ -167,17 +167,17 @@ def main(telegram=False):
     r2 = bt(pc, fin, fy, sec, use_trend=True, use_bad=True, use_quality=False, sectorcap=False)
     L.append(row(" +부실제외", r2))
     r3 = bt(pc, fin, fy, sec, use_trend=True, use_bad=True, use_quality=True, sectorcap=False)
-    L.append(row(" +품질(ROE>0)", r3))
+    L.append(row(" +품질(ROE>0) = ★최종 동결규칙", r3))
     r4 = bt(pc, fin, fy, sec, use_trend=True, use_bad=True, use_quality=True, sectorcap=True)
-    L.append(row(" +섹터캡 = 최종(정직판)", r4))
-    # 1000만 환산
-    L.append(f"\n[B. 1000만원 → 11년 후]")
-    L.append(f"  최종(정직판): {INIT*(1+r4[0]/100)/1e4:,.0f}만원 (총수익 {INIT*r4[0]/100/1e4:+,.0f}만)")
+    L.append(row(" (참고: +섹터캡 — 해로워서 제외)", r4))
+    # 1000만 환산 (최종 = 섹터캡 제외판 r3)
+    L.append(f"\n[B. 1000만원 → 11년 후] (★최종 동결규칙 = 섹터캡 없음)")
+    L.append(f"  최종(정직판): {INIT*(1+r3[0]/100)/1e4:,.0f}만원 (총수익 {INIT*r3[0]/100/1e4:+,.0f}만)")
     L.append(f"  코스피 보유 : {INIT*(1+ih/100)/1e4:,.0f}만원 (총수익 {INIT*ih/100/1e4:+,.0f}만)")
     # 슬리피지
     L.append(f"\n[C. 슬리피지 스트레스 — 최종]")
     for m, lab in ((1, '기본'), (2, '2배'), (3, '3배')):
-        rr = bt(pc, fin, fy, sec, buy=0.0015 * m, sell=0.0033 * m)
+        rr = bt(pc, fin, fy, sec, sectorcap=False, buy=0.0015 * m, sell=0.0033 * m)
         L.append(f"  {lab:6} {rr[0]:>7.0f}% / MDD{rr[1]:.0f}%")
     rep = "\n".join(L)
     print(rep)
