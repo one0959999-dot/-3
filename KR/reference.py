@@ -10,11 +10,21 @@
 테이블이 없으면 조용히 무필터(교과서 원본 동작) — 안전 폴백.
 """
 import os
+import csv as _csv
 import sqlite3
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 def _dbpath():
     return os.path.join(ROOT, 'lassi.db')
+
+def _master_csv():
+    return os.path.join(ROOT, 'reference_data', 'stock_master.csv')
+
+def _safe_connect():
+    try:
+        return sqlite3.connect(_dbpath())
+    except Exception:
+        return None
 
 
 def _table_exists(con, name):
@@ -22,18 +32,45 @@ def _table_exists(con, name):
     return r is not None
 
 
+_ARTIFACT_CACHE = None
+
+
 def artifact_tickers(con=None):
-    """confirmed 아티팩트(데이터오류) 티커 집합. 테이블 없으면 빈 집합."""
-    own = con is None
-    con = con or sqlite3.connect(_dbpath())
+    """confirmed 아티팩트(데이터오류) 티커 집합.
+    우선순위: 커밋된 CSV(reference_data/stock_master.csv — git으로 EC2에도 배포됨)
+      → lassi.db:stock_master(로컬 개발) → 빈 집합(안전 폴백). 결과 캐시."""
+    global _ARTIFACT_CACHE
+    if _ARTIFACT_CACHE is not None:
+        return _ARTIFACT_CACHE
+    # 1) 커밋 CSV (이식성 — EC2 포함 어디서든 동작)
     try:
-        if not _table_exists(con, 'stock_master'):
-            return set()
-        rows = con.execute("SELECT ticker FROM stock_master WHERE artifact_tier='confirmed'").fetchall()
-        return {str(t[0]).zfill(6) for t in rows}
-    finally:
-        if own:
-            con.close()
+        path = _master_csv()
+        if os.path.exists(path):
+            out = set()
+            with open(path, encoding='utf-8-sig') as f:
+                for row in _csv.DictReader(f):
+                    if row.get('artifact_tier') == 'confirmed':
+                        out.add(str(row.get('ticker', '')).zfill(6))
+            if out:
+                _ARTIFACT_CACHE = out
+                return out
+    except Exception:
+        pass
+    # 2) DB 폴백 (연결 실패해도 크래시 없이 빈 집합)
+    dbcon = con if con is not None else _safe_connect()
+    if dbcon is not None:
+        try:
+            if _table_exists(dbcon, 'stock_master'):
+                rows = dbcon.execute("SELECT ticker FROM stock_master WHERE artifact_tier='confirmed'").fetchall()
+                _ARTIFACT_CACHE = {str(t[0]).zfill(6) for t in rows}
+                return _ARTIFACT_CACHE
+        except Exception:
+            pass
+        finally:
+            if con is None:
+                dbcon.close()
+    _ARTIFACT_CACHE = set()
+    return _ARTIFACT_CACHE
 
 
 def delisting_risk(ticker, con=None):
@@ -75,17 +112,20 @@ def delisting_risk(ticker, con=None):
 def refine_universe(tickers, drop_artifact=True, drop_delisting_risk=True, verbose=False):
     """교과서 유니버스에서 참고서 필터로 회피종목 제거.
     반환 (kept, dropped): dropped=[(ticker, 사유), ...]. 데이터 없으면 원본 반환(안전)."""
-    con = sqlite3.connect(_dbpath())
+    arts = artifact_tickers() if drop_artifact else set()   # CSV 기반 — DB 없어도 동작
+    con = _safe_connect() if drop_delisting_risk else None   # 상폐리스크만 DB 필요
     try:
-        arts = artifact_tickers(con) if drop_artifact else set()
         kept, dropped = [], []
         for t in tickers:
             t6 = str(t).zfill(6)
             if t6 in arts:
                 dropped.append((t6, 'artifact'))
                 continue
-            if drop_delisting_risk:
-                lvl, rs = delisting_risk(t6, con)
+            if drop_delisting_risk and con is not None:
+                try:
+                    lvl, rs = delisting_risk(t6, con)
+                except Exception:
+                    lvl, rs = 'unknown', []
                 if lvl == 'high':
                     dropped.append((t6, '상폐리스크:' + '·'.join(rs)))
                     continue
@@ -96,7 +136,8 @@ def refine_universe(tickers, drop_artifact=True, drop_delisting_risk=True, verbo
                   f"상폐리스크 {sum(1 for _,r in dropped if r.startswith('상폐'))})")
         return kept, dropped
     finally:
-        con.close()
+        if con is not None:
+            con.close()
 
 
 if __name__ == '__main__':
