@@ -19,6 +19,7 @@ from KR.live_v1 import tg
 
 P = lambda f: os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', f)
 LOCK = P('auto_order_us.lock'); MARKER = P('auto_order_us_done.txt')
+OBS_MARKER = P('first_fill_verified_us.txt')  # 최초 US 실주문 통화검증 완료 마커
 SPY = 'SPY'; CASH_BUFFER = 5.0  # 최소 잔여 $
 
 
@@ -66,6 +67,44 @@ def acquire_lock():
         except Exception:
             pass
         return False
+
+
+def _write_obs():
+    tmp = OBS_MARKER + '.tmp'
+    open(tmp, 'w').write(datetime.datetime.now().isoformat())
+    os.replace(tmp, OBS_MARKER)
+
+
+def _observe_first_us_fill(toss, uid, price):
+    """최초 US 실주문 통화검증(관찰체결): 소액 SPY 매수 → cash_usd 감소분이 주문액(USD)과
+    일치하는지 확인. 토스가 orderAmount를 KRW로 오결제하면 cash_usd가 거의 안 줄어(₩10≈$0.008)
+    감지된다. 반환 (통과여부, 관찰소요 USD)."""
+    tg("🔬 US 최초 실주문 통화검증: SPY 소액매수로 'USD로 결제되나' 확인...")
+    pre = read_us(toss)
+    if pre is None:
+        tg("⛔ US 통화검증 중단: 계좌조회 실패"); return False, 0.0
+    pre_cash, pre_spy = pre[1], pre[0].get(SPY, 0)
+    test_amt = round(min(10.0, pre_cash - CASH_BUFFER), 2)
+    if test_amt < 5:
+        tg(f"⛔ US 통화검증 불가: 테스트 가용 ${test_amt:.2f} < $5 — 환전 확인"); return False, 0.0
+    ok = toss.buy_fractional_order(SPY, test_amt)
+    if not ok:
+        tg("⛔ US 통화검증 실패: 주문접수 거부 — 중단"); return False, 0.0
+    _log(uid, SPY, True, test_amt, price)
+    time.sleep(8)
+    post = read_us(toss)
+    if post is None:
+        tg("⛔ US 통화검증 미확인: 매수후 계좌조회 실패 — 오늘 중단(내일 재검증)"); return False, test_amt
+    usd_spent = pre_cash - post[1]
+    spy_gained = post[0].get(SPY, 0) - pre_spy
+    if spy_gained <= 0:
+        tg("⛔ US 통화검증 미확인: SPY 미증가(체결 안 됨) — 중단"); return False, test_amt
+    if usd_spent < test_amt * 0.5 or usd_spent > test_amt * 1.5:
+        tg(f"🚨 US 통화검증 실패: SPY +{spy_gained:.4f}주인데 USD 감소 ${usd_spent:.2f} ≠ 주문 ${test_amt:.2f} "
+           "— 결제통화 이상(KRW 오결제 의심). 중단·수동확인 필요"); return False, test_amt
+    _write_obs()
+    tg(f"✅ US 통화검증 통과: SPY +{spy_gained:.4f}주, USD -${usd_spent:.2f}(≈주문 ${test_amt:.2f}) — 정상 USD 결제 확인")
+    return True, usd_spent
 
 
 def main(execute=False, max_usd=500.0, probe=False):
@@ -119,6 +158,17 @@ def main(execute=False, max_usd=500.0, probe=False):
         msg = "⛔ 실행거부: 락파일(다른 실행중)"; print(msg); tg(msg); return 0
     try:
         open(MARKER + '.tmp', 'w').write(today_tag()); os.replace(MARKER + '.tmp', MARKER)
+        # ⑨ 최초 US 실주문 통화검증(관찰체결): USD로 결제되는지 소액 확인 후 본 매수
+        if not os.path.exists(OBS_MARKER):
+            okobs, obs_spent = _observe_first_us_fill(toss, uid, price)
+            if not okobs:
+                return 0  # 통화 미검증 → 오늘 중단(마커=중복차단, 내일 재시도)
+            amount = round(min(deploy - obs_spent, max_usd - obs_spent), 2)
+            if amount < 10:
+                final = read_us(toss)
+                ftxt = f"현금 ${final[1]:,.2f}, SPY {final[0].get(SPY,0)}주" if final else "조회실패"
+                tg(f"🇺🇸 US 통화검증 완료(소액 매수). 잔여 ${amount:,.2f}<$10 — 다음 실행에 본 매수. 계좌: {ftxt}")
+                return 0
         tg(f"🔴 US 실주문: SPY ${amount:,.2f} 소수점 매수 (캡 ${max_usd:,.0f})")
         ok = toss.buy_fractional_order(SPY, amount)
         _log(uid, SPY, ok, amount, price)
