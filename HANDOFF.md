@@ -25,8 +25,10 @@
 
 ## EC2
 - ssh -i lassi-key.pem ubuntu@13.209.19.86, /home/ubuntu/lassi_bot, venv/bin/python (Python 3.12.3)
-- 크론(UTC): 30 23 * * 0 live_v1(월 08:30 계획) / 35 23 * * 0 US / 0 0 * * * deadman
-  / **0 1 * * 1-5 auto_order --rebalance --execute** / **30 1 * * 1-5 auto_deploy --execute**
+- ★타임존: EC2 = **Asia/Seoul (KST)** (timedatectl 실측). 크론 숫자는 KST로 해석됨. 과거 'UTC' 표기는 오류.
+- 현재 크론(드라이런): 30 23 * * 0 live_v1(계획) / 35 23 * * 0 US / 0 0 * * * deadman
+- **실전 무장 시(KST 기준, 반드시 10시대!)**: **0 10 * * 1-5 auto_order --rebalance --execute**(리밸 10:00) / **30 10 * * 1-5 auto_deploy --execute**(배분 10:30)
+  ※주의: 절대 '0 1'/'30 1'(새벽1시) 쓰지 말 것 — 장중 아님으로 is_kr_market_open에 매일 거부돼 무장해도 영원히 무동작.
 - 배포: 로컬 커밋푸시 → EC2 git pull. lassi.db는 gitignore(수동전송). 구봇(KR/bot.py 스윙)=격리·배포금지.
 
 ## 감사에서 수용한 잔여위험 (다시 파낼 필요 없음)

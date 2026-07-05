@@ -17,6 +17,7 @@ error.log
 server_log.txt
 lassi.db
 *.flag
+rebalance_plan.json
 
 .env
 
