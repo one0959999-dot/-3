@@ -54,6 +54,13 @@ def fetch_universe():
                if t and len(t) == 6 and t.isdigit()]
     names = {t: n for t, n in c.execute('SELECT ticker, name FROM kr_ticker_cache')}
     c.close()
+    # 참고서 필터: 데이터 아티팩트·상폐리스크(자본잠식) 종목을 후보에서 제외.
+    # 교과서(algo_v1.select)는 불변 — 유니버스만 정제. 데이터 없으면 원본 유지(안전 폴백).
+    try:
+        from KR.reference import refine_universe
+        tickers, _dropped = refine_universe(tickers, verbose=True)
+    except Exception as e:
+        print('[참고서] 필터 skip:', e)
     start = (datetime.date.today() - datetime.timedelta(days=LOOKBACK_DAYS)).isoformat()
     cl = {}
     def batch(tks, sfx):
