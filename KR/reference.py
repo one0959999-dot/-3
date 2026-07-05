@@ -141,8 +141,23 @@ def refine_universe(tickers, drop_artifact=True, drop_delisting_risk=True, verbo
 
 
 if __name__ == '__main__':
-    # 자체 점검
+    # 자체 점검 (배포 후 EC2 연동 확인용: python KR/reference.py)
     arts = artifact_tickers()
-    print(f"아티팩트(confirmed) 티커: {len(arts)}개, 샘플 {list(arts)[:5]}")
+    src = 'CSV' if os.path.exists(_master_csv()) else 'DB/none'
+    print(f"[1] 아티팩트(confirmed) 티커: {len(arts)}개 (출처={src}), 샘플 {list(arts)[:5]}")
+    print("[2] 상폐리스크 판정:")
     for tk in ['005930', '000660', '196170']:
-        print(f"  {tk} 상폐리스크:", delisting_risk(tk))
+        print(f"    {tk}:", delisting_risk(tk))
+    print("[3] 실 유니버스 필터 자체점검:")
+    try:
+        con = sqlite3.connect(_dbpath())
+        tickers = [t for (t,) in con.execute('SELECT ticker FROM kr_ticker_cache')
+                   if t and len(t) == 6 and t.isdigit()]
+        con.close()
+        kept, dropped = refine_universe(tickers, verbose=True)
+        arts_dropped = sum(1 for _, r in dropped if r == 'artifact')
+        ok = arts_dropped > 0
+        print(f"    → {'✅ 연동정상' if ok else '⚠️ 아티팩트 미제외(데이터 확인 필요)'}: "
+              f"{len(tickers)}종목 중 {len(dropped)}개 제외(아티팩트 {arts_dropped})")
+    except Exception as e:
+        print('    유니버스 점검 skip:', e)
