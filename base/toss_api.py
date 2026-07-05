@@ -413,15 +413,19 @@ class TossInvestApi:
         data = self._get(f"/api/v1/stocks/{symbol}/warnings")
         return data if isinstance(data, list) else []
 
-    def has_investment_warning(self, symbol: str) -> bool:
-        """투자경고·VI 발동 여부 — 매수 전 체크용"""
-        warnings = self.get_warnings(symbol)
+    def has_investment_warning(self, symbol: str):
+        """투자경고·VI 발동 여부 — 매수 전 체크용.
+        반환 True(경고)/False(정상), 조회 실패 시 None(fail-safe: 호출측이 안전하게 매수 스킵).
+        ※과거엔 실패를 []→False(경고없음)로 위장해 관리/VI 종목을 매수할 위험이 있었음."""
+        data = self._get(f"/api/v1/stocks/{symbol}/warnings")
+        if not isinstance(data, list):
+            return None  # 조회 실패 = 알 수 없음
         danger = {
             "INVESTMENT_WARNING", "INVESTMENT_RISK",
             "OVERHEATED", "LIQUIDATION_TRADING",
             "VI_STATIC", "VI_DYNAMIC", "VI_STATIC_AND_DYNAMIC",
         }
-        return any(w.get("warningType") in danger for w in warnings)
+        return any(w.get("warningType") in danger for w in data)
 
     def search_stock_name(self, query: str) -> list[dict]:
         """토스증권 compat — symbol 직접 조회로 대체"""

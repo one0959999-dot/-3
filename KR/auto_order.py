@@ -109,9 +109,9 @@ def _cancel_unfilled(toss):
     try:
         n = toss.cancel_all_unfilled()
         if n is not None and n < 0:
-            tg("⚠️ 미체결취소 확인실패(주문조회 API) — DAY주문은 장마감시 자동소멸, 내일 재대조")
+            tg("🚨 미체결취소 확인실패(주문조회 API) — 미체결 잔존 가능. DAY주문 장마감 자동소멸 + 내일 미체결게이트가 재실행 차단. 계좌 육안확인 권장")
     except Exception:
-        tg("⚠️ 미체결취소 중 오류 — DAY주문은 장마감시 자동소멸, 내일 재대조")
+        tg("🚨 미체결취소 중 오류 — 미체결 잔존 가능. DAY주문 장마감 자동소멸 + 내일 미체결게이트가 재실행 차단. 계좌 육안확인 권장")
 
 
 # ─────────── 마커/상태 (전부 원자적 쓰기) ───────────
@@ -317,6 +317,8 @@ def main(execute=False, max_buy=None, force=False, probe=False, budget_override=
         print("\n📋 드라이런 종료 — 주문 없음."); return 0
 
     # ─────────── 실행 안전 게이트 (매수 전용) ───────────
+    if not getattr(toss, 'account_seq', 'x'):
+        msg = "⛔ 실행거부: 계좌seq 미확보(자동조회 실패) — 주문 헤더 누락 위험. --probe로 계좌확인 후 재시도"; print(msg); tg(msg); return 1
     if not anytime and not is_rebalance_week():
         msg = "⛔ 실행거부: 리밸런스 주간 아님(1·4·7·10월 첫주). 신규자금 상시투입은 auto_deploy 경로."; print(msg); tg(msg); return 0
     rq, rstate = read_reb()
@@ -361,7 +363,10 @@ def main(execute=False, max_buy=None, force=False, probe=False, budget_override=
         cap = max(cap - obs_cost, 0)
         spent = 0; done_b = 0
         for s, q, nm, tlp in buys:
-            if toss.has_investment_warning(s):
+            w = toss.has_investment_warning(s)
+            if w is None:
+                tg(f"  ⚠️ 매수스킵(경고조회실패=안전측): {nm}"); continue
+            if w:
                 tg(f"  ⚠️ 매수스킵(관리/경고): {nm}"); continue
             lp = toss.get_price(s)
             if not lp or lp <= 0 or abs(lp / tlp - 1) > PRICE_SANITY:
@@ -380,9 +385,18 @@ def main(execute=False, max_buy=None, force=False, probe=False, budget_override=
         _cancel_unfilled(toss)
         write_marker("DONE")
         final = read_account(toss)
-        ftxt = f"현금 {final[1]/1e4:,.0f}만, 보유 {len(final[0])}종목" if final else "조회실패"
-        _journal('deploy', {'buys': done_b, 'spent': int(spent)})
-        tg(f"🔴 완료(신규자금 배분): 매수 {done_b}건 ≈{spent/1e4:,.0f}만. 계좌: {ftxt}.")
+        if final is not None:
+            actual = cash - final[1]  # 초기 매수가능현금 - 최종현금 = 실제 집행액(접수 아닌 실체결)
+            ftxt = f"현금 {final[1]/1e4:,.0f}만, 보유 {len(final[0])}종목"
+        else:
+            actual = None; ftxt = "조회실패"
+        est = spent + obs_cost  # 접수기준 추정(관찰분 포함)
+        mismatch = actual is not None and abs(actual - est) > 100_000
+        _journal('deploy', {'buys': done_b, 'spent_est': int(est),
+                            'spent_actual': (int(actual) if actual is not None else None)})
+        act_txt = f"{actual/1e4:,.0f}만" if actual is not None else f"~{est/1e4:,.0f}만(추정)"
+        tg(f"🔴 완료(신규자금 배분): 매수접수 {done_b}건 · 실체결 ≈{act_txt}. 계좌: {ftxt}."
+           + (f"\n🚨 접수({est/1e4:,.0f}만) vs 실체결 차이 큼 — 미체결 잔존 의심, 계좌·미체결 확인 요망" if mismatch else ""))
     finally:
         try:
             os.remove(LOCK)
@@ -448,6 +462,8 @@ def rebalance_main(execute=False, max_buy=None):
     if acct is None:
         msg = "⛔ 리밸런스 중단: 계좌조회 실패 — 아무것도 안 함"; print(msg); tg(msg); return 1
     holdings, cash, total = acct
+    if execute and not getattr(toss, 'account_seq', 'x'):
+        msg = "⛔ 리밸런스 거부: 계좌seq 미확보(자동조회 실패) — 주문 헤더 누락 위험. --probe로 확인 필요"; print(msg); tg(msg); return 1
 
     # ⑧ 수동보유(놀이돈) 제외 — 리밸런스 불간섭 + 예산에서 차감
     mh = load_manual_hold() & set(holdings)
@@ -662,7 +678,10 @@ def _rebalance_pass(toss, uid, q, plan, holdings, max_buy=None):
         tg(f"🔄 리밸런스 매수(D+{age}): {len(buys)}건 ≈{buy_val/1e4:,.0f}만, 가용 {cash/1e4:,.0f}만")
         spent = 0; done_b = 0
         for s, need, nm, pp in buys:
-            if toss.has_investment_warning(s):
+            w = toss.has_investment_warning(s)
+            if w is None:
+                tg(f"  ⚠️ 매수스킵(경고조회실패=안전측): {nm}"); continue
+            if w:
                 tg(f"  ⚠️ 매수스킵(관리/경고): {nm}"); continue
             lp = toss.get_price(s)
             if not lp or lp <= 0 or abs(lp / pp - 1) > PRICE_SANITY:
