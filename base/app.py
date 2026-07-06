@@ -43,6 +43,22 @@ def load_user(uid):
     return User(row) if row else None
 
 
+AUTO_LOGIN = True           # 단일 사용자 자동로그인 (로그인 화면 스킵). 끄려면 False.
+AUTO_LOGIN_UID = '1'
+
+
+@app.before_request
+def _auto_login():
+    """접속 즉시 자동 인증 — 로그인 화면 없이 바로 대시보드(단일 사용자용).
+    ※조회 전용 대시보드라 매매·설정 변경은 불가. URL 아는 사람은 열람 가능."""
+    if not AUTO_LOGIN or request.endpoint in ('login', 'logout', 'static'):
+        return
+    if not current_user.is_authenticated:
+        row = _user_row(AUTO_LOGIN_UID)
+        if row:
+            login_user(User(row), remember=True)
+
+
 def _toss(row):
     return TossInvestApi(row['toss_client_id'], row['toss_client_secret'], row['toss_account_seq'] or '')
 
