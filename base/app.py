@@ -271,35 +271,39 @@ def _gemini(key, prompt):
 
 PAGE = """<!doctype html><html lang=ko><head><meta charset=utf-8>
 <meta name=viewport content="width=device-width,initial-scale=1,viewport-fit=cover">
-<meta name=theme-color content="#eaeff8"><meta name=apple-mobile-web-app-capable content=yes>
+<meta name=theme-color content="#e9f1ec"><meta name=apple-mobile-web-app-capable content=yes>
 <title>시나브로</title><style>
-:root{--bg:#f2f4f8;--card:#fff;--line:#f0f2f6;--txt:#191f28;--sub:#8b95a1;--faint:#b6bdc7;--up:#f04452;--down:#3182f6;--pri:#3182f6;--soft:#f6f8fb;--grn:#12b886;
+:root{--bg:#f2f5f4;--card:#fff;--line:#eef2f0;--txt:#191f28;--sub:#8b95a1;--faint:#b6bdc7;--up:#f04452;--down:#3182f6;--pri:#149a6e;--soft:#f4f8f6;--grn:#12b886;
 --sh:0 1px 2px rgba(23,32,64,.04),0 10px 30px rgba(23,32,64,.06);--sh2:0 2px 6px rgba(23,32,64,.06),0 16px 40px rgba(23,32,64,.09)}
 *{box-sizing:border-box;margin:0;-webkit-tap-highlight-color:transparent}
 body{font-family:Pretendard,-apple-system,'Malgun Gothic','Apple SD Gothic Neo',system-ui,sans-serif;
-background:linear-gradient(180deg,#eaeff8 0,var(--bg) 260px);color:var(--txt);letter-spacing:-.3px;font-size:14px;min-height:100vh}
+background:linear-gradient(180deg,#e9f1ec 0,var(--bg) 260px);color:var(--txt);letter-spacing:-.3px;font-size:14px;min-height:100vh}
+body:before{content:'';position:fixed;inset:0;z-index:-1;pointer-events:none;background:
+radial-gradient(640px 420px at 88% -8%,rgba(20,154,110,.11),transparent),
+radial-gradient(520px 380px at -12% 6%,rgba(18,184,134,.07),transparent)}
 .wrap{max-width:1060px;margin:0 auto;padding:0 20px 64px}
 .num,.amt,.hval,.hpl,.vv,.lp,.pill{font-variant-numeric:tabular-nums}
 /* 스티키 헤더 */
 .top{position:sticky;top:0;z-index:15;display:flex;justify-content:space-between;align-items:center;
-margin:0 -20px 2px;padding:13px 22px 11px;background:rgba(238,242,249,.78);backdrop-filter:blur(16px);-webkit-backdrop-filter:blur(16px)}
+margin:0 -20px 2px;padding:13px 22px 11px;background:rgba(236,243,239,.78);backdrop-filter:blur(16px);-webkit-backdrop-filter:blur(16px)}
 .logo{font-size:20px;font-weight:800;letter-spacing:-.6px} .logo em{font-style:normal;color:var(--pri)}
 .top a{color:var(--sub);text-decoration:none;font-size:12.5px;font-weight:600;padding:6px 11px;border-radius:9px;transition:.15s}
 .top a:hover{background:rgba(255,255,255,.85);color:var(--txt)}
 .note{font-size:11.5px;color:var(--faint);margin:6px 2px 12px} .note a{color:var(--pri);text-decoration:none;font-weight:600}
-/* 봇 상태 배너 */
-.banner{display:flex;gap:10px;flex-wrap:wrap;margin-bottom:14px}
-.bstat{flex:1;min-width:148px;display:flex;align-items:center;gap:11px;background:var(--card);border:1px solid rgba(15,30,70,.045);
-border-radius:16px;padding:13px 15px;box-shadow:var(--sh);cursor:pointer;transition:transform .15s,box-shadow .15s}
-.bstat:hover{transform:translateY(-1px);box-shadow:var(--sh2)} .bstat:active{transform:scale(.985)}
-.binfo{color:#c4cdd8;font-size:16px;transition:.15s} .bstat:hover .binfo{color:var(--pri);transform:translateX(2px)}
-.led{width:10px;height:10px;border-radius:50%;flex-shrink:0} .led.off{background:#cbd3dd}
+/* 봇 상태 캡슐 (한 줄) */
+.sbar{display:flex;align-items:center;background:var(--card);border:1px solid rgba(15,30,70,.045);border-radius:99px;
+padding:11px 6px;box-shadow:var(--sh);margin-bottom:14px}
+.sseg{flex:1;display:flex;align-items:center;justify-content:center;gap:6px;font-size:12.5px;color:var(--sub);font-weight:600;
+cursor:pointer;padding:2px 0;border-radius:99px;transition:background .15s}
+.sseg:hover{background:var(--soft)} .sseg:active{transform:scale(.97)}
+.sseg b{font-weight:800;font-size:12.5px}
+.t-on{color:var(--grn)} .t-off{color:var(--sub)} .t-wait{color:#ff9500}
+.sdiv{width:1px;height:15px;background:var(--line);flex-shrink:0}
+.led{width:9px;height:9px;border-radius:50%;flex-shrink:0} .led.off{background:#cbd3dd}
 .led.on{background:var(--grn);animation:pulse 2.4s ease-out infinite}
 .led.wait{background:#ff9500;animation:pulsew 2.4s ease-out infinite}
 @keyframes pulse{0%{box-shadow:0 0 0 0 rgba(18,184,134,.35)}70%{box-shadow:0 0 0 7px rgba(18,184,134,0)}100%{box-shadow:0 0 0 0 rgba(18,184,134,0)}}
 @keyframes pulsew{0%{box-shadow:0 0 0 0 rgba(255,149,0,.35)}70%{box-shadow:0 0 0 7px rgba(255,149,0,0)}100%{box-shadow:0 0 0 0 rgba(255,149,0,0)}}
-.bstat .bl{font-size:11.5px;color:var(--sub);font-weight:600} .bstat .bv{font-size:14.5px;font-weight:800;margin-top:1px}
-.bstat .bv.on{color:var(--grn)} .bstat .bv.off{color:var(--sub)} .bstat .bv.wait{color:#ff9500}
 /* 탭 */
 .seg{display:flex;background:rgba(222,229,238,.75);border-radius:14px;padding:4px;gap:4px;margin:0 0 14px;max-width:340px}
 .seg div{flex:1;text-align:center;padding:9px 0;border-radius:11px;font-weight:700;font-size:14px;color:var(--sub);cursor:pointer;transition:.18s}
@@ -309,17 +313,20 @@ border-radius:16px;padding:13px 15px;box-shadow:var(--sh);cursor:pointer;transit
 .pane{display:none} .pane.on{display:block;animation:f .22s ease} @keyframes f{from{opacity:0;transform:translateY(7px)}to{opacity:1}}
 .card{background:var(--card);border:1px solid rgba(15,30,70,.045);border-radius:20px;padding:20px;margin-bottom:14px;box-shadow:var(--sh)}
 .h{font-size:14px;font-weight:800;margin:0 4px 8px}
-/* hero */
-.hero{background:linear-gradient(150deg,#fff 0,#f2f7ff 55%,#ebf2ff 100%);text-align:center;padding:30px 20px 26px;position:relative;overflow:hidden}
-.hero:before{content:'';position:absolute;width:240px;height:240px;border-radius:50%;top:-110px;right:-70px;
-background:radial-gradient(closest-side,rgba(49,130,246,.12),transparent)}
-.hero:after{content:'';position:absolute;width:180px;height:180px;border-radius:50%;bottom:-100px;left:-60px;
-background:radial-gradient(closest-side,rgba(18,184,134,.08),transparent)}
+/* hero — 딥그린 프리미엄 카드 */
+.hero{background:linear-gradient(155deg,#17372c 0,#1e4f3d 48%,#153228 100%);text-align:center;padding:32px 20px 28px;
+position:relative;overflow:hidden;border:0;box-shadow:0 2px 6px rgba(16,50,38,.18),0 18px 44px rgba(16,50,38,.22)}
+.hero:before{content:'';position:absolute;width:260px;height:260px;border-radius:50%;top:-120px;right:-80px;
+background:radial-gradient(closest-side,rgba(94,214,167,.22),transparent)}
+.hero:after{content:'';position:absolute;width:200px;height:200px;border-radius:50%;bottom:-110px;left:-70px;
+background:radial-gradient(closest-side,rgba(46,160,120,.20),transparent)}
 .hero>*{position:relative}
-.hero .lab{font-size:12.5px;color:var(--sub);font-weight:700}
-.hero .amt{font-size:40px;font-weight:800;margin:5px 0 13px;letter-spacing:-2px} .hero .amt small{font-size:19px;color:var(--sub);font-weight:700;letter-spacing:-.5px}
+.hero .lab{font-size:12.5px;color:rgba(255,255,255,.55);font-weight:700}
+.hero .amt{font-size:40px;font-weight:800;margin:5px 0 13px;letter-spacing:-2px;color:#fff}
+.hero .amt small{font-size:19px;color:rgba(255,255,255,.5);font-weight:700;letter-spacing:-.5px}
 .pill{display:inline-flex;align-items:center;gap:5px;font-size:14.5px;font-weight:800;padding:8px 15px;border-radius:99px}
 .up{color:var(--up)} .down{color:var(--down)} .pill.up{background:#fdeaec} .pill.down{background:#e9f1fe}
+.hero .pill.up{background:rgba(240,68,82,.28);color:#ffaab1} .hero .pill.down{background:rgba(120,170,255,.2);color:#a9c9ff}
 /* 도넛 */
 .donut{display:flex;align-items:center;gap:18px}
 .dc{position:relative;width:120px;height:120px;flex-shrink:0} .pie{width:100%;height:100%;border-radius:50%;box-shadow:inset 0 0 0 1px rgba(15,30,70,.04)}
@@ -333,7 +340,7 @@ background:radial-gradient(closest-side,rgba(18,184,134,.08),transparent)}
 .hold:last-child{border:0} .hold:hover{background:var(--soft)} .hold:active{transform:scale(.988)}
 .hold:hover .chev{transform:translateX(2px);color:var(--pri)}
 .hicon{width:40px;height:40px;border-radius:13px;display:flex;align-items:center;justify-content:center;font-weight:800;font-size:13px;color:#fff;flex-shrink:0;box-shadow:0 3px 8px rgba(23,32,64,.10)}
-.hicon.etf{background:#e7f0ff !important;color:var(--pri);box-shadow:none}
+.hicon.etf{background:#e4f4ec !important;color:var(--pri);box-shadow:none}
 .hmid{flex:1;min-width:0} .hnm{font-weight:700;font-size:15px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .prices{display:flex;gap:12px;margin-top:3px;font-size:12px}
 .prices .pb{color:var(--sub)} .prices .pc{font-weight:700} .prices b{font-weight:800}
@@ -354,13 +361,13 @@ details[open] summary:before{transform:rotate(90deg)}
 .chat .msgs{max-height:290px;overflow-y:auto;display:flex;flex-direction:column;gap:9px;padding:2px;scrollbar-width:thin}
 .msgs::-webkit-scrollbar{width:5px} .msgs::-webkit-scrollbar-thumb{background:#dfe5ec;border-radius:3px}
 .m{max-width:85%;padding:10px 13px;border-radius:16px;font-size:13.5px;line-height:1.55;white-space:pre-wrap;word-break:break-word}
-.m.u{align-self:flex-end;background:linear-gradient(135deg,#3b8bff,#2c78ec);color:#fff;border-bottom-right-radius:5px;box-shadow:0 3px 10px rgba(49,130,246,.25)}
+.m.u{align-self:flex-end;background:linear-gradient(135deg,#1fb583,#149a6e);color:#fff;border-bottom-right-radius:5px;box-shadow:0 3px 10px rgba(20,154,110,.25)}
 .m.a{align-self:flex-start;background:var(--soft);border:1px solid var(--line);border-bottom-left-radius:5px}
 .cin{display:flex;gap:8px;margin-top:12px}
 .cin input{flex:1;padding:12px 14px;border:1.5px solid var(--line);border-radius:13px;font-size:14px;background:var(--soft);transition:.15s}
-.cin input:focus{outline:none;border-color:var(--pri);background:#fff;box-shadow:0 0 0 3px rgba(49,130,246,.12)}
+.cin input:focus{outline:none;border-color:var(--pri);background:#fff;box-shadow:0 0 0 3px rgba(20,154,110,.13)}
 .cin button{padding:12px 17px;background:var(--pri);color:#fff;border:0;border-radius:13px;font-weight:800;cursor:pointer;transition:.15s}
-.cin button:hover{background:#2b74e0} .cin button:active{transform:scale(.96)}
+.cin button:hover{background:#0f8159} .cin button:active{transform:scale(.96)}
 /* 모달 — 데스크톱 중앙 / 모바일 바텀시트 */
 .modal{display:none;position:fixed;inset:0;background:rgba(12,20,40,.5);z-index:30;align-items:center;justify-content:center;padding:16px;backdrop-filter:blur(3px);-webkit-backdrop-filter:blur(3px)}
 .modal.on{display:flex}
@@ -381,9 +388,8 @@ details[open] summary:before{transform:rotate(90deg)}
 .wrap{padding:0 14px calc(52px + env(safe-area-inset-bottom))}
 .top{margin:0 -14px 2px;padding:11px 16px 9px} .logo{font-size:19px}
 .note{margin:5px 2px 10px}
-.banner{gap:7px;margin-bottom:6px}
-.bstat{flex-direction:column;gap:6px;padding:12px 4px 10px;min-width:0;text-align:center;border-radius:15px}
-.bstat .bl{font-size:10px} .bstat .bv{font-size:12px;margin-top:0} .binfo{display:none}
+.sbar{padding:10px 2px;margin-bottom:11px}
+.sseg{font-size:11.5px;gap:5px} .sseg b{font-size:11.5px}
 .seg{max-width:none;margin-bottom:12px}
 .card{padding:16px;border-radius:18px;margin-bottom:11px}
 .hero{padding:24px 16px 21px} .hero .amt{font-size:33px} .hero .amt small{font-size:16px}
@@ -398,10 +404,12 @@ details[open] summary:before{transform:rotate(90deg)}
 <div class=top><div class=logo>시나브로<em>.</em></div><a href="{{url_for('logout')}}">로그아웃</a></div>
 <div class=note>{{now}} 기준 · <a href="{{url_for('dashboard')}}">↻ 새로고침</a></div>
 
-<div class=banner>
-  <div class=bstat onclick="openBot('kr')"><span class="led {{'on' if bot.kr else 'off'}}"></span><div style=flex:1><div class=bl>국내 자동매매</div><div class="bv {{'on' if bot.kr else 'off'}}">{{ '가동중' if bot.kr else '정지' }}</div></div><span class=binfo>›</span></div>
-  <div class=bstat onclick="openBot('us')"><span class="led {{'wait' if bot.us_wait else ('on' if bot.us else 'off')}}"></span><div style=flex:1><div class=bl>미국 자동매매</div><div class="bv {{'wait' if bot.us_wait else ('on' if bot.us else 'off')}}">{{ '환전 대기' if bot.us_wait else ('가동중' if bot.us else '정지') }}</div></div><span class=binfo>›</span></div>
-  <div class=bstat onclick="openBot('dm')"><span class="led {{'on' if bot.deadman else 'off'}}"></span><div style=flex:1><div class=bl>감시장치</div><div class="bv {{'on' if bot.deadman else 'off'}}">{{ '켜짐' if bot.deadman else '꺼짐' }}</div></div><span class=binfo>›</span></div>
+<div class=sbar>
+  <div class=sseg onclick="openBot('kr')"><span class="led {{'on' if bot.kr else 'off'}}"></span>국내 <b class="{{'t-on' if bot.kr else 't-off'}}">{{ '가동중' if bot.kr else '정지' }}</b></div>
+  <div class=sdiv></div>
+  <div class=sseg onclick="openBot('us')"><span class="led {{'wait' if bot.us_wait else ('on' if bot.us else 'off')}}"></span>미국 <b class="{{'t-wait' if bot.us_wait else ('t-on' if bot.us else 't-off')}}">{{ '환전 대기' if bot.us_wait else ('가동중' if bot.us else '정지') }}</b></div>
+  <div class=sdiv></div>
+  <div class=sseg onclick="openBot('dm')"><span class="led {{'on' if bot.deadman else 'off'}}"></span>감시 <b class="{{'t-on' if bot.deadman else 't-off'}}">{{ '켜짐' if bot.deadman else '꺼짐' }}</b></div>
 </div>
 <div class=seg><div class="on" onclick="sw('kr')">🇰🇷 국내</div><div onclick="sw('us')">🇺🇸 미국</div></div>
 
@@ -409,7 +417,7 @@ details[open] summary:before{transform:rotate(90deg)}
 <div><!-- 왼쪽: 계좌/포트폴리오/보유 -->
 <div id=kr class="pane on">
 {% if kr.error %}<div class="card warn">⚠️ {{kr.error}}</div>{% else %}
-<div class="card hero"><div class=lab>총 자산</div><div class=amt>{{ '{:,.0f}'.format(kr.total) }}<small> 원</small></div>
+<div class="card hero"><div class=lab>총 자산</div><div class=amt><span class=cnt>{{ '{:,.0f}'.format(kr.total) }}</span><small> 원</small></div>
   <span class="pill {{'up' if (kr.ret or 0)>=0 else 'down'}}">{{ '▲' if (kr.ret or 0)>=0 else '▼' }} {{ '%.2f'|format(kr.ret|abs) if kr.ret is not none else '—' }}% <span style=opacity:.5>·</span> {{ '{:+,.0f}'.format(kr.pl) }}원</span></div>
 <div class=card><div class=lab style=margin-bottom:12px>포트폴리오 구성</div>
   <div class=donut><div class=dc><div class=pie style="background:conic-gradient({{kr.conic}})"></div>
@@ -431,7 +439,7 @@ details[open] summary:before{transform:rotate(90deg)}
 
 <div id=us class=pane>
 {% if us.error %}<div class="card warn">⚠️ {{us.error}}</div>{% else %}
-<div class="card hero"><div class=lab>USD 예수금</div><div class=amt>${{ '%.2f'|format(us.cash_usd) }}</div></div>
+<div class="card hero"><div class=lab>USD 예수금</div><div class=amt>$<span class=cnt>{{ '%.2f'|format(us.cash_usd) }}</span></div></div>
 {% if us.holdings %}<div class=card>{% for h in us.holdings %}<div class=hold style=cursor:default>
 <div class=hicon style=background:linear-gradient(135deg,#f04452,#d63a48)>{{h.ticker[:3]}}</div><div class=hmid><div class=hnm>{{h.ticker}}</div></div>
 <div class=hend><div class=hval>{{ '%.4f'|format(h.qty) }}주</div></div></div>{% endfor %}</div>
@@ -443,7 +451,7 @@ details[open] summary:before{transform:rotate(90deg)}
   <div class=msgs id=msgs><div class="m a">무엇이든 물어보세요.</div></div>
   <div class=cin><input id=ci placeholder="메시지 입력..." onkeydown="if(event.key=='Enter')send()"><button onclick=send()>전송</button></div></div>
 
-<div class=card><details><summary style="cursor:pointer;font-weight:800;font-size:15px;outline:none">⚙️ 자동화 상세 <span class=mut style=font-weight:500;font-size:11px>· 눌러서 펼치기</span></summary>
+<div class=card><details><summary style="cursor:pointer;font-weight:800;font-size:15px;outline:none">⚙️ 자동화 상세</summary>
   <div style=margin-top:12px>
   <div class=st><span class=kk>리밸런스 상태</span><span class=vv>{{bot.rebal}}</span></div>
   <div class=st><span class=kk>참고서 필터</span><span class=vv>{{bot.artifact}}</span></div>
@@ -488,17 +496,23 @@ i.value='';m.innerHTML+='<div class="m u">'+v.replace(/</g,'&lt;')+'</div>';
 var a=document.createElement('div');a.className='m a';a.textContent='…';m.appendChild(a);m.scrollTop=m.scrollHeight;
 try{var r=await fetch('/api/chat',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({message:v})});
 var j=await r.json();a.textContent=j.reply||'(응답 없음)';}catch(e){a.textContent='(오류)';}m.scrollTop=m.scrollHeight;}
+document.querySelectorAll('.cnt').forEach(function(el){
+var t=el.textContent.trim(),dec=(t.split('.')[1]||'').length,v=parseFloat(t.replace(/,/g,''));
+if(isNaN(v))return;var s=performance.now(),D=620;
+(function f(n){var p=Math.min((n-s)/D,1),e=1-Math.pow(1-p,3);
+el.textContent=(v*e).toLocaleString(undefined,{minimumFractionDigits:dec,maximumFractionDigits:dec});
+if(p<1)requestAnimationFrame(f);})(s);});
 </script></body></html>"""
 
 LOGIN = """<!doctype html><html lang=ko><head><meta charset=utf-8><meta name=viewport content="width=device-width,initial-scale=1"><title>시나브로 로그인</title><style>
 *{box-sizing:border-box}
-body{font-family:Pretendard,-apple-system,'Malgun Gothic',system-ui,sans-serif;background:linear-gradient(160deg,#eef1f6,#e0ebfa);color:#191f28;display:flex;height:100vh;align-items:center;justify-content:center;margin:0;letter-spacing:-.3px}
+body{font-family:Pretendard,-apple-system,'Malgun Gothic',system-ui,sans-serif;background:linear-gradient(160deg,#eff3f1,#ddeee6);color:#191f28;display:flex;height:100vh;align-items:center;justify-content:center;margin:0;letter-spacing:-.3px}
 form{background:#fff;padding:36px 30px;border-radius:26px;width:320px;box-shadow:0 2px 6px rgba(23,32,64,.05),0 24px 60px rgba(0,25,80,.13)}
-h2{margin:0 0 4px;font-size:26px;letter-spacing:-.8px} h2 span{color:#3182f6} .s{color:#8b95a1;font-size:13px;margin-bottom:20px}
-input{width:100%;padding:14px;margin:6px 0;background:#f6f8fb;border:1.5px solid #eef1f5;color:#191f28;border-radius:13px;font-size:15px;transition:.15s}
-input:focus{outline:none;border-color:#3182f6;background:#fff;box-shadow:0 0 0 3px rgba(49,130,246,.12)}
-button{width:100%;padding:14px;background:#3182f6;color:#fff;border:0;border-radius:13px;margin-top:14px;cursor:pointer;font-weight:800;font-size:16px;transition:.15s}
-button:hover{background:#2b74e0}
+h2{margin:0 0 4px;font-size:26px;letter-spacing:-.8px} h2 span{color:#149a6e} .s{color:#8b95a1;font-size:13px;margin-bottom:20px}
+input{width:100%;padding:14px;margin:6px 0;background:#f5f8f6;border:1.5px solid #eef2f0;color:#191f28;border-radius:13px;font-size:15px;transition:.15s}
+input:focus{outline:none;border-color:#149a6e;background:#fff;box-shadow:0 0 0 3px rgba(20,154,110,.13)}
+button{width:100%;padding:14px;background:#149a6e;color:#fff;border:0;border-radius:13px;margin-top:14px;cursor:pointer;font-weight:800;font-size:16px;transition:.15s}
+button:hover{background:#0f8159}
 .e{color:#f04452;font-size:13px;margin-bottom:6px;font-weight:600}</style></head><body>
 <form method=post><h2>시나브로<span>.</span></h2><div class=s>모르는 사이 조금씩 · 자동매매</div>
 {% if error %}<div class=e>{{error}}</div>{% endif %}
