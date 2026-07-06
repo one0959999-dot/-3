@@ -156,7 +156,8 @@ def recent_trades(uid, n=30):
 
 def _gemini(key, prompt):
     import requests
-    for model in ('gemini-2.0-flash', 'gemini-1.5-flash'):
+    last = 'unknown'
+    for model in ('gemini-2.5-flash', 'gemini-2.0-flash-001'):
         try:
             r = requests.post(
                 f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={key}",
