@@ -48,28 +48,37 @@ def _toss(row):
 
 
 def kr_snapshot(row):
-    out = {'holdings': [], 'cash': 0, 'total': 0, 'principal': 0, 'ret': None, 'pl': 0, 'error': None, 'hold_val': 0}
+    out = {'holdings': [], 'cash': 0, 'total': 0, 'hold_val': 0,
+           'cost_basis': 0, 'unreal_ret': None, 'unreal_pl': 0,       # 원가기준(자동계산)
+           'principal': None, 'ret': None, 'pl': 0, 'error': None}    # 실입금 기준(수동, 선택)
     try:
         t = _toss(row)
         bal = t.get_account_balance()
         if not bal:
             out['error'] = '계좌조회 실패(토큰/IP/API)'; return out
-        hv = 0.0
+        hv = 0.0; cost = 0.0
         for s in bal.get('stocks', []):
             q = int(s.get('shares', 0) or 0)
             if q <= 0:
                 continue
             px = float(s.get('current_price', 0) or 0) or float(s.get('purchase_price', 0) or 0)
-            val = q * px
-            hv += val
+            bp = float(s.get('purchase_price', 0) or 0) or px          # 매입가(없으면 현재가)
+            val = q * px; hv += val; cost += q * bp
             out['holdings'].append({'name': s.get('name', s['ticker']), 'ticker': s['ticker'],
-                                    'qty': q, 'price': px, 'value': val, 'is_etf': s['ticker'] == '069500'})
+                                    'qty': q, 'price': px, 'buy': bp, 'value': val,
+                                    'is_etf': s['ticker'] == '069500'})
         cash = t.get_buyable_cash(default=None)
         cash = float(cash) if cash is not None else 0.0
         out['cash'] = cash; out['hold_val'] = hv; out['total'] = cash + hv
+        # ── 원가 기준 원금(자동계산): 매입원가 + 현금 → 미실현 수익률 ──
+        out['cost_basis'] = cost + cash
+        if out['cost_basis'] > 0:
+            out['unreal_ret'] = (out['total'] / out['cost_basis'] - 1) * 100
+            out['unreal_pl'] = out['total'] - out['cost_basis']
+        # ── 실입금 기준 원금(수동, 설정했을 때만): 총수익률(실현손익 포함) ──
         pr = get_user_initial_cash(int(row['id']), is_mock=False)
-        out['principal'] = pr
-        if pr and pr > 0:
+        if pr and pr not in (0, 10000000.0):     # 10000000=미설정 기본값
+            out['principal'] = pr
             out['ret'] = (out['total'] / pr - 1) * 100
             out['pl'] = out['total'] - pr
         out['holdings'].sort(key=lambda x: (-x['is_etf'], -x['value']))
@@ -178,24 +187,28 @@ h3{font-size:13px;color:var(--mut);margin:22px 0 4px;font-weight:700;letter-spac
 <div class="card hero">
   <div class=k>총자산</div><div class=big>{{ '{:,.0f}'.format(kr.total) }}<span style=font-size:18px> 원</span></div>
   <div class=grid style=margin-top:16px>
-    <div><div class=k>수익률</div><div class="v {{'pos' if (kr.ret or 0)>=0 else 'neg'}}">{{ '%+.2f'|format(kr.ret) if kr.ret is not none else '—' }}%</div></div>
-    <div><div class=k>평가손익</div><div class="v {{'pos' if kr.pl>=0 else 'neg'}}">{{ '{:+,.0f}'.format(kr.pl) }}</div></div>
-    <div><div class=k>원금</div><div class=v>{{ '{:,.0f}'.format(kr.principal) }}</div></div>
+    <div><div class=k>미실현 수익률 <span class=blue>· 자동</span></div><div class="v {{'pos' if (kr.unreal_ret or 0)>=0 else 'neg'}}">{{ '%+.2f'|format(kr.unreal_ret) if kr.unreal_ret is not none else '—' }}%</div></div>
+    <div><div class=k>평가손익</div><div class="v {{'pos' if kr.unreal_pl>=0 else 'neg'}}">{{ '{:+,.0f}'.format(kr.unreal_pl) }}</div></div>
+    <div><div class=k>원가 원금 <span class=blue>· 자동</span></div><div class=v>{{ '{:,.0f}'.format(kr.cost_basis) }}</div></div>
     <div><div class=k>현금(미투입)</div><div class=v>{{ '{:,.0f}'.format(kr.cash) }}</div></div>
   </div>
+  {% if kr.principal %}<div class=mut style=margin-top:14px;border-top:1px solid #24304a;padding-top:12px>실입금 원금 {{ '{:,.0f}'.format(kr.principal) }}원 기준 <b class="{{'pos' if (kr.ret or 0)>=0 else 'neg'}}">총수익률 {{ '%+.2f'|format(kr.ret) }}%</b> <span class=mut>(실현손익 포함)</span></div>{% endif %}
 </div>
-<div class=card><table><tr><th class=l>종목</th><th>수량</th><th>현재가</th><th>평가액</th><th>비중</th></tr>
+<div class=card><table><tr><th class=l>종목</th><th>수량</th><th>매입가</th><th>현재가</th><th>평가액</th><th>비중</th></tr>
 {% for h in kr.holdings %}<tr><td class=l>{% if h.is_etf %}<span class="badge b-etf">지수</span> {% endif %}<span class="{{'etf' if h.is_etf}}">{{h.name}}</span> <span class=mut>{{h.ticker}}</span></td>
-<td>{{h.qty}}</td><td>{{ '{:,.0f}'.format(h.price) }}</td><td>{{ '{:,.0f}'.format(h.value) }}</td>
+<td>{{h.qty}}</td><td class=mut>{{ '{:,.0f}'.format(h.buy) }}</td><td>{{ '{:,.0f}'.format(h.price) }}</td><td>{{ '{:,.0f}'.format(h.value) }}</td>
 <td>{{ '%.1f'|format(h.value/kr.total*100 if kr.total else 0) }}%</td></tr>{% endfor %}
-{% if not kr.holdings %}<tr><td colspan=5 class="l mut">보유 종목 없음</td></tr>{% endif %}
+{% if not kr.holdings %}<tr><td colspan=6 class="l mut">보유 종목 없음</td></tr>{% endif %}
 </table></div>
-<div class=card><h3 style=margin-top:0>💵 원금 설정 <span class=mut style=font-weight:400>· 수동(자동감지 없음=버그근절)</span></h3>
+<div class=card><h3 style=margin-top:0>💵 원금</h3>
+<div class=mut style=margin-bottom:12px;line-height:1.7>
+• <b class=blue>원가 원금(자동)</b> = 매입가×수량 + 현금 → 위 <b>미실현 수익률</b>로 자동 계산됩니다. <b>입력 불필요.</b><br>
+• <b>실입금 원금(선택·수동)</b> = 실제 넣은 총 금액. 설정하면 실현손익까지 포함한 <b>총수익률</b>도 함께 표시됩니다.</div>
 <form method=post action="{{url_for('set_principal')}}" style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
-<input name=amount type=number placeholder="실제 투자원금" value="{{ '%.0f'|format(kr.principal) }}">
-<button class=btn type=submit>원금 확정</button>
-<button class=btn2 type=submit name=amount value="{{ '%.0f'|format(kr.total) }}">현재 총액({{ '{:,.0f}'.format(kr.total) }})으로</button>
-</form><div class=mut style=margin-top:8px>수익률 = 총자산 ÷ 원금 − 1. 실제 넣은 돈을 입력하거나, 지금부터 재시작하려면 "현재 총액으로".</div></div>
+<input name=amount type=number placeholder="실제 입금액(원)">
+<button class=btn type=submit>실입금 원금 설정</button>
+<button class=btn2 type=submit name=amount value="{{ '%.0f'|format(kr.total) }}">현재 총액으로</button>
+</form></div>
 {% endif %}
 </div>
 
