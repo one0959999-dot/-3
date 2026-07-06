@@ -299,11 +299,12 @@ details{margin-top:6px} summary{cursor:pointer;font-size:13px;color:var(--sub);f
   <div class=msgs id=msgs><div class="m a">안녕하세요! 포트폴리오·전략에 대해 물어보세요. 예: "지금 수익률 어때?", "참고서가 뭐야?", "왜 현금이 많아?"</div></div>
   <div class=cin><input id=ci placeholder="메시지 입력..." onkeydown="if(event.key=='Enter')send()"><button onclick=send()>전송</button></div></div>
 
-<div class=card><div class=h style=margin-bottom:6px>⚙️ 자동화 상세</div>
+<div class=card><details><summary style="cursor:pointer;font-weight:800;font-size:15px;outline:none">⚙️ 자동화 상세 <span class=mut style=font-weight:500;font-size:11px>· 눌러서 펼치기</span></summary>
+  <div style=margin-top:12px>
   <div class=st><span class=kk>리밸런스 상태</span><span class=vv>{{bot.rebal}}</span></div>
   <div class=st><span class=kk>참고서 필터</span><span class=vv>{{bot.artifact}}</span></div>
   <div class=st><span class=kk>감시 heartbeat</span><span class=vv>{{bot.heartbeat}}</span></div>
-  <div class=cap>크론: 리밸 평일10:00 · 신규배분 평일10:30 · US 미국장 · deadman 매일</div></div>
+  <div class=cap>크론: 리밸 평일10:00 · 신규배분 평일10:30 · US 미국장 · deadman 매일</div></div></details></div>
 
 <div class=card><div class=h style=margin-bottom:4px>📜 최근 거래</div>
   <details {{ 'open' if trades|length<=4 else '' }}><summary>{{trades|length}}건 보기</summary>
@@ -383,6 +384,71 @@ def dashboard():
         trades=recent_trades(int(row['id'])), bot=bot_status())
 
 
+# 수익패턴 → 평이한 한글 라벨 + 한줄설명
+_PAT = {
+    'spike':              ('📈 급등형', '평소 잠잠하다 가끔 크게 튀는 유형'),
+    'decline':            ('📉 하락형', '장기적으로 우하향해온 유형'),
+    'sideways':           ('➡️ 횡보형', '뚜렷한 방향 없이 오르내린 유형'),
+    'steady_grower':      ('🌱 꾸준상승형', '완만하게 우상향해온 유형'),
+    'artifact_confirmed': ('⚠️ 데이터의심', '거래 이상 신호 — 회피 대상'),
+    'delisted':           ('⛔ 상장폐지', ''),
+}
+
+
+def _bar(label, raw, scale, color=None):
+    """작은 가로 막대 1줄. raw=비율(0.42=42%). Korean color(빨강+/파랑-) 기본."""
+    try:
+        v = float(raw)
+    except (TypeError, ValueError):
+        return (f'<div style="display:flex;align-items:center;gap:8px;margin:6px 0">'
+                f'<span style="width:56px;font-size:12px;color:#8b95a1">{label}</span>'
+                f'<span style="flex:1;height:7px;background:#e9edf2;border-radius:4px"></span>'
+                f'<span style="width:58px;text-align:right;font-size:12px;color:#8b95a1">—</span></div>')
+    w = min(abs(v) / scale, 1.0) * 100
+    col = color or ('#3182f6' if v < 0 else '#f04452')
+    return (f'<div style="display:flex;align-items:center;gap:8px;margin:6px 0">'
+            f'<span style="width:56px;font-size:12px;color:#8b95a1">{label}</span>'
+            f'<span style="flex:1;height:7px;background:#e9edf2;border-radius:4px;overflow:hidden">'
+            f'<span style="display:block;height:100%;width:{w:.0f}%;background:{col};border-radius:4px"></span></span>'
+            f'<span style="width:58px;text-align:right;font-size:12px;font-weight:700;color:{col}">{v*100:+.1f}%</span></div>')
+
+
+def _stock_reason(m):
+    plabel, pdesc = _PAT.get(m.get('pattern', ''), ('· 패턴 정보 없음', ''))
+    tmap = {'clean': ('데이터 정상', '#00c473'), 'watch': ('검토 필요', '#ff9500'),
+            'confirmed': ('데이터 아티팩트 의심', '#f04452')}
+    tlabel, tcol = tmap.get(m.get('artifact_tier'), ('정보 없음', '#8b95a1'))
+    best = (m.get('best_year') or '').replace(':', '년 ')
+    worst = (m.get('worst_year') or '').replace(':', '년 ')
+    yr = (f"<div style='font-size:12px;color:#8b95a1;margin-top:9px'>최고 {best or '—'} · 최악 {worst or '—'}</div>"
+          if (best or worst) else '')
+    why = (
+        "<b>왜 이 종목을 샀나</b>"
+        "<div style='margin:8px 0 4px;line-height:1.95;font-size:13px'>"
+        "✅ <b>주가가 안정적</b> — 최근 6개월 등락이 작은 편<br>"
+        "✅ <b>상승 추세</b> — 200일 평균선 위<br>"
+        "✅ <b>부실기업 아님</b> — 자본잠식·연속적자·거래정지 같은 위험기업은 애초에 걸러냈고, 이 종목은 그 관문을 통과"
+        "</div>"
+        "<div style='font-size:12px;color:#8b95a1'>이렇게 통과한 저변동 25종목을 같은 비중으로, "
+        "사고팔기(타이밍)·손절 없이 분기 동안 보유합니다.</div>"
+    )
+    viz = (
+        "<div style='margin-top:14px;padding-top:12px;border-top:1px solid #e4e9ef'>"
+        "<div style='display:flex;align-items:center;justify-content:space-between;margin-bottom:3px'>"
+        "<b>수익 패턴</b>"
+        f"<span style='font-size:14px;font-weight:800'>{plabel}</span></div>"
+        f"<div style='font-size:12px;color:#8b95a1;margin-bottom:11px'>{pdesc}</div>"
+        + _bar('총수익', m.get('total_ret'), 2.0)
+        + _bar('연수익', m.get('cagr'), 0.3)
+        + _bar('최대낙폭', m.get('mdd'), 1.0, color='#3182f6')
+        + _bar('변동성', m.get('ann_vol'), 0.8, color='#ff9500')
+        + yr
+        + f"<div style='font-size:12px;margin-top:6px'>데이터 신뢰도: <b style='color:{tcol}'>{tlabel}</b></div>"
+        "</div>"
+    )
+    return why + viz
+
+
 @app.route('/api/stock/<ticker>')
 @login_required
 def api_stock(ticker):
@@ -390,14 +456,10 @@ def api_stock(ticker):
     m = _master().get(tk, {})
     if tk == '069500':
         html = ("<b>지수 슬리브 (코스피200)</b><br>KODEX200 = 코스피200 시총가중 ETF. "
-                "폭등장 참여를 담당하는 <b>포트폴리오의 50%</b> 목표. 지수를 그대로 추종해 "
-                "저변동 슬리브의 상승장 열위를 보완합니다.")
+                "폭등장에 함께 오르는 역할로 <b>포트폴리오의 50%</b>를 담당합니다. "
+                "지수를 그대로 따라가, 저변동 종목들이 상승장에서 덜 오르는 약점을 메웁니다.")
     else:
-        tier = {'clean': '데이터 정상', 'watch': '검토(단일신호)', 'confirmed': '⚠️아티팩트'}.get(m.get('artifact_tier'), '—')
-        html = ("<b>v3 저변동 선정</b><br>이 종목은 매 분기 '<b>126일 변동성이 낮은 상위</b> + "
-                "가격이 <b>상승중인 200일선 위</b> + 부실(자본잠식·2년적자)·정체가격·거래일부족 <b>제외</b>' "
-                "규칙을 통과해 저변동 25종목(동일비중)에 편입됐습니다. 타이밍·손절 없이 분기 보유.<br><br>"
-                f"· 참고서 데이터: <b>{tier}</b><br>· 수익패턴: {m.get('pattern', '—')}")
+        html = _stock_reason(m)
     return jsonify(html=html)
 
 
