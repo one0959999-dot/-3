@@ -267,7 +267,9 @@ def _gemini(key, prompt):
 
 
 PAGE = """<!doctype html><html lang=ko><head><meta charset=utf-8>
-<meta name=viewport content="width=device-width,initial-scale=1"><title>Lassi</title><style>
+<meta name=viewport content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name=theme-color content="#eaeff8"><meta name=apple-mobile-web-app-capable content=yes>
+<title>Lassi</title><style>
 :root{--bg:#f2f4f8;--card:#fff;--line:#f0f2f6;--txt:#191f28;--sub:#8b95a1;--faint:#b6bdc7;--up:#f04452;--down:#3182f6;--pri:#3182f6;--soft:#f6f8fb;--grn:#12b886;
 --sh:0 1px 2px rgba(23,32,64,.04),0 10px 30px rgba(23,32,64,.06);--sh2:0 2px 6px rgba(23,32,64,.06),0 16px 40px rgba(23,32,64,.09)}
 *{box-sizing:border-box;margin:0;-webkit-tap-highlight-color:transparent}
@@ -371,6 +373,24 @@ details[open] summary:before{transform:rotate(90deg)}
 .mclose{width:100%;padding:14px;background:#f1f3f7;border:0;border-radius:14px;font-weight:800;cursor:pointer;margin-top:8px;font-size:15px;transition:.15s}
 .mclose:hover{background:#e8ebf1}
 .foot{text-align:center;font-size:11.5px;color:var(--faint);margin:18px 0 0}
+/* ── 모바일 (폰 최적화) ── */
+@media(max-width:600px){
+.wrap{padding:0 14px calc(52px + env(safe-area-inset-bottom))}
+.top{margin:0 -14px 2px;padding:11px 16px 9px} .logo{font-size:19px}
+.note{margin:5px 2px 10px}
+.banner{gap:7px;margin-bottom:6px}
+.bstat{flex-direction:column;gap:6px;padding:12px 4px 10px;min-width:0;text-align:center;border-radius:15px}
+.bstat .bl{font-size:10px} .bstat .bv{font-size:12px;margin-top:0} .binfo{display:none}
+.seg{max-width:none;margin-bottom:12px}
+.card{padding:16px;border-radius:18px;margin-bottom:11px}
+.hero{padding:24px 16px 21px} .hero .amt{font-size:33px} .hero .amt small{font-size:16px}
+.pill{font-size:13.5px;padding:7px 13px}
+.donut{gap:13px} .dc{width:104px;height:104px} .hole{inset:18px} .hole .t2{font-size:16px}
+.hold{padding:11px 4px;gap:10px} .hicon{width:37px;height:37px;border-radius:12px}
+.hnm{font-size:14px} .hval{font-size:14px}
+.grid{gap:12px} .chat .msgs{max-height:230px}
+.h{font-size:13.5px}
+}
 </style></head><body><div class=wrap>
 <div class=top><div class=logo>Lassi<em>.</em></div><a href="{{url_for('logout')}}">로그아웃</a></div>
 <div class=note>{{now}} 기준 · <a href="{{url_for('dashboard')}}">↻ 새로고침</a></div>
@@ -380,7 +400,7 @@ details[open] summary:before{transform:rotate(90deg)}
   <div class=bstat onclick="openBot('us')"><span class="led {{'wait' if bot.us_wait else ('on' if bot.us else 'off')}}"></span><div style=flex:1><div class=bl>미국 자동매매</div><div class="bv {{'wait' if bot.us_wait else ('on' if bot.us else 'off')}}">{{ '환전 대기' if bot.us_wait else ('가동중' if bot.us else '정지') }}</div></div><span class=binfo>›</span></div>
   <div class=bstat onclick="openBot('dm')"><span class="led {{'on' if bot.deadman else 'off'}}"></span><div style=flex:1><div class=bl>감시장치</div><div class="bv {{'on' if bot.deadman else 'off'}}">{{ '켜짐' if bot.deadman else '꺼짐' }}</div></div><span class=binfo>›</span></div>
 </div>
-<div class=cap style="margin:-6px 4px 12px">궁금하면 눌러보세요 — 각 항목이 지금 왜 이 상태인지 알려드려요</div>
+<div class=cap style="margin:-6px 4px 12px">궁금하면 박스를 눌러보세요 — 왜 이 상태인지 알려드려요</div>
 
 <div class=seg><div class="on" onclick="sw('kr')">🇰🇷 국내</div><div onclick="sw('us')">🇺🇸 미국</div></div>
 
@@ -396,7 +416,7 @@ details[open] summary:before{transform:rotate(90deg)}
     <div class=leg>{% for s in kr.alloc %}<div class=legrow><span class=dot style=background:{{s.color}}></span>
       <span class=ln>{{s.label}}<div class=lv>{{ '{:,.0f}'.format(s.val) }}원</div></span>
       <span class=lp>{{ '%.0f'|format(s.pct) }}%</span></div>{% endfor %}</div></div>
-  {% if dca %}<div class=cap style="color:#ff9500;font-weight:600">📅 지수 DCA 진행중 · {{ '{:,.0f}'.format(dca.reserved/10000) }}만 예약 · 약 {{dca.months}}개월 분할 남음 <span class=mut style=font-weight:400>(의도적 지수 저비중 — 고점 몰빵 회피)</span></div>
+  {% if dca %}<div class=cap style="color:#ff9500;font-weight:600">📅 지수는 매달 나눠서 사는 중 · 남은 {{ '{:,.0f}'.format(dca.reserved/10000) }}만원 · 약 {{dca.months}}개월</div>
   {% elif kr.alloc[0].pct < 40 %}<div class=cap>⚠️ 지수 비중 부족 · 현금 {{ '%.0f'|format(kr.alloc[2].pct) }}% 재배분 대기</div>{% endif %}</div>
 <div class=card><div class=h style=margin-bottom:2px>보유 종목 {{kr.holdings|length}} <span class=mut style=font-weight:500;font-size:11px>· 종목 누르면 매수이유</span></div>
 {% for h in kr.holdings %}<div class=hold onclick="openStock('{{h.ticker}}','{{h.name}}',{{h.qty}},{{h.buy}},{{h.price}},{{h.plpct}},{{'1' if h.is_etf else '0'}})">
