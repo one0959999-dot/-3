@@ -84,5 +84,29 @@ for _ in range(2000):
         over.append((c, st, lo, ix))
 ck("T9 퍼즈2000: 배분 ≤ 현금 & 음수 없음", not over, f"위반 {len(over)}건" + (str(over[0]) if over else ''))
 
+# 10) ★지수 시세실패 방어: plan_buyonly index_ok (오늘 KODEX 시세실패 → 저변동 편중 방지)
+import KR.auto_order as AO
+AO.time.sleep = lambda *a, **k: None  # 재시도 지연 제거(테스트 가속)
+
+
+class _FakeToss:
+    def __init__(self, fail=()):
+        self.fail = set(fail)
+
+    def get_price(self, s):
+        return None if s in self.fail else 10000
+
+
+TGT = ([{'symbol': '069500', 'sleeve': '지수ETF', 'price': 10000, 'name': 'KODEX200'}]
+       + [{'symbol': f'{i:06d}', 'sleeve': '저변동', 'price': 10000, 'name': f'S{i}'} for i in range(1, 26)])
+b, sk, ok = AO.plan_buyonly(TGT, _FakeToss(), 2_000_000, 400_000)
+ck("T10 정상: index_ok True + ETF 매수계획", ok is True and any(x[0] == '069500' for x in b))
+b2, sk2, ok2 = AO.plan_buyonly(TGT, _FakeToss(fail=['069500']), 2_000_000, 400_000)
+ck("T10 ETF시세실패: index_ok False", ok2 is False and not any(x[0] == '069500' for x in b2))
+ck("T10 ETF시세실패: 저변동은 계획됨(상위서 보류할것)", len(b2) > 0)
+b3, sk3, ok3 = AO.plan_buyonly(TGT, _FakeToss(fail=['069500']), 2_000_000, 0)  # 지수예산0(트랜치 대기중)
+ck("T10 지수예산0: index_ok True(살 필요 없음)", ok3 is True)
+ck("T10 _price_retry 실패시 None", AO._price_retry(_FakeToss(fail=['X']), 'X', tries=2) is None)
+
 print("\n결과:", "ALL PASS" if not fails else f"FAIL {len(fails)}건: {fails}")
 sys.exit(1 if fails else 0)
