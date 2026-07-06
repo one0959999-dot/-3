@@ -1,17 +1,16 @@
 # -*- coding: utf-8 -*-
-"""클린 대시보드 v3 — 새 체제(교과서 v3 + 참고서, 크론 자동매매) 조회 전용.
+"""Lassi 대시보드 v4 — 클린/밝은 토스풍. 조회 전용(주문 안 냄, 구봇 0).
 
-★구봇/매매 코드 전무. 이 앱은 절대 주문을 내지 않는다(매매는 EC2 크론 담당).
-  계좌=toss_api 직접조회. 원금=사용자 수동설정(자동감지 없음=원금버그 근절).
-  KR/US 탭 분리. 실행: python base/app.py (로컬) / gunicorn base.app:app (서버)
+계좌=toss_api 직접조회. 원금=원가기준 자동계산(매입가합+현금)=미실현 수익률.
+수동 원금설정 없음. 색: 한국식(빨강=상승/이익, 파랑=하락/손실).
+실행: python base/app.py (로컬) / gunicorn base.app:app (서버)
 """
 import os, sys, datetime
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from flask import Flask, request, redirect, url_for, render_template_string
 from flask_login import (LoginManager, UserMixin, login_user, logout_user,
                          login_required, current_user)
-from base.database import (get_db_connection, verify_user, get_user_initial_cash,
-                           set_user_initial_cash, init_db)
+from base.database import get_db_connection, verify_user, init_db
 from base.toss_api import TossInvestApi
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -19,7 +18,7 @@ def P(f):
     return os.path.join(ROOT, f)
 
 app = Flask(__name__)
-app.secret_key = os.environ.get('LASSI_SECRET', 'lassi-dash-v3')
+app.secret_key = os.environ.get('LASSI_SECRET', 'lassi-dash-v4')
 login_manager = LoginManager(app)
 login_manager.login_view = 'login'
 
@@ -48,39 +47,33 @@ def _toss(row):
 
 
 def kr_snapshot(row):
+    """원가기준 자동계산: 원가원금 = Σ(매입가×수량)+현금 → 미실현 수익률."""
     out = {'holdings': [], 'cash': 0, 'total': 0, 'hold_val': 0,
-           'cost_basis': 0, 'unreal_ret': None, 'unreal_pl': 0,       # 원가기준(자동계산)
-           'principal': None, 'ret': None, 'pl': 0, 'error': None}    # 실입금 기준(수동, 선택)
+           'cost_basis': 0, 'ret': None, 'pl': 0, 'error': None}
     try:
         t = _toss(row)
         bal = t.get_account_balance()
         if not bal:
-            out['error'] = '계좌조회 실패(토큰/IP/API)'; return out
+            out['error'] = '계좌조회 실패(토큰/IP/API 확인)'; return out
         hv = 0.0; cost = 0.0
         for s in bal.get('stocks', []):
             q = int(s.get('shares', 0) or 0)
             if q <= 0:
                 continue
             px = float(s.get('current_price', 0) or 0) or float(s.get('purchase_price', 0) or 0)
-            bp = float(s.get('purchase_price', 0) or 0) or px          # 매입가(없으면 현재가)
+            bp = float(s.get('purchase_price', 0) or 0) or px
             val = q * px; hv += val; cost += q * bp
             out['holdings'].append({'name': s.get('name', s['ticker']), 'ticker': s['ticker'],
                                     'qty': q, 'price': px, 'buy': bp, 'value': val,
+                                    'plpct': (px / bp - 1) * 100 if bp else 0,
                                     'is_etf': s['ticker'] == '069500'})
         cash = t.get_buyable_cash(default=None)
         cash = float(cash) if cash is not None else 0.0
         out['cash'] = cash; out['hold_val'] = hv; out['total'] = cash + hv
-        # ── 원가 기준 원금(자동계산): 매입원가 + 현금 → 미실현 수익률 ──
         out['cost_basis'] = cost + cash
         if out['cost_basis'] > 0:
-            out['unreal_ret'] = (out['total'] / out['cost_basis'] - 1) * 100
-            out['unreal_pl'] = out['total'] - out['cost_basis']
-        # ── 실입금 기준 원금(수동, 설정했을 때만): 총수익률(실현손익 포함) ──
-        pr = get_user_initial_cash(int(row['id']), is_mock=False)
-        if pr and pr not in (0, 10000000.0):     # 10000000=미설정 기본값
-            out['principal'] = pr
-            out['ret'] = (out['total'] / pr - 1) * 100
-            out['pl'] = out['total'] - pr
+            out['ret'] = (out['total'] / out['cost_basis'] - 1) * 100
+            out['pl'] = out['total'] - out['cost_basis']
         out['holdings'].sort(key=lambda x: (-x['is_etf'], -x['value']))
     except Exception as e:
         out['error'] = f'{type(e).__name__}: {e}'
@@ -121,7 +114,7 @@ def automation_status():
     for label, f in [('deadman 감시', 'heartbeat.txt'), ('신규자금 배분', 'auto_deploy_done.txt'),
                      ('US 통화검증', 'first_fill_verified_us.txt'), ('리밸런스 상태', 'rebalance_state.txt')]:
         try:
-            st[label] = open(P(f)).read().strip()[:40]
+            st[label] = open(P(f)).read().strip()[:40] or '—'
         except Exception:
             st[label] = '—'
     try:
@@ -131,7 +124,7 @@ def automation_status():
         st['참고서 아티팩트 제외'] = '—'
     try:
         from KR.live_v1 import is_rebalance_week
-        st['리밸런스 주간'] = '예 (교체 진행)' if is_rebalance_week() else '아니오 (유지)'
+        st['리밸런스 주간'] = '예 (교체)' if is_rebalance_week() else '아니오 (유지)'
     except Exception:
         st['리밸런스 주간'] = '—'
     return st
@@ -139,116 +132,109 @@ def automation_status():
 
 PAGE = """<!doctype html><html lang=ko><head><meta charset=utf-8>
 <meta name=viewport content="width=device-width,initial-scale=1"><title>Lassi</title><style>
-:root{--bg:#0b0f1a;--card:#141b2d;--card2:#1a2337;--line:#24304a;--txt:#eaf0fb;--mut:#8394b3;
---blue:#3b82f6;--grn:#34d399;--red:#f87171;--gold:#fbbf24}
-*{box-sizing:border-box;margin:0} body{font-family:system-ui,'Malgun Gothic',sans-serif;
-background:linear-gradient(160deg,#0b0f1a,#0e1526);color:var(--txt);min-height:100vh}
-.wrap{max-width:900px;margin:0 auto;padding:18px 16px 60px}
-.top{display:flex;justify-content:space-between;align-items:center;margin-bottom:6px}
-.logo{font-size:19px;font-weight:800;letter-spacing:-.3px} .logo span{font-weight:400;color:var(--mut);font-size:12px}
-.sub{color:var(--mut);font-size:12px;margin-bottom:16px} .sub a{color:var(--blue);text-decoration:none}
-.tabs{display:flex;gap:8px;margin:14px 0} .tab{flex:1;padding:12px;text-align:center;border-radius:12px;
-background:var(--card);border:1px solid var(--line);cursor:pointer;font-weight:700;font-size:15px;color:var(--mut);transition:.15s}
-.tab.on{background:linear-gradient(135deg,#1e3a8a,#2563eb);color:#fff;border-color:#2563eb;box-shadow:0 4px 14px rgba(37,99,235,.35)}
-.pane{display:none} .pane.on{display:block;animation:fade .2s} @keyframes fade{from{opacity:0;transform:translateY(4px)}to{opacity:1}}
-.card{background:var(--card);border:1px solid var(--line);border-radius:16px;padding:18px;margin:12px 0;box-shadow:0 2px 10px rgba(0,0,0,.25)}
-.hero{background:linear-gradient(135deg,#141b2d,#1c2743)}
-.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:14px}
-.k{color:var(--mut);font-size:12px;margin-bottom:4px} .v{font-size:22px;font-weight:700}
-.big{font-size:32px;font-weight:800;letter-spacing:-1px} .pos{color:var(--grn)} .neg{color:var(--red)} .blue{color:var(--blue)}
-table{width:100%;border-collapse:collapse;font-size:13px} td,th{padding:9px 8px;border-bottom:1px solid #1c2740}
-th{color:var(--mut);font-weight:600;font-size:11px;text-transform:uppercase;letter-spacing:.5px}
-td{text-align:right} td.l,th.l{text-align:left} th{text-align:right}
-.etf{color:#60a5fa;font-weight:700} .badge{display:inline-block;padding:2px 8px;border-radius:20px;font-size:11px;font-weight:700}
-.b-buy{background:rgba(52,211,153,.15);color:var(--grn)} .b-sell{background:rgba(248,113,113,.15);color:var(--red)}
-.b-etf{background:rgba(59,130,246,.15);color:#60a5fa}
-input{background:#0b0f1a;border:1px solid #2c3a58;color:var(--txt);padding:11px;border-radius:10px;font-size:15px;width:170px}
-.btn{background:linear-gradient(135deg,#2563eb,#3b82f6);color:#fff;border:0;padding:11px 16px;border-radius:10px;cursor:pointer;font-weight:700;font-size:14px}
-.btn2{background:var(--card2);border:1px solid var(--line);color:var(--txt);padding:11px 14px;border-radius:10px;cursor:pointer;font-size:13px}
-.warn{background:linear-gradient(135deg,#3a2318,#2d1c12);border-color:#7c3a1a;color:var(--gold)}
-h3{font-size:13px;color:var(--mut);margin:22px 0 4px;font-weight:700;letter-spacing:.3px}
-.st{display:flex;justify-content:space-between;padding:9px 2px;border-bottom:1px solid #1c2740;font-size:13px}
-.st:last-child{border:0} .st .sv{font-weight:600} .bar{height:6px;border-radius:4px;background:#1c2740;overflow:hidden;margin-top:6px}
-.bar>i{display:block;height:100%;background:linear-gradient(90deg,#3b82f6,#60a5fa)}
-.mut{color:var(--mut);font-size:12px} .center{text-align:center;margin:24px 0}
+:root{--bg:#f2f4f8;--card:#fff;--txt:#191f28;--sub:#8b95a1;--line:#eef1f5;
+--up:#f04452;--down:#3182f6;--pri:#3182f6;--pri-bg:#e8f2ff;--soft:#f7f9fc}
+*{box-sizing:border-box;margin:0;-webkit-tap-highlight-color:transparent}
+body{font-family:-apple-system,'Malgun Gothic','Apple SD Gothic Neo',system-ui,sans-serif;
+background:var(--bg);color:var(--txt);line-height:1.4;letter-spacing:-.2px}
+.wrap{max-width:520px;margin:0 auto;padding:14px 16px 70px}
+.top{display:flex;justify-content:space-between;align-items:center;padding:8px 2px 4px}
+.logo{font-size:20px;font-weight:800} .logo em{font-style:normal;color:var(--pri)}
+.top a{color:var(--sub);text-decoration:none;font-size:14px;font-weight:600}
+.note{font-size:12px;color:var(--sub);margin:2px 2px 10px}
+.seg{display:flex;background:#e9edf3;border-radius:14px;padding:4px;gap:4px;margin:10px 0 4px}
+.seg div{flex:1;text-align:center;padding:11px;border-radius:10px;font-weight:700;font-size:15px;color:var(--sub);cursor:pointer;transition:.15s}
+.seg div.on{background:#fff;color:var(--txt);box-shadow:0 2px 6px rgba(0,0,0,.08)}
+.pane{display:none} .pane.on{display:block;animation:f .22s} @keyframes f{from{opacity:0;transform:translateY(6px)}to{opacity:1}}
+.card{background:var(--card);border-radius:20px;padding:20px;margin:12px 0;box-shadow:0 1px 3px rgba(0,20,60,.06),0 8px 24px rgba(0,20,60,.04)}
+.hero .lab{font-size:13px;color:var(--sub);font-weight:600}
+.hero .amt{font-size:34px;font-weight:800;margin:2px 0 10px;letter-spacing:-1.2px}
+.hero .amt small{font-size:19px;font-weight:700;color:var(--sub)}
+.pill{display:inline-flex;align-items:center;gap:6px;font-size:15px;font-weight:800;padding:7px 12px;border-radius:12px}
+.up{color:var(--up)} .down{color:var(--down)} .pill.up{background:#fde8ea} .pill.down{background:#e8f0fe}
+.row2{display:flex;gap:10px;margin-top:14px} .row2>div{flex:1;background:var(--soft);border-radius:14px;padding:12px 14px}
+.row2 .k{font-size:12px;color:var(--sub);font-weight:600} .row2 .v{font-size:16px;font-weight:800;margin-top:3px}
+.h{font-size:14px;font-weight:800;color:var(--txt);margin:22px 4px 8px}
+table{width:100%;border-collapse:collapse;font-size:14px}
+td,th{padding:12px 6px;border-bottom:1px solid var(--line)} tr:last-child td{border:0}
+th{color:var(--sub);font-size:12px;font-weight:600;text-align:right} th.l,td.l{text-align:left} td{text-align:right;font-weight:600}
+.nm{font-weight:700} .tk{color:var(--sub);font-size:12px;font-weight:500}
+.tag{display:inline-block;font-size:11px;font-weight:800;padding:2px 7px;border-radius:8px;margin-right:5px}
+.tag.etf{background:var(--pri-bg);color:var(--pri)} .tag.b{background:#fde8ea;color:var(--up)} .tag.s{background:#e8f0fe;color:var(--down)}
+.st{display:flex;justify-content:space-between;padding:11px 2px;border-bottom:1px solid var(--line);font-size:14px} .st:last-child{border:0}
+.st .kk{color:var(--sub);font-weight:600} .st .vv{font-weight:700}
+.warn{background:#fff4e5;color:#c2681a;font-weight:600}
+.mut{color:var(--sub)} .cap{font-size:12px;color:var(--sub);margin:8px 4px 0}
+.foot{text-align:center;font-size:12px;color:#b0b8c1;margin:26px 0}
 </style></head><body><div class=wrap>
-<div class=top><div class=logo>🤖 Lassi <span>교과서 v3 + 참고서</span></div>
-<div class=mut><a href="{{url_for('logout')}}">로그아웃</a></div></div>
-<div class=sub>{{now}} · 크론 자동매매 · <b>이 화면은 주문을 내지 않습니다(조회 전용)</b> · <a href="{{url_for('dashboard')}}">↻ 새로고침</a></div>
+<div class=top><div class=logo>Lassi<em>.</em></div><a href="{{url_for('logout')}}">로그아웃</a></div>
+<div class=note>{{now}} · 크론 자동매매 · 이 화면은 주문을 내지 않습니다 · <a style=color:var(--pri) href="{{url_for('dashboard')}}">↻ 새로고침</a></div>
 
-<div class=tabs>
-  <div class="tab on" onclick="sw('kr')">🇰🇷 국내 (KR)</div>
-  <div class=tab onclick="sw('us')">🇺🇸 미국 (US)</div>
-</div>
+<div class=seg><div class="on" onclick="sw('kr')">🇰🇷 국내</div><div onclick="sw('us')">🇺🇸 미국</div></div>
 
-<!-- ===== KR ===== -->
+<!-- KR -->
 <div id=kr class="pane on">
 {% if kr.error %}<div class="card warn">⚠️ {{kr.error}}</div>{% else %}
 <div class="card hero">
-  <div class=k>총자산</div><div class=big>{{ '{:,.0f}'.format(kr.total) }}<span style=font-size:18px> 원</span></div>
-  <div class=grid style=margin-top:16px>
-    <div><div class=k>미실현 수익률 <span class=blue>· 자동</span></div><div class="v {{'pos' if (kr.unreal_ret or 0)>=0 else 'neg'}}">{{ '%+.2f'|format(kr.unreal_ret) if kr.unreal_ret is not none else '—' }}%</div></div>
-    <div><div class=k>평가손익</div><div class="v {{'pos' if kr.unreal_pl>=0 else 'neg'}}">{{ '{:+,.0f}'.format(kr.unreal_pl) }}</div></div>
-    <div><div class=k>원가 원금 <span class=blue>· 자동</span></div><div class=v>{{ '{:,.0f}'.format(kr.cost_basis) }}</div></div>
+  <div class=lab>총자산</div>
+  <div class=amt>{{ '{:,.0f}'.format(kr.total) }}<small> 원</small></div>
+  <span class="pill {{'up' if (kr.ret or 0)>=0 else 'down'}}">{{ '▲' if (kr.ret or 0)>=0 else '▼' }} {{ '%.2f'|format(kr.ret|abs) if kr.ret is not none else '—' }}% · {{ '{:+,.0f}'.format(kr.pl) }}원</span>
+  <div class=row2>
+    <div><div class=k>매입원가</div><div class=v>{{ '{:,.0f}'.format(kr.cost_basis) }}</div></div>
     <div><div class=k>현금(미투입)</div><div class=v>{{ '{:,.0f}'.format(kr.cash) }}</div></div>
   </div>
-  {% if kr.principal %}<div class=mut style=margin-top:14px;border-top:1px solid #24304a;padding-top:12px>실입금 원금 {{ '{:,.0f}'.format(kr.principal) }}원 기준 <b class="{{'pos' if (kr.ret or 0)>=0 else 'neg'}}">총수익률 {{ '%+.2f'|format(kr.ret) }}%</b> <span class=mut>(실현손익 포함)</span></div>{% endif %}
 </div>
-<div class=card><table><tr><th class=l>종목</th><th>수량</th><th>매입가</th><th>현재가</th><th>평가액</th><th>비중</th></tr>
-{% for h in kr.holdings %}<tr><td class=l>{% if h.is_etf %}<span class="badge b-etf">지수</span> {% endif %}<span class="{{'etf' if h.is_etf}}">{{h.name}}</span> <span class=mut>{{h.ticker}}</span></td>
-<td>{{h.qty}}</td><td class=mut>{{ '{:,.0f}'.format(h.buy) }}</td><td>{{ '{:,.0f}'.format(h.price) }}</td><td>{{ '{:,.0f}'.format(h.value) }}</td>
-<td>{{ '%.1f'|format(h.value/kr.total*100 if kr.total else 0) }}%</td></tr>{% endfor %}
-{% if not kr.holdings %}<tr><td colspan=6 class="l mut">보유 종목 없음</td></tr>{% endif %}
+<div class=h>보유 종목 <span class=mut style=font-weight:500>{{kr.holdings|length}}개</span></div>
+<div class=card style=padding:8px><table><tr><th class=l>종목</th><th>수익률</th><th>평가액</th><th>비중</th></tr>
+{% for h in kr.holdings %}<tr><td class=l><div>{% if h.is_etf %}<span class="tag etf">지수</span>{% endif %}<span class=nm>{{h.name}}</span></div>
+<div class=tk>{{h.qty}}주 · 매입 {{ '{:,.0f}'.format(h.buy) }}</div></td>
+<td class="{{'up' if h.plpct>=0 else 'down'}}">{{ '%+.1f'|format(h.plpct) }}%</td>
+<td>{{ '{:,.0f}'.format(h.value) }}</td><td class=mut>{{ '%.0f'|format(h.value/kr.total*100 if kr.total else 0) }}%</td></tr>{% endfor %}
+{% if not kr.holdings %}<tr><td colspan=4 class="l mut" style=padding:16px>보유 종목 없음</td></tr>{% endif %}
 </table></div>
-<div class=card><h3 style=margin-top:0>💵 원금</h3>
-<div class=mut style=margin-bottom:12px;line-height:1.7>
-• <b class=blue>원가 원금(자동)</b> = 매입가×수량 + 현금 → 위 <b>미실현 수익률</b>로 자동 계산됩니다. <b>입력 불필요.</b><br>
-• <b>실입금 원금(선택·수동)</b> = 실제 넣은 총 금액. 설정하면 실현손익까지 포함한 <b>총수익률</b>도 함께 표시됩니다.</div>
-<form method=post action="{{url_for('set_principal')}}" style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
-<input name=amount type=number placeholder="실제 입금액(원)">
-<button class=btn type=submit>실입금 원금 설정</button>
-<button class=btn2 type=submit name=amount value="{{ '%.0f'|format(kr.total) }}">현재 총액으로</button>
-</form></div>
+<div class=cap>* 수익률 = 매입원가 대비 미실현 손익 (매입가 자동계산)</div>
 {% endif %}
 </div>
 
-<!-- ===== US ===== -->
+<!-- US -->
 <div id=us class=pane>
 {% if us.error %}<div class="card warn">⚠️ {{us.error}}</div>{% else %}
-<div class="card hero"><div class=k>USD 예수금</div><div class=big>${{ '%.2f'|format(us.cash_usd) }}</div>
-<div class=mut style=margin-top:8px>전략 = SPY(S&P500) 보유. 환전하면 크론이 자동으로 통화검증 후 매수.</div></div>
-<div class=card><table><tr><th class=l>종목</th><th>수량</th></tr>
-{% for h in us.holdings %}<tr><td class=l>{{h.ticker}}</td><td>{{ '%.4f'|format(h.qty) }}주</td></tr>{% endfor %}
-{% if not us.holdings %}<tr><td colspan=2 class="l mut">SPY 미보유 — USD 환전 시 자동매수 대기</td></tr>{% endif %}
-</table></div>{% endif %}
+<div class="card hero"><div class=lab>USD 예수금</div><div class=amt>${{ '%.2f'|format(us.cash_usd) }}</div>
+<div class=cap style=margin-top:4px>전략 = SPY(S&P500) 보유. 환전하면 크론이 통화검증 후 자동매수.</div></div>
+{% if us.holdings %}<div class=card style=padding:8px><table><tr><th class=l>종목</th><th>수량</th></tr>
+{% for h in us.holdings %}<tr><td class="l nm">{{h.ticker}}</td><td>{{ '%.4f'|format(h.qty) }}주</td></tr>{% endfor %}</table></div>
+{% else %}<div class="card mut" style=text-align:center;padding:24px>SPY 미보유 — USD 환전 시 자동매수 대기</div>{% endif %}{% endif %}
 </div>
 
-<!-- ===== 공통 ===== -->
-<h3>⚙️ 자동화 상태</h3>
-<div class=card>{% for k,v in status.items() %}<div class=st><span class=mut>{{k}}</span><span class=sv>{{v}}</span></div>{% endfor %}
-<div class=mut style=margin-top:10px>크론: 리밸 평일 10:00 · 신규배분 평일 10:30 · US 미국장(새벽) · deadman 매일</div></div>
+<!-- 공통 -->
+<div class=h>⚙️ 자동화 상태</div>
+<div class=card>{% for k,v in status.items() %}<div class=st><span class=kk>{{k}}</span><span class=vv>{{v}}</span></div>{% endfor %}
+<div class=cap>크론: 리밸 평일 10:00 · 신규배분 평일 10:30 · US 미국장 · deadman 매일</div></div>
 
-<h3>📜 최근 거래</h3>
-<div class=card><table><tr><th class=l>일시</th><th class=l>종목</th><th>구분</th><th>가격</th><th>수량</th><th class=l>비고</th></tr>
-{% for t in trades %}<tr><td class=l mut>{{t.created_at[5:16]}}</td><td class=l>{{t.stock_name}} <span class=mut>{{t.mode}}</span></td>
-<td><span class="badge {{'b-sell' if t.action=='SELL' else 'b-buy'}}">{{t.action}}</span></td>
-<td>{{ '{:,.0f}'.format(t.price) }}</td><td>{{ '{:.0f}'.format(t.shares) }}</td><td class="l mut">{{t.strategy or '-'}}</td></tr>{% endfor %}
-</table></div>
-<div class="center mut">Lassi 대시보드 v3 · 조회 전용 · 매매는 검증된 크론이 담당</div>
+<div class=h>📜 최근 거래</div>
+<div class=card style=padding:8px><table><tr><th class=l>종목</th><th>가격</th><th>수량</th><th class=l>일시</th></tr>
+{% for t in trades %}<tr><td class=l><span class="tag {{'s' if t.action=='SELL' else 'b'}}">{{ '매도' if t.action=='SELL' else '매수' }}</span><span class=nm>{{t.stock_name}}</span> <span class=tk>{{t.mode}}</span></td>
+<td>{{ '{:,.0f}'.format(t.price) }}</td><td>{{ '{:.0f}'.format(t.shares) }}</td><td class="l tk">{{t.created_at[5:16]}}</td></tr>{% endfor %}
+{% if not trades %}<tr><td colspan=4 class="l mut" style=padding:16px>거래 없음</td></tr>{% endif %}</table></div>
+
+<div class=foot>Lassi · 조회 전용 · 매매는 검증된 크론이 담당</div>
 </div>
-<script>function sw(x){document.querySelectorAll('.tab').forEach(t=>t.classList.remove('on'));
+<script>function sw(x){document.querySelectorAll('.seg div').forEach(t=>t.classList.remove('on'));
 document.querySelectorAll('.pane').forEach(p=>p.classList.remove('on'));
 document.getElementById(x).classList.add('on');event.currentTarget.classList.add('on');}</script>
 </body></html>"""
 
 LOGIN = """<!doctype html><html lang=ko><head><meta charset=utf-8><title>Lassi 로그인</title><style>
-body{font-family:system-ui,sans-serif;background:linear-gradient(160deg,#0b0f1a,#0e1526);color:#eaf0fb;
+body{font-family:-apple-system,'Malgun Gothic',system-ui,sans-serif;background:#f2f4f8;color:#191f28;
 display:flex;height:100vh;align-items:center;justify-content:center;margin:0}
-form{background:#141b2d;padding:32px;border-radius:18px;border:1px solid #24304a;width:300px;box-shadow:0 10px 40px rgba(0,0,0,.4)}
-h2{margin:0 0 18px} input{width:100%;padding:12px;margin:7px 0;background:#0b0f1a;border:1px solid #2c3a58;color:#eaf0fb;border-radius:10px;font-size:15px}
-button{width:100%;padding:12px;background:linear-gradient(135deg,#2563eb,#3b82f6);color:#fff;border:0;border-radius:10px;margin-top:10px;cursor:pointer;font-weight:700;font-size:15px}
-.e{color:#f87171;font-size:13px;margin-bottom:8px}</style></head><body>
-<form method=post><h2>🤖 Lassi</h2>{% if error %}<div class=e>{{error}}</div>{% endif %}
+form{background:#fff;padding:34px 28px;border-radius:22px;width:310px;box-shadow:0 10px 40px rgba(0,20,60,.1)}
+h2{margin:0 0 4px;font-size:24px} .s{color:#8b95a1;font-size:13px;margin-bottom:18px}
+input{width:100%;padding:14px;margin:7px 0;background:#f7f9fc;border:1px solid #eef1f5;color:#191f28;border-radius:12px;font-size:15px}
+input:focus{outline:none;border-color:#3182f6;background:#fff}
+button{width:100%;padding:14px;background:#3182f6;color:#fff;border:0;border-radius:12px;margin-top:12px;cursor:pointer;font-weight:800;font-size:16px}
+.e{color:#f04452;font-size:13px;margin-bottom:6px;font-weight:600}</style></head><body>
+<form method=post><h2>Lassi<span style=color:#3182f6>.</span></h2><div class=s>교과서 v3 + 참고서 · 자동매매</div>
+{% if error %}<div class=e>{{error}}</div>{% endif %}
 <input name=username placeholder=아이디 autofocus><input name=password type=password placeholder=비밀번호>
 <button>로그인</button></form></body></html>"""
 
@@ -278,18 +264,6 @@ def dashboard():
         PAGE, now=datetime.datetime.now().strftime('%Y-%m-%d %H:%M'),
         kr=kr_snapshot(row), us=us_snapshot(row),
         trades=recent_trades(int(row['id'])), status=automation_status())
-
-
-@app.route('/set_principal', methods=['POST'])
-@login_required
-def set_principal():
-    try:
-        amt = float(request.form.get('amount', 0))
-        if amt > 0:
-            set_user_initial_cash(int(current_user.row['id']), amt, is_mock=False)
-    except Exception:
-        pass
-    return redirect(url_for('dashboard'))
 
 
 if __name__ == '__main__':
