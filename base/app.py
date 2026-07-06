@@ -168,6 +168,75 @@ def bot_status():
     return st
 
 
+def bot_details(bot, us, dca):
+    """봇 상태 박스 클릭시 보여줄 친절한 설명 (상태별 '왜 이런지' + '뭘 하면 되는지')."""
+    d = {}
+    # ── 국내 ──
+    if bot.get('kr'):
+        dca_line = ''
+        if dca:
+            dca_line = (f"<br>· 지금은 <b>지수 나눠사기(DCA) 진행중</b> — 예약 {dca['reserved']/1e4:,.0f}만원을 "
+                        f"매달 1회씩 약 {dca['months']}개월에 걸쳐 지수를 삽니다 (고점에 몰빵하지 않으려는 의도)")
+        d['kr'] = {'title': '국내 자동매매', 'sub': '🟢 정상 가동중',
+                   'html': ("<div class=rsn><b>서버가 정해진 시간에 알아서 매매해요</b><br>"
+                            "· 평일 <b>10:00</b> — 분기 리밸런스 확인 (1·4·7·10월 첫 주에만 실제 종목 교체)<br>"
+                            "· 평일 <b>10:30</b> — 계좌에 새 현금이 생기면 자동으로 나눠서 매수"
+                            + dca_line +
+                            "</div><div class=rsn><b>따로 하실 일은 없어요</b><br>"
+                            "매매가 일어나면 그때마다 텔레그램으로 알려드립니다. "
+                            "이 화면은 언제든 들어와서 구경만 하셔도 됩니다.</div>")}
+    else:
+        d['kr'] = {'title': '국내 자동매매', 'sub': '⏸️ 정지됨',
+                   'html': ("<div class=rsn><b>왜 정지인가요?</b><br>"
+                            "서버의 예약작업(크론)에서 국내 매매가 해제되어 있어요. "
+                            "이 상태에서는 리밸런스도, 신규 현금 매수도 실행되지 않습니다.</div>"
+                            "<div class=rsn><b>다시 켜려면</b><br>"
+                            "EC2 서버의 crontab에 auto_order(리밸런스)·auto_deploy(신규자금) 항목을 "
+                            "다시 등록해야 해요. 채팅으로 요청해 주시면 도와드릴게요.</div>")}
+    # ── 미국 ──
+    us_cash = (us or {}).get('cash_usd') or 0
+    us_hold = bool((us or {}).get('holdings'))
+    if bot.get('us') and bot.get('us_wait'):
+        d['us'] = {'title': '미국 자동매매', 'sub': '🟡 환전 대기중 (봇은 켜져 있어요)',
+                   'html': ("<div class=rsn><b>왜 아무것도 안 사나요?</b><br>"
+                            "봇은 켜져 있는데, 계좌에 <b>달러(USD)가 $0</b>이라 살 돈이 없어요. "
+                            "토스는 원화를 자동으로 환전해 주지 않아서, 원화가 있어도 미국 주식은 못 삽니다.</div>"
+                            "<div class=rsn><b>뭘 하면 되나요?</b><br>"
+                            "토스증권 앱에서 <b>원화 → 달러 환전</b>을 한 번만 해두세요. "
+                            "그러면 다음 미국장 아침(한국시간 새벽)에 봇이 자동으로 SPY(미국 S&P500 ETF)를 삽니다. "
+                            "안 쓰실 거면 그대로 두셔도 아무 문제 없어요.</div>")}
+    elif bot.get('us'):
+        body = (f"달러 <b>${us_cash:,.2f}</b>가 확인됐어요. 다음 미국장 아침(한국시간 새벽)에 자동으로 SPY를 삽니다."
+                if us_cash >= 1 else "SPY를 보유중이에요. 새 달러가 들어오면 자동으로 추가 매수합니다.")
+        d['us'] = {'title': '미국 자동매매', 'sub': '🟢 정상 가동중',
+                   'html': (f"<div class=rsn><b>지금 상태</b><br>{body}</div>"
+                            "<div class=rsn><b>전략</b><br>미국은 단순해요 — 달러가 생기면 SPY 하나만 삽니다. "
+                            "매매 결과는 텔레그램으로 알려드립니다.</div>")}
+    else:
+        d['us'] = {'title': '미국 자동매매', 'sub': '⏸️ 정지됨',
+                   'html': ("<div class=rsn><b>왜 정지인가요?</b><br>"
+                            "서버의 예약작업(크론)에서 미국 매매가 해제되어 있어요.</div>"
+                            "<div class=rsn><b>다시 켜려면</b><br>"
+                            "EC2 crontab에 auto_order_us 항목을 다시 등록하면 됩니다. "
+                            "채팅으로 요청해 주시면 도와드릴게요.</div>")}
+    # ── 감시장치 ──
+    hb = bot.get('heartbeat', '—')
+    if bot.get('deadman'):
+        d['dm'] = {'title': '감시장치 (deadman)', 'sub': '🟢 켜져 있음',
+                   'html': ("<div class=rsn><b>뭘 하는 건가요?</b><br>"
+                            "매일 자정에 '봇이 살아있나'를 스스로 점검하는 안전장치예요. "
+                            "봇이 멈추거나 며칠째 아무 기록이 없으면 텔레그램으로 바로 알려줍니다.<br><br>"
+                            f"마지막 생존신호: <b>{hb}</b></div>"
+                            "<div class=rsn><b>여행 가도 되나요?</b><br>"
+                            "네. 문제가 생기면 이 장치가 알려주니, 알림이 없다는 건 잘 돌고 있다는 뜻이에요.</div>")}
+    else:
+        d['dm'] = {'title': '감시장치 (deadman)', 'sub': '⏸️ 꺼져 있음',
+                   'html': ("<div class=rsn><b>주의</b><br>"
+                            "봇이 멈춰도 알려줄 감시가 꺼져 있어요. 매매 봇 자체는 별개로 돌 수 있지만, "
+                            "문제가 생겨도 모를 수 있으니 켜두는 걸 추천해요. 채팅으로 요청해 주세요.</div>")}
+    return d
+
+
 def recent_trades(uid, n=30):
     c = get_db_connection()
     try:
@@ -216,12 +285,16 @@ margin:0 -20px 2px;padding:13px 22px 11px;background:rgba(238,242,249,.78);backd
 /* 봇 상태 배너 */
 .banner{display:flex;gap:10px;flex-wrap:wrap;margin-bottom:14px}
 .bstat{flex:1;min-width:148px;display:flex;align-items:center;gap:11px;background:var(--card);border:1px solid rgba(15,30,70,.045);
-border-radius:16px;padding:13px 15px;box-shadow:var(--sh)}
+border-radius:16px;padding:13px 15px;box-shadow:var(--sh);cursor:pointer;transition:transform .15s,box-shadow .15s}
+.bstat:hover{transform:translateY(-1px);box-shadow:var(--sh2)} .bstat:active{transform:scale(.985)}
+.binfo{color:#c4cdd8;font-size:16px;transition:.15s} .bstat:hover .binfo{color:var(--pri);transform:translateX(2px)}
 .led{width:10px;height:10px;border-radius:50%;flex-shrink:0} .led.off{background:#cbd3dd}
 .led.on{background:var(--grn);animation:pulse 2.4s ease-out infinite}
+.led.wait{background:#ff9500;animation:pulsew 2.4s ease-out infinite}
 @keyframes pulse{0%{box-shadow:0 0 0 0 rgba(18,184,134,.35)}70%{box-shadow:0 0 0 7px rgba(18,184,134,0)}100%{box-shadow:0 0 0 0 rgba(18,184,134,0)}}
+@keyframes pulsew{0%{box-shadow:0 0 0 0 rgba(255,149,0,.35)}70%{box-shadow:0 0 0 7px rgba(255,149,0,0)}100%{box-shadow:0 0 0 0 rgba(255,149,0,0)}}
 .bstat .bl{font-size:11.5px;color:var(--sub);font-weight:600} .bstat .bv{font-size:14.5px;font-weight:800;margin-top:1px}
-.bstat .bv.on{color:var(--grn)} .bstat .bv.off{color:var(--sub)}
+.bstat .bv.on{color:var(--grn)} .bstat .bv.off{color:var(--sub)} .bstat .bv.wait{color:#ff9500}
 /* 탭 */
 .seg{display:flex;background:rgba(222,229,238,.75);border-radius:14px;padding:4px;gap:4px;margin:0 0 14px;max-width:340px}
 .seg div{flex:1;text-align:center;padding:9px 0;border-radius:11px;font-weight:700;font-size:14px;color:var(--sub);cursor:pointer;transition:.18s}
@@ -300,13 +373,14 @@ details[open] summary:before{transform:rotate(90deg)}
 .foot{text-align:center;font-size:11.5px;color:var(--faint);margin:18px 0 0}
 </style></head><body><div class=wrap>
 <div class=top><div class=logo>Lassi<em>.</em></div><a href="{{url_for('logout')}}">로그아웃</a></div>
-<div class=note>{{now}} · 조회 전용(주문 안 냄) · <a href="{{url_for('dashboard')}}">↻ 새로고침</a></div>
+<div class=note>{{now}} 기준 · <a href="{{url_for('dashboard')}}">↻ 새로고침</a></div>
 
 <div class=banner>
-  <div class=bstat><span class="led {{'on' if bot.kr else 'off'}}"></span><div><div class=bl>국내 자동매매</div><div class="bv {{'on' if bot.kr else 'off'}}">{{ '가동중' if bot.kr else '정지' }}</div></div></div>
-  <div class=bstat><span class="led {{'on' if bot.us else 'off'}}"></span><div><div class=bl>미국 자동매매</div><div class="bv {{'on' if bot.us else 'off'}}">{{ '가동중' if bot.us else '정지' }}</div></div></div>
-  <div class=bstat><span class="led {{'on' if bot.deadman else 'off'}}"></span><div><div class=bl>감시 (deadman)</div><div class="bv {{'on' if bot.deadman else 'off'}}">{{ 'ON' if bot.deadman else 'OFF' }}</div></div></div>
+  <div class=bstat onclick="openBot('kr')"><span class="led {{'on' if bot.kr else 'off'}}"></span><div style=flex:1><div class=bl>국내 자동매매</div><div class="bv {{'on' if bot.kr else 'off'}}">{{ '가동중' if bot.kr else '정지' }}</div></div><span class=binfo>›</span></div>
+  <div class=bstat onclick="openBot('us')"><span class="led {{'wait' if bot.us_wait else ('on' if bot.us else 'off')}}"></span><div style=flex:1><div class=bl>미국 자동매매</div><div class="bv {{'wait' if bot.us_wait else ('on' if bot.us else 'off')}}">{{ '환전 대기' if bot.us_wait else ('가동중' if bot.us else '정지') }}</div></div><span class=binfo>›</span></div>
+  <div class=bstat onclick="openBot('dm')"><span class="led {{'on' if bot.deadman else 'off'}}"></span><div style=flex:1><div class=bl>감시장치</div><div class="bv {{'on' if bot.deadman else 'off'}}">{{ '켜짐' if bot.deadman else '꺼짐' }}</div></div><span class=binfo>›</span></div>
 </div>
+<div class=cap style="margin:-6px 4px 12px">궁금하면 눌러보세요 — 각 항목이 지금 왜 이 상태인지 알려드려요</div>
 
 <div class=seg><div class="on" onclick="sw('kr')">🇰🇷 국내</div><div onclick="sw('us')">🇺🇸 미국</div></div>
 
@@ -337,7 +411,7 @@ details[open] summary:before{transform:rotate(90deg)}
 <div id=us class=pane>
 {% if us.error %}<div class="card warn">⚠️ {{us.error}}</div>{% else %}
 <div class="card hero"><div class=lab>USD 예수금</div><div class=amt>${{ '%.2f'|format(us.cash_usd) }}</div>
-<div class=cap style=margin-top:1px>전략 = SPY 보유. 환전하면 크론이 통화검증 후 자동매수.</div></div>
+<div class=cap style=margin-top:1px>달러로 환전해두면 봇이 자동으로 SPY(미국 대표지수 ETF)를 사요. 원화는 자동 환전되지 않아요.</div></div>
 {% if us.holdings %}<div class=card>{% for h in us.holdings %}<div class=hold style=cursor:default>
 <div class=hicon style=background:linear-gradient(135deg,#f04452,#d63a48)>{{h.ticker[:3]}}</div><div class=hmid><div class=hnm>{{h.ticker}}</div></div>
 <div class=hend><div class=hval>{{ '%.4f'|format(h.qty) }}주</div></div></div>{% endfor %}</div>
@@ -345,7 +419,7 @@ details[open] summary:before{transform:rotate(90deg)}
 </div>
 
 <div><!-- 오른쪽: AI / 자동화상세 / 거래 -->
-<div class=card chat><div class=h style=margin-bottom:10px>💬 AI 어시스턴트 <span class=mut style=font-weight:500;font-size:11px>· 조회·조언만</span></div>
+<div class=card chat><div class=h style=margin-bottom:10px>💬 AI 어시스턴트 <span class=mut style=font-weight:500;font-size:11px>· 뭐든 물어보세요</span></div>
   <div class=msgs id=msgs><div class="m a">안녕하세요! 포트폴리오·전략에 대해 물어보세요. 예: "지금 수익률 어때?", "참고서가 뭐야?", "왜 현금이 많아?"</div></div>
   <div class=cin><input id=ci placeholder="메시지 입력..." onkeydown="if(event.key=='Enter')send()"><button onclick=send()>전송</button></div></div>
 
@@ -364,12 +438,16 @@ details[open] summary:before{transform:rotate(90deg)}
 </div>
 </div>
 
-<div class=foot>Lassi · 조회 전용 · 매매는 검증된 크론이 담당</div>
+<div class=foot>Lassi · 매매는 서버가 알아서 해요 — 이 화면은 구경만 하셔도 됩니다</div>
 </div>
 
 <div id=modal class=modal onclick="if(event.target==this)closeM()"><div class=sheet id=sheet></div></div>
 
 <script>
+var BOTD={{botd|tojson}};
+function openBot(k){var d=BOTD[k];if(!d)return;var s=document.getElementById('sheet');
+s.innerHTML='<h3>'+d.title+'</h3><div class=sub>'+d.sub+'</div>'+d.html+'<button class=mclose onclick=closeM()>닫기</button>';
+document.getElementById('modal').classList.add('on');}
 function sw(x){document.querySelectorAll('.seg div').forEach(t=>t.classList.remove('on'));
 document.querySelectorAll('.pane').forEach(p=>p.classList.remove('on'));
 document.getElementById(x).classList.add('on');event.currentTarget.classList.add('on');}
@@ -430,10 +508,13 @@ def logout():
 @login_required
 def dashboard():
     row = current_user.row
+    kr = kr_snapshot(row); us = us_snapshot(row); bot = bot_status(); dca = dca_status()
+    # US '환전 대기' 상태: 봇은 무장인데 USD 0 + SPY 미보유 → 배너에서 바로 이유를 보여줌
+    bot['us_wait'] = bool(bot.get('us')) and not us.get('error') and (us.get('cash_usd') or 0) < 1 and not us.get('holdings')
     return render_template_string(
         PAGE, now=datetime.datetime.now().strftime('%Y-%m-%d %H:%M'),
-        kr=kr_snapshot(row), us=us_snapshot(row), dca=dca_status(),
-        trades=recent_trades(int(row['id'])), bot=bot_status())
+        kr=kr, us=us, dca=dca, trades=recent_trades(int(row['id'])),
+        bot=bot, botd=bot_details(bot, us, dca))
 
 
 # 수익패턴 → 평이한 한글 라벨 + 한줄설명
