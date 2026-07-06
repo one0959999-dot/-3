@@ -71,6 +71,21 @@ def _master():
     return _MASTER
 
 
+def dca_status():
+    """지수 DCA 원장(dca_index_plan.json) 읽어 진행상황. 진행중 아니면 None."""
+    try:
+        import json as _json, math as _math
+        with open(P('dca_index_plan.json'), encoding='utf-8') as f:
+            d = _json.load(f)
+        reserved = int(d.get('reserved', 0)); tranche = int(d.get('tranche', 0))
+        if reserved <= 0:
+            return None
+        months = _math.ceil(reserved / tranche) if tranche > 0 else 1
+        return {'reserved': reserved, 'months': months, 'tranche': tranche}
+    except Exception:
+        return None
+
+
 def kr_snapshot(row):
     out = {'holdings': [], 'cash': 0, 'total': 0, 'hold_val': 0, 'cost_basis': 0,
            'ret': None, 'pl': 0, 'error': None, 'alloc': [], 'conic': ''}
@@ -273,7 +288,8 @@ details{margin-top:6px} summary{cursor:pointer;font-size:13px;color:var(--sub);f
     <div class=leg>{% for s in kr.alloc %}<div class=legrow><span class=dot style=background:{{s.color}}></span>
       <span class=ln>{{s.label}}<div class=lv>{{ '{:,.0f}'.format(s.val) }}원</div></span>
       <span class=lp>{{ '%.0f'|format(s.pct) }}%</span></div>{% endfor %}</div></div>
-  {% if kr.alloc[0].pct < 40 %}<div class=cap>⚠️ 지수 비중 부족 · 현금 {{ '%.0f'|format(kr.alloc[2].pct) }}% 재배분 대기</div>{% endif %}</div>
+  {% if dca %}<div class=cap style="color:#ff9500;font-weight:600">📅 지수 DCA 진행중 · {{ '{:,.0f}'.format(dca.reserved/10000) }}만 예약 · 약 {{dca.months}}개월 분할 남음 <span class=mut style=font-weight:400>(의도적 지수 저비중 — 고점 몰빵 회피)</span></div>
+  {% elif kr.alloc[0].pct < 40 %}<div class=cap>⚠️ 지수 비중 부족 · 현금 {{ '%.0f'|format(kr.alloc[2].pct) }}% 재배분 대기</div>{% endif %}</div>
 <div class=card><div class=h style=margin-bottom:2px>보유 종목 {{kr.holdings|length}} <span class=mut style=font-weight:500;font-size:11px>· 종목 누르면 매수이유</span></div>
 {% for h in kr.holdings %}<div class=hold onclick="openStock('{{h.ticker}}','{{h.name}}',{{h.qty}},{{h.buy}},{{h.price}},{{h.plpct}},{{'1' if h.is_etf else '0'}})">
   <div class="hicon {{'etf' if h.is_etf}}" {% if not h.is_etf %}style="background:linear-gradient(135deg,hsl({{h.hue}},62%,58%),hsl({{h.hue}},66%,47%))"{% endif %}>{{ '📊' if h.is_etf else h.name[:2] }}</div>
@@ -380,7 +396,7 @@ def dashboard():
     row = current_user.row
     return render_template_string(
         PAGE, now=datetime.datetime.now().strftime('%Y-%m-%d %H:%M'),
-        kr=kr_snapshot(row), us=us_snapshot(row),
+        kr=kr_snapshot(row), us=us_snapshot(row), dca=dca_status(),
         trades=recent_trades(int(row['id'])), bot=bot_status())
 
 
