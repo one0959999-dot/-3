@@ -18,6 +18,7 @@ server_log.txt
 lassi.db
 *.flag
 rebalance_plan.json
+dca_index_plan.json
 
 .env
 

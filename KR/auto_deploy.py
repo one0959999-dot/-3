@@ -17,7 +17,8 @@ import logging
 logging.disable(logging.CRITICAL)
 import warnings
 warnings.filterwarnings('ignore')
-from KR.auto_order import load_toss, read_account, main as run_order, tg, quarter_tag, read_reb
+from KR.auto_order import (load_toss, read_account, main as run_order, tg, quarter_tag, read_reb,
+                           dca_reserved, dca_tranche_due)
 from KR.live_v1 import is_rebalance_week
 
 P = lambda f: os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', f)
@@ -57,16 +58,22 @@ def main(execute=False, max_buy=None):
     if acct is None:
         msg = "⛔ 자동투입 중단: 계좌조회 실패"; print(msg); tg(msg); return 1
     holdings, cash, total = acct
-    print(f"[계좌] 현금 {cash/1e4:,.0f}만, 보유 {len(holdings)}종목, 총 {total/1e4:,.0f}만")
+    # 지수 DCA 예약분은 '이미 배분 결정된 미래 트랜치 몫' — 신규자금이 아님. 빼고 판단(매일 오인알림 방지).
+    reserved = dca_reserved()
+    new_cash = max(0, cash - reserved)
+    tranche_due = dca_tranche_due()
+    resv_txt = f" (지수DCA 예약 {reserved/1e4:,.0f}만 제외)" if reserved else ""
+    print(f"[계좌] 현금 {cash/1e4:,.0f}만 → 신규 {new_cash/1e4:,.0f}만{resv_txt}, 보유 {len(holdings)}종목, 총 {total/1e4:,.0f}만")
 
-    # 현금 없으면 대기 (조용히)
-    if cash < MIN_CASH:
-        print(f"현금 {cash/1e4:,.0f}만 < {MIN_CASH//10000}만 — 신규자금 없음, 대기")
+    # 신규자금도 없고 이번 달 지수 트랜치도 도래 안 했으면 대기 (조용히)
+    if new_cash < MIN_CASH and not tranche_due:
+        print(f"신규 {new_cash/1e4:,.0f}만 < {MIN_CASH//10000}만, 트랜치 미도래 — 대기")
         return 0
 
     if not execute:
-        print(f"📋 [드라이런] 현금 {cash/1e4:,.0f}만 감지 — 실행하면 이 돈 전액으로 알고리즘 매수. (--execute 필요)")
-        tg(f"💡 신규자금 {cash/1e4:,.0f}만 감지 (드라이런). 자동투입 대기 중.")
+        why = f"신규자금 {new_cash/1e4:,.0f}만" + (" + 지수 트랜치 도래" if tranche_due else "")
+        print(f"📋 [드라이런] {why} 감지 — 실행하면 알고리즘 자동배분(저변동 즉시·지수 DCA). (--execute 필요)")
+        tg(f"💡 {why} 감지 (드라이런). 자동투입 대기 중.")
         return 0
 
     # 하루 1회 제한
@@ -80,9 +87,10 @@ def main(execute=False, max_buy=None):
     except Exception:
         pass
 
-    # 현금 생김 → 신규자금 전액 배분 매수 (auto_order buy-only, anytime=상시허용)
+    # 신규자금/트랜치 도래 → 배분 매수 (auto_order buy-only, anytime=상시허용). 지수 DCA는 auto_order가 처리.
     cap_txt = f"{max_buy/1e4:,.0f}만" if max_buy else "전액"
-    tg(f"🟢 신규자금 {cash/1e4:,.0f}만 감지 — 알고리즘 자동매수 시작 (투입 {cap_txt})")
+    trg = f"신규자금 {new_cash/1e4:,.0f}만" + (" + 지수 트랜치" if tranche_due else "")
+    tg(f"🟢 {trg} 감지 — 알고리즘 자동배분 시작 (저변동 즉시·지수 DCA, 투입 {cap_txt})")
     rc = run_order(execute=True, max_buy=max_buy, force=False, probe=False, budget_override=None, anytime=True)
     if rc == 0:
         mark_today()
