@@ -171,6 +171,9 @@ def bot_status():
 def bot_details(bot, us, dca):
     """봇 상태 박스 클릭시 보여줄 친절한 설명 (상태별 '왜 이런지' + '뭘 하면 되는지')."""
     d = {}
+    now = datetime.datetime.now()  # EC2=KST
+    kr_open = now.weekday() < 5 and (9, 0) <= (now.hour, now.minute) < (15, 30)
+    kr_mkt = f"<br>· 지금 국내 장: <b>{'열림' if kr_open else '마감'}</b> — 매매는 장중에만 실행돼요"
     # ── 국내 ──
     if bot.get('kr'):
         dca_line = ''
@@ -181,7 +184,7 @@ def bot_details(bot, us, dca):
                    'html': ("<div class=rsn><b>서버가 정해진 시간에 알아서 매매해요</b><br>"
                             "· 평일 <b>10:00</b> — 분기 리밸런스 확인 (1·4·7·10월 첫 주에만 실제 종목 교체)<br>"
                             "· 평일 <b>10:30</b> — 계좌에 새 현금이 생기면 자동으로 나눠서 매수"
-                            + dca_line +
+                            + dca_line + kr_mkt +
                             "</div><div class=rsn><b>따로 하실 일은 없어요</b><br>"
                             "매매가 일어나면 그때마다 텔레그램으로 알려드립니다. "
                             "이 화면은 언제든 들어와서 구경만 하셔도 됩니다.</div>")}
@@ -269,7 +272,7 @@ def _gemini(key, prompt):
 PAGE = """<!doctype html><html lang=ko><head><meta charset=utf-8>
 <meta name=viewport content="width=device-width,initial-scale=1,viewport-fit=cover">
 <meta name=theme-color content="#eaeff8"><meta name=apple-mobile-web-app-capable content=yes>
-<title>Lassi</title><style>
+<title>시나브로</title><style>
 :root{--bg:#f2f4f8;--card:#fff;--line:#f0f2f6;--txt:#191f28;--sub:#8b95a1;--faint:#b6bdc7;--up:#f04452;--down:#3182f6;--pri:#3182f6;--soft:#f6f8fb;--grn:#12b886;
 --sh:0 1px 2px rgba(23,32,64,.04),0 10px 30px rgba(23,32,64,.06);--sh2:0 2px 6px rgba(23,32,64,.06),0 16px 40px rgba(23,32,64,.09)}
 *{box-sizing:border-box;margin:0;-webkit-tap-highlight-color:transparent}
@@ -392,7 +395,7 @@ details[open] summary:before{transform:rotate(90deg)}
 .h{font-size:13.5px}
 }
 </style></head><body><div class=wrap>
-<div class=top><div class=logo>Lassi<em>.</em></div><a href="{{url_for('logout')}}">로그아웃</a></div>
+<div class=top><div class=logo>시나브로<em>.</em></div><a href="{{url_for('logout')}}">로그아웃</a></div>
 <div class=note>{{now}} 기준 · <a href="{{url_for('dashboard')}}">↻ 새로고침</a></div>
 
 <div class=banner>
@@ -400,8 +403,6 @@ details[open] summary:before{transform:rotate(90deg)}
   <div class=bstat onclick="openBot('us')"><span class="led {{'wait' if bot.us_wait else ('on' if bot.us else 'off')}}"></span><div style=flex:1><div class=bl>미국 자동매매</div><div class="bv {{'wait' if bot.us_wait else ('on' if bot.us else 'off')}}">{{ '환전 대기' if bot.us_wait else ('가동중' if bot.us else '정지') }}</div></div><span class=binfo>›</span></div>
   <div class=bstat onclick="openBot('dm')"><span class="led {{'on' if bot.deadman else 'off'}}"></span><div style=flex:1><div class=bl>감시장치</div><div class="bv {{'on' if bot.deadman else 'off'}}">{{ '켜짐' if bot.deadman else '꺼짐' }}</div></div><span class=binfo>›</span></div>
 </div>
-<div class=cap style="margin:-6px 4px 12px">궁금하면 박스를 눌러보세요 — 왜 이 상태인지 알려드려요</div>
-
 <div class=seg><div class="on" onclick="sw('kr')">🇰🇷 국내</div><div onclick="sw('us')">🇺🇸 미국</div></div>
 
 <div class=grid>
@@ -418,7 +419,7 @@ details[open] summary:before{transform:rotate(90deg)}
       <span class=lp>{{ '%.0f'|format(s.pct) }}%</span></div>{% endfor %}</div></div>
   {% if dca %}<div class=cap style="color:#ff9500;font-weight:600">📅 지수는 매달 나눠서 사는 중 · 남은 {{ '{:,.0f}'.format(dca.reserved/10000) }}만원 · 약 {{dca.months}}개월</div>
   {% elif kr.alloc[0].pct < 40 %}<div class=cap>⚠️ 지수 비중 부족 · 현금 {{ '%.0f'|format(kr.alloc[2].pct) }}% 재배분 대기</div>{% endif %}</div>
-<div class=card><div class=h style=margin-bottom:2px>보유 종목 {{kr.holdings|length}} <span class=mut style=font-weight:500;font-size:11px>· 종목 누르면 매수이유</span></div>
+<div class=card><div class=h style=margin-bottom:2px>보유 종목 {{kr.holdings|length}}</div>
 {% for h in kr.holdings %}<div class=hold onclick="openStock('{{h.ticker}}','{{h.name}}',{{h.qty}},{{h.buy}},{{h.price}},{{h.plpct}},{{'1' if h.is_etf else '0'}})">
   <div class="hicon {{'etf' if h.is_etf}}" {% if not h.is_etf %}style="background:linear-gradient(135deg,hsl({{h.hue}},62%,58%),hsl({{h.hue}},66%,47%))"{% endif %}>{{ '📊' if h.is_etf else h.name[:2] }}</div>
   <div class=hmid><div class=hnm>{{h.name}}</div>
@@ -430,8 +431,7 @@ details[open] summary:before{transform:rotate(90deg)}
 
 <div id=us class=pane>
 {% if us.error %}<div class="card warn">⚠️ {{us.error}}</div>{% else %}
-<div class="card hero"><div class=lab>USD 예수금</div><div class=amt>${{ '%.2f'|format(us.cash_usd) }}</div>
-<div class=cap style=margin-top:1px>달러로 환전해두면 봇이 자동으로 SPY(미국 대표지수 ETF)를 사요. 원화는 자동 환전되지 않아요.</div></div>
+<div class="card hero"><div class=lab>USD 예수금</div><div class=amt>${{ '%.2f'|format(us.cash_usd) }}</div></div>
 {% if us.holdings %}<div class=card>{% for h in us.holdings %}<div class=hold style=cursor:default>
 <div class=hicon style=background:linear-gradient(135deg,#f04452,#d63a48)>{{h.ticker[:3]}}</div><div class=hmid><div class=hnm>{{h.ticker}}</div></div>
 <div class=hend><div class=hval>{{ '%.4f'|format(h.qty) }}주</div></div></div>{% endfor %}</div>
@@ -439,8 +439,8 @@ details[open] summary:before{transform:rotate(90deg)}
 </div>
 
 <div><!-- 오른쪽: AI / 자동화상세 / 거래 -->
-<div class=card chat><div class=h style=margin-bottom:10px>💬 AI 어시스턴트 <span class=mut style=font-weight:500;font-size:11px>· 뭐든 물어보세요</span></div>
-  <div class=msgs id=msgs><div class="m a">안녕하세요! 포트폴리오·전략에 대해 물어보세요. 예: "지금 수익률 어때?", "참고서가 뭐야?", "왜 현금이 많아?"</div></div>
+<div class=card chat><div class=h style=margin-bottom:10px>💬 AI 어시스턴트</div>
+  <div class=msgs id=msgs><div class="m a">무엇이든 물어보세요.</div></div>
   <div class=cin><input id=ci placeholder="메시지 입력..." onkeydown="if(event.key=='Enter')send()"><button onclick=send()>전송</button></div></div>
 
 <div class=card><details><summary style="cursor:pointer;font-weight:800;font-size:15px;outline:none">⚙️ 자동화 상세 <span class=mut style=font-weight:500;font-size:11px>· 눌러서 펼치기</span></summary>
@@ -458,7 +458,6 @@ details[open] summary:before{transform:rotate(90deg)}
 </div>
 </div>
 
-<div class=foot>Lassi · 매매는 서버가 알아서 해요 — 이 화면은 구경만 하셔도 됩니다</div>
 </div>
 
 <div id=modal class=modal onclick="if(event.target==this)closeM()"><div class=sheet id=sheet></div></div>
@@ -491,7 +490,7 @@ try{var r=await fetch('/api/chat',{method:'POST',headers:{'Content-Type':'applic
 var j=await r.json();a.textContent=j.reply||'(응답 없음)';}catch(e){a.textContent='(오류)';}m.scrollTop=m.scrollHeight;}
 </script></body></html>"""
 
-LOGIN = """<!doctype html><html lang=ko><head><meta charset=utf-8><meta name=viewport content="width=device-width,initial-scale=1"><title>Lassi 로그인</title><style>
+LOGIN = """<!doctype html><html lang=ko><head><meta charset=utf-8><meta name=viewport content="width=device-width,initial-scale=1"><title>시나브로 로그인</title><style>
 *{box-sizing:border-box}
 body{font-family:Pretendard,-apple-system,'Malgun Gothic',system-ui,sans-serif;background:linear-gradient(160deg,#eef1f6,#e0ebfa);color:#191f28;display:flex;height:100vh;align-items:center;justify-content:center;margin:0;letter-spacing:-.3px}
 form{background:#fff;padding:36px 30px;border-radius:26px;width:320px;box-shadow:0 2px 6px rgba(23,32,64,.05),0 24px 60px rgba(0,25,80,.13)}
@@ -501,7 +500,7 @@ input:focus{outline:none;border-color:#3182f6;background:#fff;box-shadow:0 0 0 3
 button{width:100%;padding:14px;background:#3182f6;color:#fff;border:0;border-radius:13px;margin-top:14px;cursor:pointer;font-weight:800;font-size:16px;transition:.15s}
 button:hover{background:#2b74e0}
 .e{color:#f04452;font-size:13px;margin-bottom:6px;font-weight:600}</style></head><body>
-<form method=post><h2>Lassi<span>.</span></h2><div class=s>교과서 v3 + 참고서 · 자동매매</div>
+<form method=post><h2>시나브로<span>.</span></h2><div class=s>모르는 사이 조금씩 · 자동매매</div>
 {% if error %}<div class=e>{{error}}</div>{% endif %}
 <input name=username placeholder=아이디 autofocus><input name=password type=password placeholder=비밀번호>
 <button>로그인</button></form></body></html>"""
