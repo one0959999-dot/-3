@@ -655,15 +655,9 @@ def set_user_initial_cash(user_id, pure_principal, is_mock):
         finally:
             conn.close()
 
-def add_user_initial_cash(user_id, deposit_delta, is_mock):
-    with db_lock:
-        conn = get_db_connection()
-        cash_col = "us_initial_cash" if is_mock else "real_initial_cash"
-        try:
-            conn.execute(f'UPDATE users SET {cash_col} = {cash_col} + ? WHERE id = ?', (deposit_delta, user_id))
-            conn.commit()
-        finally:
-            conn.close()
+# [제거됨] add_user_initial_cash — 구봇의 '외부입금 오탐' 원금 가산기(계좌변화를 입금으로 착각해
+# real_initial_cash를 부풀림). 호출부(KR/bot.py·US/bot.py)와 함께 삭제. 원금은 set_user_initial_cash
+# (사용자 수동확정)만이 진실원천.
 
 def get_news_api_keys(user_id: int) -> dict:
     conn = get_db_connection()
