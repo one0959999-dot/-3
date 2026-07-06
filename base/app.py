@@ -395,8 +395,9 @@ _PAT = {
 }
 
 
-def _bar(label, raw, scale, color=None):
-    """작은 가로 막대 1줄. raw=비율(0.42=42%). Korean color(빨강+/파랑-) 기본."""
+def _bar(label, raw, scale, color=None, signed=True):
+    """작은 가로 막대 1줄. raw=비율(0.42=42%). Korean color(빨강+/파랑-) 기본.
+    signed=False면 부호 없이 절대값 표시(변동성처럼 방향 없는 값)."""
     try:
         v = float(raw)
     except (TypeError, ValueError):
@@ -406,22 +407,27 @@ def _bar(label, raw, scale, color=None):
                 f'<span style="width:58px;text-align:right;font-size:12px;color:#8b95a1">—</span></div>')
     w = min(abs(v) / scale, 1.0) * 100
     col = color or ('#3182f6' if v < 0 else '#f04452')
+    val = f"{v*100:+.1f}%" if signed else f"{abs(v)*100:.1f}%"
     return (f'<div style="display:flex;align-items:center;gap:8px;margin:6px 0">'
             f'<span style="width:56px;font-size:12px;color:#8b95a1">{label}</span>'
             f'<span style="flex:1;height:7px;background:#e9edf2;border-radius:4px;overflow:hidden">'
             f'<span style="display:block;height:100%;width:{w:.0f}%;background:{col};border-radius:4px"></span></span>'
-            f'<span style="width:58px;text-align:right;font-size:12px;font-weight:700;color:{col}">{v*100:+.1f}%</span></div>')
+            f'<span style="width:58px;text-align:right;font-size:12px;font-weight:700;color:{col}">{val}</span></div>')
 
 
 def _stock_reason(m):
     plabel, pdesc = _PAT.get(m.get('pattern', ''), ('· 패턴 정보 없음', ''))
-    tmap = {'clean': ('데이터 정상', '#00c473'), 'watch': ('검토 필요', '#ff9500'),
-            'confirmed': ('데이터 아티팩트 의심', '#f04452')}
-    tlabel, tcol = tmap.get(m.get('artifact_tier'), ('정보 없음', '#8b95a1'))
+    # 참고서 데이터 신뢰도 등급 + 평이한 설명
+    tmap = {'clean': ('데이터 정상', '#00c473', '과거 시세에서 이상 신호 없음 — 믿을 만한 데이터'),
+            'watch': ('검토 필요', '#ff9500', '이상 신호 1개(약한 의심) — 배제까진 아니고 참고 표시'),
+            'confirmed': ('데이터 아티팩트 의심', '#f04452', '이상 신호 강함 — 데이터 왜곡 가능, 라이브에선 제외됨')}
+    tlabel, tcol, tdesc = tmap.get(m.get('artifact_tier'), ('정보 없음', '#8b95a1', ''))
     best = (m.get('best_year') or '').replace(':', '년 ')
     worst = (m.get('worst_year') or '').replace(':', '년 ')
     yr = (f"<div style='font-size:12px;color:#8b95a1;margin-top:9px'>최고 {best or '—'} · 최악 {worst or '—'}</div>"
           if (best or worst) else '')
+    fy = (m.get('first_date') or '')[:4]; ly = (m.get('last_date') or '')[:4]
+    span = f"{fy}~{ly}" if (fy and ly) else "상장 이후"
     why = (
         "<b>왜 이 종목을 샀나</b>"
         "<div style='margin:8px 0 4px;line-height:1.95;font-size:13px'>"
@@ -437,14 +443,19 @@ def _stock_reason(m):
         "<div style='display:flex;align-items:center;justify-content:space-between;margin-bottom:3px'>"
         "<b>수익 패턴</b>"
         f"<span style='font-size:14px;font-weight:800'>{plabel}</span></div>"
-        f"<div style='font-size:12px;color:#8b95a1;margin-bottom:11px'>{pdesc}</div>"
+        f"<div style='font-size:12px;color:#8b95a1;margin-bottom:9px'>{pdesc}</div>"
+        f"<div style='font-size:11px;color:#aeb6bf;margin-bottom:9px;line-height:1.5'>※ 아래는 {span} <b>장기</b> 기록입니다. "
+        f"위 '주가 안정적'은 <b>최근 6개월</b> 기준이라, 장기론 더 크게 출렁였을 수 있어요.</div>"
         + _bar('총수익', m.get('total_ret'), 2.0)
         + _bar('연수익', m.get('cagr'), 0.3)
         + _bar('최대낙폭', m.get('mdd'), 1.0, color='#3182f6')
-        + _bar('변동성', m.get('ann_vol'), 0.8, color='#ff9500')
+        + _bar('변동성', m.get('ann_vol'), 0.8, color='#ff9500', signed=False)
         + yr
-        + f"<div style='font-size:12px;margin-top:6px'>데이터 신뢰도: <b style='color:{tcol}'>{tlabel}</b></div>"
-        "</div>"
+        + f"<div style='font-size:12px;margin-top:10px'>데이터 신뢰도 "
+        f"<span class=mut style='font-weight:500'>· 참고서가 시세데이터 품질 평가</span>: "
+        f"<b style='color:{tcol}'>{tlabel}</b></div>"
+        + (f"<div style='font-size:11px;color:#8b95a1;margin-top:2px;line-height:1.5'>{tdesc}</div>" if tdesc else '')
+        + "</div>"
     )
     return why + viz
 
