@@ -365,7 +365,7 @@ summary::-webkit-details-marker{display:none}
 summary:before{content:'▸';display:inline-block;transition:transform .18s;font-size:11px;color:var(--faint)}
 details[open] summary:before{transform:rotate(90deg)}
 /* 채팅 */
-.chat .msgs{max-height:290px;overflow-y:auto;display:flex;flex-direction:column;gap:9px;padding:2px;scrollbar-width:thin}
+.chat .msgs{min-height:230px;max-height:440px;overflow-y:auto;display:flex;flex-direction:column;gap:9px;padding:2px;scrollbar-width:thin}
 .msgs::-webkit-scrollbar{width:5px} .msgs::-webkit-scrollbar-thumb{background:#dfe5ec;border-radius:3px}
 .m{max-width:85%;padding:10px 13px;border-radius:16px;font-size:13.5px;line-height:1.55;white-space:pre-wrap;word-break:break-word}
 .m.u{align-self:flex-end;background:linear-gradient(135deg,#1fb583,#149a6e);color:#fff;border-bottom-right-radius:5px;box-shadow:0 3px 10px rgba(20,154,110,.25)}
@@ -375,6 +375,11 @@ details[open] summary:before{transform:rotate(90deg)}
 .cin input:focus{outline:none;border-color:var(--pri);background:#fff;box-shadow:0 0 0 3px rgba(20,154,110,.13)}
 .cin button{padding:12px 17px;background:var(--pri);color:#fff;border:0;border-radius:13px;font-weight:800;cursor:pointer;transition:.15s}
 .cin button:hover{background:#0f8159} .cin button:active{transform:scale(.96)}
+.cin button:disabled,.cin input:disabled{opacity:.55;cursor:default}
+.m.a.typing{display:flex;gap:4px;align-items:center;padding:14px 16px}
+.td{width:7px;height:7px;border-radius:50%;background:#b3bcc6;animation:td 1.1s infinite}
+.td:nth-child(2){animation-delay:.15s} .td:nth-child(3){animation-delay:.3s}
+@keyframes td{0%,60%,100%{transform:translateY(0);opacity:.45}30%{transform:translateY(-4px);opacity:1}}
 /* 모달 — 데스크톱 중앙 / 모바일 바텀시트 */
 .modal{display:none;position:fixed;inset:0;background:rgba(12,20,40,.5);z-index:30;align-items:center;justify-content:center;padding:16px;backdrop-filter:blur(3px);-webkit-backdrop-filter:blur(3px)}
 .modal.on{display:flex}
@@ -404,7 +409,7 @@ details[open] summary:before{transform:rotate(90deg)}
 .donut{gap:13px} .dc{width:104px;height:104px} .hole{inset:18px} .hole .t2{font-size:16px}
 .hold{padding:11px 4px;gap:10px} .hicon{width:37px;height:37px;border-radius:12px}
 .hnm{font-size:14px} .hval{font-size:14px}
-.grid{gap:12px} .chat .msgs{max-height:230px}
+.grid{gap:12px} .chat .msgs{min-height:170px;max-height:46vh}
 .h{font-size:13.5px}
 }
 </style></head><body><div class=wrap>
@@ -452,9 +457,9 @@ details[open] summary:before{transform:rotate(90deg)}
 </div>
 
 <div><!-- 오른쪽: AI / 자동화상세 / 거래 -->
-<div class=card chat><div class=h style=margin-bottom:10px>💬 AI 어시스턴트</div>
+<div class="card chat"><div class=h style=margin-bottom:10px>💬 AI 어시스턴트</div>
   <div class=msgs id=msgs><div class="m a">무엇이든 물어보세요.</div></div>
-  <div class=cin><input id=ci placeholder="메시지 입력..." onkeydown="if(event.key=='Enter')send()"><button onclick=send()>전송</button></div></div>
+  <div class=cin><input id=ci placeholder="메시지 입력..." onkeydown="if(event.key=='Enter')send()"><button id=cbtn onclick=send()>전송</button></div></div>
 
 <div class=card><details><summary style="cursor:pointer;font-weight:800;font-size:15px;outline:none">⚙️ 자동화 상세</summary>
   <div style=margin-top:12px>
@@ -496,11 +501,17 @@ s.innerHTML='<h3>'+nm+'</h3><div class=sub>'+tk+(etf==1?' · 지수 ETF':' · �
 document.getElementById('modal').classList.add('on');
 try{var r=await fetch('/api/stock/'+tk);var j=await r.json();
 document.getElementById('rsn').innerHTML=j.html;}catch(e){document.getElementById('rsn').textContent='정보 로드 실패';}}
-async function send(){var i=document.getElementById('ci'),m=document.getElementById('msgs'),v=i.value.trim();if(!v)return;
-i.value='';m.innerHTML+='<div class="m u">'+v.replace(/</g,'&lt;')+'</div>';
-var a=document.createElement('div');a.className='m a';a.textContent='…';m.appendChild(a);m.scrollTop=m.scrollHeight;
+function esc(s){return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')}
+function md(s){return esc(s).replace(/\\*\\*(.+?)\\*\\*/g,'<b>$1</b>').replace(/^\\s*[\\*\\-]\\s+/gm,'· ')}
+async function send(){var i=document.getElementById('ci'),b=document.getElementById('cbtn'),m=document.getElementById('msgs'),v=i.value.trim();if(!v||i.disabled)return;
+i.value='';i.disabled=true;b.disabled=true;
+var u=document.createElement('div');u.className='m u';u.textContent=v;m.appendChild(u);
+var a=document.createElement('div');a.className='m a typing';a.innerHTML='<span class=td></span><span class=td></span><span class=td></span>';
+m.appendChild(a);m.scrollTop=m.scrollHeight;
 try{var r=await fetch('/api/chat',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({message:v})});
-var j=await r.json();a.textContent=j.reply||'(응답 없음)';}catch(e){a.textContent='(오류)';}m.scrollTop=m.scrollHeight;}
+var j=await r.json();a.classList.remove('typing');a.innerHTML=md(j.reply||'(응답 없음)');}
+catch(e){a.classList.remove('typing');a.textContent='(오류 — 다시 보내주세요)';}
+i.disabled=false;b.disabled=false;i.focus();m.scrollTop=m.scrollHeight;}
 document.querySelectorAll('.cnt').forEach(function(el){
 var t=el.textContent.trim(),dec=(t.split('.')[1]||'').length,v=parseFloat(t.replace(/,/g,''));
 if(isNaN(v))return;var s=performance.now(),D=620;
@@ -659,10 +670,13 @@ def api_chat():
     kr = kr_snapshot(row)
     ctx = (f"총자산 {kr['total']:,.0f}원, 미실현수익률 {kr['ret']:.2f}%, 보유 {len(kr['holdings'])}종목, "
            f"현금 {kr['cash']:,.0f}원(미투입). 전략=KODEX200 지수ETF 50% + v3저변동 25종목 50%, 분기 리밸런스, "
-           f"참고서(데이터아티팩트·부실상폐 회피). US=SPY. 매매는 서버가 정해진 시간에 자동 실행.") if not kr['error'] else '계좌조회 실패'
+           f"참고서(데이터아티팩트·부실상폐 회피). 저변동 목표는 25종목이지만 배정액보다 1주 가격이 비싼 종목은 "
+           f"건너뛰어 실제 보유수가 더 적을 수 있음(분기 리밸런스가 채움). 미국은 SPY(S&P500 ETF) 하나만 매수. "
+           f"매매는 서버가 정해진 시간에 자동 실행.") if not kr['error'] else '계좌조회 실패'
     prompt = ("너는 '시나브로' 자동투자 대시보드의 어시스턴트다. 아래 맥락으로 사용자 질문에 한국어로 간결·친근하게 답해라. "
               "너는 매매 실행이나 봇 켜기/끄기를 할 수 없다(그건 개발 채팅에서만 가능) — 설명·조언만 한다. "
-              "전문용어(크론·EC2 등)는 쓰지 말고 쉬운 말로.\n\n[포트폴리오]\n" + ctx + "\n\n[질문]\n" + msg)
+              "전문용어(크론·EC2 등) 금지, 마크다운 기호(**굵게**, * 목록) 금지 — 짧은 일반 문장으로, 5문장 이내. "
+              "인사말 없이 질문에 바로 답해라.\n\n[포트폴리오]\n" + ctx + "\n\n[질문]\n" + msg)
     return jsonify(reply=_gemini(key, prompt))
 
 
