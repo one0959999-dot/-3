@@ -436,6 +436,8 @@ background-size:211px 211px}
 @keyframes tw1{0%,100%{opacity:.15}50%{opacity:.40}}
 @keyframes tw2{0%,100%{opacity:.38}45%{opacity:.14}}
 .hero .pearl.tilt{animation:none;transition:background-position .2s ease-out}
+.hero .pearl b{position:absolute;border-radius:50%;pointer-events:none;opacity:0}
+@keyframes fl{0%,100%{opacity:0}50%{opacity:.9}}
 .hero .lab{font-size:12.5px;color:rgba(255,255,255,.68);font-weight:700}
 .hero .amt{font-size:40px;font-weight:800;margin:5px 0 4px;letter-spacing:-2px;color:#fff}
 .hero .amt small{font-size:19px;color:rgba(255,255,255,.62);font-weight:700;letter-spacing:-.5px}
@@ -726,6 +728,15 @@ var dx=e.changedTouches[0].clientX-_sx,dy=e.changedTouches[0].clientY-_sy;
 if(Math.abs(dx)>75&&Math.abs(dy)<45&&!document.getElementById('modal').classList.contains('on')){
 var t=document.querySelectorAll('.seg div');(dx<0?t[1]:t[0]).click();}});
 setTimeout(function(){document.body.classList.remove('boot')},900);
+/* 랜덤 펄: 위치·크기·색·주기·시작이 전부 랜덤인 입자 40개 — 하나씩 톡톡 빛남 */
+document.querySelectorAll('.pearl').forEach(function(p){
+var cols=['rgba(255,255,255,.9)','rgba(255,255,255,.75)','rgba(196,255,230,.85)','rgba(255,243,206,.8)'];
+for(var i=0;i<40;i++){var f=document.createElement('b');
+var s=(Math.random()*1.3+0.6).toFixed(1),c=cols[Math.floor(Math.random()*cols.length)];
+f.style.cssText='left:'+(Math.random()*100).toFixed(1)+'%;top:'+(Math.random()*100).toFixed(1)+'%;'
++'width:'+s+'px;height:'+s+'px;background:'+c+';box-shadow:0 0 '+(s*2)+'px '+c+';'
++'animation:fl '+(2.6+Math.random()*5).toFixed(1)+'s ease-in-out '+(Math.random()*7).toFixed(1)+'s infinite';
+p.appendChild(f);}});
 /* 펄 광원: 자이로 지원시(HTTPS)만 기울기 반사 — 평소엔 자동 광택+트윙클만(은은) */
 window.addEventListener('deviceorientation',function(e){
 if(e.gamma==null)return;
