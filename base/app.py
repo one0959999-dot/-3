@@ -98,7 +98,7 @@ def _equity_snapshot(total):
         except Exception:
             pass
     pts = [h[k] for k in sorted(h)][-90:]
-    return pts, ((total - prev) if prev else None)
+    return pts, ((total - prev) if prev else None), prev
 
 
 def _spark(pts, w=300, hgt=40):
@@ -147,6 +147,7 @@ def kr_snapshot(row):
             tk = str(s['ticker'])
             out['holdings'].append({'name': s.get('name', tk), 'ticker': tk, 'qty': q, 'price': px,
                                     'buy': bp, 'value': val, 'plpct': (px / bp - 1) * 100 if bp else 0,
+                                    'plw': (px - bp) * q,
                                     'is_etf': is_etf, 'hue': (int(tk) % 360) if tk.isdigit() else 210})
         cash = t.get_buyable_cash(default=None)
         cash = float(cash) if cash is not None else 0.0
@@ -158,7 +159,7 @@ def kr_snapshot(row):
         out['holdings'].sort(key=lambda x: (-x['is_etf'], -x['value']))
         tot = out['total'] or 1
         cum = 0.0; stops = []
-        for label, v, col in [('지수 ETF', etf_v, '#3182f6'), ('저변동 25종목', stk_v, '#20c997'), ('현금', cash, '#c4cdd8')]:
+        for label, v, col in [('지수 ETF', etf_v, '#149a6e'), ('저변동 25종목', stk_v, '#8fd6b4'), ('현금', cash, '#c4cdd8')]:
             f = v / tot * 100
             out['alloc'].append({'label': label, 'val': v, 'pct': f, 'color': col})
             stops.append(f"{col} {cum:.2f}% {cum + f:.2f}%")
@@ -332,6 +333,7 @@ PAGE = """<!doctype html><html lang=ko><head><meta charset=utf-8>
 <meta name=theme-color content="#e9f1ec" media="(prefers-color-scheme: light)">
 <meta name=theme-color content="#101418" media="(prefers-color-scheme: dark)">
 <meta name=apple-mobile-web-app-capable content=yes>
+<meta name=apple-mobile-web-app-status-bar-style content=black-translucent>
 <meta name=apple-mobile-web-app-title content=시나브로>
 <link rel=manifest href=/manifest.json><link rel=apple-touch-icon href=/icon.png>
 <link rel=icon type=image/png href=/icon.png>
@@ -339,20 +341,23 @@ PAGE = """<!doctype html><html lang=ko><head><meta charset=utf-8>
 :root{--bg:#f2f5f4;--card:#fff;--line:#eef2f0;--txt:#191f28;--sub:#8b95a1;--faint:#b6bdc7;--up:#f04452;--down:#3182f6;--pri:#149a6e;--soft:#f4f8f6;--grn:#12b886;
 --sh:0 1px 2px rgba(23,32,64,.04),0 10px 30px rgba(23,32,64,.06);--sh2:0 2px 6px rgba(23,32,64,.06),0 16px 40px rgba(23,32,64,.09)}
 *{box-sizing:border-box;margin:0;-webkit-tap-highlight-color:transparent}
+html{overscroll-behavior-y:none}
+body.mlock{overflow:hidden}
 body{font-family:Pretendard,-apple-system,'Malgun Gothic','Apple SD Gothic Neo',system-ui,sans-serif;
 background:linear-gradient(180deg,#e9f1ec 0,var(--bg) 260px);color:var(--txt);letter-spacing:-.3px;font-size:14px;min-height:100vh}
 body:before{content:'';position:fixed;inset:0;z-index:-1;pointer-events:none;background:
 radial-gradient(640px 420px at 88% -8%,rgba(20,154,110,.11),transparent),
 radial-gradient(520px 380px at -12% 6%,rgba(18,184,134,.07),transparent)}
+body:after{content:'';position:fixed;top:0;left:0;right:0;height:env(safe-area-inset-top);background:#173a2c;z-index:50;pointer-events:none}
 .wrap{max-width:1060px;margin:0 auto;padding:0 20px 64px}
 .num,.amt,.hval,.hpl,.vv,.lp,.pill{font-variant-numeric:tabular-nums}
 /* 스티키 헤더 */
 .top{position:sticky;top:0;z-index:15;display:flex;justify-content:space-between;align-items:center;
-margin:0 -20px 2px;padding:13px 22px 11px;background:rgba(236,243,239,.78);backdrop-filter:blur(16px);-webkit-backdrop-filter:blur(16px)}
+margin:0 -20px 2px;padding:calc(13px + env(safe-area-inset-top)) 22px 11px;background:rgba(236,243,239,.78);backdrop-filter:blur(16px);-webkit-backdrop-filter:blur(16px)}
 .logo{font-size:20px;font-weight:800;letter-spacing:-.6px} .logo em{font-style:normal;color:var(--pri)}
 .top a{color:var(--sub);text-decoration:none;font-size:12.5px;font-weight:600;padding:6px 11px;border-radius:9px;transition:.15s}
 .top a:hover{background:rgba(255,255,255,.85);color:var(--txt)}
-.note{font-size:11.5px;color:var(--faint);margin:6px 2px 12px} .note a{color:var(--pri);text-decoration:none;font-weight:600}
+.note{font-size:11.5px;color:#6b7684;margin:6px 2px 12px} .note a{color:var(--pri);text-decoration:none;font-weight:600}
 /* 봇 상태 캡슐 (한 줄, 상태별 색 배경으로 한눈에) */
 .sbar{display:flex;gap:6px;background:var(--card);border:1px solid rgba(15,30,70,.045);border-radius:99px;
 padding:6px;box-shadow:var(--sh);margin-bottom:14px}
@@ -385,22 +390,30 @@ background:radial-gradient(closest-side,rgba(94,214,167,.22),transparent)}
 .hero:after{content:'';position:absolute;width:200px;height:200px;border-radius:50%;bottom:-110px;left:-70px;
 background:radial-gradient(closest-side,rgba(46,160,120,.20),transparent)}
 .hero>*{position:relative}
-.hero .lab{font-size:12.5px;color:rgba(255,255,255,.55);font-weight:700}
-.hero .amt{font-size:40px;font-weight:800;margin:5px 0 13px;letter-spacing:-2px;color:#fff}
-.hero .amt small{font-size:19px;color:rgba(255,255,255,.5);font-weight:700;letter-spacing:-.5px}
-.pill{display:inline-flex;align-items:center;gap:5px;font-size:14.5px;font-weight:800;padding:8px 15px;border-radius:99px}
+.hero .lab{font-size:12.5px;color:rgba(255,255,255,.68);font-weight:700}
+.hero .amt{font-size:40px;font-weight:800;margin:5px 0 4px;letter-spacing:-2px;color:#fff}
+.hero .amt small{font-size:19px;color:rgba(255,255,255,.62);font-weight:700;letter-spacing:-.5px}
+.pill{display:inline-flex;align-items:center;gap:5px;font-size:13px;font-weight:800;padding:7px 14px;border-radius:99px}
 .up{color:var(--up)} .down{color:var(--down)} .pill.up{background:#fdeaec} .pill.down{background:#e9f1fe}
 .hero .pill.up{background:rgba(240,68,82,.28);color:#ffaab1} .hero .pill.down{background:rgba(120,170,255,.2);color:#a9c9ff}
-.dchg{font-size:12px;font-weight:700;margin-top:9px} .hero .dchg.up{color:#ffb3ba} .hero .dchg.down{color:#a9c9ff}
+.dchg{font-size:14.5px;font-weight:800;margin:3px 0 11px} .hero .dchg.up{color:#ffb3ba} .hero .dchg.down{color:#a9c9ff}
 .spk{width:100%;height:40px;margin-top:13px;display:block;opacity:.92}
 .spk polyline{fill:none;stroke:rgba(255,255,255,.8);stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
 .trow{display:flex;align-items:center;gap:8px;padding:9.5px 2px;border-bottom:1px solid var(--line);font-size:13.5px} .trow:last-child{border:0}
 .tnm{flex:1;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .tend{text-align:right;flex-shrink:0} .tend b{font-size:13.5px}
 .tend small{display:block;color:var(--sub);font-size:11px;margin-top:1px;font-weight:500}
-#ptr{position:fixed;top:12px;left:50%;transform:translateX(-50%);width:34px;height:34px;border-radius:50%;
+#ptr{position:fixed;top:calc(12px + env(safe-area-inset-top));left:50%;transform:translateX(-50%);width:34px;height:34px;border-radius:50%;
 background:var(--pri);color:#fff;display:flex;align-items:center;justify-content:center;font-size:17px;
-opacity:0;transition:.2s;z-index:40;box-shadow:0 4px 14px rgba(20,154,110,.4);pointer-events:none}
+opacity:0;transition:opacity .15s;z-index:40;box-shadow:0 4px 14px rgba(20,154,110,.4);pointer-events:none}
+#ptr.spin{animation:pspin .6s linear infinite}
+@keyframes pspin{to{transform:translateX(-50%) rotate(360deg)}}
+/* 참고서 막대(종목상세) — 다크모드 자동대응 */
+.bar{display:flex;align-items:center;gap:8px;margin:6px 0}
+.bar .bl{width:56px;font-size:12px;color:var(--sub)}
+.bar .trk{flex:1;height:7px;background:var(--line);border-radius:4px;overflow:hidden}
+.bar .fill{display:block;height:100%;border-radius:4px}
+.bar .bv{width:58px;text-align:right;font-size:12px;font-weight:700}
 /* 도넛 */
 .donut{display:flex;align-items:center;gap:18px}
 .dc{position:relative;width:120px;height:120px;flex-shrink:0} .pie{width:100%;height:100%;border-radius:50%;box-shadow:inset 0 0 0 1px rgba(15,30,70,.04);animation:pin .55s ease}
@@ -433,7 +446,7 @@ summary::-webkit-details-marker{display:none}
 summary:before{content:'▸';display:inline-block;transition:transform .18s;font-size:11px;color:var(--faint)}
 details[open] summary:before{transform:rotate(90deg)}
 /* 채팅 */
-.chat .msgs{min-height:230px;max-height:440px;overflow-y:auto;display:flex;flex-direction:column;gap:9px;padding:2px;scrollbar-width:thin}
+.chat .msgs{min-height:230px;max-height:440px;overflow-y:auto;display:flex;flex-direction:column;gap:9px;padding:2px;scrollbar-width:thin;overscroll-behavior:contain}
 .msgs::-webkit-scrollbar{width:5px} .msgs::-webkit-scrollbar-thumb{background:#dfe5ec;border-radius:3px}
 .m{max-width:85%;padding:10px 13px;border-radius:16px;font-size:13.5px;line-height:1.55;white-space:pre-wrap;word-break:break-word}
 .m.u{align-self:flex-end;background:linear-gradient(135deg,#1fb583,#149a6e);color:#fff;border-bottom-right-radius:5px;box-shadow:0 3px 10px rgba(20,154,110,.25)}
@@ -451,10 +464,10 @@ details[open] summary:before{transform:rotate(90deg)}
 /* 모달 — 데스크톱 중앙 / 모바일 바텀시트 */
 .modal{display:none;position:fixed;inset:0;background:rgba(12,20,40,.5);z-index:30;align-items:center;justify-content:center;padding:16px;backdrop-filter:blur(3px);-webkit-backdrop-filter:blur(3px)}
 .modal.on{display:flex}
-.sheet{background:#fff;border-radius:24px;width:100%;max-width:440px;padding:26px 24px;max-height:86vh;overflow-y:auto;box-shadow:var(--sh2);animation:pop .22s ease}
+.sheet{background:#fff;border-radius:24px;width:100%;max-width:440px;padding:26px 24px;max-height:86vh;overflow-y:auto;box-shadow:var(--sh2);animation:pop .22s ease;overscroll-behavior:contain}
 @keyframes pop{from{opacity:0;transform:translateY(14px) scale(.98)}to{opacity:1;transform:none}}
 @media(max-width:560px){.modal{align-items:flex-end;padding:0}
-.sheet{max-width:none;border-radius:24px 24px 0 0;max-height:88vh;animation:slide .25s ease}}
+.sheet{max-width:none;border-radius:24px 24px 0 0;max-height:88vh;animation:slide .25s ease;padding-bottom:calc(26px + env(safe-area-inset-bottom))}}
 @keyframes slide{from{opacity:.5;transform:translateY(48px)}to{opacity:1;transform:none}}
 .sheet h3{font-size:19px;margin-bottom:3px;letter-spacing:-.5px} .sheet .sub{color:var(--sub);font-size:12.5px;margin-bottom:16px}
 .mrow{display:flex;justify-content:space-between;padding:10.5px 0;border-bottom:1px solid var(--line);font-size:14px} .mrow .k{color:var(--sub);font-weight:600}
@@ -466,7 +479,8 @@ details[open] summary:before{transform:rotate(90deg)}
 /* ── 모바일 (폰 최적화) ── */
 @media(max-width:600px){
 .wrap{padding:0 14px calc(52px + env(safe-area-inset-bottom))}
-.top{margin:0 -14px 2px;padding:11px 16px 9px} .logo{font-size:19px}
+.top{margin:0 -14px 2px;padding:calc(11px + env(safe-area-inset-top)) 16px 9px} .logo{font-size:19px}
+.hpl{font-size:11.5px}
 .note{margin:5px 2px 10px}
 .sbar{padding:5px;gap:5px;margin-bottom:11px}
 .sseg{font-size:11px;gap:4px;padding:8px 0} .sseg b{font-size:11px}
@@ -503,6 +517,8 @@ body:before{background:radial-gradient(640px 420px at 88% -8%,rgba(20,154,110,.1
 .rsn{background:var(--soft);border-color:var(--line)}
 .mclose{background:#232b34;color:var(--txt)} .mclose:hover{background:#2a3340}
 .td{background:#5c6773}
+.note{color:var(--sub)}
+.cin input:focus{background:var(--card)}
 }
 </style></head><body><div class=wrap>
 <div class=top><div class=logo>시나브로<em>.</em></div><a href="{{url_for('logout')}}">로그아웃</a></div>
@@ -520,12 +536,12 @@ body:before{background:radial-gradient(640px 420px at 88% -8%,rgba(20,154,110,.1
 <div id=kr class="pane on">
 {% if kr.error %}<div class="card warn">⚠️ {{kr.error}}</div>{% else %}
 <div class="card hero"><div class=lab>총 자산</div><div class=amt><span class=cnt>{{ '{:,.0f}'.format(kr.total) }}</span><small> 원</small></div>
+  {% if kr.get('delta') is not none %}<div class="dchg {{'up' if kr.delta>=0 else 'down'}}">어제보다 {{ '{:+,.0f}'.format(kr.delta) }}원{% if kr.get('delta_pct') is not none %} ({{ '%+.1f'|format(kr.delta_pct) }}%){% endif %}</div>{% endif %}
   <span class="pill {{'up' if (kr.ret or 0)>=0 else 'down'}}">{{ '▲' if (kr.ret or 0)>=0 else '▼' }} {{ '%.2f'|format(kr.ret|abs) if kr.ret is not none else '—' }}% <span style=opacity:.5>·</span> {{ '{:+,.0f}'.format(kr.pl) }}원</span>
-  {% if kr.get('delta') is not none %}<div class="dchg {{'up' if kr.delta>=0 else 'down'}}">어제보다 {{ '{:+,.0f}'.format(kr.delta) }}원</div>{% endif %}
   {% if kr.get('spark') %}<svg class=spk viewBox="0 0 300 40" preserveAspectRatio=none><polyline points="{{kr.spark}}"/></svg>{% endif %}</div>
-<div class=card><div class=lab style=margin-bottom:12px>포트폴리오 구성</div>
+<div class=card><div class=h style=margin-bottom:12px>포트폴리오 구성</div>
   <div class=donut><div class=dc><div class=pie style="background:conic-gradient({{kr.conic}})"></div>
-    <div class=hole><div class=t1>보유</div><div class=t2>{{kr.holdings|length}}개</div></div></div>
+    <div class=hole><div class=t1>투자중</div><div class=t2>{{ '%.0f'|format(100 - kr.alloc[2].pct) }}%</div></div></div>
     <div class=leg>{% for s in kr.alloc %}<div class=legrow><span class=dot style=background:{{s.color}}></span>
       <span class=ln>{{s.label}}<div class=lv>{{ '{:,.0f}'.format(s.val) }}원</div></span>
       <span class=lp>{{ '%.0f'|format(s.pct) }}%</span></div>{% endfor %}</div></div>
@@ -536,7 +552,7 @@ body:before{background:radial-gradient(640px 420px at 88% -8%,rgba(20,154,110,.1
   <div class="hicon {{'etf' if h.is_etf}}" {% if not h.is_etf %}style="background:linear-gradient(135deg,hsl({{h.hue}},62%,58%),hsl({{h.hue}},66%,47%))"{% endif %}>{{ '📊' if h.is_etf else h.name[:2] }}</div>
   <div class=hmid><div class=hnm>{{h.name}}</div>
     <div class=prices><span class=pb>매입 {{ '{:,.0f}'.format(h.buy) }}</span><span class="pc {{'up' if h.plpct>=0 else 'down'}}">현재 <b>{{ '{:,.0f}'.format(h.price) }}</b></span></div></div>
-  <div class=hend><div class=hval>{{ '{:,.0f}'.format(h.value) }}</div><div class="hpl {{'up' if h.plpct>=0 else 'down'}}">{{ '%+.1f'|format(h.plpct) }}%</div></div>
+  <div class=hend><div class=hval>{{ '{:,.0f}'.format(h.value) }}</div><div class="hpl {{'up' if h.plpct>=0 else 'down'}}">{{ '{:+,.0f}'.format(h.plw) }} ({{ '%+.1f'|format(h.plpct) }}%)</div></div>
   <span class=chev>›</span></div>{% endfor %}
 {% if not kr.holdings %}<div class="mut" style=text-align:center;padding:16px>보유 종목 없음</div>{% endif %}</div>
 {% endif %}</div>
@@ -583,11 +599,11 @@ body:before{background:radial-gradient(640px 420px at 88% -8%,rgba(20,154,110,.1
 var BOTD={{botd|tojson}};
 function openBot(k){var d=BOTD[k];if(!d)return;var s=document.getElementById('sheet');
 s.innerHTML='<h3>'+d.title+'</h3><div class=sub>'+d.sub+'</div>'+d.html+'<button class=mclose onclick=closeM()>닫기</button>';
-document.getElementById('modal').classList.add('on');}
+document.getElementById('modal').classList.add('on');document.body.classList.add('mlock');}
 function sw(x){document.querySelectorAll('.seg div').forEach(t=>t.classList.remove('on'));
 document.querySelectorAll('.pane').forEach(p=>p.classList.remove('on'));
 document.getElementById(x).classList.add('on');event.currentTarget.classList.add('on');}
-function closeM(){document.getElementById('modal').classList.remove('on');}
+function closeM(){document.getElementById('modal').classList.remove('on');document.body.classList.remove('mlock');}
 async function openStock(tk,nm,qty,buy,price,pl,etf){
 var col=pl>=0?'#f04452':'#3182f6';
 var s=document.getElementById('sheet');
@@ -596,8 +612,9 @@ s.innerHTML='<h3>'+nm+'</h3><div class=sub>'+tk+(etf==1?' · 지수 ETF':' · �
 +'<div class=mrow><span class=k>매입가</span><span>'+buy.toLocaleString()+'원</span></div>'
 +'<div class=mrow><span class=k>현재가</span><span style="color:'+col+';font-weight:800">'+price.toLocaleString()+'원 ('+(pl>=0?'+':'')+pl.toFixed(1)+'%)</span></div>'
 +'<div class=mrow><span class=k>평가액</span><span style=font-weight:800>'+(qty*price).toLocaleString()+'원</span></div>'
++'<div class=mrow><span class=k>평가손익</span><span style="color:'+col+';font-weight:800">'+((price-buy)*qty>=0?'+':'')+Math.round((price-buy)*qty).toLocaleString()+'원</span></div>'
 +'<div class=rsn id=rsn>불러오는 중…</div><button class=mclose onclick=closeM()>닫기</button>';
-document.getElementById('modal').classList.add('on');
+document.getElementById('modal').classList.add('on');document.body.classList.add('mlock');
 try{var r=await fetch('/api/stock/'+tk);var j=await r.json();
 document.getElementById('rsn').innerHTML=j.html;}catch(e){document.getElementById('rsn').textContent='정보 로드 실패';}}
 function esc(s){return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')}
@@ -611,11 +628,22 @@ try{var r=await fetch('/api/chat',{method:'POST',headers:{'Content-Type':'applic
 var j=await r.json();a.classList.remove('typing');a.innerHTML=md(j.reply||'(응답 없음)');}
 catch(e){a.classList.remove('typing');a.textContent='(오류 — 다시 보내주세요)';}
 i.disabled=false;b.disabled=false;i.focus();m.scrollTop=m.scrollHeight;}
-/* 당겨서 새로고침 (홈화면 앱엔 새로고침 버튼이 없음) */
-var _py=-1;
-document.addEventListener('touchstart',function(e){_py=(window.scrollY<=0)?e.touches[0].clientY:-1},{passive:true});
+/* 당겨서 새로고침 — 릴리즈 방식(끝까지 당겼다 놓으면 실행), 모달 열림시 무시 */
+var _py=-1,_armed=false;
+document.addEventListener('touchstart',function(e){
+_armed=false;
+_py=(window.scrollY<=0&&!document.getElementById('modal').classList.contains('on'))?e.touches[0].clientY:-1;},{passive:true});
 document.addEventListener('touchmove',function(e){if(_py<0)return;
-if(e.touches[0].clientY-_py>90){_py=-1;document.getElementById('ptr').style.opacity=1;setTimeout(function(){location.reload()},150);}},{passive:true});
+var d=e.touches[0].clientY-_py,p=document.getElementById('ptr');
+if(d<=0){p.style.opacity=0;_armed=false;return}
+p.style.opacity=Math.min(d/90,1);
+p.style.transform='translateX(-50%) translateY('+Math.min(d/3,28)+'px) rotate('+(d*2)+'deg)';
+if(d>90&&!_armed){_armed=true;if(navigator.vibrate)navigator.vibrate(10);}},{passive:true});
+document.addEventListener('touchend',function(){
+var p=document.getElementById('ptr');
+if(_armed){p.classList.add('spin');p.style.transform='translateX(-50%)';setTimeout(function(){location.reload()},250);}
+else{p.style.opacity=0;p.style.transform='translateX(-50%)';}
+_py=-1;_armed=false;},{passive:true});
 /* 좌우 스와이프로 국내/미국 탭 전환 */
 var _sx=0,_sy=0;
 document.addEventListener('touchstart',function(e){_sx=e.touches[0].clientX;_sy=e.touches[0].clientY},{passive:true});
@@ -678,8 +706,9 @@ def dashboard():
     bot['us_wait'] = bool(bot.get('us')) and not us.get('error') and (us.get('cash_usd') or 0) < 1 and not us.get('holdings')
     if not kr.get('error'):
         try:
-            pts, delta = _equity_snapshot(kr['total'])
+            pts, delta, prev = _equity_snapshot(kr['total'])
             kr['spark'] = _spark(pts); kr['delta'] = delta
+            kr['delta_pct'] = (delta / prev * 100) if (delta is not None and prev) else None
         except Exception:
             pass
     now = datetime.datetime.now()
@@ -703,22 +732,18 @@ _PAT = {
 
 def _bar(label, raw, scale, color=None, signed=True):
     """작은 가로 막대 1줄. raw=비율(0.42=42%). Korean color(빨강+/파랑-) 기본.
-    signed=False면 부호 없이 절대값 표시(변동성처럼 방향 없는 값)."""
+    signed=False면 부호 없이 절대값(변동성처럼 방향 없는 값). 색은 CSS 변수 기반(.bar) = 다크모드 자동."""
     try:
         v = float(raw)
     except (TypeError, ValueError):
-        return (f'<div style="display:flex;align-items:center;gap:8px;margin:6px 0">'
-                f'<span style="width:56px;font-size:12px;color:#8b95a1">{label}</span>'
-                f'<span style="flex:1;height:7px;background:#e9edf2;border-radius:4px"></span>'
-                f'<span style="width:58px;text-align:right;font-size:12px;color:#8b95a1">—</span></div>')
+        return (f'<div class=bar><span class=bl>{label}</span><span class=trk></span>'
+                f'<span class=bv style="color:var(--sub)">—</span></div>')
     w = min(abs(v) / scale, 1.0) * 100
     col = color or ('#3182f6' if v < 0 else '#f04452')
     val = f"{v*100:+.1f}%" if signed else f"{abs(v)*100:.1f}%"
-    return (f'<div style="display:flex;align-items:center;gap:8px;margin:6px 0">'
-            f'<span style="width:56px;font-size:12px;color:#8b95a1">{label}</span>'
-            f'<span style="flex:1;height:7px;background:#e9edf2;border-radius:4px;overflow:hidden">'
-            f'<span style="display:block;height:100%;width:{w:.0f}%;background:{col};border-radius:4px"></span></span>'
-            f'<span style="width:58px;text-align:right;font-size:12px;font-weight:700;color:{col}">{val}</span></div>')
+    return (f'<div class=bar><span class=bl>{label}</span>'
+            f'<span class=trk><span class=fill style="width:{w:.0f}%;background:{col}"></span></span>'
+            f'<span class=bv style="color:{col}">{val}</span></div>')
 
 
 def _stock_reason(m):
@@ -730,7 +755,7 @@ def _stock_reason(m):
     tlabel, tcol, tdesc = tmap.get(m.get('artifact_tier'), ('정보 없음', '#8b95a1', ''))
     best = (m.get('best_year') or '').replace(':', '년 ')
     worst = (m.get('worst_year') or '').replace(':', '년 ')
-    yr = (f"<div style='font-size:12px;color:#8b95a1;margin-top:9px'>최고 {best or '—'} · 최악 {worst or '—'}</div>"
+    yr = (f"<div style='font-size:12px;color:var(--sub);margin-top:9px'>최고 {best or '—'} · 최악 {worst or '—'}</div>"
           if (best or worst) else '')
     fy = (m.get('first_date') or '')[:4]; ly = (m.get('last_date') or '')[:4]
     span = f"{fy}~{ly}" if (fy and ly) else "상장 이후"
@@ -741,16 +766,16 @@ def _stock_reason(m):
         "✅ <b>상승 추세</b> — 200일 평균선 위<br>"
         "✅ <b>부실기업 아님</b> — 자본잠식·연속적자·거래정지 같은 위험기업은 애초에 걸러냈고, 이 종목은 그 관문을 통과"
         "</div>"
-        "<div style='font-size:12px;color:#8b95a1'>이렇게 통과한 저변동 25종목을 같은 비중으로, "
+        "<div style='font-size:12px;color:var(--sub)'>이렇게 통과한 저변동 25종목을 같은 비중으로, "
         "사고팔기(타이밍)·손절 없이 분기 동안 보유합니다.</div>"
     )
     viz = (
-        "<div style='margin-top:14px;padding-top:12px;border-top:1px solid #e4e9ef'>"
+        "<div style='margin-top:14px;padding-top:12px;border-top:1px solid var(--line)'>"
         "<div style='display:flex;align-items:center;justify-content:space-between;margin-bottom:3px'>"
         "<b>수익 패턴</b>"
         f"<span style='font-size:14px;font-weight:800'>{plabel}</span></div>"
-        f"<div style='font-size:12px;color:#8b95a1;margin-bottom:9px'>{pdesc}</div>"
-        f"<div style='font-size:11px;color:#aeb6bf;margin-bottom:9px;line-height:1.5'>※ 아래는 {span} <b>장기</b> 기록입니다. "
+        f"<div style='font-size:12px;color:var(--sub);margin-bottom:9px'>{pdesc}</div>"
+        f"<div style='font-size:11px;color:var(--faint);margin-bottom:9px;line-height:1.5'>※ 아래는 {span} <b>장기</b> 기록입니다. "
         f"위 '주가 안정적'은 <b>최근 6개월</b> 기준이라, 장기론 더 크게 출렁였을 수 있어요.</div>"
         + _bar('총수익', m.get('total_ret'), 2.0)
         + _bar('연수익', m.get('cagr'), 0.3)
@@ -760,7 +785,7 @@ def _stock_reason(m):
         + f"<div style='font-size:12px;margin-top:10px'>데이터 신뢰도 "
         f"<span class=mut style='font-weight:500'>· 참고서가 시세데이터 품질 평가</span>: "
         f"<b style='color:{tcol}'>{tlabel}</b></div>"
-        + (f"<div style='font-size:11px;color:#8b95a1;margin-top:2px;line-height:1.5'>{tdesc}</div>" if tdesc else '')
+        + (f"<div style='font-size:11px;color:var(--sub);margin-top:2px;line-height:1.5'>{tdesc}</div>" if tdesc else '')
         + "</div>"
     )
     return why + viz
