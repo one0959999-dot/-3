@@ -379,9 +379,7 @@ cursor:pointer;padding:9px 0;border-radius:99px;transition:filter .15s}
 .seg div.on{background:#fff;color:var(--txt);box-shadow:0 2px 8px rgba(23,32,64,.1)}
 /* 반응형 2열 */
 .grid{display:grid;grid-template-columns:1fr;gap:16px} @media(min-width:840px){.grid{grid-template-columns:1.25fr 1fr;align-items:start}}
-.pane{display:none} .pane.on{display:block;animation:f .22s ease} @keyframes f{from{opacity:0;transform:translateY(7px)}to{opacity:1}}
-.pane.on.sl{animation:slL .26s ease} .pane.on.sr{animation:slR .26s ease}
-@keyframes slL{from{opacity:0;transform:translateX(26px)}to{opacity:1}} @keyframes slR{from{opacity:0;transform:translateX(-26px)}to{opacity:1}}
+.pane{display:none} .pane.on{display:block;animation:f .2s ease} @keyframes f{from{opacity:0}to{opacity:1}}
 /* 카드 스태거는 첫 로드에만(body.boot) — 탭 전환시 재실행되면 뚝뚝 끊겨 보임 */
 .boot .grid .card{animation:cardin .45s ease backwards}
 .boot .grid .card:nth-child(2){animation-delay:.06s} .boot .grid .card:nth-child(3){animation-delay:.12s} .boot .grid .card:nth-child(4){animation-delay:.18s}
@@ -621,10 +619,9 @@ s.scrollTop=0;
 document.getElementById('modal').classList.add('on');document.body.classList.add('mlock');}
 function sw(x){var was=document.querySelector('.pane.on');
 document.querySelectorAll('.seg div').forEach(t=>t.classList.remove('on'));
-document.querySelectorAll('.pane').forEach(p=>p.classList.remove('on','sl','sr'));
-var p=document.getElementById(x);
-if(was&&was.id!=x)p.classList.add(x=='us'?'sl':'sr');
-p.classList.add('on');event.currentTarget.classList.add('on');}
+document.querySelectorAll('.pane').forEach(p=>p.classList.remove('on'));
+document.getElementById(x).classList.add('on');event.currentTarget.classList.add('on');
+if(was&&was.id!=x)window.scrollTo(0,0);}
 function closeM(){var sh=document.getElementById('sheet');
 document.getElementById('modal').classList.remove('on');document.body.classList.remove('mlock');
 sh.style.transform='';sh.style.transition='';}
