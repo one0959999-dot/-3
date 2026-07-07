@@ -388,12 +388,21 @@ cursor:pointer;padding:9px 0;border-radius:99px;transition:filter .15s}
 .h{font-size:14px;font-weight:800;margin:0 4px 8px}
 /* hero — 딥그린 프리미엄 카드 */
 .hero{background:linear-gradient(155deg,#17372c 0,#1e4f3d 48%,#153228 100%);text-align:center;padding:32px 20px 28px;
-position:relative;overflow:hidden;border:0;box-shadow:0 2px 6px rgba(16,50,38,.18),0 18px 44px rgba(16,50,38,.22)}
+position:relative;overflow:hidden;border:0;box-shadow:0 2px 6px rgba(16,50,38,.18),0 18px 44px rgba(16,50,38,.22),inset 0 1px 0 rgba(255,255,255,.10)}
 .hero:before{content:'';position:absolute;width:260px;height:260px;border-radius:50%;top:-120px;right:-80px;
 background:radial-gradient(closest-side,rgba(94,214,167,.22),transparent)}
 .hero:after{content:'';position:absolute;width:200px;height:200px;border-radius:50%;bottom:-110px;left:-70px;
 background:radial-gradient(closest-side,rgba(46,160,120,.20),transparent)}
 .hero>*{position:relative}
+/* 펄 도장 — 진주빛 광택 + 플레이크, 폰 기울이면 빛이 따라옴 */
+.hero .pearl{position:absolute;inset:0;pointer-events:none;
+background:linear-gradient(115deg,transparent 30%,rgba(255,255,255,.06) 42%,rgba(150,255,215,.13) 50%,rgba(255,255,255,.05) 58%,transparent 70%);
+background-size:240% 240%;animation:sheen 9s ease-in-out infinite alternate}
+@keyframes sheen{from{background-position:0% 40%}to{background-position:100% 60%}}
+.hero .pearl:after{content:'';position:absolute;inset:0;opacity:.5;
+background-image:radial-gradient(rgba(255,255,255,.16) .6px,transparent .9px),radial-gradient(rgba(170,255,225,.12) .5px,transparent .8px);
+background-size:5px 5px,9px 9px;background-position:0 0,3px 4px}
+.hero .pearl.tilt{animation:none;transition:background-position .2s ease-out}
 .hero .lab{font-size:12.5px;color:rgba(255,255,255,.68);font-weight:700}
 .hero .amt{font-size:40px;font-weight:800;margin:5px 0 4px;letter-spacing:-2px;color:#fff}
 .hero .amt small{font-size:19px;color:rgba(255,255,255,.62);font-weight:700;letter-spacing:-.5px}
@@ -544,7 +553,7 @@ body:before{background:radial-gradient(640px 420px at 88% -8%,rgba(20,154,110,.1
 <div><!-- 왼쪽: 계좌/포트폴리오/보유 -->
 <div id=kr class="pane on">
 {% if kr.error %}<div class="card warn">⚠️ {{kr.error}}</div>{% else %}
-<div class="card hero"><div class=lab>총 자산</div><div class=amt><span class=cnt>{{ '{:,.0f}'.format(kr.total) }}</span><small> 원</small></div>
+<div class="card hero"><i class=pearl></i><div class=lab>총 자산</div><div class=amt><span class=cnt>{{ '{:,.0f}'.format(kr.total) }}</span><small> 원</small></div>
   {% if kr.get('delta') is not none %}<div class="dchg {{'up' if kr.delta>=0 else 'down'}}">어제보다 {{ '{:+,.0f}'.format(kr.delta) }}원{% if kr.get('delta_pct') is not none %} ({{ '%+.1f'|format(kr.delta_pct) }}%){% endif %}</div>{% endif %}
   <span class="pill {{'up' if (kr.ret or 0)>=0 else 'down'}}">{{ '▲' if (kr.ret or 0)>=0 else '▼' }} {{ '%.2f'|format(kr.ret|abs) if kr.ret is not none else '—' }}% <span style=opacity:.5>·</span> {{ '{:+,.0f}'.format(kr.pl) }}원</span>
   {% if kr.get('spark') %}<svg class=spk viewBox="0 0 300 40" preserveAspectRatio=none>
@@ -571,7 +580,7 @@ body:before{background:radial-gradient(640px 420px at 88% -8%,rgba(20,154,110,.1
 
 <div id=us class=pane>
 {% if us.error %}<div class="card warn">⚠️ {{us.error}}</div>{% else %}
-<div class="card hero"><div class=lab>USD 예수금</div><div class=amt>$<span class=cnt>{{ '%.2f'|format(us.cash_usd) }}</span></div></div>
+<div class="card hero"><i class=pearl></i><div class=lab>USD 예수금</div><div class=amt>$<span class=cnt>{{ '%.2f'|format(us.cash_usd) }}</span></div></div>
 {% if us.holdings %}<div class=card>{% for h in us.holdings %}<div class=hold style=cursor:default>
 <div class=hicon style=background:linear-gradient(135deg,#f04452,#d63a48)>{{h.ticker[:3]}}</div><div class=hmid><div class=hnm>{{h.ticker}}</div></div>
 <div class=hend><div class=hval>{{ '%.4f'|format(h.qty) }}주</div></div></div>{% endfor %}</div>
@@ -684,6 +693,13 @@ var dx=e.changedTouches[0].clientX-_sx,dy=e.changedTouches[0].clientY-_sy;
 if(Math.abs(dx)>75&&Math.abs(dy)<45&&!document.getElementById('modal').classList.contains('on')){
 var t=document.querySelectorAll('.seg div');(dx<0?t[1]:t[0]).click();}});
 setTimeout(function(){document.body.classList.remove('boot')},900);
+/* 펄 도장: 폰 기울기에 빛 반사 이동 (지원 기기에서만, 권한요청 없음) */
+window.addEventListener('deviceorientation',function(e){
+if(e.gamma==null)return;
+var g=Math.max(-28,Math.min(28,e.gamma)),b=Math.max(-28,Math.min(28,(e.beta||40)-40));
+document.querySelectorAll('.pearl').forEach(function(p){
+p.classList.add('tilt');
+p.style.backgroundPosition=(50+g*1.7)+'% '+(50+b*1.3)+'%';});});
 var _loaded=Date.now();
 document.addEventListener('visibilitychange',function(){
 if(document.hidden)return;
