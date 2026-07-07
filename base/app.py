@@ -616,6 +616,7 @@ var RSN={};
 if(tks.length)fetch('/api/stocks?t='+tks.join(',')).then(function(r){return r.json()}).then(function(j){RSN=j||{}}).catch(function(){});})();
 function openBot(k){var d=BOTD[k];if(!d)return;var s=document.getElementById('sheet');
 s.innerHTML='<h3>'+d.title+'</h3><div class=sub>'+d.sub+'</div>'+d.html+'<button class=mclose onclick=closeM()>닫기</button>';
+s.scrollTop=0;
 document.getElementById('modal').classList.add('on');document.body.classList.add('mlock');}
 function sw(x){var was=document.querySelector('.pane.on');
 document.querySelectorAll('.seg div').forEach(t=>t.classList.remove('on'));
@@ -645,6 +646,7 @@ s.innerHTML='<h3>'+nm+'</h3><div class=sub>'+tk+(etf==1?' · 지수 ETF':' · �
 +'<div class=mrow><span class=k>평가액</span><span style=font-weight:800>'+(qty*price).toLocaleString()+'원</span></div>'
 +'<div class=mrow><span class=k>평가손익</span><span style="color:'+col+';font-weight:800">'+((price-buy)*qty>=0?'+':'')+Math.round((price-buy)*qty).toLocaleString()+'원</span></div>'
 +'<div class="rsn'+(RSN[tk]?'':' load')+'" id=rsn>'+(RSN[tk]||'')+'</div><button class=mclose onclick=closeM()>닫기</button>';
+s.scrollTop=0;
 document.getElementById('modal').classList.add('on');document.body.classList.add('mlock');
 if(!RSN[tk]){try{var r=await fetch('/api/stock/'+tk);var j=await r.json();RSN[tk]=j.html;
 var el=document.getElementById('rsn');el.classList.remove('load');el.innerHTML=j.html;}
