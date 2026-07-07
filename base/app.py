@@ -399,7 +399,8 @@ background:radial-gradient(closest-side,rgba(46,160,120,.20),transparent)}
 background:linear-gradient(115deg,transparent 32%,rgba(255,255,255,.035) 44%,rgba(150,255,215,.075) 50%,rgba(255,255,255,.03) 56%,transparent 68%);
 background-size:240% 240%;animation:sheen 11s ease-in-out infinite alternate}
 @keyframes sheen{from{background-position:0% 40%}to{background-position:100% 60%}}
-.hero .pearl:after{content:'';position:absolute;inset:0;opacity:.30;
+.hero .pearl:before{content:'';position:absolute;inset:0;
+animation:tw1 6.5s ease-in-out infinite;
 background-image:
 radial-gradient(circle at 13px 27px,rgba(255,255,255,.85) 0,transparent 1.1px),
 radial-gradient(circle at 87px 9px,rgba(195,255,228,.7) 0,transparent .8px),
@@ -409,14 +410,31 @@ radial-gradient(circle at 66px 118px,rgba(255,255,255,.75) 0,transparent .8px),
 radial-gradient(circle at 139px 131px,rgba(190,255,225,.6) 0,transparent 1px),
 radial-gradient(circle at 24px 102px,rgba(255,255,255,.5) 0,transparent .6px),
 radial-gradient(circle at 98px 88px,rgba(255,246,214,.45) 0,transparent .7px),
+radial-gradient(circle at 7px 58px,rgba(255,255,255,.7) 0,transparent .8px),
+radial-gradient(circle at 52px 140px,rgba(200,255,232,.6) 0,transparent .9px),
+radial-gradient(circle at 112px 12px,rgba(255,255,255,.55) 0,transparent .7px),
+radial-gradient(circle at 133px 93px,rgba(255,244,208,.5) 0,transparent .8px),
+radial-gradient(circle at 75px 44px,rgba(255,255,255,.65) 0,transparent .6px);
+background-size:149px 149px}
+.hero .pearl:after{content:'';position:absolute;inset:0;
+animation:tw2 8.5s ease-in-out infinite;
+background-image:
 radial-gradient(circle at 33px 151px,rgba(255,255,255,.8) 0,transparent .9px),
 radial-gradient(circle at 172px 44px,rgba(195,255,230,.65) 0,transparent 1.1px),
 radial-gradient(circle at 109px 187px,rgba(255,255,255,.55) 0,transparent .7px),
 radial-gradient(circle at 58px 12px,rgba(255,255,255,.65) 0,transparent .8px),
 radial-gradient(circle at 190px 166px,rgba(255,240,200,.5) 0,transparent .9px),
-radial-gradient(circle at 146px 99px,rgba(255,255,255,.7) 0,transparent .6px);
-background-size:149px 149px,149px 149px,149px 149px,149px 149px,149px 149px,149px 149px,149px 149px,149px 149px,
-211px 211px,211px 211px,211px 211px,211px 211px,211px 211px,211px 211px}
+radial-gradient(circle at 146px 99px,rgba(255,255,255,.7) 0,transparent .6px),
+radial-gradient(circle at 15px 88px,rgba(255,255,255,.6) 0,transparent .7px),
+radial-gradient(circle at 84px 60px,rgba(198,255,230,.55) 0,transparent .8px),
+radial-gradient(circle at 201px 120px,rgba(255,255,255,.75) 0,transparent 1px),
+radial-gradient(circle at 122px 143px,rgba(255,246,212,.5) 0,transparent .7px),
+radial-gradient(circle at 47px 199px,rgba(255,255,255,.6) 0,transparent .8px),
+radial-gradient(circle at 160px 203px,rgba(195,255,228,.6) 0,transparent .9px),
+radial-gradient(circle at 94px 26px,rgba(255,255,255,.55) 0,transparent .6px);
+background-size:211px 211px}
+@keyframes tw1{0%,100%{opacity:.15}50%{opacity:.40}}
+@keyframes tw2{0%,100%{opacity:.38}45%{opacity:.14}}
 .hero .pearl.tilt{animation:none;transition:background-position .2s ease-out}
 .hero .lab{font-size:12.5px;color:rgba(255,255,255,.68);font-weight:700}
 .hero .amt{font-size:40px;font-weight:800;margin:5px 0 4px;letter-spacing:-2px;color:#fff}
@@ -708,18 +726,12 @@ var dx=e.changedTouches[0].clientX-_sx,dy=e.changedTouches[0].clientY-_sy;
 if(Math.abs(dx)>75&&Math.abs(dy)<45&&!document.getElementById('modal').classList.contains('on')){
 var t=document.querySelectorAll('.seg div');(dx<0?t[1]:t[0]).click();}});
 setTimeout(function(){document.body.classList.remove('boot')},900);
-/* 펄 도장 광원 이동 — ①자이로(HTTPS에서만 가능) ②폴백: 터치/마우스 따라 반사 */
-var _tilt=false;
-function pearlTo(x,y){document.querySelectorAll('.pearl').forEach(function(p){
-p.classList.add('tilt');p.style.backgroundPosition=x+'% '+y+'%';});}
+/* 펄 광원: 자이로 지원시(HTTPS)만 기울기 반사 — 평소엔 자동 광택+트윙클만(은은) */
 window.addEventListener('deviceorientation',function(e){
-if(e.gamma==null)return;_tilt=true;
+if(e.gamma==null)return;
 var g=Math.max(-28,Math.min(28,e.gamma)),b=Math.max(-28,Math.min(28,(e.beta||40)-40));
-pearlTo(50+g*1.7,50+b*1.3);});
-document.addEventListener('touchmove',function(e){if(_tilt)return;var t=e.touches[0];
-pearlTo(t.clientX/window.innerWidth*100,t.clientY/window.innerHeight*100);},{passive:true});
-document.addEventListener('mousemove',function(e){if(_tilt)return;
-pearlTo(e.clientX/window.innerWidth*100,e.clientY/window.innerHeight*100);},{passive:true});
+document.querySelectorAll('.pearl').forEach(function(p){
+p.classList.add('tilt');p.style.backgroundPosition=(50+g*1.7)+'% '+(50+b*1.3)+'%';});});
 var _loaded=Date.now();
 document.addEventListener('visibilitychange',function(){
 if(document.hidden)return;
