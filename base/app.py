@@ -380,6 +380,11 @@ cursor:pointer;padding:9px 0;border-radius:99px;transition:filter .15s}
 /* 반응형 2열 */
 .grid{display:grid;grid-template-columns:1fr;gap:16px} @media(min-width:840px){.grid{grid-template-columns:1.25fr 1fr;align-items:start}}
 .pane{display:none} .pane.on{display:block;animation:f .22s ease} @keyframes f{from{opacity:0;transform:translateY(7px)}to{opacity:1}}
+.pane.on.sl{animation:slL .26s ease} .pane.on.sr{animation:slR .26s ease}
+@keyframes slL{from{opacity:0;transform:translateX(26px)}to{opacity:1}} @keyframes slR{from{opacity:0;transform:translateX(-26px)}to{opacity:1}}
+.grid .card{animation:cardin .45s ease backwards}
+.grid .card:nth-child(2){animation-delay:.06s} .grid .card:nth-child(3){animation-delay:.12s} .grid .card:nth-child(4){animation-delay:.18s}
+@keyframes cardin{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:none}}
 .card{background:var(--card);border:1px solid rgba(15,30,70,.045);border-radius:20px;padding:20px;margin-bottom:14px;box-shadow:var(--sh)}
 .h{font-size:14px;font-weight:800;margin:0 4px 8px}
 /* hero — 딥그린 프리미엄 카드 */
@@ -467,7 +472,8 @@ details[open] summary:before{transform:rotate(90deg)}
 .sheet{background:#fff;border-radius:24px;width:100%;max-width:440px;padding:26px 24px;max-height:86vh;overflow-y:auto;box-shadow:var(--sh2);animation:pop .22s ease;overscroll-behavior:contain}
 @keyframes pop{from{opacity:0;transform:translateY(14px) scale(.98)}to{opacity:1;transform:none}}
 @media(max-width:560px){.modal{align-items:flex-end;padding:0}
-.sheet{max-width:none;border-radius:24px 24px 0 0;max-height:88vh;animation:slide .25s ease;padding-bottom:calc(26px + env(safe-area-inset-bottom))}}
+.sheet{max-width:none;border-radius:24px 24px 0 0;max-height:88vh;animation:slide .25s ease;padding-bottom:calc(26px + env(safe-area-inset-bottom))}
+.sheet:before{content:'';display:block;width:44px;height:5px;border-radius:3px;background:var(--line);margin:-10px auto 13px}}
 @keyframes slide{from{opacity:.5;transform:translateY(48px)}to{opacity:1;transform:none}}
 .sheet h3{font-size:19px;margin-bottom:3px;letter-spacing:-.5px} .sheet .sub{color:var(--sub);font-size:12.5px;margin-bottom:16px}
 .mrow{display:flex;justify-content:space-between;padding:10.5px 0;border-bottom:1px solid var(--line);font-size:14px} .mrow .k{color:var(--sub);font-weight:600}
@@ -497,6 +503,7 @@ background-size:200% 100%;animation:shim 1.2s infinite linear}
 .grid{gap:12px} .chat .msgs{min-height:170px;max-height:46vh}
 .h{font-size:13.5px}
 }
+@media(prefers-reduced-motion:reduce){*,*:before,*:after{animation-duration:.01ms!important;animation-iteration-count:1!important;transition-duration:.01ms!important}}
 /* ── 다크모드 (기기 설정 따라 자동) ── */
 @media(prefers-color-scheme:dark){
 :root{--bg:#101418;--card:#181d24;--line:#242b34;--txt:#e7ebf0;--sub:#93a0ad;--faint:#5c6773;--soft:#1f252d;
@@ -541,7 +548,10 @@ body:before{background:radial-gradient(640px 420px at 88% -8%,rgba(20,154,110,.1
 <div class="card hero"><div class=lab>총 자산</div><div class=amt><span class=cnt>{{ '{:,.0f}'.format(kr.total) }}</span><small> 원</small></div>
   {% if kr.get('delta') is not none %}<div class="dchg {{'up' if kr.delta>=0 else 'down'}}">어제보다 {{ '{:+,.0f}'.format(kr.delta) }}원{% if kr.get('delta_pct') is not none %} ({{ '%+.1f'|format(kr.delta_pct) }}%){% endif %}</div>{% endif %}
   <span class="pill {{'up' if (kr.ret or 0)>=0 else 'down'}}">{{ '▲' if (kr.ret or 0)>=0 else '▼' }} {{ '%.2f'|format(kr.ret|abs) if kr.ret is not none else '—' }}% <span style=opacity:.5>·</span> {{ '{:+,.0f}'.format(kr.pl) }}원</span>
-  {% if kr.get('spark') %}<svg class=spk viewBox="0 0 300 40" preserveAspectRatio=none><polyline points="{{kr.spark}}"/></svg>{% endif %}</div>
+  {% if kr.get('spark') %}<svg class=spk viewBox="0 0 300 40" preserveAspectRatio=none>
+  <defs><linearGradient id=sg x1=0 y1=0 x2=0 y2=1><stop offset=0 stop-color="rgba(255,255,255,.30)"/><stop offset=1 stop-color="rgba(255,255,255,0)"/></linearGradient></defs>
+  <polygon points="0,40 {{kr.spark}} 300,40" fill="url(#sg)"/>
+  <polyline points="{{kr.spark}}"/></svg>{% endif %}</div>
 <div class=card><div class=h style=margin-bottom:12px>포트폴리오 구성</div>
   <div class=donut><div class=dc><div class=pie style="background:conic-gradient({{kr.conic}})"></div>
     <div class=hole><div class=t1>투자중</div><div class=t2>{{ '%.0f'|format(100 - kr.alloc[2].pct) }}%</div></div></div>
@@ -607,10 +617,24 @@ if(tks.length)fetch('/api/stocks?t='+tks.join(',')).then(function(r){return r.js
 function openBot(k){var d=BOTD[k];if(!d)return;var s=document.getElementById('sheet');
 s.innerHTML='<h3>'+d.title+'</h3><div class=sub>'+d.sub+'</div>'+d.html+'<button class=mclose onclick=closeM()>닫기</button>';
 document.getElementById('modal').classList.add('on');document.body.classList.add('mlock');}
-function sw(x){document.querySelectorAll('.seg div').forEach(t=>t.classList.remove('on'));
-document.querySelectorAll('.pane').forEach(p=>p.classList.remove('on'));
-document.getElementById(x).classList.add('on');event.currentTarget.classList.add('on');}
-function closeM(){document.getElementById('modal').classList.remove('on');document.body.classList.remove('mlock');}
+function sw(x){var was=document.querySelector('.pane.on');
+document.querySelectorAll('.seg div').forEach(t=>t.classList.remove('on'));
+document.querySelectorAll('.pane').forEach(p=>p.classList.remove('on','sl','sr'));
+var p=document.getElementById(x);
+if(was&&was.id!=x)p.classList.add(x=='us'?'sl':'sr');
+p.classList.add('on');event.currentTarget.classList.add('on');}
+function closeM(){var sh=document.getElementById('sheet');
+document.getElementById('modal').classList.remove('on');document.body.classList.remove('mlock');
+sh.style.transform='';sh.style.transition='';}
+/* 바텀시트 아래로 드래그해서 닫기 (내용이 맨 위일 때만) */
+(function(){var sh=document.getElementById('sheet'),sy=-1,dy=0;
+sh.addEventListener('touchstart',function(e){sy=(sh.scrollTop<=0)?e.touches[0].clientY:-1;dy=0;},{passive:true});
+sh.addEventListener('touchmove',function(e){if(sy<0)return;dy=e.touches[0].clientY-sy;
+if(dy>0){sh.style.transition='none';sh.style.transform='translateY('+dy+'px)';}},{passive:true});
+sh.addEventListener('touchend',function(){
+if(dy>110){sh.style.transition='transform .22s ease';sh.style.transform='translateY(110%)';setTimeout(closeM,190);}
+else if(dy>0){sh.style.transition='transform .2s ease';sh.style.transform='';}
+sy=-1;dy=0;},{passive:true});})();
 async function openStock(tk,nm,qty,buy,price,pl,etf){
 var col=pl>=0?'#f04452':'#3182f6';
 var s=document.getElementById('sheet');
