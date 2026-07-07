@@ -388,13 +388,13 @@ cursor:pointer;padding:9px 0;border-radius:99px;transition:filter .15s}
 .h{font-size:14px;font-weight:800;margin:0 4px 8px}
 /* hero — 딥그린 프리미엄 카드 */
 .hero{background:linear-gradient(155deg,#17372c 0,#1e4f3d 48%,#153228 100%);text-align:center;padding:32px 20px 28px;
-min-height:234px;display:flex;flex-direction:column;justify-content:center;
+min-height:154px;display:flex;flex-direction:column;justify-content:center;
 position:relative;overflow:hidden;border:0;box-shadow:0 2px 6px rgba(16,50,38,.18),0 18px 44px rgba(16,50,38,.22),inset 0 1px 0 rgba(255,255,255,.07)}
 .hero:before{content:'';position:absolute;width:260px;height:260px;border-radius:50%;top:-120px;right:-80px;
 background:radial-gradient(closest-side,rgba(94,214,167,.22),transparent)}
 .hero:after{content:'';position:absolute;width:200px;height:200px;border-radius:50%;bottom:-110px;left:-70px;
 background:radial-gradient(closest-side,rgba(46,160,120,.20),transparent)}
-.hero>*{position:relative}
+.hero>*{position:relative;z-index:1}
 /* 펄 도장 — 은은한 광택 + 불규칙 플레이크(큰 타일 2장, 주기 어긋나 반복 안 보임) */
 .hero .pearl{position:absolute;inset:0;pointer-events:none;
 background:linear-gradient(115deg,transparent 32%,rgba(255,255,255,.035) 44%,rgba(150,255,215,.075) 50%,rgba(255,255,255,.03) 56%,transparent 68%);
@@ -446,7 +446,7 @@ background-size:211px 211px}
 .up{color:var(--up)} .down{color:var(--down)} .pill.up{background:#fdeaec} .pill.down{background:#e9f1fe}
 .hero .pill.up{background:rgba(240,68,82,.28);color:#ffaab1} .hero .pill.down{background:rgba(120,170,255,.2);color:#a9c9ff}
 .dchg{font-size:14.5px;font-weight:800;margin:3px 0 11px} .hero .dchg.up{color:#ffb3ba} .hero .dchg.down{color:#a9c9ff}
-.spk{width:100%;height:40px;margin-top:13px;display:block;opacity:.92}
+.spk{position:absolute;left:16px;right:16px;bottom:5px;height:17px;display:block;opacity:.6;z-index:0 !important;pointer-events:none}
 .spk polyline{fill:none;stroke:rgba(255,255,255,.8);stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
 .trow{display:flex;align-items:center;gap:8px;padding:9.5px 2px;border-bottom:1px solid var(--line);font-size:13.5px} .trow:last-child{border:0}
 .tnm{flex:1;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
@@ -539,7 +539,7 @@ background-size:200% 100%;animation:shim 1.2s infinite linear}
 .sseg{font-size:11px;gap:4px;padding:8px 0} .sseg b{font-size:11px}
 .seg{max-width:none;margin-bottom:12px}
 .card{padding:16px;border-radius:18px;margin-bottom:11px}
-.hero{padding:24px 16px 21px} .hero .amt{font-size:33px} .hero .amt small{font-size:16px}
+.hero{padding:24px 16px 21px;min-height:147px} .hero .amt{font-size:33px} .hero .amt small{font-size:16px}
 .pill{font-size:13.5px;padding:7px 13px}
 .donut{gap:13px} .dc{width:104px;height:104px} .hole{inset:18px} .hole .t2{font-size:16px}
 .hold{padding:11px 4px;gap:10px} .hicon{width:37px;height:37px;border-radius:12px}
@@ -729,6 +729,9 @@ var dx=e.changedTouches[0].clientX-_sx,dy=e.changedTouches[0].clientY-_sy;
 if(Math.abs(dx)>75&&Math.abs(dy)<45&&!document.getElementById('modal').classList.contains('on')){
 var t=document.querySelectorAll('.seg div');(dx<0?t[1]:t[0]).click();}});
 setTimeout(function(){document.body.classList.remove('boot')},900);
+/* US 총액 카드 높이 = KR 총액 카드 높이 (항상 동일 크기) */
+(function(){var k=document.querySelector('#kr .hero'),u=document.querySelector('#us .hero');
+if(k&&u)u.style.minHeight=k.offsetHeight+'px';})();
 /* 랜덤 펄: 위치·크기·색·주기·시작이 전부 랜덤인 입자 40개 — 하나씩 톡톡 빛남 */
 document.querySelectorAll('.pearl').forEach(function(p){
 var cols=['rgba(255,255,255,.9)','rgba(255,255,255,.75)','rgba(196,255,230,.85)','rgba(255,243,206,.8)'];
