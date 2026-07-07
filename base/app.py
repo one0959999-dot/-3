@@ -382,8 +382,9 @@ cursor:pointer;padding:9px 0;border-radius:99px;transition:filter .15s}
 .pane{display:none} .pane.on{display:block;animation:f .22s ease} @keyframes f{from{opacity:0;transform:translateY(7px)}to{opacity:1}}
 .pane.on.sl{animation:slL .26s ease} .pane.on.sr{animation:slR .26s ease}
 @keyframes slL{from{opacity:0;transform:translateX(26px)}to{opacity:1}} @keyframes slR{from{opacity:0;transform:translateX(-26px)}to{opacity:1}}
-.grid .card{animation:cardin .45s ease backwards}
-.grid .card:nth-child(2){animation-delay:.06s} .grid .card:nth-child(3){animation-delay:.12s} .grid .card:nth-child(4){animation-delay:.18s}
+/* 카드 스태거는 첫 로드에만(body.boot) — 탭 전환시 재실행되면 뚝뚝 끊겨 보임 */
+.boot .grid .card{animation:cardin .45s ease backwards}
+.boot .grid .card:nth-child(2){animation-delay:.06s} .boot .grid .card:nth-child(3){animation-delay:.12s} .boot .grid .card:nth-child(4){animation-delay:.18s}
 @keyframes cardin{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:none}}
 .card{background:var(--card);border:1px solid rgba(15,30,70,.045);border-radius:20px;padding:20px;margin-bottom:14px;box-shadow:var(--sh)}
 .h{font-size:14px;font-weight:800;margin:0 4px 8px}
@@ -530,7 +531,7 @@ body:before{background:radial-gradient(640px 420px at 88% -8%,rgba(20,154,110,.1
 .note{color:var(--sub)}
 .cin input:focus{background:var(--card)}
 }
-</style></head><body><div class=wrap>
+</style></head><body class=boot><div class=wrap>
 <div class=top><div class=logo>시나브로<em>.</em></div><a href="{{url_for('logout')}}">로그아웃</a></div>
 <div class=note>{{now}} 기준 · <span style="color:{{'#149a6e' if mkt else 'inherit'}};font-weight:600">{{ '장중' if mkt else '장 마감' }}</span> · <a href="{{url_for('dashboard')}}">↻ 새로고침</a></div>
 
@@ -685,6 +686,7 @@ document.addEventListener('touchend',function(e){
 var dx=e.changedTouches[0].clientX-_sx,dy=e.changedTouches[0].clientY-_sy;
 if(Math.abs(dx)>75&&Math.abs(dy)<45&&!document.getElementById('modal').classList.contains('on')){
 var t=document.querySelectorAll('.seg div');(dx<0?t[1]:t[0]).click();}});
+setTimeout(function(){document.body.classList.remove('boot')},900);
 var _loaded=Date.now();
 document.addEventListener('visibilitychange',function(){
 if(document.hidden)return;
