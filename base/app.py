@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""Lassi 대시보드 v8 — 반응형(데스크톱 2열/모바일 1열) + 종목상세 + 봇상태배너 + AI챗.
+"""시나브로 대시보드 — 반응형(데스크톱 2열/모바일 1열) + 종목상세 + 봇상태캡슐 + AI챗.
 
 조회 전용(구봇 0). 계좌=toss_api. 원금=원가기준 자동. 자동로그인. 봇상태=crontab.
 종목 클릭→매수이유+참고서. AI챗=Gemini. 색: 한국식(빨강=상승/파랑=하락).
@@ -17,7 +17,7 @@ def P(f):
     return os.path.join(ROOT, f)
 
 app = Flask(__name__)
-app.secret_key = os.environ.get('LASSI_SECRET', 'lassi-dash-v8')
+app.secret_key = os.environ.get('LASSI_SECRET', 'sinabro-dash')
 login_manager = LoginManager(app)
 login_manager.login_view = 'login'
 AUTO_LOGIN = True
@@ -149,7 +149,15 @@ def us_snapshot(row):
 def bot_status():
     st = {'kr': None, 'us': None, 'deadman': None, 'heartbeat': '—', 'rebal': '—', 'artifact': '—'}
     try:
-        cron = subprocess.run(['crontab', '-l'], capture_output=True, text=True, timeout=5).stdout
+        # gunicorn 서비스는 PATH=venv/bin 뿐이라 'crontab'을 못 찾음 → 절대경로 폴백 필수
+        cron = ''
+        for cmd in (['crontab', '-l'], ['/usr/bin/crontab', '-l'], ['/bin/crontab', '-l']):
+            try:
+                cron = subprocess.run(cmd, capture_output=True, text=True, timeout=5).stdout
+                if cron:
+                    break
+            except FileNotFoundError:
+                continue
         st['kr'] = ('auto_deploy.py --execute' in cron) or ('auto_order.py --rebalance --execute' in cron)
         st['us'] = 'auto_order_us.py --execute' in cron
         st['deadman'] = 'deadman.py' in cron
@@ -190,12 +198,11 @@ def bot_details(bot, us, dca):
                             "이 화면은 언제든 들어와서 구경만 하셔도 됩니다.</div>")}
     else:
         d['kr'] = {'title': '국내 자동매매', 'sub': '⏸️ 정지됨',
-                   'html': ("<div class=rsn><b>왜 정지인가요?</b><br>"
-                            "서버의 예약작업(크론)에서 국내 매매가 해제되어 있어요. "
-                            "이 상태에서는 리밸런스도, 신규 현금 매수도 실행되지 않습니다.</div>"
+                   'html': ("<div class=rsn><b>지금은 봇이 완전히 쉬는 상태예요</b><br>"
+                            "서버에 국내 매매 예약이 걸려 있지 않아요. 아무것도 사거나 팔지 않고, "
+                            "갖고 있는 주식은 그대로 있습니다.</div>"
                             "<div class=rsn><b>다시 켜려면</b><br>"
-                            "EC2 서버의 crontab에 auto_order(리밸런스)·auto_deploy(신규자금) 항목을 "
-                            "다시 등록해야 해요. 채팅으로 요청해 주시면 도와드릴게요.</div>")}
+                            "이 화면에서는 켤 수 없고, 개발 채팅(클로드)에서 \"국내 봇 켜줘\"라고 하면 됩니다.</div>")}
     # ── 미국 ──
     us_cash = (us or {}).get('cash_usd') or 0
     us_hold = bool((us or {}).get('holdings'))
@@ -217,15 +224,14 @@ def bot_details(bot, us, dca):
                             "매매 결과는 텔레그램으로 알려드립니다.</div>")}
     else:
         d['us'] = {'title': '미국 자동매매', 'sub': '⏸️ 정지됨',
-                   'html': ("<div class=rsn><b>왜 정지인가요?</b><br>"
-                            "서버의 예약작업(크론)에서 미국 매매가 해제되어 있어요.</div>"
+                   'html': ("<div class=rsn><b>지금은 봇이 완전히 쉬는 상태예요</b><br>"
+                            "서버에 미국 매매 예약이 걸려 있지 않아요. 달러가 있어도 사지 않습니다.</div>"
                             "<div class=rsn><b>다시 켜려면</b><br>"
-                            "EC2 crontab에 auto_order_us 항목을 다시 등록하면 됩니다. "
-                            "채팅으로 요청해 주시면 도와드릴게요.</div>")}
+                            "이 화면에서는 켤 수 없고, 개발 채팅(클로드)에서 \"미국 봇 켜줘\"라고 하면 됩니다.</div>")}
     # ── 감시장치 ──
     hb = bot.get('heartbeat', '—')
     if bot.get('deadman'):
-        d['dm'] = {'title': '감시장치 (deadman)', 'sub': '🟢 켜져 있음',
+        d['dm'] = {'title': '감시장치', 'sub': '🟢 켜져 있음',
                    'html': ("<div class=rsn><b>뭘 하는 건가요?</b><br>"
                             "매일 자정에 '봇이 살아있나'를 스스로 점검하는 안전장치예요. "
                             "봇이 멈추거나 며칠째 아무 기록이 없으면 텔레그램으로 바로 알려줍니다.<br><br>"
@@ -233,10 +239,10 @@ def bot_details(bot, us, dca):
                             "<div class=rsn><b>여행 가도 되나요?</b><br>"
                             "네. 문제가 생기면 이 장치가 알려주니, 알림이 없다는 건 잘 돌고 있다는 뜻이에요.</div>")}
     else:
-        d['dm'] = {'title': '감시장치 (deadman)', 'sub': '⏸️ 꺼져 있음',
-                   'html': ("<div class=rsn><b>주의</b><br>"
-                            "봇이 멈춰도 알려줄 감시가 꺼져 있어요. 매매 봇 자체는 별개로 돌 수 있지만, "
-                            "문제가 생겨도 모를 수 있으니 켜두는 걸 추천해요. 채팅으로 요청해 주세요.</div>")}
+        d['dm'] = {'title': '감시장치', 'sub': '⏸️ 꺼져 있음',
+                   'html': ("<div class=rsn><b>봇이 멈춰도 알려줄 장치가 꺼져 있어요</b><br>"
+                            "매매 봇과는 별개라 매매는 계속되지만, 봇에 문제가 생겨도 알림이 안 옵니다. "
+                            "켜두는 걸 추천해요 — 개발 채팅(클로드)에서 \"감시 켜줘\"라고 하면 됩니다.</div>")}
     return d
 
 
@@ -290,15 +296,16 @@ margin:0 -20px 2px;padding:13px 22px 11px;background:rgba(236,243,239,.78);backd
 .top a{color:var(--sub);text-decoration:none;font-size:12.5px;font-weight:600;padding:6px 11px;border-radius:9px;transition:.15s}
 .top a:hover{background:rgba(255,255,255,.85);color:var(--txt)}
 .note{font-size:11.5px;color:var(--faint);margin:6px 2px 12px} .note a{color:var(--pri);text-decoration:none;font-weight:600}
-/* 봇 상태 캡슐 (한 줄) */
-.sbar{display:flex;align-items:center;background:var(--card);border:1px solid rgba(15,30,70,.045);border-radius:99px;
-padding:11px 6px;box-shadow:var(--sh);margin-bottom:14px}
-.sseg{flex:1;display:flex;align-items:center;justify-content:center;gap:6px;font-size:12.5px;color:var(--sub);font-weight:600;
-cursor:pointer;padding:2px 0;border-radius:99px;transition:background .15s}
-.sseg:hover{background:var(--soft)} .sseg:active{transform:scale(.97)}
+/* 봇 상태 캡슐 (한 줄, 상태별 색 배경으로 한눈에) */
+.sbar{display:flex;gap:6px;background:var(--card);border:1px solid rgba(15,30,70,.045);border-radius:99px;
+padding:6px;box-shadow:var(--sh);margin-bottom:14px}
+.sseg{flex:1;display:flex;align-items:center;justify-content:center;gap:6px;font-size:12.5px;font-weight:600;
+cursor:pointer;padding:9px 0;border-radius:99px;transition:filter .15s}
+.sseg:hover{filter:brightness(.97)} .sseg:active{transform:scale(.97)}
 .sseg b{font-weight:800;font-size:12.5px}
-.t-on{color:var(--grn)} .t-off{color:var(--sub)} .t-wait{color:#ff9500}
-.sdiv{width:1px;height:15px;background:var(--line);flex-shrink:0}
+.sseg.s-on{background:#e0f4ea;color:#22795c} .sseg.s-on b{color:#0f8a60}
+.sseg.s-wait{background:#fff1dc;color:#a86a10} .sseg.s-wait b{color:#e08600}
+.sseg.s-off{background:#f0f2f4;color:#8b95a1} .sseg.s-off b{color:#6b7684}
 .led{width:9px;height:9px;border-radius:50%;flex-shrink:0} .led.off{background:#cbd3dd}
 .led.on{background:var(--grn);animation:pulse 2.4s ease-out infinite}
 .led.wait{background:#ff9500;animation:pulsew 2.4s ease-out infinite}
@@ -388,8 +395,8 @@ details[open] summary:before{transform:rotate(90deg)}
 .wrap{padding:0 14px calc(52px + env(safe-area-inset-bottom))}
 .top{margin:0 -14px 2px;padding:11px 16px 9px} .logo{font-size:19px}
 .note{margin:5px 2px 10px}
-.sbar{padding:10px 2px;margin-bottom:11px}
-.sseg{font-size:11.5px;gap:5px} .sseg b{font-size:11.5px}
+.sbar{padding:5px;gap:5px;margin-bottom:11px}
+.sseg{font-size:11px;gap:4px;padding:8px 0} .sseg b{font-size:11px}
 .seg{max-width:none;margin-bottom:12px}
 .card{padding:16px;border-radius:18px;margin-bottom:11px}
 .hero{padding:24px 16px 21px} .hero .amt{font-size:33px} .hero .amt small{font-size:16px}
@@ -405,11 +412,9 @@ details[open] summary:before{transform:rotate(90deg)}
 <div class=note>{{now}} 기준 · <a href="{{url_for('dashboard')}}">↻ 새로고침</a></div>
 
 <div class=sbar>
-  <div class=sseg onclick="openBot('kr')"><span class="led {{'on' if bot.kr else 'off'}}"></span>국내 <b class="{{'t-on' if bot.kr else 't-off'}}">{{ '가동중' if bot.kr else '정지' }}</b></div>
-  <div class=sdiv></div>
-  <div class=sseg onclick="openBot('us')"><span class="led {{'wait' if bot.us_wait else ('on' if bot.us else 'off')}}"></span>미국 <b class="{{'t-wait' if bot.us_wait else ('t-on' if bot.us else 't-off')}}">{{ '환전 대기' if bot.us_wait else ('가동중' if bot.us else '정지') }}</b></div>
-  <div class=sdiv></div>
-  <div class=sseg onclick="openBot('dm')"><span class="led {{'on' if bot.deadman else 'off'}}"></span>감시 <b class="{{'t-on' if bot.deadman else 't-off'}}">{{ '켜짐' if bot.deadman else '꺼짐' }}</b></div>
+  <div class="sseg {{'s-on' if bot.kr else 's-off'}}" onclick="openBot('kr')"><span class="led {{'on' if bot.kr else 'off'}}"></span>국내 <b>{{ '가동중' if bot.kr else '정지' }}</b></div>
+  <div class="sseg {{'s-wait' if bot.us_wait else ('s-on' if bot.us else 's-off')}}" onclick="openBot('us')"><span class="led {{'wait' if bot.us_wait else ('on' if bot.us else 'off')}}"></span>미국 <b>{{ '환전 대기' if bot.us_wait else ('가동중' if bot.us else '정지') }}</b></div>
+  <div class="sseg {{'s-on' if bot.deadman else 's-off'}}" onclick="openBot('dm')"><span class="led {{'on' if bot.deadman else 'off'}}"></span>감시 <b>{{ '켜짐' if bot.deadman else '꺼짐' }}</b></div>
 </div>
 <div class=seg><div class="on" onclick="sw('kr')">🇰🇷 국내</div><div onclick="sw('us')">🇺🇸 미국</div></div>
 
@@ -654,9 +659,10 @@ def api_chat():
     kr = kr_snapshot(row)
     ctx = (f"총자산 {kr['total']:,.0f}원, 미실현수익률 {kr['ret']:.2f}%, 보유 {len(kr['holdings'])}종목, "
            f"현금 {kr['cash']:,.0f}원(미투입). 전략=KODEX200 지수ETF 50% + v3저변동 25종목 50%, 분기 리밸런스, "
-           f"참고서(데이터아티팩트·부실상폐 회피). US=SPY. 매매는 EC2 크론 자동.") if not kr['error'] else '계좌조회 실패'
-    prompt = ("너는 Lassi 자동투자 대시보드 어시스턴트다. 아래 맥락으로 사용자 질문에 한국어로 간결·친근하게 답해라. "
-              "매매 실행은 못 하고 설명·조언만 한다.\n\n[포트폴리오]\n" + ctx + "\n\n[질문]\n" + msg)
+           f"참고서(데이터아티팩트·부실상폐 회피). US=SPY. 매매는 서버가 정해진 시간에 자동 실행.") if not kr['error'] else '계좌조회 실패'
+    prompt = ("너는 '시나브로' 자동투자 대시보드의 어시스턴트다. 아래 맥락으로 사용자 질문에 한국어로 간결·친근하게 답해라. "
+              "너는 매매 실행이나 봇 켜기/끄기를 할 수 없다(그건 개발 채팅에서만 가능) — 설명·조언만 한다. "
+              "전문용어(크론·EC2 등)는 쓰지 말고 쉬운 말로.\n\n[포트폴리오]\n" + ctx + "\n\n[질문]\n" + msg)
     return jsonify(reply=_gemini(key, prompt))
 
 
