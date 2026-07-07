@@ -388,6 +388,7 @@ cursor:pointer;padding:9px 0;border-radius:99px;transition:filter .15s}
 .h{font-size:14px;font-weight:800;margin:0 4px 8px}
 /* hero — 딥그린 프리미엄 카드 */
 .hero{background:linear-gradient(155deg,#17372c 0,#1e4f3d 48%,#153228 100%);text-align:center;padding:32px 20px 28px;
+min-height:234px;display:flex;flex-direction:column;justify-content:center;
 position:relative;overflow:hidden;border:0;box-shadow:0 2px 6px rgba(16,50,38,.18),0 18px 44px rgba(16,50,38,.22),inset 0 1px 0 rgba(255,255,255,.07)}
 .hero:before{content:'';position:absolute;width:260px;height:260px;border-radius:50%;top:-120px;right:-80px;
 background:radial-gradient(closest-side,rgba(94,214,167,.22),transparent)}
@@ -615,7 +616,7 @@ body:before{background:radial-gradient(640px 420px at 88% -8%,rgba(20,154,110,.1
 
 <div id=us class=pane>
 {% if us.error %}<div class="card warn">⚠️ {{us.error}}</div>{% else %}
-<div class="card hero"><i class=pearl></i><div class=lab>USD 예수금</div><div class=amt>$<span class=cnt>{{ '%.2f'|format(us.cash_usd) }}</span></div></div>
+<div class="card hero"><i class=pearl></i><div class=lab>USD 예수금</div><div class=amt><span class=cnt>{{ '%.2f'|format(us.cash_usd) }}</span><small> 달러</small></div></div>
 {% if us.holdings %}<div class=card>{% for h in us.holdings %}<div class=hold style=cursor:default>
 <div class=hicon style=background:linear-gradient(135deg,#f04452,#d63a48)>{{h.ticker[:3]}}</div><div class=hmid><div class=hnm>{{h.ticker}}</div></div>
 <div class=hend><div class=hval>{{ '%.4f'|format(h.qty) }}주</div></div></div>{% endfor %}</div>
