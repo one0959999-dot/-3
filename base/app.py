@@ -388,20 +388,35 @@ cursor:pointer;padding:9px 0;border-radius:99px;transition:filter .15s}
 .h{font-size:14px;font-weight:800;margin:0 4px 8px}
 /* hero — 딥그린 프리미엄 카드 */
 .hero{background:linear-gradient(155deg,#17372c 0,#1e4f3d 48%,#153228 100%);text-align:center;padding:32px 20px 28px;
-position:relative;overflow:hidden;border:0;box-shadow:0 2px 6px rgba(16,50,38,.18),0 18px 44px rgba(16,50,38,.22),inset 0 1px 0 rgba(255,255,255,.10)}
+position:relative;overflow:hidden;border:0;box-shadow:0 2px 6px rgba(16,50,38,.18),0 18px 44px rgba(16,50,38,.22),inset 0 1px 0 rgba(255,255,255,.07)}
 .hero:before{content:'';position:absolute;width:260px;height:260px;border-radius:50%;top:-120px;right:-80px;
 background:radial-gradient(closest-side,rgba(94,214,167,.22),transparent)}
 .hero:after{content:'';position:absolute;width:200px;height:200px;border-radius:50%;bottom:-110px;left:-70px;
 background:radial-gradient(closest-side,rgba(46,160,120,.20),transparent)}
 .hero>*{position:relative}
-/* 펄 도장 — 진주빛 광택 + 플레이크, 폰 기울이면 빛이 따라옴 */
+/* 펄 도장 — 은은한 광택 + 불규칙 플레이크(큰 타일 2장, 주기 어긋나 반복 안 보임) */
 .hero .pearl{position:absolute;inset:0;pointer-events:none;
-background:linear-gradient(115deg,transparent 30%,rgba(255,255,255,.06) 42%,rgba(150,255,215,.13) 50%,rgba(255,255,255,.05) 58%,transparent 70%);
-background-size:240% 240%;animation:sheen 9s ease-in-out infinite alternate}
+background:linear-gradient(115deg,transparent 32%,rgba(255,255,255,.035) 44%,rgba(150,255,215,.075) 50%,rgba(255,255,255,.03) 56%,transparent 68%);
+background-size:240% 240%;animation:sheen 11s ease-in-out infinite alternate}
 @keyframes sheen{from{background-position:0% 40%}to{background-position:100% 60%}}
-.hero .pearl:after{content:'';position:absolute;inset:0;opacity:.5;
-background-image:radial-gradient(rgba(255,255,255,.16) .6px,transparent .9px),radial-gradient(rgba(170,255,225,.12) .5px,transparent .8px);
-background-size:5px 5px,9px 9px;background-position:0 0,3px 4px}
+.hero .pearl:after{content:'';position:absolute;inset:0;opacity:.30;
+background-image:
+radial-gradient(circle at 13px 27px,rgba(255,255,255,.85) 0,transparent 1.1px),
+radial-gradient(circle at 87px 9px,rgba(195,255,228,.7) 0,transparent .8px),
+radial-gradient(circle at 41px 73px,rgba(255,255,255,.6) 0,transparent .7px),
+radial-gradient(circle at 121px 54px,rgba(255,242,205,.55) 0,transparent .9px),
+radial-gradient(circle at 66px 118px,rgba(255,255,255,.75) 0,transparent .8px),
+radial-gradient(circle at 139px 131px,rgba(190,255,225,.6) 0,transparent 1px),
+radial-gradient(circle at 24px 102px,rgba(255,255,255,.5) 0,transparent .6px),
+radial-gradient(circle at 98px 88px,rgba(255,246,214,.45) 0,transparent .7px),
+radial-gradient(circle at 33px 151px,rgba(255,255,255,.8) 0,transparent .9px),
+radial-gradient(circle at 172px 44px,rgba(195,255,230,.65) 0,transparent 1.1px),
+radial-gradient(circle at 109px 187px,rgba(255,255,255,.55) 0,transparent .7px),
+radial-gradient(circle at 58px 12px,rgba(255,255,255,.65) 0,transparent .8px),
+radial-gradient(circle at 190px 166px,rgba(255,240,200,.5) 0,transparent .9px),
+radial-gradient(circle at 146px 99px,rgba(255,255,255,.7) 0,transparent .6px);
+background-size:149px 149px,149px 149px,149px 149px,149px 149px,149px 149px,149px 149px,149px 149px,149px 149px,
+211px 211px,211px 211px,211px 211px,211px 211px,211px 211px,211px 211px}
 .hero .pearl.tilt{animation:none;transition:background-position .2s ease-out}
 .hero .lab{font-size:12.5px;color:rgba(255,255,255,.68);font-weight:700}
 .hero .amt{font-size:40px;font-weight:800;margin:5px 0 4px;letter-spacing:-2px;color:#fff}
