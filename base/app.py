@@ -71,6 +71,46 @@ def _master():
     return _MASTER
 
 
+def _equity_snapshot(total):
+    """총자산 일별 스냅샷(equity_history.json, 하루 1키·방문시 갱신) → (최근 90일 값들, 어제대비)."""
+    import json as _j
+    today = datetime.date.today().isoformat()
+    try:
+        with open(P('equity_history.json'), encoding='utf-8') as f:
+            h = _j.load(f)
+    except Exception:
+        h = {}
+    days = sorted(h)
+    prev = None
+    if days:
+        if days[-1] < today:
+            prev = h[days[-1]]
+        elif len(days) > 1:
+            prev = h[days[-2]]
+    if total > 0 and h.get(today) != total:
+        h[today] = total
+        h = {k: h[k] for k in sorted(h)[-180:]}
+        try:
+            tmp = P('equity_history.json') + '.tmp'
+            with open(tmp, 'w', encoding='utf-8') as f:
+                _j.dump(h, f)
+            os.replace(tmp, P('equity_history.json'))
+        except Exception:
+            pass
+    pts = [h[k] for k in sorted(h)][-90:]
+    return pts, ((total - prev) if prev else None)
+
+
+def _spark(pts, w=300, hgt=40):
+    """스파크라인 SVG polyline 좌표 (2점 이상일 때만)."""
+    if len(pts) < 2:
+        return ''
+    lo, hi = min(pts), max(pts)
+    rng = (hi - lo) or 1
+    step = w / (len(pts) - 1)
+    return ' '.join(f"{i*step:.1f},{hgt - 5 - (p - lo) / rng * (hgt - 10):.1f}" for i, p in enumerate(pts))
+
+
 def dca_status():
     """지수 DCA 원장(dca_index_plan.json) 읽어 진행상황. 진행중 아니면 None."""
     try:
@@ -116,6 +156,9 @@ def kr_snapshot(row):
             out['ret'] = (out['total'] / out['cost_basis'] - 1) * 100
             out['pl'] = out['total'] - out['cost_basis']
         out['holdings'].sort(key=lambda x: (-x['is_etf'], -x['value']))
+        mx = max((h['value'] for h in out['holdings']), default=0) or 1
+        for h in out['holdings']:
+            h['wpct'] = h['value'] / mx * 100  # 최대보유 대비 상대 비중(막대용)
         tot = out['total'] or 1
         cum = 0.0; stops = []
         for label, v, col in [('지수 ETF', etf_v, '#3182f6'), ('저변동 25종목', stk_v, '#20c997'), ('현금', cash, '#c4cdd8')]:
@@ -280,6 +323,9 @@ PAGE = """<!doctype html><html lang=ko><head><meta charset=utf-8>
 <meta name=theme-color content="#e9f1ec" media="(prefers-color-scheme: light)">
 <meta name=theme-color content="#101418" media="(prefers-color-scheme: dark)">
 <meta name=apple-mobile-web-app-capable content=yes>
+<meta name=apple-mobile-web-app-title content=시나브로>
+<link rel=manifest href=/manifest.json><link rel=apple-touch-icon href=/icon.png>
+<link rel=icon type=image/png href=/icon.png>
 <title>시나브로</title><style>
 :root{--bg:#f2f5f4;--card:#fff;--line:#eef2f0;--txt:#191f28;--sub:#8b95a1;--faint:#b6bdc7;--up:#f04452;--down:#3182f6;--pri:#149a6e;--soft:#f4f8f6;--grn:#12b886;
 --sh:0 1px 2px rgba(23,32,64,.04),0 10px 30px rgba(23,32,64,.06);--sh2:0 2px 6px rgba(23,32,64,.06),0 16px 40px rgba(23,32,64,.09)}
@@ -336,6 +382,11 @@ background:radial-gradient(closest-side,rgba(46,160,120,.20),transparent)}
 .pill{display:inline-flex;align-items:center;gap:5px;font-size:14.5px;font-weight:800;padding:8px 15px;border-radius:99px}
 .up{color:var(--up)} .down{color:var(--down)} .pill.up{background:#fdeaec} .pill.down{background:#e9f1fe}
 .hero .pill.up{background:rgba(240,68,82,.28);color:#ffaab1} .hero .pill.down{background:rgba(120,170,255,.2);color:#a9c9ff}
+.dchg{font-size:12px;font-weight:700;margin-top:9px} .hero .dchg.up{color:#ffb3ba} .hero .dchg.down{color:#a9c9ff}
+.spk{width:100%;height:40px;margin-top:13px;display:block;opacity:.92}
+.spk polyline{fill:none;stroke:rgba(255,255,255,.8);stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
+.wbar{height:3px;background:var(--line);border-radius:2px;margin-top:6px;overflow:hidden;max-width:170px}
+.wbar span{display:block;height:100%;border-radius:2px;opacity:.65}
 /* 도넛 */
 .donut{display:flex;align-items:center;gap:18px}
 .dc{position:relative;width:120px;height:120px;flex-shrink:0} .pie{width:100%;height:100%;border-radius:50%;box-shadow:inset 0 0 0 1px rgba(15,30,70,.04);animation:pin .55s ease}
@@ -441,7 +492,7 @@ body:before{background:radial-gradient(640px 420px at 88% -8%,rgba(20,154,110,.1
 }
 </style></head><body><div class=wrap>
 <div class=top><div class=logo>시나브로<em>.</em></div><a href="{{url_for('logout')}}">로그아웃</a></div>
-<div class=note>{{now}} 기준 · <a href="{{url_for('dashboard')}}">↻ 새로고침</a></div>
+<div class=note>{{now}} 기준 · <span style="color:{{'#149a6e' if mkt else 'inherit'}};font-weight:600">{{ '장중' if mkt else '장 마감' }}</span> · <a href="{{url_for('dashboard')}}">↻ 새로고침</a></div>
 
 <div class=sbar>
   <div class="sseg {{'s-on' if bot.kr else 's-off'}}" onclick="openBot('kr')"><span class="led {{'on' if bot.kr else 'off'}}"></span>국내 <b>{{ '가동중' if bot.kr else '정지' }}</b></div>
@@ -455,7 +506,9 @@ body:before{background:radial-gradient(640px 420px at 88% -8%,rgba(20,154,110,.1
 <div id=kr class="pane on">
 {% if kr.error %}<div class="card warn">⚠️ {{kr.error}}</div>{% else %}
 <div class="card hero"><div class=lab>총 자산</div><div class=amt><span class=cnt>{{ '{:,.0f}'.format(kr.total) }}</span><small> 원</small></div>
-  <span class="pill {{'up' if (kr.ret or 0)>=0 else 'down'}}">{{ '▲' if (kr.ret or 0)>=0 else '▼' }} {{ '%.2f'|format(kr.ret|abs) if kr.ret is not none else '—' }}% <span style=opacity:.5>·</span> {{ '{:+,.0f}'.format(kr.pl) }}원</span></div>
+  <span class="pill {{'up' if (kr.ret or 0)>=0 else 'down'}}">{{ '▲' if (kr.ret or 0)>=0 else '▼' }} {{ '%.2f'|format(kr.ret|abs) if kr.ret is not none else '—' }}% <span style=opacity:.5>·</span> {{ '{:+,.0f}'.format(kr.pl) }}원</span>
+  {% if kr.get('delta') is not none %}<div class="dchg {{'up' if kr.delta>=0 else 'down'}}">어제보다 {{ '{:+,.0f}'.format(kr.delta) }}원</div>{% endif %}
+  {% if kr.get('spark') %}<svg class=spk viewBox="0 0 300 40" preserveAspectRatio=none><polyline points="{{kr.spark}}"/></svg>{% endif %}</div>
 <div class=card><div class=lab style=margin-bottom:12px>포트폴리오 구성</div>
   <div class=donut><div class=dc><div class=pie style="background:conic-gradient({{kr.conic}})"></div>
     <div class=hole><div class=t1>보유</div><div class=t2>{{kr.holdings|length}}개</div></div></div>
@@ -468,7 +521,8 @@ body:before{background:radial-gradient(640px 420px at 88% -8%,rgba(20,154,110,.1
 {% for h in kr.holdings %}<div class=hold onclick="openStock('{{h.ticker}}','{{h.name}}',{{h.qty}},{{h.buy}},{{h.price}},{{h.plpct}},{{'1' if h.is_etf else '0'}})">
   <div class="hicon {{'etf' if h.is_etf}}" {% if not h.is_etf %}style="background:linear-gradient(135deg,hsl({{h.hue}},62%,58%),hsl({{h.hue}},66%,47%))"{% endif %}>{{ '📊' if h.is_etf else h.name[:2] }}</div>
   <div class=hmid><div class=hnm>{{h.name}}</div>
-    <div class=prices><span class=pb>매입 {{ '{:,.0f}'.format(h.buy) }}</span><span class="pc {{'up' if h.plpct>=0 else 'down'}}">현재 <b>{{ '{:,.0f}'.format(h.price) }}</b></span></div></div>
+    <div class=prices><span class=pb>매입 {{ '{:,.0f}'.format(h.buy) }}</span><span class="pc {{'up' if h.plpct>=0 else 'down'}}">현재 <b>{{ '{:,.0f}'.format(h.price) }}</b></span></div>
+    <div class=wbar><span style="width:{{ '%.0f'|format(h.wpct if h.wpct is defined else 0) }}%;background:{{ '#149a6e' if h.is_etf else 'hsl(' ~ h.hue ~ ',55%,55%)' }}"></span></div></div>
   <div class=hend><div class=hval>{{ '{:,.0f}'.format(h.value) }}</div><div class="hpl {{'up' if h.plpct>=0 else 'down'}}">{{ '%+.1f'|format(h.plpct) }}%</div></div>
   <span class=chev>›</span></div>{% endfor %}
 {% if not kr.holdings %}<div class="mut" style=text-align:center;padding:16px>보유 종목 없음</div>{% endif %}</div>
@@ -592,8 +646,16 @@ def dashboard():
     kr = kr_snapshot(row); us = us_snapshot(row); bot = bot_status(); dca = dca_status()
     # US '환전 대기' 상태: 봇은 무장인데 USD 0 + SPY 미보유 → 배너에서 바로 이유를 보여줌
     bot['us_wait'] = bool(bot.get('us')) and not us.get('error') and (us.get('cash_usd') or 0) < 1 and not us.get('holdings')
+    if not kr.get('error'):
+        try:
+            pts, delta = _equity_snapshot(kr['total'])
+            kr['spark'] = _spark(pts); kr['delta'] = delta
+        except Exception:
+            pass
+    now = datetime.datetime.now()
+    mkt = now.weekday() < 5 and (9, 0) <= (now.hour, now.minute) < (15, 30)
     return render_template_string(
-        PAGE, now=datetime.datetime.now().strftime('%Y-%m-%d %H:%M'),
+        PAGE, now=now.strftime('%Y-%m-%d %H:%M'), mkt=mkt,
         kr=kr, us=us, dca=dca, trades=recent_trades(int(row['id'])),
         bot=bot, botd=bot_details(bot, us, dca))
 
@@ -672,6 +734,39 @@ def _stock_reason(m):
         + "</div>"
     )
     return why + viz
+
+
+_ICON = None
+
+
+@app.route('/icon.png')
+def icon():
+    """홈화면 앱 아이콘 — 딥그린 배경 + 시나브로(조금씩 상승) 계단 3개. PIL로 1회 생성 후 캐시."""
+    global _ICON
+    from io import BytesIO
+    from flask import send_file
+    if _ICON is None:
+        from PIL import Image, ImageDraw
+        s = 512
+        img = Image.new('RGB', (s, s), '#173a2c')
+        d = ImageDraw.Draw(img)
+        d.rounded_rectangle([0, 0, s, s], radius=0, fill='#1b4636')
+        d.ellipse([-160, -160, 300, 300], fill='#1e5240')       # 좌상단 은은한 글로우
+        bw, gap, base = 88, 40, 396                              # 계단 3개(조금씩 ↑)
+        x0 = (s - bw * 3 - gap * 2) // 2
+        for i, (hh, col) in enumerate([(120, '#8fd6b4'), (190, '#c9ecd9'), (268, '#ffffff')]):
+            x = x0 + i * (bw + gap)
+            d.rounded_rectangle([x, base - hh, x + bw, base], radius=26, fill=col)
+        buf = BytesIO(); img.save(buf, 'PNG'); _ICON = buf.getvalue()
+    return send_file(BytesIO(_ICON), mimetype='image/png', max_age=86400)
+
+
+@app.route('/manifest.json')
+def manifest():
+    return jsonify({
+        'name': '시나브로', 'short_name': '시나브로', 'display': 'standalone',
+        'start_url': '/', 'background_color': '#101418', 'theme_color': '#173a2c',
+        'icons': [{'src': '/icon.png', 'sizes': '512x512', 'type': 'image/png'}]})
 
 
 @app.route('/api/stock/<ticker>')
