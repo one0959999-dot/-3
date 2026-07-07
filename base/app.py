@@ -693,13 +693,18 @@ var dx=e.changedTouches[0].clientX-_sx,dy=e.changedTouches[0].clientY-_sy;
 if(Math.abs(dx)>75&&Math.abs(dy)<45&&!document.getElementById('modal').classList.contains('on')){
 var t=document.querySelectorAll('.seg div');(dx<0?t[1]:t[0]).click();}});
 setTimeout(function(){document.body.classList.remove('boot')},900);
-/* 펄 도장: 폰 기울기에 빛 반사 이동 (지원 기기에서만, 권한요청 없음) */
+/* 펄 도장 광원 이동 — ①자이로(HTTPS에서만 가능) ②폴백: 터치/마우스 따라 반사 */
+var _tilt=false;
+function pearlTo(x,y){document.querySelectorAll('.pearl').forEach(function(p){
+p.classList.add('tilt');p.style.backgroundPosition=x+'% '+y+'%';});}
 window.addEventListener('deviceorientation',function(e){
-if(e.gamma==null)return;
+if(e.gamma==null)return;_tilt=true;
 var g=Math.max(-28,Math.min(28,e.gamma)),b=Math.max(-28,Math.min(28,(e.beta||40)-40));
-document.querySelectorAll('.pearl').forEach(function(p){
-p.classList.add('tilt');
-p.style.backgroundPosition=(50+g*1.7)+'% '+(50+b*1.3)+'%';});});
+pearlTo(50+g*1.7,50+b*1.3);});
+document.addEventListener('touchmove',function(e){if(_tilt)return;var t=e.touches[0];
+pearlTo(t.clientX/window.innerWidth*100,t.clientY/window.innerHeight*100);},{passive:true});
+document.addEventListener('mousemove',function(e){if(_tilt)return;
+pearlTo(e.clientX/window.innerWidth*100,e.clientY/window.innerHeight*100);},{passive:true});
 var _loaded=Date.now();
 document.addEventListener('visibilitychange',function(){
 if(document.hidden)return;
