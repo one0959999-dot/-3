@@ -156,9 +156,6 @@ def kr_snapshot(row):
             out['ret'] = (out['total'] / out['cost_basis'] - 1) * 100
             out['pl'] = out['total'] - out['cost_basis']
         out['holdings'].sort(key=lambda x: (-x['is_etf'], -x['value']))
-        mx = max((h['value'] for h in out['holdings']), default=0) or 1
-        for h in out['holdings']:
-            h['wpct'] = h['value'] / mx * 100  # 최대보유 대비 상대 비중(막대용)
         tot = out['total'] or 1
         cum = 0.0; stops = []
         for label, v, col in [('지수 ETF', etf_v, '#3182f6'), ('저변동 25종목', stk_v, '#20c997'), ('현금', cash, '#c4cdd8')]:
@@ -294,7 +291,19 @@ def recent_trades(uid, n=30):
     try:
         rows = c.execute("SELECT stock_name, action, price, shares, created_at, mode "
                          "FROM trade_journal WHERE user_id=? ORDER BY id DESC LIMIT ?", (uid, n)).fetchall()
-        return [dict(r) for r in rows]
+        out = []
+        today = datetime.date.today()
+        for r in rows:
+            t = dict(r)
+            t['amt'] = (t.get('price') or 0) * (t.get('shares') or 0)
+            ds = (t.get('created_at') or '')[:10]
+            try:
+                d = datetime.date.fromisoformat(ds)
+                t['day'] = '오늘' if d == today else ('어제' if (today - d).days == 1 else f"{d.month}/{d.day}")
+            except Exception:
+                t['day'] = ds[5:]
+            out.append(t)
+        return out
     except Exception:
         return []
     finally:
@@ -385,8 +394,13 @@ background:radial-gradient(closest-side,rgba(46,160,120,.20),transparent)}
 .dchg{font-size:12px;font-weight:700;margin-top:9px} .hero .dchg.up{color:#ffb3ba} .hero .dchg.down{color:#a9c9ff}
 .spk{width:100%;height:40px;margin-top:13px;display:block;opacity:.92}
 .spk polyline{fill:none;stroke:rgba(255,255,255,.8);stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
-.wbar{height:3px;background:var(--line);border-radius:2px;margin-top:6px;overflow:hidden;max-width:170px}
-.wbar span{display:block;height:100%;border-radius:2px;opacity:.65}
+.trow{display:flex;align-items:center;gap:8px;padding:9.5px 2px;border-bottom:1px solid var(--line);font-size:13.5px} .trow:last-child{border:0}
+.tnm{flex:1;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.tend{text-align:right;flex-shrink:0} .tend b{font-size:13.5px}
+.tend small{display:block;color:var(--sub);font-size:11px;margin-top:1px;font-weight:500}
+#ptr{position:fixed;top:12px;left:50%;transform:translateX(-50%);width:34px;height:34px;border-radius:50%;
+background:var(--pri);color:#fff;display:flex;align-items:center;justify-content:center;font-size:17px;
+opacity:0;transition:.2s;z-index:40;box-shadow:0 4px 14px rgba(20,154,110,.4);pointer-events:none}
 /* 도넛 */
 .donut{display:flex;align-items:center;gap:18px}
 .dc{position:relative;width:120px;height:120px;flex-shrink:0} .pie{width:100%;height:100%;border-radius:50%;box-shadow:inset 0 0 0 1px rgba(15,30,70,.04);animation:pin .55s ease}
@@ -521,8 +535,7 @@ body:before{background:radial-gradient(640px 420px at 88% -8%,rgba(20,154,110,.1
 {% for h in kr.holdings %}<div class=hold onclick="openStock('{{h.ticker}}','{{h.name}}',{{h.qty}},{{h.buy}},{{h.price}},{{h.plpct}},{{'1' if h.is_etf else '0'}})">
   <div class="hicon {{'etf' if h.is_etf}}" {% if not h.is_etf %}style="background:linear-gradient(135deg,hsl({{h.hue}},62%,58%),hsl({{h.hue}},66%,47%))"{% endif %}>{{ '📊' if h.is_etf else h.name[:2] }}</div>
   <div class=hmid><div class=hnm>{{h.name}}</div>
-    <div class=prices><span class=pb>매입 {{ '{:,.0f}'.format(h.buy) }}</span><span class="pc {{'up' if h.plpct>=0 else 'down'}}">현재 <b>{{ '{:,.0f}'.format(h.price) }}</b></span></div>
-    <div class=wbar><span style="width:{{ '%.0f'|format(h.wpct if h.wpct is defined else 0) }}%;background:{{ '#149a6e' if h.is_etf else 'hsl(' ~ h.hue ~ ',55%,55%)' }}"></span></div></div>
+    <div class=prices><span class=pb>매입 {{ '{:,.0f}'.format(h.buy) }}</span><span class="pc {{'up' if h.plpct>=0 else 'down'}}">현재 <b>{{ '{:,.0f}'.format(h.price) }}</b></span></div></div>
   <div class=hend><div class=hval>{{ '{:,.0f}'.format(h.value) }}</div><div class="hpl {{'up' if h.plpct>=0 else 'down'}}">{{ '%+.1f'|format(h.plpct) }}%</div></div>
   <span class=chev>›</span></div>{% endfor %}
 {% if not kr.holdings %}<div class="mut" style=text-align:center;padding:16px>보유 종목 없음</div>{% endif %}</div>
@@ -550,16 +563,21 @@ body:before{background:radial-gradient(640px 420px at 88% -8%,rgba(20,154,110,.1
   <div class=cap>크론: 리밸 평일10:00 · 신규배분 평일10:30 · US 미국장 · deadman 매일</div></div></details></div>
 
 <div class=card><div class=h style=margin-bottom:4px>📜 최근 거래</div>
-  <details {{ 'open' if trades|length<=4 else '' }}><summary>{{trades|length}}건 보기</summary>
-  {% for t in trades %}<div class=st><span><span class="tag {{'s' if t.action=='SELL' else 'b'}}">{{ '매도' if t.action=='SELL' else '매수' }}</span>{{t.stock_name}}</span>
-  <span class=vv>{{ '{:,.0f}'.format(t.price) }} <span class=mut style=font-weight:500;font-size:11px>{{t.created_at[5:16]}}</span></span></div>{% endfor %}
-  {% if not trades %}<div class="mut" style=text-align:center;padding:10px>거래 없음</div>{% endif %}</details></div>
+  {% for t in trades[:3] %}<div class=trow><span class="tag {{'s' if t.action=='SELL' else 'b'}}">{{ '매도' if t.action=='SELL' else '매수' }}</span>
+  <span class=tnm>{{t.stock_name}}</span>
+  <span class=tend><b>{{ '{:,.0f}'.format(t.amt) }}원</b><small>{{t.shares}}주 · {{t.day}}</small></span></div>{% endfor %}
+  {% if trades|length > 3 %}<details><summary>전체 {{trades|length}}건</summary>
+  {% for t in trades[3:] %}<div class=trow><span class="tag {{'s' if t.action=='SELL' else 'b'}}">{{ '매도' if t.action=='SELL' else '매수' }}</span>
+  <span class=tnm>{{t.stock_name}}</span>
+  <span class=tend><b>{{ '{:,.0f}'.format(t.amt) }}원</b><small>{{t.shares}}주 · {{t.day}}</small></span></div>{% endfor %}</details>{% endif %}
+  {% if not trades %}<div class="mut" style=text-align:center;padding:10px>거래 없음</div>{% endif %}</div>
 </div>
 </div>
 
 </div>
 
 <div id=modal class=modal onclick="if(event.target==this)closeM()"><div class=sheet id=sheet></div></div>
+<div id=ptr>↻</div>
 
 <script>
 var BOTD={{botd|tojson}};
@@ -593,6 +611,18 @@ try{var r=await fetch('/api/chat',{method:'POST',headers:{'Content-Type':'applic
 var j=await r.json();a.classList.remove('typing');a.innerHTML=md(j.reply||'(응답 없음)');}
 catch(e){a.classList.remove('typing');a.textContent='(오류 — 다시 보내주세요)';}
 i.disabled=false;b.disabled=false;i.focus();m.scrollTop=m.scrollHeight;}
+/* 당겨서 새로고침 (홈화면 앱엔 새로고침 버튼이 없음) */
+var _py=-1;
+document.addEventListener('touchstart',function(e){_py=(window.scrollY<=0)?e.touches[0].clientY:-1},{passive:true});
+document.addEventListener('touchmove',function(e){if(_py<0)return;
+if(e.touches[0].clientY-_py>90){_py=-1;document.getElementById('ptr').style.opacity=1;setTimeout(function(){location.reload()},150);}},{passive:true});
+/* 좌우 스와이프로 국내/미국 탭 전환 */
+var _sx=0,_sy=0;
+document.addEventListener('touchstart',function(e){_sx=e.touches[0].clientX;_sy=e.touches[0].clientY},{passive:true});
+document.addEventListener('touchend',function(e){
+var dx=e.changedTouches[0].clientX-_sx,dy=e.changedTouches[0].clientY-_sy;
+if(Math.abs(dx)>75&&Math.abs(dy)<45&&!document.getElementById('modal').classList.contains('on')){
+var t=document.querySelectorAll('.seg div');(dx<0?t[1]:t[0]).click();}});
 var _loaded=Date.now();
 document.addEventListener('visibilitychange',function(){
 if(document.hidden)return;
