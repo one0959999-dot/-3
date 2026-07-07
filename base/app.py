@@ -277,7 +277,9 @@ def _gemini(key, prompt):
 
 PAGE = """<!doctype html><html lang=ko><head><meta charset=utf-8>
 <meta name=viewport content="width=device-width,initial-scale=1,viewport-fit=cover">
-<meta name=theme-color content="#e9f1ec"><meta name=apple-mobile-web-app-capable content=yes>
+<meta name=theme-color content="#e9f1ec" media="(prefers-color-scheme: light)">
+<meta name=theme-color content="#101418" media="(prefers-color-scheme: dark)">
+<meta name=apple-mobile-web-app-capable content=yes>
 <title>시나브로</title><style>
 :root{--bg:#f2f5f4;--card:#fff;--line:#eef2f0;--txt:#191f28;--sub:#8b95a1;--faint:#b6bdc7;--up:#f04452;--down:#3182f6;--pri:#149a6e;--soft:#f4f8f6;--grn:#12b886;
 --sh:0 1px 2px rgba(23,32,64,.04),0 10px 30px rgba(23,32,64,.06);--sh2:0 2px 6px rgba(23,32,64,.06),0 16px 40px rgba(23,32,64,.09)}
@@ -336,7 +338,8 @@ background:radial-gradient(closest-side,rgba(46,160,120,.20),transparent)}
 .hero .pill.up{background:rgba(240,68,82,.28);color:#ffaab1} .hero .pill.down{background:rgba(120,170,255,.2);color:#a9c9ff}
 /* 도넛 */
 .donut{display:flex;align-items:center;gap:18px}
-.dc{position:relative;width:120px;height:120px;flex-shrink:0} .pie{width:100%;height:100%;border-radius:50%;box-shadow:inset 0 0 0 1px rgba(15,30,70,.04)}
+.dc{position:relative;width:120px;height:120px;flex-shrink:0} .pie{width:100%;height:100%;border-radius:50%;box-shadow:inset 0 0 0 1px rgba(15,30,70,.04);animation:pin .55s ease}
+@keyframes pin{from{transform:scale(.85) rotate(-14deg);opacity:0}to{transform:none;opacity:1}}
 .hole{position:absolute;inset:21px;background:#fff;border-radius:50%;display:flex;flex-direction:column;align-items:center;justify-content:center;box-shadow:0 0 10px rgba(23,32,64,.06)}
 .hole .t1{font-size:10px;color:var(--sub);font-weight:700} .hole .t2{font-size:18px;font-weight:800}
 .leg{flex:1} .legrow{display:flex;align-items:center;gap:9px;padding:6.5px 0}
@@ -411,6 +414,30 @@ details[open] summary:before{transform:rotate(90deg)}
 .hnm{font-size:14px} .hval{font-size:14px}
 .grid{gap:12px} .chat .msgs{min-height:170px;max-height:46vh}
 .h{font-size:13.5px}
+}
+/* ── 다크모드 (기기 설정 따라 자동) ── */
+@media(prefers-color-scheme:dark){
+:root{--bg:#101418;--card:#181d24;--line:#242b34;--txt:#e7ebf0;--sub:#93a0ad;--faint:#5c6773;--soft:#1f252d;
+--sh:0 1px 2px rgba(0,0,0,.25),0 10px 30px rgba(0,0,0,.35);--sh2:0 2px 6px rgba(0,0,0,.35),0 16px 40px rgba(0,0,0,.5);--down:#62a1ff}
+body{background:linear-gradient(180deg,#131a17 0,var(--bg) 260px)}
+body:before{background:radial-gradient(640px 420px at 88% -8%,rgba(20,154,110,.13),transparent)}
+.top{background:rgba(16,20,24,.78)} .top a:hover{background:rgba(255,255,255,.06);color:var(--txt)}
+.card{border-color:rgba(255,255,255,.05)}
+.seg{background:rgba(36,43,52,.8)} .seg div.on{background:#232b35;color:var(--txt);box-shadow:none}
+.sseg.s-on{background:rgba(18,184,134,.14);color:#54cfa0} .sseg.s-on b{color:#43c793}
+.sseg.s-wait{background:rgba(255,149,0,.13);color:#ffb04d} .sseg.s-wait b{color:#ff9f2e}
+.sseg.s-off{background:#232a32;color:#7d8894} .sseg.s-off b{color:#9aa5b0}
+.hole{background:var(--card);box-shadow:none}
+.pill.up{background:rgba(240,68,82,.16)} .pill.down{background:rgba(98,161,255,.15)}
+.hicon.etf{background:rgba(20,154,110,.16)!important;color:#4ecf9e}
+.m.a{background:var(--soft);border-color:var(--line)}
+.cin input{background:var(--soft);border-color:var(--line);color:var(--txt)}
+.tag.b{background:rgba(240,68,82,.16)} .tag.s{background:rgba(98,161,255,.18)}
+.warn{background:#33270f;color:#f0a24a}
+.modal{background:rgba(0,0,0,.62)} .sheet{background:var(--card)}
+.rsn{background:var(--soft);border-color:var(--line)}
+.mclose{background:#232b34;color:var(--txt)} .mclose:hover{background:#2a3340}
+.td{background:#5c6773}
 }
 </style></head><body><div class=wrap>
 <div class=top><div class=logo>시나브로<em>.</em></div><a href="{{url_for('logout')}}">로그아웃</a></div>
@@ -512,6 +539,11 @@ try{var r=await fetch('/api/chat',{method:'POST',headers:{'Content-Type':'applic
 var j=await r.json();a.classList.remove('typing');a.innerHTML=md(j.reply||'(응답 없음)');}
 catch(e){a.classList.remove('typing');a.textContent='(오류 — 다시 보내주세요)';}
 i.disabled=false;b.disabled=false;i.focus();m.scrollTop=m.scrollHeight;}
+var _loaded=Date.now();
+document.addEventListener('visibilitychange',function(){
+if(document.hidden)return;
+var busy=document.querySelector('#msgs .m.u')||document.getElementById('modal').classList.contains('on')||document.getElementById('ci').value;
+if(!busy&&Date.now()-_loaded>60000)location.reload();});
 document.querySelectorAll('.cnt').forEach(function(el){
 var t=el.textContent.trim(),dec=(t.split('.')[1]||'').length,v=parseFloat(t.replace(/,/g,''));
 if(isNaN(v))return;var s=performance.now(),D=620;
